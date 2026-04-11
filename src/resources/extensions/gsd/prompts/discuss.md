@@ -28,6 +28,8 @@ After reflection is confirmed, decide the approach based on the actual scope —
 
 **Anti-reduction rule:** If the user describes a big vision, plan the big vision. Do not ask "what's the minimum viable version?" or try to reduce scope unless the user explicitly asks for an MVP or minimal version. When something is complex or risky, phase it into a later milestone — do not cut it. The user's ambition is the target, and your job is to sequence it intelligently, not shrink it.
 
+{{preparationContext}}
+
 ## Mandatory Investigation Before First Question Round
 
 Before asking your first question, do a mandatory investigation pass. This is not optional.
@@ -114,6 +116,8 @@ If they clarify, absorb the correction and re-verify.
 
 The depth verification is the required write-gate. Do **not** add another meta "ready to proceed?" checkpoint immediately after it unless there is still material ambiguity.
 
+**CRITICAL — Non-bypassable gate:** The system mechanically blocks CONTEXT.md writes until the user selects the "(Recommended)" option. If the user declines, cancels, or the tool fails, you MUST re-ask — never rationalize past the block ("tool not responding, I'll proceed" is forbidden). The gate exists to protect the user's work; treat a block as an instruction, not an obstacle to work around.
+
 ## Wrap-up Gate
 
 Once the depth checklist is fully satisfied, move directly into requirements and roadmap preview. Do not insert a separate "are you ready to continue?" gate unless the user explicitly wants to keep brainstorming or you still see material ambiguity.
@@ -171,7 +175,7 @@ For multi-milestone projects, requirements should span the full vision. Requirem
 
 If the project is new or has no `REQUIREMENTS.md`, surface candidate requirements in chat before writing the roadmap. Ask for correction only on material omissions, wrong ownership, or wrong scope. If the user has already been specific and raises no substantive objection, treat the requirement set as confirmed and continue.
 
-**Print the requirements in chat before writing the roadmap.** Do not say "here are the requirements" and then only write them to a file. The user must see them in the terminal. Print a markdown table with columns: ID, Title, Status, Owner, Source. Group by status (Active, Deferred, Out of Scope). After the table, ask: "Confirm, adjust, or add?"
+**Print the requirements in chat before writing the roadmap.** Do not say "here are the requirements" and then only write them to a file. The user must see them in the terminal. Print a markdown table with columns: ID, Title, Status, Owner, Source. Group by status (Active, Deferred, Out of Scope). After the table, ask: "Confirm, adjust, or add?" **Non-bypassable:** If the user does not respond or gives an ambiguous answer, you MUST re-ask — never proceed to roadmap creation without explicit requirement confirmation.
 
 ## Scope Assessment
 
@@ -183,7 +187,7 @@ Before moving to output, confirm the size estimate from your reflection still ho
 
 Before writing any files, **print the planned roadmap in chat** so the user can see and approve it. Print a markdown table with columns: Slice, Title, Risk, Depends, Demo. One row per slice. Below the table, print the milestone definition of done as a bullet list.
 
-If the user raises a substantive objection, adjust the roadmap. Otherwise, present the roadmap and ask: "Ready to write, or want to adjust?" — one gate, not two.
+If the user raises a substantive objection, adjust the roadmap. Otherwise, present the roadmap and ask: "Ready to write, or want to adjust?" — one gate, not two. **Non-bypassable:** If the user does not respond or gives an ambiguous answer, you MUST re-ask — never write files without explicit approval. A missing response is not a "yes."
 
 ### Naming Convention
 
@@ -240,7 +244,7 @@ If a milestone has no dependencies, omit the frontmatter. The dependency chain f
 
 #### Phase 3: Sequential readiness gate for remaining milestones
 
-For each remaining milestone **one at a time, in sequence**, decide the most likely readiness mode from the evidence you already have, then use `ask_user_questions` to let the user correct that recommendation. Present three options:
+For each remaining milestone **one at a time, in sequence**, decide the most likely readiness mode from the evidence you already have, then use `ask_user_questions` to let the user correct that recommendation. **Non-bypassable:** If `ask_user_questions` fails, errors, returns no response, or the user's response does not match a provided option, you MUST re-ask — never rationalize past the block or auto-select a readiness mode. Present three options:
 
 - **"Discuss now"** — The user wants to conduct a focused discussion for this milestone in the current session, while the context from the broader discussion is still fresh. Proceed with a focused discussion for this milestone (reflection → investigation → questioning → depth verification). When the discussion concludes, write a full `CONTEXT.md`. Then move to the gate for the next milestone.
 - **"Write draft for later"** — This milestone has seed material from the current conversation but needs its own dedicated discussion in a future session. Write a `CONTEXT-DRAFT.md` capturing the seed material (what was discussed, key ideas, provisional scope, open questions). Mark it clearly as a draft, not a finalized context. **What happens downstream:** When auto-mode reaches this milestone, it pauses and notifies the user: "M00x has draft context — needs discussion. Run /gsd." The `/gsd` wizard shows a "Discuss from draft" option that seeds the new discussion with this draft, so nothing from the current conversation is lost. After the dedicated discussion produces a full CONTEXT.md, the draft file is automatically deleted.

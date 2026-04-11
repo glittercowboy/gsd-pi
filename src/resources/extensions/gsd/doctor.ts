@@ -8,6 +8,7 @@ import { resolveMilestoneFile, resolveMilestonePath, resolveSliceFile, resolveSl
 import { deriveState, isMilestoneComplete } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadEffectiveGSDPreferences, type GSDPreferences } from "./preferences.js";
+import { isClosedStatus } from "./status-guards.js";
 
 import type { DoctorIssue, DoctorIssueCode, DoctorReport } from "./doctor-types.js";
 import { GLOBAL_STATE_CODES } from "./doctor-types.js";
@@ -87,7 +88,8 @@ function validatePreferenceShape(preferences: GSDPreferences): string[] {
   return issues;
 }
 
-function buildStateMarkdown(state: Awaited<ReturnType<typeof deriveState>>): string {
+/** Build STATE.md content from derived state. Exported for guided-flow pre-dispatch rebuild (#3475). */
+export function buildStateMarkdown(state: Awaited<ReturnType<typeof deriveState>>): string {
   const lines: string[] = [];
   lines.push("# GSD State", "");
 
@@ -473,15 +475,16 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
     if (!roadmapContent) continue;
 
     // Normalize slices: prefer DB, fall back to parser
-    type NormSlice = RoadmapSliceEntry & { pending?: boolean };
+    type NormSlice = RoadmapSliceEntry & { pending?: boolean; skipped?: boolean };
     let slices: NormSlice[];
     if (isDbAvailable()) {
       const dbSlices = getMilestoneSlices(milestoneId);
       slices = dbSlices.map(s => ({
         id: s.id,
         title: s.title,
-        done: s.status === "complete",
+        done: isClosedStatus(s.status),
         pending: s.status === "pending",
+        skipped: s.status === "skipped",
         risk: (s.risk || "medium") as RoadmapSliceEntry["risk"],
         depends: s.depends,
         demo: s.demo,
@@ -577,8 +580,9 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       const slicePath = resolveSlicePath(basePath, milestoneId, slice.id);
       if (!slicePath) {
         // Pending slices haven't been planned yet — directories are created
-        // lazily by ensurePreconditions() at dispatch time. Skip them.
-        if (slice.pending) continue;
+        // lazily by ensurePreconditions() at dispatch time. Skipped slices are
+        // intentionally allowed to remain summary-less and directory-less.
+        if (slice.pending || slice.skipped) continue;
         const expectedPath = relSlicePath(basePath, milestoneId, slice.id);
         issues.push({
           severity: slice.done ? "warning" : "error",
@@ -602,7 +606,8 @@ export async function runGSDDoctor(basePath: string, options?: { fix?: boolean; 
       const tasksDir = resolveTasksDir(basePath, milestoneId, slice.id);
       if (!tasksDir) {
         // Pending slices haven't been planned yet — tasks/ is created on demand.
-        if (slice.pending) continue;
+        // Skipped slices may legitimately never create tasks/.
+        if (slice.pending || slice.skipped) continue;
         issues.push({
           severity: slice.done ? "warning" : "error",
           code: "missing_tasks_dir",

@@ -458,13 +458,74 @@ test("openai-codex-responses.ts extracts nested error fields", () => {
   );
 });
 
+// ── Fix 1: resetTransientRetryState resets module-level singleton ────────────
+
+test("resetTransientRetryState is exported from agent-end-recovery.ts", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
+  assert.ok(
+    src.includes("export function resetTransientRetryState"),
+    "agent-end-recovery.ts must export resetTransientRetryState for provider-error-resume.ts",
+  );
+});
+
+test("provider-error-resume.ts calls resetTransientRetryState before startAuto", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "provider-error-resume.ts"), "utf-8");
+  assert.ok(
+    src.includes("resetTransientRetryState"),
+    "provider-error-resume.ts must import and call resetTransientRetryState",
+  );
+  // Ensure reset is called BEFORE startAuto — order matters
+  const resetIdx = src.indexOf("resetTransientRetryState()");
+  const startIdx = src.indexOf("await deps.startAuto(");
+  assert.ok(
+    resetIdx !== -1 && startIdx !== -1 && resetIdx < startIdx,
+    "resetTransientRetryState() must be called before deps.startAuto()",
+  );
+});
+
+// ── Fix 2: Session creation timeout treated as transient in phases.ts ───────
+
+test("phases.ts handles timeout session-creation failures with pause instead of stopAuto", () => {
+  const src = readFileSync(join(__dirname, "..", "auto", "phases.ts"), "utf-8");
+
+  // The cancelled + isTransient + category=timeout path must pause, not hard-stop
+  assert.ok(
+    src.includes('category === "timeout"'),
+    "phases.ts must check category === 'timeout' on transient cancelled unitResults",
+  );
+  // Must call pauseAuto (not stopAuto) for timeout cancellations
+  assert.ok(
+    /category === "timeout"[\s\S]{0,300}pauseAuto/.test(src),
+    "phases.ts must call pauseAuto for session-timeout failures (not stopAuto or continue)",
+  );
+  // Must NOT use action: "continue" for transient cancellations (causes infinite loops)
+  assert.ok(
+    !/isTransient[\s\S]{0,500}action:\s*"continue"/.test(src),
+    "phases.ts must NOT return action:continue for cancelled units — use break+pause instead",
+  );
+});
+
+// ── Fix 3: MAX_TRANSIENT_AUTO_RESUMES raised to 8 ───────────────────────────
+
+test("MAX_TRANSIENT_AUTO_RESUMES is at least 8 for sustained overload resilience", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
+  const match = src.match(/MAX_TRANSIENT_AUTO_RESUMES\s*=\s*(\d+)/);
+  assert.ok(match, "MAX_TRANSIENT_AUTO_RESUMES must be defined");
+  const value = Number(match![1]);
+  assert.ok(
+    value >= 8,
+    `MAX_TRANSIENT_AUTO_RESUMES must be >= 8 for sustained overload resilience, got ${value}`,
+  );
+});
+
 // ── agent-session retryable regex handles server_error (#1166) ──────────────
 
 test("agent-session retryable error regex matches server_error (underscore)", () => {
   // This regex is extracted from _isRetryableError in agent-session.ts.
   // It must match both "server error" (space) and "server_error" (underscore)
   // to properly classify Codex streaming errors as retryable.
-  const retryableRegex = /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|temporarily backed off/i;
+  // "temporarily backed off" intentionally excluded — see #3429
+  const retryableRegex = /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|extra usage is required/i;
 
   // server_error (with underscore — Codex streaming error format)
   assert.ok(retryableRegex.test("Codex server_error: An error occurred"));

@@ -245,6 +245,41 @@ describe('gsd-tools', () => {
     }
   });
 
+  test('gsd_summary_save supports CONTEXT-DRAFT persistence', async () => {
+    const tmpDir = makeTmpDir();
+    try {
+      const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+      openDatabase(dbPath);
+
+      await saveArtifactToDb(
+        {
+          path: 'milestones/M001/M001-CONTEXT-DRAFT.md',
+          artifact_type: 'CONTEXT-DRAFT',
+          content: '# M001 Draft Context\n\nDraft notes.',
+          milestone_id: 'M001',
+        },
+        tmpDir,
+      );
+
+      const draftPath = path.join(tmpDir, '.gsd', 'milestones', 'M001', 'M001-CONTEXT-DRAFT.md');
+      assert.ok(fs.existsSync(draftPath), 'Draft context file should be created');
+      const draftContent = fs.readFileSync(draftPath, 'utf-8');
+      assert.ok(draftContent.includes('Draft Context'), 'Draft context file should contain draft content');
+
+      const adapter = _getAdapter();
+      assert.ok(adapter !== null, 'Adapter should be available');
+      const rows = adapter!.prepare(
+        "SELECT * FROM artifacts WHERE path = 'milestones/M001/M001-CONTEXT-DRAFT.md'",
+      ).all();
+      assert.deepStrictEqual(rows.length, 1, 'Should have 1 draft artifact row');
+      assert.deepStrictEqual(rows[0]['artifact_type'] as string, 'CONTEXT-DRAFT', 'Artifact type should be CONTEXT-DRAFT');
+
+      closeDatabase();
+    } finally {
+      cleanupDir(tmpDir);
+    }
+  });
+
   test('DB unavailable error paths', async () => {
     // (d) All tools return isError when DB unavailable
     // Close any open DB and don't open a new one

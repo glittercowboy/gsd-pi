@@ -14,7 +14,7 @@ export async function handleGSDCommand(
   const trimmed = (typeof args === "string" ? args : "").trim();
 
   const handlers = [
-    () => handleCoreCommand(trimmed, ctx),
+    () => handleCoreCommand(trimmed, ctx, pi),
     () => handleAutoCommand(trimmed, ctx, pi),
     () => handleParallelCommand(trimmed, ctx, pi),
     () => handleWorkflowCommand(trimmed, ctx, pi),
@@ -29,4 +29,3 @@ export async function handleGSDCommand(
 
   ctx.ui.notify(`Unknown: /gsd ${trimmed}. Run /gsd help for available commands.`, "warning");
 }
-

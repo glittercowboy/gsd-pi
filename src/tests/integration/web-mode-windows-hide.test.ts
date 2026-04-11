@@ -117,4 +117,9 @@ test("launchWebMode source-dev host also passes windowsHide: true", async (t) =>
     true,
     "source-dev spawn must also include windowsHide: true (#2628)",
   );
+  assert.equal(
+    capturedOptions!.shell,
+    true,
+    "source-dev spawn must include shell: true when launching npm.cmd on Windows",
+  );
 });

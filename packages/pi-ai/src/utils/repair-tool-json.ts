@@ -28,20 +28,154 @@ export function hasYamlBulletLists(json: string): boolean {
 }
 
 /**
- * Attempt to repair YAML-style bullet lists embedded in a JSON string.
+ * Detect whether a JSON string contains XML parameter tags
+ * (i.e. `<parameter name="X">value</parameter>`).
  *
- * Converts patterns like:
- *   "keyDecisions": - Used Web Notification API..., "keyFiles": - file1
+ * Some models mix XML tool-call syntax into JSON string values,
+ * producing hybrid output that fails JSON.parse.
  *
- * Into:
- *   "keyDecisions": ["Used Web Notification API..."], "keyFiles": ["file1"]
+ * @see https://github.com/gsd-build/gsd-2/issues/3403
+ */
+export function hasXmlParameterTags(json: string): boolean {
+	return /<\/?parameter[\s>]/.test(json);
+}
+
+/**
+ * Detect whether a JSON string contains truncated numeric values
+ * (e.g. `"exitCode": -,` or `"durationMs": ,`).
  *
- * Returns the original string unchanged if no YAML patterns are detected
+ * Smaller models sometimes emit incomplete numbers when the value
+ * is cut off mid-generation.
+ *
+ * @see https://github.com/gsd-build/gsd-2/issues/3464
+ */
+export function hasTruncatedNumbers(json: string): boolean {
+	// Match: colon, optional whitespace, then a comma or } without a value
+	// Or: colon, optional whitespace, bare minus sign followed by comma/}
+	return /:\s*,/.test(json) || /:\s*-\s*[,}]/.test(json);
+}
+
+type XmlParameterBlock = {
+	name: string;
+	value: unknown;
+};
+
+const xmlParameterBlockPattern = /<parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/parameter>/g;
+
+function parseXmlParameterValue(raw: string): unknown {
+	const trimmed = raw.trim();
+	if (trimmed === "") return "";
+	try {
+		return JSON.parse(trimmed);
+	} catch {
+		return trimmed;
+	}
+}
+
+function extractXmlParameterBlocks(text: string): XmlParameterBlock[] {
+	const blocks: XmlParameterBlock[] = [];
+	for (const match of text.matchAll(xmlParameterBlockPattern)) {
+		blocks.push({
+			name: match[1],
+			value: parseXmlParameterValue(match[2] ?? ""),
+		});
+	}
+	return blocks;
+}
+
+function trimLeakedXmlTail(fieldName: string, value: string): string {
+	let cut = value.length;
+	const parameterIndex = value.indexOf("<parameter");
+	if (parameterIndex >= 0) cut = Math.min(cut, parameterIndex);
+
+	const closingTagIndex = value.indexOf(`</${fieldName}>`);
+	if (closingTagIndex >= 0) cut = Math.min(cut, closingTagIndex);
+
+	return value.slice(0, cut).trimEnd();
+}
+
+/**
+ * Strip XML `<parameter>` tags from a JSON string, leaving only the
+ * text content. This handles the case where the LLM mixes XML
+ * tool-call format into JSON string values.
+ */
+function stripXmlParameterTags(json: string): string {
+	// Remove opening tags: <parameter name="X">
+	let cleaned = json.replace(/<parameter\s+name="[^"]*"\s*>/g, "");
+	// Remove closing tags: </parameter>
+	cleaned = cleaned.replace(/<\/parameter>/g, "");
+	return cleaned;
+}
+
+function promoteXmlParametersToTopLevel(json: string): string {
+	try {
+		const parsed = JSON.parse(json) as Record<string, unknown>;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+			return stripXmlParameterTags(json);
+		}
+
+		let changed = false;
+		for (const [fieldName, value] of Object.entries(parsed)) {
+			if (typeof value !== "string" || !hasXmlParameterTags(value)) continue;
+
+			const blocks = extractXmlParameterBlocks(value);
+			if (blocks.length === 0) continue;
+
+			parsed[fieldName] = trimLeakedXmlTail(fieldName, value);
+			for (const block of blocks) {
+				if (!(block.name in parsed)) {
+					parsed[block.name] = block.value;
+				}
+			}
+			changed = true;
+		}
+
+		return changed ? JSON.stringify(parsed) : stripXmlParameterTags(json);
+	} catch {
+		return stripXmlParameterTags(json);
+	}
+}
+
+/**
+ * Replace truncated numeric values with 0.
+ * Handles: `"key": ,` → `"key": 0,` and `"key": -,` → `"key": 0,`
+ */
+function repairTruncatedNumbers(json: string): string {
+	// Bare comma after colon (missing value entirely)
+	let repaired = json.replace(/:\s*,/g, ": 0,");
+	// Bare minus sign followed by comma or closing brace
+	repaired = repaired.replace(/:\s*-\s*([,}])/g, ": 0$1");
+	return repaired;
+}
+
+/**
+ * Attempt to repair malformed JSON in LLM tool-call arguments.
+ *
+ * Handles three categories of malformation:
+ *
+ * 1. **YAML bullet lists** (#2660): `"key": - item1\n  - item2` → `"key": ["item1", "item2"]`
+ * 2. **XML parameter tags** (#3403): `<parameter name="X">value</parameter>` → stripped to content
+ * 3. **Truncated numbers** (#3464): `"exitCode": -,` → `"exitCode": 0,`
+ *
+ * Returns the original string unchanged if no patterns are detected
  * or if the repair itself would produce invalid JSON.
  */
 export function repairToolJson(json: string): string {
-	if (!hasYamlBulletLists(json)) {
-		return json;
+	let repaired = json;
+
+	// Phase 1: Strip XML parameter tags
+	if (hasXmlParameterTags(repaired)) {
+		repaired = promoteXmlParametersToTopLevel(repaired);
+	}
+
+	// Phase 2: Repair truncated numbers
+	if (hasTruncatedNumbers(repaired)) {
+		repaired = repairTruncatedNumbers(repaired);
+	}
+
+	// Phase 3: Repair YAML bullet lists
+	if (!hasYamlBulletLists(repaired)) {
+		return repaired;
 	}
 
 	// Strategy: find each `"key": - item1\n  - item2\n  - item3` region and
@@ -52,8 +186,6 @@ export function repairToolJson(json: string): string {
 	//   "someKey":\s*- item text (possibly multiline)
 	//   optionally followed by more `- item` lines
 	//   terminated by the next `"key":` or `}` or end of string.
-
-	let repaired = json;
 
 	// Match a key followed by YAML-style bullet list.
 	// Capture: (1) the key portion including colon, (2) the bullet-list body,

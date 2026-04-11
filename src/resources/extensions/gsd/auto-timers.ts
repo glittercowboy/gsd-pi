@@ -24,6 +24,7 @@ import { saveActivityLog } from "./activity-log.js";
 import { recoverTimedOutUnit, type RecoveryContext } from "./auto-timeout-recovery.js";
 import { resolveAgentEndCancelled } from "./auto/resolve.js";
 import type { AutoSession } from "./auto/session.js";
+import { logWarning, logError } from "./workflow-logger.js";
 
 export interface SupervisionContext {
   s: AutoSession;
@@ -99,13 +100,15 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
           }
         }
       }
-    } catch {
+    } catch (err) {
       // Non-fatal — fall through with no estimate
+      logWarning("timer", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   const estimateMinutes = taskEstimate ? parseEstimateMinutes(taskEstimate) : null;
+  const MAX_TIMEOUT_SCALE = 6; // Cap at 6x (60min task). Prevents 2h+ tasks from creating 120min+ timeout windows.
   const timeoutScale = estimateMinutes && estimateMinutes > 0
-    ? Math.max(1, estimateMinutes / 10)  // 10min task = 1x, 30min = 3x, 2h = 12x
+    ? Math.min(MAX_TIMEOUT_SCALE, Math.max(1, estimateMinutes / 10))
     : 1;
 
   const softTimeoutMs = (supervisor.soft_timeout_minutes ?? 0) * 60 * 1000 * timeoutScale;
@@ -120,6 +123,10 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       phase: "wrapup-warning-sent",
       wrapupWarningSent: true,
     });
+    // Only trigger a new turn if no tools are currently in flight.
+    // Triggering during active tool calls causes tool results to be skipped
+    // with "Skipped due to queued user message", leading to provider errors (#3512).
+    const softTrigger = getInFlightToolCount() === 0;
     pi.sendMessage(
       {
         customType: "gsd-auto-wrapup",
@@ -134,7 +141,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
           "4. leave precise resume notes if anything remains unfinished",
         ].join("\n"),
       },
-      { triggerTurn: true },
+      { triggerTurn: softTrigger },
     );
   }, softTimeoutMs);
 
@@ -214,12 +221,14 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       await pauseAuto(ctx, pi);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[idle-watchdog] Unhandled error: ${message}`);
+      logError("timer", `[idle-watchdog] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
       resolveAgentEndCancelled({ message: `Idle watchdog error: ${message}`, category: "idle", isTransient: true });
       try {
         ctx.ui.notify(`Idle watchdog error: ${message}`, "warning");
-      } catch { /* best effort */ }
+      } catch (err) { /* best effort */
+        logWarning("timer", `notification failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }, 15000);
 
@@ -248,12 +257,14 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       await pauseAuto(ctx, pi);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[hard-timeout] Unhandled error: ${message}`);
+      logError("timer", `[hard-timeout] Unhandled error: ${message}`);
       // Unblock any pending unit promise so the auto-loop is not orphaned.
       resolveAgentEndCancelled({ message: `Hard timeout error: ${message}`, category: "timeout", isTransient: true });
       try {
         ctx.ui.notify(`Hard timeout error: ${message}`, "warning");
-      } catch { /* best effort */ }
+      } catch (err) { /* best effort */
+        logWarning("timer", `notification failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }, hardTimeoutMs);
 
@@ -287,6 +298,8 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
       );
     }
 
+    // Only trigger a new turn if no tools are currently in flight (#3512).
+    const contextTrigger = getInFlightToolCount() === 0;
     pi.sendMessage(
       {
         customType: "gsd-auto-wrapup",
@@ -302,7 +315,7 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
           "Do NOT start new sub-tasks or investigations.",
         ].join("\n"),
       },
-      { triggerTurn: true },
+      { triggerTurn: contextTrigger },
     );
 
     if (s.continueHereHandle) {
@@ -311,3 +324,4 @@ export function startUnitSupervision(sctx: SupervisionContext): void {
     }
   }, 15_000);
 }
+

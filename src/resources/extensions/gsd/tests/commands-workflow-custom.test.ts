@@ -100,6 +100,18 @@ steps: []
 // ─── Catalog Registration ────────────────────────────────────────────────
 
 describe("workflow catalog registration", () => {
+  it("model appears in TOP_LEVEL_SUBCOMMANDS", () => {
+    const entry = TOP_LEVEL_SUBCOMMANDS.find((c) => c.cmd === "model");
+    assert.ok(entry, "model should be in TOP_LEVEL_SUBCOMMANDS");
+    assert.match(entry!.desc, /session model/i);
+  });
+
+  it("getGsdArgumentCompletions('m') includes model", () => {
+    const completions = getGsdArgumentCompletions("m");
+    const labels = completions.map((c: any) => c.label);
+    assert.ok(labels.includes("model"), "should include model completion");
+  });
+
   it("workflow appears in TOP_LEVEL_SUBCOMMANDS", () => {
     const entry = TOP_LEVEL_SUBCOMMANDS.find((c) => c.cmd === "workflow");
     assert.ok(entry, "workflow should be in TOP_LEVEL_SUBCOMMANDS");

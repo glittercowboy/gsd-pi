@@ -32,6 +32,17 @@ test("isVerificationNotApplicable: 'None planned' is not applicable", () => {
   assert.equal(isVerificationNotApplicable("None planned"), true);
 });
 
+test("isVerificationNotApplicable: 'None — <rationale>' is not applicable (#3897)", () => {
+  assert.equal(
+    isVerificationNotApplicable("None — no new background jobs, workers, or lifecycle changes introduced."),
+    true,
+  );
+});
+
+test("isVerificationNotApplicable: em dash without spaces is not applicable (#3897)", () => {
+  assert.equal(isVerificationNotApplicable("none—inline"), true);
+});
+
 test("isVerificationNotApplicable: 'N/A' is not applicable", () => {
   assert.equal(isVerificationNotApplicable("N/A"), true);
 });
@@ -79,4 +90,19 @@ test("isVerificationNotApplicable: 'Verify API response times under load' requir
 
 test("isVerificationNotApplicable: 'Monitor error rates for 24h' requires verification", () => {
   assert.equal(isVerificationNotApplicable("Monitor error rates for 24h"), false);
+});
+
+// Regression: #3634 — "Not provided." default from plan-milestone
+test("isVerificationNotApplicable: 'Not provided.' is not applicable (#3634)", () => {
+  assert.equal(isVerificationNotApplicable("Not provided."), true);
+});
+
+test("isVerificationNotApplicable: 'Not provided' (no period) is not applicable (#3634)", () => {
+  assert.equal(isVerificationNotApplicable("Not provided"), true);
+});
+
+test("isVerificationNotApplicable: trailing period does not defeat match (#3634)", () => {
+  assert.equal(isVerificationNotApplicable("None required."), true);
+  assert.equal(isVerificationNotApplicable("N/A."), true);
+  assert.equal(isVerificationNotApplicable("Not applicable."), true);
 });

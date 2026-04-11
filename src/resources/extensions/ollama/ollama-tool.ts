@@ -31,6 +31,8 @@ export function registerOllamaTool(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use 'list' to see what models are available locally before trying to use one.",
 			"Use 'pull' to download a model that isn't available yet.",
+			"Use 'remove' to delete a local model that is no longer needed.",
+			"Use 'show' to get detailed info about a model (parameters, quantization, families).",
 			"Use 'status' to check if Ollama is running.",
 			"Use 'ps' to see which models are loaded in memory and VRAM usage.",
 			"Common models: llama3.1:8b, qwen2.5-coder:7b, deepseek-r1:8b, codestral:22b",
@@ -40,6 +42,8 @@ export function registerOllamaTool(pi: ExtensionAPI): void {
 				[
 					Type.Literal("list"),
 					Type.Literal("pull"),
+					Type.Literal("remove"),
+					Type.Literal("show"),
 					Type.Literal("status"),
 					Type.Literal("ps"),
 				],
@@ -161,6 +165,71 @@ export function registerOllamaTool(pi: ExtensionAPI): void {
 						return {
 							content: [{ type: "text", text: `Loaded models:\n${lines.join("\n")}` }],
 							details: { action, modelCount: ps.models.length, durationMs: Date.now() - startTime } as OllamaToolDetails,
+						};
+					}
+
+					case "remove": {
+						if (!model) {
+							return {
+								content: [{ type: "text", text: "Error: 'model' parameter is required for remove action." }],
+								isError: true,
+								details: { action, durationMs: Date.now() - startTime, error: "missing_model" } as OllamaToolDetails,
+							};
+						}
+
+						const running = await client.isRunning();
+						if (!running) {
+							return {
+								content: [{ type: "text", text: "Ollama is not running." }],
+								isError: true,
+								details: { action, model, durationMs: Date.now() - startTime, error: "not_running" } as OllamaToolDetails,
+							};
+						}
+
+						await client.deleteModel(model);
+						return {
+							content: [{ type: "text", text: `Successfully removed ${model}` }],
+							details: { action, model, durationMs: Date.now() - startTime } as OllamaToolDetails,
+						};
+					}
+
+					case "show": {
+						if (!model) {
+							return {
+								content: [{ type: "text", text: "Error: 'model' parameter is required for show action." }],
+								isError: true,
+								details: { action, durationMs: Date.now() - startTime, error: "missing_model" } as OllamaToolDetails,
+							};
+						}
+
+						const running = await client.isRunning();
+						if (!running) {
+							return {
+								content: [{ type: "text", text: "Ollama is not running." }],
+								isError: true,
+								details: { action, model, durationMs: Date.now() - startTime, error: "not_running" } as OllamaToolDetails,
+							};
+						}
+
+						const info = await client.showModel(model);
+						const details = info.details;
+						const infoLines = [
+							`Model: ${model}`,
+							`Family: ${details.family}`,
+							`Parameters: ${details.parameter_size}`,
+							`Quantization: ${details.quantization_level}`,
+							`Format: ${details.format}`,
+						];
+						if (details.families?.length) {
+							infoLines.push(`Families: ${details.families.join(", ")}`);
+						}
+						if (info.parameters) {
+							infoLines.push(`\nModelfile parameters:\n${info.parameters}`);
+						}
+
+						return {
+							content: [{ type: "text", text: infoLines.join("\n") }],
+							details: { action, model, durationMs: Date.now() - startTime } as OllamaToolDetails,
 						};
 					}
 

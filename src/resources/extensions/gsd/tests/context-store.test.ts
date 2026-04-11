@@ -15,6 +15,8 @@ import {
   formatRequirementsForPrompt,
   queryArtifact,
   queryProject,
+  formatRoadmapExcerpt,
+  queryKnowledge,
 } from '../context-store.ts';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -450,5 +452,179 @@ describe("context-store: queryProject", () => {
 
     const content = queryProject();
     assert.strictEqual(content, null, 'queryProject returns null when DB closed');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// context-store: formatRoadmapExcerpt
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("context-store: formatRoadmapExcerpt", () => {
+  // Sample roadmap content matching actual M005-ROADMAP.md format
+  const sampleRoadmap = `# M005: Tiered Context Injection
+
+## Vision
+Refactor prompt builders to inject relevance-scoped context.
+
+## Slice Overview
+| ID | Slice | Risk | Depends | Done | After this |
+|----|-------|------|---------|------|------------|
+| S01 | Scope existing queries | low | — | ✅ | planSlice prompt scoped. |
+| S02 | KNOWLEDGE scoping | medium | S01 | ⬜ | KNOWLEDGE sections filtered. |
+| S03 | Measurement test | low | S02 | ⬜ | 40% reduction confirmed. |
+`;
+
+  test("S02 with S01 predecessor includes both rows", () => {
+    const result = formatRoadmapExcerpt(sampleRoadmap, 'S02', '.gsd/milestones/M005/M005-ROADMAP.md');
+
+    // Should have header
+    assert.match(result, /\| ID \| Slice \| Risk \| Depends \| Done \| After this \|/, 'has header row');
+    // Should have separator
+    assert.match(result, /\|----\|/, 'has separator row');
+    // Should have S01 predecessor
+    assert.match(result, /\| S01 \|/, 'has predecessor S01 row');
+    // Should have S02 target
+    assert.match(result, /\| S02 \|/, 'has target S02 row');
+    // Should have reference directive
+    assert.match(result, /See full roadmap:.*M005-ROADMAP\.md/, 'has reference directive');
+    // Should NOT have S03 (not relevant)
+    assert.ok(!result.includes('| S03 |'), 'does not include unrelated S03');
+  });
+
+  test("S01 with no predecessor includes only target row", () => {
+    const result = formatRoadmapExcerpt(sampleRoadmap, 'S01');
+
+    // Should have header + separator + S01 only
+    assert.match(result, /\| ID \| Slice \|/, 'has header row');
+    assert.match(result, /\| S01 \|/, 'has target S01 row');
+    // Should NOT have S02 or S03
+    assert.ok(!result.includes('| S02 |'), 'does not include S02');
+    assert.ok(!result.includes('| S03 |'), 'does not include S03');
+    // Should have reference
+    assert.match(result, /See full roadmap:/, 'has reference directive');
+
+    // Count rows: header + separator + S01 + blank + directive = 5 lines
+    const lines = result.split('\n');
+    assert.strictEqual(lines.length, 5, 'correct number of lines (no predecessor)');
+  });
+
+  test("missing slice returns empty string", () => {
+    const result = formatRoadmapExcerpt(sampleRoadmap, 'S99');
+
+    assert.strictEqual(result, '', 'missing slice returns empty string');
+  });
+
+  test("empty input returns empty string", () => {
+    assert.strictEqual(formatRoadmapExcerpt('', 'S01'), '', 'empty content returns empty');
+    assert.strictEqual(formatRoadmapExcerpt(sampleRoadmap, ''), '', 'empty sliceId returns empty');
+  });
+
+  test("handles table with various column formats", () => {
+    // Table with different spacing and content
+    const variantRoadmap = `# Milestone
+
+| ID | Slice | Risk | Depends | Done | After this |
+|:---|:------|:-----|:--------|:-----|:-----------|
+| S01 | First slice title | low | — | ✅ | First complete. |
+| S02 | Second longer slice title here | medium | S01 | ⬜ | Second working. |
+`;
+
+    const result = formatRoadmapExcerpt(variantRoadmap, 'S02');
+
+    assert.match(result, /\| S01 \|/, 'has predecessor with different spacing');
+    assert.match(result, /\| S02 \|/, 'has target with different spacing');
+    assert.match(result, /Second longer slice title/, 'preserves full slice title');
+  });
+
+  test("handles multiple dependencies by using first one", () => {
+    const multiDepRoadmap = `| ID | Slice | Risk | Depends | Done | After this |
+|----|-------|------|---------|------|------------|
+| S01 | First | low | — | ✅ | Done. |
+| S02 | Second | low | — | ✅ | Done. |
+| S03 | Third | medium | S01, S02 | ⬜ | Working. |
+`;
+
+    const result = formatRoadmapExcerpt(multiDepRoadmap, 'S03');
+
+    // Should include S01 (first dependency) and S03
+    assert.match(result, /\| S01 \|/, 'has first dependency S01');
+    assert.match(result, /\| S03 \|/, 'has target S03');
+    // S02 is also a dependency but we only include the first one
+    // (This is intentional to keep excerpts minimal)
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// context-store: queryKnowledge
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("context-store: queryKnowledge", () => {
+  // Sample KNOWLEDGE.md content
+  const sampleKnowledge = `# Project Knowledge
+
+## Database Patterns
+SQLite is used with WAL mode for concurrent reads.
+Always use prepared statements.
+
+More database details here.
+
+## API Design
+REST endpoints follow OpenAPI spec.
+Use versioned paths like /v1/resource.
+
+## Testing Guidelines
+Unit tests use node:test.
+Integration tests mock external services.
+`;
+
+  test("single keyword matches header", async () => {
+    const result = await queryKnowledge(sampleKnowledge, ['database']);
+
+    assert.match(result, /## Database Patterns/, 'includes matching section header');
+    assert.match(result, /SQLite is used with WAL mode/, 'includes section content');
+    // Should NOT include other sections
+    assert.ok(!result.includes('## API Design'), 'does not include non-matching API section');
+    assert.ok(!result.includes('## Testing Guidelines'), 'does not include non-matching Testing section');
+  });
+
+  test("multiple keywords match multiple sections", async () => {
+    const result = await queryKnowledge(sampleKnowledge, ['database', 'testing']);
+
+    assert.match(result, /## Database Patterns/, 'includes Database section');
+    assert.match(result, /## Testing Guidelines/, 'includes Testing section');
+    assert.ok(!result.includes('## API Design'), 'does not include API section');
+  });
+
+  test("no matches returns empty string", async () => {
+    const result = await queryKnowledge(sampleKnowledge, ['nonexistent']);
+
+    assert.strictEqual(result, '', 'no matches returns empty string per D020');
+  });
+
+  test("keyword in first paragraph matches", async () => {
+    const result = await queryKnowledge(sampleKnowledge, ['sqlite']);
+
+    // 'sqlite' appears in first paragraph of Database Patterns
+    assert.match(result, /## Database Patterns/, 'matches keyword in first paragraph');
+    assert.match(result, /SQLite is used/, 'includes the section with matching paragraph');
+  });
+
+  test("case-insensitive matching", async () => {
+    const result = await queryKnowledge(sampleKnowledge, ['DATABASE', 'API']);
+
+    assert.match(result, /## Database Patterns/, 'case-insensitive header match');
+    assert.match(result, /## API Design/, 'case-insensitive header match for API');
+  });
+
+  test("empty keywords returns empty string", async () => {
+    const result = await queryKnowledge(sampleKnowledge, []);
+
+    assert.strictEqual(result, '', 'empty keywords returns empty string');
+  });
+
+  test("empty content returns empty string", async () => {
+    const result = await queryKnowledge('', ['database']);
+
+    assert.strictEqual(result, '', 'empty content returns empty string');
   });
 });

@@ -63,4 +63,6 @@ If `.gsd/REQUIREMENTS.md` exists and requirement ownership or status changed, up
 
 {{commitInstruction}}
 
+**DB access safety:** Do NOT query `.gsd/gsd.db` directly via `sqlite3` or `node -e require('better-sqlite3')`. Use `gsd_milestone_status` to read current milestone and slice state. All roadmap mutations go through `gsd_reassess_roadmap` — the tool writes to the DB and re-renders ROADMAP.md atomically.
+
 When done, say: "Roadmap reassessed."

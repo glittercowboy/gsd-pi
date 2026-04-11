@@ -155,7 +155,7 @@ jobs:
         run: npm run test:coverage
 
   windows-portability:
-    timeout-minutes: 15
+    timeout-minutes: 25
     needs: detect-changes
     if: >-
       needs.detect-changes.outputs.docs-only != 'true'
@@ -180,11 +180,16 @@ jobs:
       - name: Typecheck extensions
         run: npm run typecheck:extensions
 
-      - name: Run unit tests
-        run: npm run test:unit
-
       - name: Run package tests
         run: npm run test:packages
+
+      - name: Run Windows portability tests
+        run: >-
+          node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs
+          --experimental-strip-types --test
+          src/tests/windows-portability.test.ts
+          src/resources/extensions/gsd/tests/validate-directory.test.ts
+          src/tests/integration/web-mode-windows-hide.test.ts
 
   rtk-portability:
     timeout-minutes: 20

@@ -142,7 +142,7 @@ type ProviderFlowRuntime = {
 };
 
 const REQUIRED_PROVIDER_CATALOG: RequiredProviderCatalogEntry[] = [
-  { id: "anthropic", label: "Anthropic (Claude)", supportsApiKey: true, supportsOAuth: true, recommended: true },
+  { id: "anthropic", label: "Anthropic (Claude)", supportsApiKey: true, supportsOAuth: false, recommended: true },
   { id: "openai", label: "OpenAI", supportsApiKey: true, supportsOAuth: false },
   { id: "github-copilot", label: "GitHub Copilot", supportsApiKey: false, supportsOAuth: true },
   { id: "openai-codex", label: "ChatGPT Plus/Pro (Codex Subscription)", supportsApiKey: false, supportsOAuth: true },
@@ -231,7 +231,9 @@ function resolveOnboardingLockReason(
 
 function hasStoredCredentialValue(authStorage: AuthStorageInstance, providerId: string): boolean {
   return authStorage.getCredentialsForProvider(providerId).some((credential) => {
-    if (credential.type === "oauth") return true;
+    if (credential.type === "oauth") {
+      return typeof credential.access === "string" && credential.access.trim().length > 0;
+    }
     return typeof credential.key === "string" && credential.key.trim().length > 0;
   });
 }
@@ -246,9 +248,6 @@ function resolveCredentialSource(
   }
   if (getEnvApiKeyFn(providerId)) {
     return "environment";
-  }
-  if (authStorage.getCredentialsForProvider(providerId).length > 0) {
-    return "runtime";
   }
   return null;
 }

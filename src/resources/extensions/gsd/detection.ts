@@ -242,6 +242,12 @@ const TEST_MARKERS = [
 /** Directories skipped during bounded recursive project scans. */
 const RECURSIVE_SCAN_IGNORED_DIRS = new Set([
   ".git",
+  ".gsd",
+  ".planning",
+  ".plans",
+  ".claude",
+  ".cursor",
+  ".vscode",
   "node_modules",
   ".venv",
   "venv",
@@ -1114,7 +1120,7 @@ function resolveVersionCatalogAccessors(
   return accessors;
 }
 
-function scanProjectFiles(basePath: string): string[] {
+export function scanProjectFiles(basePath: string): string[] {
   const files: string[] = [];
   const queue: Array<{ path: string; depth: number }> = [{ path: basePath, depth: 0 }];
 

@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { mock } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -191,6 +191,54 @@ test("runUnit returns cancelled when session creation times out", async () => {
   assert.equal(pi.calls.length, 0);
 });
 
+test("runUnit keeps the session-switch guard across a late newSession settlement", async () => {
+  _resetPendingResolve();
+  mock.timers.enable();
+
+  try {
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    // Use delays longer than NEW_SESSION_TIMEOUT_MS (120s) so the timeout fires
+    const firstSession = makeMockSession({ newSessionDelayMs: 200_000 });
+    const secondSession = makeMockSession({ newSessionDelayMs: 200_000 });
+
+    const firstRun = runUnit(ctx, pi, firstSession, "task", "T01", "prompt");
+
+    // Tick past the 120s session timeout
+    mock.timers.tick(121_000);
+    await Promise.resolve();
+
+    const firstResult = await firstRun;
+    assert.equal(firstResult.status, "cancelled");
+    assert.equal(isSessionSwitchInFlight(), true, "guard should remain set after the timed-out session");
+
+    mock.timers.tick(1);
+    const secondRun = runUnit(ctx, pi, secondSession, "task", "T02", "prompt");
+
+    mock.timers.tick(100_000);
+    await Promise.resolve();
+    assert.equal(
+      isSessionSwitchInFlight(),
+      true,
+      "late settlement from the first session must not clear the newer session guard",
+    );
+
+    // Tick past the second session's timeout (121s total > 120s NEW_SESSION_TIMEOUT_MS)
+    mock.timers.tick(21_001);
+    await Promise.resolve();
+
+    const secondResult = await secondRun;
+    assert.equal(secondResult.status, "cancelled");
+
+    // Tick past the second session's delayed promise (200s) so .finally() fires
+    mock.timers.tick(80_000);
+    await Promise.resolve();
+    assert.equal(isSessionSwitchInFlight(), false, "guard should clear after the newer session settles");
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 test("runUnit returns cancelled when s.active is false before sendMessage", async () => {
   _resetPendingResolve();
 
@@ -325,7 +373,7 @@ test("auto/phases.ts: selectAndApplyModel called exactly once and before updateP
   // Extract the runUnitPhase function body
   const fnStart = src.indexOf("export async function runUnitPhase");
   assert.ok(fnStart > 0, "runUnitPhase should exist in phases.ts");
-  const fnBody = src.slice(fnStart, fnStart + 8000);
+  const fnBody = src.slice(fnStart, fnStart + 12000);
 
   // selectAndApplyModel must appear exactly once
   const allOccurrences = [...fnBody.matchAll(/selectAndApplyModel\(/g)];
@@ -412,7 +460,7 @@ function makeMockDeps(
     getCurrentBranch: () => "main",
     autoWorktreeBranch: () => "auto/M001",
     resolveMilestoneFile: () => null,
-    reconcileMergeState: () => false,
+    reconcileMergeState: () => "clean",
     getLedger: () => null,
     getProjectTotals: () => ({ cost: 0 }),
     formatCost: (c: number) => `$${c.toFixed(2)}`,
@@ -2107,11 +2155,11 @@ test("autoLoop rejects execute-task with 0 tool calls as hallucinated (#1833)", 
   // The task should NOT have been added to completedUnits on the first iteration
   // (0 tool calls), but SHOULD be added on the second iteration (5 tool calls)
   const warningNotification = notifications.find(
-    (n) => n.includes("0 tool calls") && n.includes("hallucinated"),
+    (n) => n.includes("0 tool calls") && n.includes("context exhaustion"),
   );
   assert.ok(
     warningNotification,
-    "should notify about 0 tool calls hallucination",
+    "should notify about 0 tool calls context exhaustion",
   );
 
   // Verify deriveState was called at least twice (two iterations)
@@ -2122,7 +2170,7 @@ test("autoLoop rejects execute-task with 0 tool calls as hallucinated (#1833)", 
   );
 });
 
-test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)", async () => {
+test("autoLoop rejects complete-slice with 0 tool calls as context-exhausted (#2653)", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
@@ -2130,6 +2178,7 @@ test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)"
   ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
   const pi = makeMockPi();
 
+  let iterationCount = 0;
   const notifications: string[] = [];
   ctx.ui.notify = (msg: string) => { notifications.push(msg); };
 
@@ -2163,7 +2212,7 @@ test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)"
       };
     },
     closeoutUnit: async () => {
-      // complete-slice with 0 tool calls is fine (e.g. it may just update status)
+      // complete-slice with 0 tool calls — context exhausted, no progress
       mockLedger.units.push({
         type: "complete-slice",
         id: "M001/S01",
@@ -2177,31 +2226,51 @@ test("autoLoop does NOT reject non-execute-task units with 0 tool calls (#1833)"
     getLedger: () => mockLedger,
     postUnitPostVerification: async () => {
       deps.callLog.push("postUnitPostVerification");
-      s.active = false;
+      iterationCount++;
+      // Deactivate after 2nd iteration
+      s.active = iterationCount < 2;
       return "continue" as const;
     },
   });
 
   const loopPromise = autoLoop(ctx, pi, s, deps);
 
+  // First iteration: complete-slice with 0 tool calls → rejected
   await new Promise((r) => setTimeout(r, 50));
+  resolveAgentEnd(makeEvent());
+
+  // Second iteration: re-dispatched, this time with tool calls
+  await new Promise((r) => setTimeout(r, 50));
+  mockLedger.units.length = 0;
+  (deps as any).closeoutUnit = async () => {
+    mockLedger.units.push({
+      type: "complete-slice",
+      id: "M001/S01",
+      startedAt: s.currentUnit?.startedAt ?? Date.now(),
+      toolCalls: 3,
+      assistantMessages: 2,
+      tokens: { input: 200, output: 400, total: 600, cacheRead: 0, cacheWrite: 0 },
+      cost: 0.30,
+    });
+  };
   resolveAgentEnd(makeEvent());
 
   await loopPromise;
 
-  // Should NOT have a hallucination warning for non-execute-task units
+  // Should have a warning about 0 tool calls for complete-slice
   const warningNotification = notifications.find(
-    (n) => n.includes("0 tool calls") && n.includes("hallucinated"),
+    (n) => n.includes("0 tool calls"),
   );
   assert.ok(
-    !warningNotification,
-    "should NOT flag non-execute-task units with 0 tool calls",
+    warningNotification,
+    "should flag complete-slice with 0 tool calls as failed (#2653)",
   );
 
-  // Verify the loop ran to completion (postUnitPostVerification was called)
+  // Verify deriveState was called at least twice (two iterations: rejected + retry)
+  const deriveCount = deps.callLog.filter((c) => c === "deriveState").length;
   assert.ok(
-    deps.callLog.includes("postUnitPostVerification"),
-    "complete-slice with 0 tool calls should still complete the post-unit pipeline",
+    deriveCount >= 2,
+    `deriveState should be called at least 2 times for retry (got ${deriveCount})`,
   );
 });
 

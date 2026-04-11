@@ -4,6 +4,7 @@ import { compareSemver } from "../update-check.ts"
 const NPM_PACKAGE_NAME = "gsd-pi"
 const REGISTRY_URL = `https://registry.npmjs.org/${NPM_PACKAGE_NAME}/latest`
 const FETCH_TIMEOUT_MS = 5000
+const NPM_COMMAND = process.platform === "win32" ? "npm.cmd" : "npm"
 
 // --- Version check ---
 
@@ -69,11 +70,12 @@ export function triggerUpdate(targetVersion?: string): boolean {
 
   updateState = { status: "running", targetVersion }
 
-  const child = spawn("npm", ["install", "-g", "gsd-pi@latest"], {
+  const child = spawn(NPM_COMMAND, ["install", "-g", "gsd-pi@latest"], {
     stdio: ["ignore", "ignore", "pipe"],
     // Detach so the child process is not killed if the parent exits
     detached: false,
     windowsHide: true,
+    shell: process.platform === "win32",
   })
 
   let stderr = ""

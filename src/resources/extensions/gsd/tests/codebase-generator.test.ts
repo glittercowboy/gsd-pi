@@ -8,11 +8,13 @@ import { execSync } from "node:child_process";
 
 import {
   parseCodebaseMap,
+  parseCodebaseMapMetadata,
   generateCodebaseMap,
   updateCodebaseMap,
   writeCodebaseMap,
   readCodebaseMap,
   getCodebaseMapStats,
+  ensureCodebaseMapFresh,
 } from "../codebase-generator.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
@@ -138,6 +140,56 @@ test("generateCodebaseMap: excludes .gsd/ files", () => {
   }
 });
 
+test("generateCodebaseMap: excludes .claude/ and other tool directories", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+    addFile(base, ".claude/CLAUDE.md");
+    addFile(base, ".claude/memory/user.md");
+    addFile(base, ".plans/plan.md");
+    addFile(base, ".cursor/settings.json");
+    addFile(base, ".vscode/settings.json");
+
+    const result = generateCodebaseMap(base);
+    assert.ok(result.content.includes("`src/main.ts`"), "should include src/main.ts");
+    assert.ok(!result.content.includes("CLAUDE.md"), "should exclude .claude/ files");
+    assert.ok(!result.content.includes("user.md"), "should exclude .claude/memory/ files");
+    assert.ok(!result.content.includes(".plans"), "should exclude .plans/ files");
+    assert.ok(!result.content.includes(".cursor"), "should exclude .cursor/ files");
+    assert.ok(!result.content.includes(".vscode"), "should exclude .vscode/ files");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("generateCodebaseMap: excludes .agents/ and other tooling directories", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+    addFile(base, ".agents/skills/pdf/SKILL.md");
+    addFile(base, ".agents/skills/find-skills/SKILL.md");
+    addFile(base, ".bg-shell/session.json");
+    addFile(base, ".idea/workspace.xml");
+    addFile(base, ".cache/data.bin");
+    addFile(base, "tmp/scratch.ts");
+    addFile(base, "target/debug/build.rs");
+    addFile(base, "venv/lib/site.py");
+
+    const result = generateCodebaseMap(base);
+    assert.ok(result.content.includes("`src/main.ts`"), "should include src/main.ts");
+    assert.ok(!result.content.includes("SKILL.md"), "should exclude .agents/ files");
+    assert.ok(!result.content.includes(".bg-shell"), "should exclude .bg-shell/ files");
+    assert.ok(!result.content.includes(".idea"), "should exclude .idea/ files");
+    assert.ok(!result.content.includes(".cache"), "should exclude .cache/ files");
+    assert.ok(!result.content.includes("tmp/"), "should exclude tmp/ files");
+    assert.ok(!result.content.includes("target"), "should exclude target/ files");
+    assert.ok(!result.content.includes("venv"), "should exclude venv/ files");
+    assert.equal(result.fileCount, 1);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("generateCodebaseMap: excludes binary and lock files", () => {
   const base = makeTmpRepo();
   try {
@@ -185,6 +237,24 @@ test("generateCodebaseMap: preserves existing descriptions", () => {
     const result = generateCodebaseMap(base, undefined, descriptions);
     assert.ok(result.content.includes("`src/main.ts` — App entry point"));
     assert.ok(result.content.includes("`src/utils.ts`"));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("generateCodebaseMap: writes freshness metadata comment", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+
+    const result = generateCodebaseMap(base);
+    const metadata = parseCodebaseMapMetadata(result.content);
+
+    assert.ok(metadata, "metadata comment should be present");
+    assert.equal(metadata?.fileCount, 1);
+    assert.equal(metadata?.truncated, false);
+    assert.equal(typeof metadata?.fingerprint, "string");
+    assert.ok(metadata?.generatedAt?.endsWith("Z"));
   } finally {
     cleanup(base);
   }
@@ -482,6 +552,117 @@ test("getCodebaseMapStats: reads total file count from header for accuracy with 
     assert.equal(stats.fileCount, 30); // from header, not from parseCodebaseMap
     assert.equal(stats.describedCount, 2);
     assert.equal(stats.undescribedCount, 28);
+  } finally {
+    cleanup(base);
+  }
+});
+
+// ─── excludePatterns from options ────────────────────────────────────────
+
+test("generateCodebaseMap: custom excludePatterns filters additional directories", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+    addFile(base, "src/utils.ts");
+    addFile(base, ".cache-data/data/index.lance");
+    addFile(base, "docs/guide.md");
+
+    const result = generateCodebaseMap(base, {
+      excludePatterns: [".cache-data/", "docs/"],
+    });
+    assert.ok(result.content.includes("`src/main.ts`"));
+    assert.ok(result.content.includes("`src/utils.ts`"));
+    assert.ok(!result.content.includes(".cache-data"));
+    assert.ok(!result.content.includes("guide.md"));
+    assert.equal(result.fileCount, 2);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("generateCodebaseMap: collapseThreshold option overrides default", () => {
+  const base = makeTmpRepo();
+  try {
+    // Create 10 files in one directory — below default threshold (20)
+    // but above a custom threshold of 5
+    for (let i = 0; i < 10; i++) {
+      addFile(base, `src/comp${i}.ts`);
+    }
+
+    // With default threshold (20), files should NOT collapse
+    const expanded = generateCodebaseMap(base);
+    assert.ok(expanded.content.includes("`src/comp0.ts`"));
+
+    // With custom threshold (5), files SHOULD collapse
+    const collapsed = generateCodebaseMap(base, { collapseThreshold: 5 });
+    assert.ok(collapsed.content.includes("10 files"));
+    assert.ok(!collapsed.content.includes("`src/comp0.ts`\n"));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("updateCodebaseMap: respects excludePatterns option", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+    addFile(base, "vendor-extra/lib.js");
+
+    const initial = generateCodebaseMap(base);
+    writeCodebaseMap(base, initial.content);
+
+    // Update with exclusion should remove vendor-extra files
+    const result = updateCodebaseMap(base, { excludePatterns: ["vendor-extra/"] });
+    assert.ok(result.content.includes("`src/main.ts`"));
+    assert.ok(!result.content.includes("vendor-extra"));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("ensureCodebaseMapFresh: generates CODEBASE.md when missing", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+
+    const result = ensureCodebaseMapFresh(base, undefined, { ttlMs: 0, force: true });
+    const written = readCodebaseMap(base);
+
+    assert.equal(result.status, "generated");
+    assert.ok(written?.includes("`src/main.ts`"));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("ensureCodebaseMapFresh: updates CODEBASE.md when tracked files change", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+    const initial = ensureCodebaseMapFresh(base, undefined, { ttlMs: 0, force: true });
+    assert.equal(initial.status, "generated");
+
+    addFile(base, "src/new.ts");
+    const refreshed = ensureCodebaseMapFresh(base, undefined, { ttlMs: 0, force: true });
+    const written = readCodebaseMap(base);
+
+    assert.equal(refreshed.status, "updated");
+    assert.equal(refreshed.reason, "files-changed");
+    assert.ok(written?.includes("`src/new.ts`"));
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("ensureCodebaseMapFresh: returns fresh when metadata matches repository state", () => {
+  const base = makeTmpRepo();
+  try {
+    addFile(base, "src/main.ts");
+    ensureCodebaseMapFresh(base, undefined, { ttlMs: 0, force: true });
+
+    const refreshed = ensureCodebaseMapFresh(base, undefined, { ttlMs: 0, force: true });
+    assert.equal(refreshed.status, "fresh");
+    assert.equal(refreshed.fileCount, 1);
   } finally {
     cleanup(base);
   }

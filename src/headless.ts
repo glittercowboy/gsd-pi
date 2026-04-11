@@ -259,7 +259,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   // per-unit timeout via auto-supervisor. Disable the overall timeout unless the
   // user explicitly set --timeout.
   const isAutoMode = options.command === 'auto'
-  const isMultiTurnCommand = options.command === 'auto' || options.command === 'next'
+  // discuss and plan are multi-turn: they involve multiple question rounds,
+  // codebase scanning, and artifact writing before the workflow completes (#3547).
+  const isMultiTurnCommand = options.command === 'auto' || options.command === 'next' || options.command === 'discuss' || options.command === 'plan'
   if (isAutoMode && options.timeout === 300_000) {
     options.timeout = 0
   }

@@ -467,6 +467,18 @@ export class ModelRegistry {
 				this.customProviderApiKeys.set(providerName, providerConfig.apiKey);
 			}
 
+			// Register custom providers so isProviderRequestReady() can find
+			// them (#3531). Without this, models.json providers with apiKey
+			// fail the auth check and are invisible to the fallback resolver.
+			if (!this.registeredProviders.has(providerName)) {
+				this.registeredProviders.set(providerName, {
+					authMode: providerConfig.apiKey ? "apiKey" : "none",
+					apiKey: providerConfig.apiKey,
+					baseUrl: providerConfig.baseUrl,
+					isReady: providerConfig.apiKey ? () => true : undefined,
+				} as any);
+			}
+
 			for (const modelDef of modelDefs) {
 				const api = modelDef.api || providerConfig.api;
 				if (!api) continue;
@@ -742,6 +754,7 @@ export class ModelRegistry {
 					maxTokens: modelDef.maxTokens,
 					headers,
 					compat: modelDef.compat,
+					providerOptions: modelDef.providerOptions,
 				} as Model<Api>);
 			}
 
@@ -917,5 +930,6 @@ export interface ProviderConfigInput {
 		maxTokens: number;
 		headers?: Record<string, string>;
 		compat?: Model<Api>["compat"];
+		providerOptions?: Record<string, unknown>;
 	}>;
 }

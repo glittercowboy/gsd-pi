@@ -91,7 +91,12 @@ export interface IterationContext {
 export interface LoopState {
   recentUnits: Array<{ key: string; error?: string }>;
   stuckRecoveryAttempts: number;
+  /** Consecutive finalize timeout count — stops auto-mode after threshold. */
+  consecutiveFinalizeTimeouts: number;
 }
+
+/** Max consecutive finalize timeouts before hard-stopping auto-mode. */
+export const MAX_FINALIZE_TIMEOUTS = 3;
 
 export interface PreDispatchData {
   state: GSDState;

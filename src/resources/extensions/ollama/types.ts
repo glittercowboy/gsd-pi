@@ -72,11 +72,31 @@ export interface OllamaVersionResponse {
 
 // ─── /api/chat ──────────────────────────────────────────────────────────────
 
+/** Per-model Ollama inference options carried via Model.providerOptions. */
+export interface OllamaChatOptions {
+	/** How long to keep the model loaded after the last request. e.g. "5m", "0" to unload. */
+	keep_alive?: string;
+	/** Number of GPU layers to offload. -1 = all. */
+	num_gpu?: number;
+	/** Override the context window for Ollama requests. Only sent when explicitly set. */
+	num_ctx?: number;
+	/** Sampling: top-k most likely tokens. Default: 40 */
+	top_k?: number;
+	/** Sampling: nucleus sampling threshold. */
+	top_p?: number;
+	/** Sampling: penalize repeating tokens. Default: 1.1 */
+	repeat_penalty?: number;
+	/** Sampling: fixed seed for reproducibility. */
+	seed?: number;
+}
+
 export interface OllamaChatMessage {
 	role: "system" | "user" | "assistant" | "tool";
 	content: string;
 	images?: string[];
 	tool_calls?: OllamaToolCall[];
+	/** Tool name — required for role: "tool" messages to correlate results with calls. */
+	name?: string;
 }
 
 export interface OllamaToolCall {
@@ -110,7 +130,10 @@ export interface OllamaChatRequest {
 		temperature?: number;
 		top_p?: number;
 		top_k?: number;
+		repeat_penalty?: number;
+		seed?: number;
 		stop?: string[];
+		num_gpu?: number;
 	};
 	keep_alive?: string;
 }

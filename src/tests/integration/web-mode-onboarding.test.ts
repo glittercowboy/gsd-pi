@@ -301,6 +301,7 @@ test("successful browser onboarding restarts the stale bridge child and unlocks 
   const harness = configureBridgeRuntime(fixture, authStorage);
   onboarding.configureOnboardingServiceForTests({
     authStorage,
+    getEnvApiKey: () => undefined,
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
   });
 
@@ -368,6 +369,7 @@ test("refresh failures keep the workspace locked and expose the failed bridge-re
   const harness = configureBridgeRuntime(fixture, authStorage, { failRestart: true });
   onboarding.configureOnboardingServiceForTests({
     authStorage,
+    getEnvApiKey: () => undefined,
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
   });
 

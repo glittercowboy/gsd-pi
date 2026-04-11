@@ -127,6 +127,7 @@ export class GsdClient implements vscode.Disposable {
 			cwd: this.cwd,
 			stdio: ["pipe", "pipe", "pipe"],
 			env: { ...process.env },
+			shell: process.platform === "win32",
 		});
 		this.process = proc;
 

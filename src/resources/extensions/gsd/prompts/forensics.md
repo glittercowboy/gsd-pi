@@ -116,6 +116,8 @@ A unit dispatched more than once (`type/id` appears multiple times) indicates a 
 
 5. **Read the actual GSD source code** at `{{gsdSourceDir}}` to confirm or deny each hypothesis. Do not guess what code does — read it.
 
+   **DB inspection:** If you need to check DB state as part of investigation, use `gsd_milestone_status` — never run `sqlite3 .gsd/gsd.db` or `node -e require('better-sqlite3')` directly. The engine holds a WAL write lock; direct access will either fail or return stale data.
+
 6. **Trace the code path** from the entry point (usually `auto-loop.ts` dispatch or `auto-dispatch.ts`) through to the failure point. Follow function calls across files.
 
 7. **Identify the specific file and line** where the bug lives. Determine what kind of defect it is:

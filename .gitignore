@@ -9,6 +9,9 @@ src/**/*.d.ts
 src/**/*.d.ts.map
 !src/**/*.test.js
 
+# ── Repowise index (local machine-generated cache) ──
+.repowise/
+
 # ── GSD project state (development-only, lives in worktree branches) ──
 package-lock.json
 .claude/
@@ -76,3 +79,6 @@ bun.lock
 
 # ── GSD baseline (auto-generated) ──
 .gsd
+
+# ── GSD baseline (auto-generated) ──
+.gsd-id

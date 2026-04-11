@@ -79,6 +79,20 @@ export function deriveWorkflowAction(input: WorkflowActionInput): WorkflowAction
       primary = { label: "Start Auto", command: "/gsd auto", variant: "default" }
     } else if (phase === "pre-planning" && !hasMilestones) {
       primary = { label: "Initialize Project", command: "/gsd", variant: "default" }
+    } else if (phase === "blocked") {
+      primary = { label: "Blocked", command: "/gsd", variant: "default" }
+      disabled = true
+      disabledReason = "Project is blocked — check blockers"
+    } else if (phase === "paused") {
+      primary = { label: "Resume", command: "/gsd auto", variant: "default" }
+    } else if (phase === "validating-milestone") {
+      primary = { label: "Validate", command: "/gsd", variant: "default" }
+    } else if (phase === "completing-milestone") {
+      primary = { label: "Complete Milestone", command: "/gsd", variant: "default" }
+    } else if (phase === "needs-discussion") {
+      primary = { label: "Discuss", command: "/gsd", variant: "default" }
+    } else if (phase === "replanning-slice") {
+      primary = { label: "Replan", command: "/gsd", variant: "default" }
     } else {
       primary = { label: "Continue", command: "/gsd", variant: "default" }
     }

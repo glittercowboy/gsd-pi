@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
 
-import { compareSemver, readUpdateCache, writeUpdateCache, checkForUpdates } from '../update-check.js'
+import { compareSemver, readUpdateCache, writeUpdateCache, checkForUpdates, fetchLatestVersionFromRegistry } from '../update-check.js'
 
 // ---------------------------------------------------------------------------
 // compareSemver
@@ -314,4 +314,24 @@ test('checkForUpdates handles missing version field in response', async (t) => {
   })
 
   assert.ok(!called, 'onUpdate should not be called when response has no version')
+})
+
+test('fetchLatestVersionFromRegistry returns the registry version string', async (t) => {
+  const registry = await startMockRegistry({ version: '2.67.0' })
+  t.after(async () => {
+    await registry.close()
+  })
+
+  const latest = await fetchLatestVersionFromRegistry(registry.url, 5000)
+  assert.equal(latest, '2.67.0')
+})
+
+test('fetchLatestVersionFromRegistry returns null for blank version strings', async (t) => {
+  const registry = await startMockRegistry({ version: '' })
+  t.after(async () => {
+    await registry.close()
+  })
+
+  const latest = await fetchLatestVersionFromRegistry(registry.url, 5000)
+  assert.equal(latest, null)
 })

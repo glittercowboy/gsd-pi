@@ -361,6 +361,13 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			return [];
 		}
 
+		// Keep incomplete escape prefixes buffered so split CSI/mouse/focus
+		// sequences do not get emitted as literal text on timeout.
+		// A lone ESC is still flushed so an actual Escape keypress is not lost.
+		if (this.buffer.length > 1 && this.buffer.startsWith(ESC) && isCompleteSequence(this.buffer) === "incomplete") {
+			return [];
+		}
+
 		const sequences = [this.buffer];
 		this.buffer = "";
 		return sequences;

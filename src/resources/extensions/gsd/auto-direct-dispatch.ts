@@ -29,6 +29,10 @@ import {
 } from "./auto-prompts.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { pauseAuto } from "./auto.js";
+import {
+  getWorkflowTransportSupportError,
+  getRequiredWorkflowToolsForAutoUnit,
+} from "./workflow-mcp.js";
 
 export async function dispatchDirectPhase(
   ctx: ExtensionCommandContext,
@@ -241,6 +245,22 @@ export async function dispatchDirectPhase(
         "warning",
       );
       return;
+  }
+
+  const compatibilityError = getWorkflowTransportSupportError(
+    ctx.model?.provider,
+    getRequiredWorkflowToolsForAutoUnit(unitType),
+    {
+      projectRoot: base,
+      surface: "direct phase dispatch",
+      unitType,
+      authMode: ctx.model?.provider ? ctx.modelRegistry.getProviderAuthMode(ctx.model.provider) : undefined,
+      baseUrl: ctx.model?.baseUrl,
+    },
+  );
+  if (compatibilityError) {
+    ctx.ui.notify(compatibilityError, "error");
+    return;
   }
 
   ctx.ui.notify(`Dispatching ${unitType} for ${unitId}...`, "info");

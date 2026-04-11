@@ -47,6 +47,14 @@ function shellEscapeSingle(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function isSafeEnvVarKey(key: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(key);
+}
+
+function isSupportedDeploymentEnvironment(env: string): boolean {
+	return env === "development" || env === "preview" || env === "production";
+}
+
 function hydrateProcessEnv(key: string, value: string): void {
 	// Make newly collected secrets immediately visible to the current session.
 	// Some extensions read process.env directly and do not reload .env on every call.
@@ -330,12 +338,22 @@ async function applySecrets(
 
 	if ((destination === "vercel" || destination === "convex") && opts.exec) {
 		const env = opts.environment ?? "development";
+		if (!isSupportedDeploymentEnvironment(env)) {
+			errors.push(`environment: unsupported target environment "${env}"`);
+			return { applied, errors };
+		}
 		for (const { key, value } of provided) {
+			if (!isSafeEnvVarKey(key)) {
+				errors.push(`${key}: invalid environment variable name`);
+				continue;
+			}
 			const cmd = destination === "vercel"
 				? `printf %s ${shellEscapeSingle(value)} | vercel env add ${key} ${env}`
-				: `npx convex env set ${key} ${shellEscapeSingle(value)}`;
+				: "";
 			try {
-				const result = await opts.exec("sh", ["-c", cmd]);
+				const result = destination === "vercel"
+					? await opts.exec("sh", ["-c", cmd])
+					: await opts.exec("npx", ["convex", "env", "set", key, value]);
 				if (result.code !== 0) {
 					errors.push(`${key}: ${result.stderr.slice(0, 200)}`);
 				} else {

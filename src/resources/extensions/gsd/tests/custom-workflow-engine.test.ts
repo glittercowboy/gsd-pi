@@ -249,6 +249,37 @@ describe("CustomWorkflowEngine.reconcile", () => {
     const graph = readGraph(runDir);
     assert.equal(graph.steps[0].status, "complete");
   });
+
+  it("re-reads GRAPH.yaml before reconcile so concurrent edits are preserved", async () => {
+    const { engine, runDir } = setupEngine([
+      makeStep({ id: "step-1" }),
+      makeStep({ id: "step-2", dependsOn: ["step-1"] }),
+    ], "wf");
+
+    const staleState = await engine.deriveState("/unused");
+
+    // Simulate another process appending a new step after deriveState() ran.
+    writeGraph(runDir, makeGraph([
+      makeStep({ id: "step-1" }),
+      makeStep({ id: "step-2", dependsOn: ["step-1"] }),
+      makeStep({ id: "step-3", dependsOn: ["step-2"] }),
+    ], "wf"));
+
+    const result = await engine.reconcile(staleState, {
+      unitType: "custom-step",
+      unitId: "wf/step-1",
+      startedAt: Date.now() - 1000,
+      finishedAt: Date.now(),
+    });
+
+    assert.equal(result.outcome, "continue");
+
+    const graph = readGraph(runDir);
+    assert.equal(graph.steps.length, 3, "reconcile should preserve the concurrent graph edit");
+    assert.equal(graph.steps[0].status, "complete");
+    assert.equal(graph.steps[1].status, "pending");
+    assert.equal(graph.steps[2].status, "pending");
+  });
 });
 
 // ─── getDisplayMetadata ──────────────────────────────────────────────────

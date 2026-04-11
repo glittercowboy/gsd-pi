@@ -3,6 +3,7 @@ import {
 	Container,
 	getCapabilities,
 	Image,
+	type ImageDimensions,
 	imageFallback,
 	Spacer,
 	Text,
@@ -88,10 +89,17 @@ export class ToolExecutionComponent extends Container {
 	private editDiffArgsKey?: string; // Track which args the preview is for
 	// Cached converted images for Kitty protocol (which requires PNG), keyed by index
 	private convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
+	// Cached resolved image dimensions to avoid re-triggering async parsing
+	// when updateDisplay() recreates Image components (#3455).
+	private resolvedImageDimensions: Map<number, ImageDimensions> = new Map();
 	// Incremental syntax highlighting cache for write tool call args
 	private writeHighlightCache?: WriteHighlightCache;
 	// When true, this component intentionally renders no lines
 	private hideComponent = false;
+
+	private get normalizedToolName(): string {
+		return typeof this.toolName === "string" ? this.toolName.toLowerCase() : "";
+	}
 
 	constructor(
 		toolName: string,
@@ -117,7 +125,7 @@ export class ToolExecutionComponent extends Container {
 
 		// Use contentBox for bash (visual truncation) or custom tools with custom renderers
 		// Use contentText for built-in tools (including overrides without custom renderers)
-		if (toolName === "bash" || (toolDefinition && !this.shouldUseBuiltInRenderer())) {
+		if (this.normalizedToolName === "bash" || (toolDefinition && !this.shouldUseBuiltInRenderer())) {
 			this.addChild(this.contentBox);
 		} else {
 			this.addChild(this.contentText);
@@ -132,14 +140,24 @@ export class ToolExecutionComponent extends Container {
 	 * or the toolDefinition doesn't provide custom renderers.
 	 */
 	private shouldUseBuiltInRenderer(): boolean {
-		const isBuiltInName = this.toolName in allTools;
+		const normalizedToolName = this.normalizedToolName;
+		const isBuiltInName = normalizedToolName in allTools;
 		const hasCustomRenderers = this.toolDefinition?.renderCall || this.toolDefinition?.renderResult;
 		return isBuiltInName && !hasCustomRenderers;
 	}
 
+	dispose(): void {
+		this.convertedImages.clear();
+		this.imageComponents = [];
+		this.imageSpacers = [];
+		this.editDiffPreview = undefined;
+		this.writeHighlightCache = undefined;
+		this.result = undefined;
+	}
+
 	updateArgs(args: any): void {
 		this.args = args;
-		if (this.toolName === "write" && this.isPartial) {
+		if (this.normalizedToolName === "write" && this.isPartial) {
 			this.updateWriteHighlightCacheIncremental();
 		}
 		this.updateDisplay();
@@ -295,7 +313,7 @@ export class ToolExecutionComponent extends Container {
 	): void {
 		this.result = result;
 		this.isPartial = isPartial;
-		if (this.toolName === "write" && !isPartial) {
+		if (this.normalizedToolName === "write" && !isPartial) {
 			const rawPath = str(this.args?.file_path ?? this.args?.path);
 			const fileContent = str(this.args?.content);
 			if (rawPath !== null && fileContent !== null) {
@@ -374,7 +392,7 @@ export class ToolExecutionComponent extends Container {
 
 		// Use built-in rendering for built-in tools (or overrides without custom renderers)
 		if (useBuiltInRenderer) {
-			if (this.toolName === "bash") {
+			if (this.normalizedToolName === "bash") {
 				// Bash uses Box with visual line truncation
 				this.contentBox.setBgFn(bgFn);
 				this.contentBox.clear();
@@ -472,16 +490,28 @@ export class ToolExecutionComponent extends Container {
 					const spacer = new Spacer(1);
 					this.addChild(spacer);
 					this.imageSpacers.push(spacer);
+					// Pass cached dimensions to avoid re-triggering async parsing
+					// when updateDisplay() recreates Image components (#3455).
+					const cachedDims = this.resolvedImageDimensions.get(i);
 					const imageComponent = new Image(
 						imageData,
 						imageMimeType,
 						{ fallbackColor: (s: string) => theme.fg("toolOutput", s) },
 						{ maxWidthCells: 60 },
+						cachedDims,
 					);
-					imageComponent.setOnDimensionsResolved(() => {
-						this.updateDisplay();
-						this.ui.requestRender();
-					});
+					if (!cachedDims) {
+						const imgIdx = i;
+						imageComponent.setOnDimensionsResolved(() => {
+							// Cache resolved dimensions so future updateDisplay() calls
+							// don't re-trigger async parsing → infinite loop (#3455).
+							const dims = imageComponent.getDimensions?.();
+							if (dims) this.resolvedImageDimensions.set(imgIdx, dims);
+							// Just re-render — don't call updateDisplay() which would
+							// destroy and recreate all Image components.
+							this.ui.requestRender();
+						});
+					}
 					this.imageComponents.push(imageComponent);
 					this.addChild(imageComponent);
 				}
@@ -604,8 +634,9 @@ export class ToolExecutionComponent extends Container {
 	private formatToolExecution(): string {
 		let text = "";
 		const invalidArg = theme.fg("error", "[invalid arg]");
+		const normalizedToolName = this.normalizedToolName;
 
-		if (this.toolName === "read") {
+		if (normalizedToolName === "read") {
 			const rawPath = str(this.args?.file_path ?? this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
 			const offset = this.args?.offset;
@@ -667,7 +698,7 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (this.toolName === "write") {
+		} else if (normalizedToolName === "write") {
 			const rawPath = str(this.args?.file_path ?? this.args?.path);
 			const fileContent = str(this.args?.content);
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
@@ -726,7 +757,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n\n${theme.fg("error", errorText)}`;
 				}
 			}
-		} else if (this.toolName === "edit") {
+		} else if (normalizedToolName === "edit") {
 			const rawPath = str(this.args?.file_path ?? this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
 
@@ -762,7 +793,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n\n${renderDiff(this.editDiffPreview.diff, { filePath: rawPath ?? undefined })}`;
 				}
 			}
-		} else if (this.toolName === "ls") {
+		} else if (normalizedToolName === "ls") {
 			const rawPath = str(this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
 			const limit = this.args?.limit;
@@ -799,7 +830,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
 				}
 			}
-		} else if (this.toolName === "find") {
+		} else if (normalizedToolName === "find") {
 			const pattern = str(this.args?.pattern);
 			const rawPath = str(this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
@@ -841,7 +872,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
 				}
 			}
-		} else if (this.toolName === "grep") {
+		} else if (normalizedToolName === "grep") {
 			const pattern = str(this.args?.pattern);
 			const rawPath = str(this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
@@ -891,7 +922,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
 				}
 			}
-		} else if (this.toolName === "web_search") {
+		} else if (normalizedToolName === "web_search") {
 			// Server-side Anthropic web search
 			text = theme.fg("toolTitle", theme.bold("web search"));
 

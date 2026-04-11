@@ -264,6 +264,146 @@ describe("complete-milestone", () => {
     );
   });
 
+  test("sanitizeCompleteMilestoneParams normalizes string parameters", async () => {
+    const { sanitizeCompleteMilestoneParams } = await import("../bootstrap/sanitize-complete-milestone.ts");
+
+    // Simulate params as they might arrive from the SDK after partial JSON parse:
+    // - numbers instead of strings
+    // - null instead of arrays
+    // - extra whitespace in strings
+    // - undefined optional fields
+    const raw: any = {
+      milestoneId: "  M011 ",
+      title: 42,                              // number instead of string
+      oneLiner: "  One-liner with spaces  ",
+      narrative: "# Big markdown\n\nWith newlines and `backticks`\n\n```ts\ncode();\n```\n",
+      successCriteriaResults: null,            // null instead of string
+      definitionOfDoneResults: undefined,      // undefined instead of string
+      requirementOutcomes: 12345,              // number instead of string
+      keyDecisions: "not an array",            // string instead of array
+      keyFiles: null,                          // null instead of array
+      lessonsLearned: [" lesson one ", null, "", "  lesson two  "],
+      followUps: "  follow up  ",
+      deviations: undefined,
+      verificationPassed: "true",             // string instead of boolean
+    };
+
+    const sanitized = sanitizeCompleteMilestoneParams(raw);
+
+    // String fields are trimmed and coerced
+    assert.strictEqual(sanitized.milestoneId, "M011");
+    assert.strictEqual(sanitized.title, "42");
+    assert.strictEqual(sanitized.oneLiner, "One-liner with spaces");
+    assert.ok(sanitized.narrative.includes("# Big markdown"), "narrative preserves markdown");
+    assert.strictEqual(sanitized.successCriteriaResults, "");
+    assert.strictEqual(sanitized.definitionOfDoneResults, "");
+    assert.strictEqual(sanitized.requirementOutcomes, "12345");
+
+    // Array fields are normalized
+    assert.ok(Array.isArray(sanitized.keyDecisions), "keyDecisions is an array");
+    assert.deepStrictEqual(sanitized.keyDecisions, []);
+    assert.ok(Array.isArray(sanitized.keyFiles), "keyFiles is an array");
+    assert.deepStrictEqual(sanitized.keyFiles, []);
+    assert.deepStrictEqual(sanitized.lessonsLearned, ["lesson one", "lesson two"]);
+
+    // Optional fields — toStr() returns "" for undefined/null
+    assert.strictEqual(sanitized.followUps, "follow up");
+    assert.strictEqual(sanitized.deviations, "");
+
+    // Boolean coercion
+    assert.strictEqual(sanitized.verificationPassed, true);
+  });
+
+  test("sanitizeCompleteMilestoneParams handles large markdown content", async () => {
+    const { sanitizeCompleteMilestoneParams } = await import("../bootstrap/sanitize-complete-milestone.ts");
+
+    // Generate a large markdown string (~25k characters to exceed the 23667 position from the bug)
+    const largeMd = "# Milestone Summary\n\n" +
+      Array.from({ length: 500 }, (_, i) =>
+        `## Section ${i}\n\n` +
+        `- [x] Task ${i} completed with \`code\` and **bold** text\n` +
+        `  - Sub-item with special chars: <, >, &, ", '\n` +
+        `  - Another sub-item: \`\`\`ts\nconst x = ${i};\n\`\`\`\n`
+      ).join("\n");
+
+    assert.ok(largeMd.length > 23667, `generated markdown is ${largeMd.length} chars, must exceed 23667`);
+
+    const raw: any = {
+      milestoneId: "M011",
+      title: "Content Depth, Narrative & Onboarding",
+      oneLiner: "Large milestone with many slices",
+      narrative: largeMd,
+      successCriteriaResults: largeMd,
+      definitionOfDoneResults: largeMd,
+      requirementOutcomes: largeMd,
+      keyDecisions: ["decision 1", "decision 2"],
+      keyFiles: ["file1.ts", "file2.ts"],
+      lessonsLearned: ["lesson 1"],
+      followUps: "Some follow-ups",
+      deviations: "Some deviations",
+      verificationPassed: true,
+    };
+
+    const sanitized = sanitizeCompleteMilestoneParams(raw);
+
+    // Large content should pass through without truncation or corruption
+    assert.strictEqual(sanitized.narrative, largeMd.trim());
+    assert.strictEqual(sanitized.successCriteriaResults, largeMd.trim());
+    assert.strictEqual(sanitized.definitionOfDoneResults, largeMd.trim());
+    assert.strictEqual(sanitized.requirementOutcomes, largeMd.trim());
+  });
+
+  test("milestoneCompleteExecute uses sanitized params", async () => {
+    // This test verifies that the execute function sanitizes params before passing
+    // to handleCompleteMilestone. We test indirectly: if we pass numeric milestoneId,
+    // the handler should still receive a string (and return a meaningful error, not a crash).
+    const { handleCompleteMilestone } = await import("../tools/complete-milestone.ts");
+    const { sanitizeCompleteMilestoneParams } = await import("../bootstrap/sanitize-complete-milestone.ts");
+    const base = createFixtureBase();
+    try {
+      // Simulate what milestoneCompleteExecute should do: sanitize then call handler
+      const raw: any = {
+        milestoneId: 42,           // number — would crash without sanitization
+        title: "Test",
+        oneLiner: "Test",
+        narrative: "Test narrative",
+        successCriteriaResults: "Results",
+        definitionOfDoneResults: "Done",
+        requirementOutcomes: "Outcomes",
+        keyDecisions: null,        // null — would crash .length without sanitization
+        keyFiles: "not-array",     // string — would crash .map without sanitization
+        lessonsLearned: undefined, // undefined — would crash .map without sanitization
+        followUps: "",
+        deviations: "",
+        verificationPassed: true,
+      };
+
+      const sanitized = sanitizeCompleteMilestoneParams(raw);
+
+      // Verify sanitization didn't crash and produced valid typed params
+      assert.strictEqual(typeof sanitized.milestoneId, "string", "milestoneId is a string after sanitization");
+      assert.ok(Array.isArray(sanitized.keyDecisions), "keyDecisions is array after sanitization");
+      assert.ok(Array.isArray(sanitized.keyFiles), "keyFiles is array after sanitization");
+      assert.ok(Array.isArray(sanitized.lessonsLearned), "lessonsLearned is array after sanitization");
+      assert.strictEqual(typeof sanitized.verificationPassed, "boolean", "verificationPassed is boolean after sanitization");
+
+      // Calling handleCompleteMilestone may throw GSD_STALE_STATE (no DB in test env)
+      // but it should NOT throw TypeError from type mismatches — that's the bug fix.
+      try {
+        await handleCompleteMilestone(sanitized, base);
+      } catch (err: any) {
+        // GSD_STALE_STATE or "No database open" is acceptable — it means we got past
+        // the type-sensitive code and failed on DB access, which is expected in tests.
+        assert.ok(
+          err.code === "GSD_STALE_STATE" || err.message?.includes("database"),
+          `expected DB error, got: ${err.message}`,
+        );
+      }
+    } finally {
+      cleanup(base);
+    }
+  });
+
   test("deriveState completing-milestone integration", async () => {
     const { deriveState, isMilestoneComplete } = await import("../state.ts");
     const { invalidateAllCaches: invalidateAllCachesDynamic } = await import("../cache.ts");

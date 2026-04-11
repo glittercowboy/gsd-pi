@@ -332,6 +332,19 @@ export interface ToolRenderResultOptions {
 }
 
 /**
+ * Tool compatibility metadata for provider-aware tool filtering (ADR-005 Phase 2).
+ * Tools without compatibility metadata are assumed universally compatible.
+ */
+export interface ToolCompatibility {
+	/** Tool produces image content in results (filtered for providers without imageToolResults) */
+	producesImages?: boolean;
+	/** Tool requires schema features that some providers don't support (e.g., ["patternProperties"]) */
+	schemaFeatures?: string[];
+	/** Tool is effective only with models above a minimum capability threshold */
+	minCapabilityTier?: "light" | "standard" | "heavy";
+}
+
+/**
  * Tool definition for registerTool().
  */
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown> {
@@ -347,6 +360,8 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptGuidelines?: string[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
+	/** Provider compatibility metadata (ADR-005). Omit for universally compatible tools. */
+	compatibility?: ToolCompatibility;
 
 	/** Execute the tool. */
 	execute(
@@ -601,6 +616,46 @@ export interface ModelSelectEvent {
 	model: Model<any>;
 	previousModel: Model<any> | undefined;
 	source: ModelSelectSource;
+}
+
+/** Fired before model selection runs capability scoring. Extensions can override the selected model. */
+export interface BeforeModelSelectEvent {
+	type: "before_model_select";
+	unitType: string;
+	unitId: string;
+	classification: { tier: string; reason: string; downgraded: boolean };
+	taskMetadata?: Record<string, unknown>;
+	eligibleModels: string[];
+	phaseConfig?: { primary: string; fallbacks: string[] };
+}
+
+/** Result from before_model_select event handler. Return { modelId } to override selection. */
+export interface BeforeModelSelectResult {
+	modelId: string;
+}
+
+/**
+ * Fired after model selection to allow extensions to adjust the active tool set (ADR-005 Phase 4).
+ * Extensions can add, remove, or reorder tools based on the selected model's provider capabilities.
+ */
+export interface AdjustToolSetEvent {
+	type: "adjust_tool_set";
+	/** The selected model's API type */
+	selectedModelApi: string;
+	/** The selected model's provider */
+	selectedModelProvider: string;
+	/** The selected model ID */
+	selectedModelId: string;
+	/** Current active tool names */
+	activeToolNames: string[];
+	/** Tools already filtered by provider compatibility */
+	filteredTools: string[];
+}
+
+/** Result from adjust_tool_set event handler. Return { toolNames } to override tool set. */
+export interface AdjustToolSetResult {
+	/** Replacement tool names. If omitted, the default filtering is used. */
+	toolNames?: string[];
 }
 
 // ============================================================================
@@ -1052,6 +1107,18 @@ export interface ExtensionAPI {
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
+	on(event: "before_model_select", handler: ExtensionHandler<BeforeModelSelectEvent, BeforeModelSelectResult>): void;
+	on(event: "adjust_tool_set", handler: ExtensionHandler<AdjustToolSetEvent, AdjustToolSetResult>): void;
+
+	// =========================================================================
+	// Event Emission (for host extensions that orchestrate model selection)
+	// =========================================================================
+
+	/** Emit before_model_select event. Returns override model ID or undefined. */
+	emitBeforeModelSelect(event: Omit<BeforeModelSelectEvent, "type">): Promise<BeforeModelSelectResult | undefined>;
+
+	/** Emit adjust_tool_set event (ADR-005). Returns override tool names or undefined. */
+	emitAdjustToolSet(event: Omit<AdjustToolSetEvent, "type">): Promise<AdjustToolSetResult | undefined>;
 
 	// =========================================================================
 	// Tool Registration
@@ -1317,6 +1384,8 @@ export interface ProviderModelConfig {
 	headers?: Record<string, string>;
 	/** OpenAI compatibility settings. */
 	compat?: Model<Api>["compat"];
+	/** Opaque provider-specific options (e.g. Ollama keep_alive, num_gpu). */
+	providerOptions?: Record<string, unknown>;
 }
 
 /** Extension factory function type. Supports both sync and async initialization. */
@@ -1367,6 +1436,10 @@ export interface ExtensionRuntimeState {
 	 */
 	registerProvider: (name: string, config: ProviderConfig) => void;
 	unregisterProvider: (name: string) => void;
+	/** Emit before_model_select event to all registered handlers. Bound by ExtensionRunner. */
+	emitBeforeModelSelect: (event: Omit<BeforeModelSelectEvent, "type">) => Promise<BeforeModelSelectResult | undefined>;
+	/** Emit adjust_tool_set event to all registered handlers. Bound by ExtensionRunner (ADR-005). */
+	emitAdjustToolSet: (event: Omit<AdjustToolSetEvent, "type">) => Promise<AdjustToolSetResult | undefined>;
 }
 
 /**

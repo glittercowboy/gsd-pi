@@ -43,6 +43,9 @@ export type {
 	BeforeProviderRequestEventResult,
 	// Context
 	CompactOptions,
+	// Events - Adjust Tool Set (ADR-005)
+	AdjustToolSetEvent,
+	AdjustToolSetResult,
 	// Events - Agent
 	ContextEvent,
 	// Event Results
@@ -135,6 +138,7 @@ export type {
 	ToolCallEvent,
 	ToolCallEventResult,
 	// Tools
+	ToolCompatibility,
 	ToolDefinition,
 	// Events - Tool Execution
 	ToolExecutionEndEvent,

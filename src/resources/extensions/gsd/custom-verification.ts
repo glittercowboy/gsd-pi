@@ -17,6 +17,7 @@
  * - The frozen DEFINITION.yaml on disk is the single source of truth for step policies.
  */
 
+import { logWarning } from "./workflow-logger.js";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -130,8 +131,8 @@ function handleContentHeuristic(
         if (!new RegExp(verify.pattern).test(content)) {
           return "pause";
         }
-      } catch {
-        // Invalid regex at runtime — treat as verification failure
+      } catch (e) {
+        logWarning("engine", `content-heuristic regex failed: ${(e as Error).message}`);
         return "pause";
       }
     }

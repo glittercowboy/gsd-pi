@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path'
 import type { AuthStorage } from '@gsd/pi-coding-agent'
 import { renderLogo } from './logo.js'
 import { agentDir } from './app-paths.js'
+import { isClaudeCliReady } from './claude-cli-check.js'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,6 +65,7 @@ const TOOL_KEYS: ToolKeyConfig[] = [
 const LLM_PROVIDER_IDS = [
   'anthropic',
   'anthropic-vertex',
+  'claude-code',
   'openai',
   'github-copilot',
   'openai-codex',
@@ -86,14 +88,13 @@ const API_KEY_PREFIXES: Record<string, string[]> = {
 }
 
 const OTHER_PROVIDERS = [
-  { value: 'google', label: 'Google (Gemini)' },
-  { value: 'groq', label: 'Groq' },
-  { value: 'xai', label: 'xAI (Grok)' },
-  { value: 'openrouter', label: 'OpenRouter' },
-  { value: 'mistral', label: 'Mistral' },
-  { value: 'ollama', label: 'Ollama (Local)' },
+  { value: 'google', label: 'Google (Gemini)', hint: 'aistudio.google.com/app/apikey' },
+  { value: 'groq', label: 'Groq', hint: 'console.groq.com/keys' },
+  { value: 'xai', label: 'xAI (Grok)', hint: 'console.x.ai' },
+  { value: 'openrouter', label: 'OpenRouter', hint: '200+ models — openrouter.ai/keys' },
+  { value: 'mistral', label: 'Mistral', hint: 'console.mistral.ai/api-keys' },
   { value: 'ollama-cloud', label: 'Ollama Cloud' },
-  { value: 'custom-openai', label: 'Custom (OpenAI-compatible)' },
+  { value: 'custom-openai', label: 'Custom (OpenAI-compatible)', hint: 'Ollama, LM Studio, vLLM, proxies — see docs/providers.md' },
 ]
 
 // ─── Dynamic imports ──────────────────────────────────────────────────────────
@@ -294,8 +295,16 @@ async function runLlmStep(p: ClackModule, pc: PicoModule, authStorage: AuthStora
     authOptions.push({ value: 'keep', label: `Keep current (${existingAuth})`, hint: 'already configured' })
   }
 
+  // Show Claude Code CLI option at the top when the CLI is installed and authenticated (#3772).
+  // This is the only TOS-compliant path for Anthropic subscription users.
+  if (isClaudeCliReady()) {
+    authOptions.push(
+      { value: 'claude-cli', label: 'Use Claude Code CLI', hint: 'recommended — uses your existing Claude subscription' },
+    )
+  }
+
   authOptions.push(
-    { value: 'browser', label: 'Sign in with your browser', hint: 'recommended — same login as claude.ai / ChatGPT' },
+    { value: 'browser', label: 'Sign in with your browser', hint: 'GitHub Copilot, ChatGPT, Google, etc.' },
     { value: 'api-key', label: 'Paste an API key', hint: 'from your provider dashboard' },
     { value: 'skip', label: 'Skip for now', hint: 'use /login inside GSD later' },
   )
@@ -308,12 +317,23 @@ async function runLlmStep(p: ClackModule, pc: PicoModule, authStorage: AuthStora
   if (p.isCancel(method) || method === 'skip') return false
   if (method === 'keep') return true
 
+  // ── Claude Code CLI path (#3772) ────────────────────────────────────────
+  if (method === 'claude-cli') {
+    p.log.success('Claude Code CLI detected — routing through local CLI (TOS-compliant)')
+    p.log.info('Your Claude subscription will be used for inference. No API key needed.')
+    // Store sentinel so hasAuth('claude-code') returns true on future boots
+    authStorage.set('claude-code', { type: 'api_key', key: 'cli' })
+    return true
+  }
+
   // ── Step 2: Which provider? ──────────────────────────────────────────────
   if (method === 'browser') {
+    // Anthropic OAuth is removed from browser auth — it violates Anthropic TOS for
+    // third-party apps (#3772). Anthropic subscription users should use the Claude
+    // Code CLI path (shown above when CLI is installed) or paste an API key.
     const provider = await p.select({
       message: 'Choose provider',
       options: [
-        { value: 'anthropic', label: 'Anthropic (Claude)', hint: 'recommended' },
         { value: 'github-copilot', label: 'GitHub Copilot' },
         { value: 'openai-codex', label: 'ChatGPT Plus/Pro (Codex)' },
         { value: 'google-gemini-cli', label: 'Google Gemini CLI' },
@@ -446,6 +466,13 @@ async function runApiKeyFlow(
 
   authStorage.set(providerId, { type: 'api_key', key: trimmed })
   p.log.success(`API key saved for ${pc.green(providerLabel)}`)
+
+  // Provider-specific post-setup hints
+  if (providerId === 'openrouter') {
+    p.log.info(`Use ${pc.cyan('/model')} inside GSD to pick an OpenRouter model.`)
+    p.log.info(`To add custom models or control routing, see ${pc.dim('docs/providers.md#openrouter')}`)
+  }
+
   return true
 }
 
@@ -504,10 +531,12 @@ async function runCustomOpenAIFlow(
   pc: PicoModule,
   authStorage: AuthStorage,
 ): Promise<boolean> {
+  p.log.info(pc.dim('Common endpoints:\n  Ollama:     http://localhost:11434/v1\n  LM Studio:  http://localhost:1234/v1\n  vLLM:       http://localhost:8000/v1'))
+
   // Prompt for base URL
   const baseUrl = await p.text({
     message: 'Base URL of your OpenAI-compatible endpoint:',
-    placeholder: 'https://my-proxy.example.com/v1',
+    placeholder: 'http://localhost:11434/v1',
     validate: (val) => {
       const trimmed = val?.trim()
       if (!trimmed) return 'Base URL is required'
@@ -588,6 +617,8 @@ async function runCustomOpenAIFlow(
   p.log.success(`Custom endpoint saved: ${pc.green(trimmedUrl)}`)
   p.log.info(`Model: ${pc.cyan(trimmedModelId)}`)
   p.log.info(`Config written to ${pc.dim(modelsJsonPath)}`)
+  p.log.info(`If you get role or streaming errors, add compat settings to models.json.`)
+  p.log.info(`See ${pc.dim('docs/providers.md#common-pitfalls')} for details.`)
   return true
 }
 

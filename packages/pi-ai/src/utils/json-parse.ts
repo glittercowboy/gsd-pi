@@ -1,5 +1,5 @@
 import { parseStreamingJson as nativeParseStreamingJson } from "@gsd/native";
-import { hasYamlBulletLists, repairToolJson } from "./repair-tool-json.js";
+import { hasXmlParameterTags, hasYamlBulletLists, repairToolJson } from "./repair-tool-json.js";
 
 /**
  * Attempts to parse potentially incomplete JSON during streaming.
@@ -20,6 +20,16 @@ export function parseStreamingJson<T = any>(partialJson: string | undefined): T 
 
 	// Fast path: try native streaming parser first
 	const result = nativeParseStreamingJson<T>(partialJson);
+
+	// XML parameter tags can be trapped inside otherwise valid JSON strings,
+	// so run repair before trusting the native parse result.
+	if (hasXmlParameterTags(partialJson)) {
+		try {
+			return JSON.parse(repairToolJson(partialJson)) as T;
+		} catch {
+			// Fall through to the native parser result on incomplete partials
+		}
+	}
 
 	// If the native parser returned a non-empty result, use it.
 	// Only attempt repair when the result is empty AND the input

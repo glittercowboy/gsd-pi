@@ -130,4 +130,21 @@ describe("PartialMessageBuilder — malformed tool arguments (#2574)", () => {
 			assert.equal(event!.toolCall.arguments.title, "done");
 		}
 	});
+
+	test("XML parameter tags trapped inside valid JSON strings are promoted (#3751)", () => {
+		const builder = new PartialMessageBuilder("claude-sonnet-4-20250514");
+		const malformedJson =
+			'{"narrative":"text.</narrative>\\n<parameter name=\\"verification\\">all tests pass</parameter>\\n<parameter name=\\"verificationEvidence\\">[\\"npm test\\"]</parameter>","oneLiner":"done"}';
+		const event = feedToolCall(builder, [malformedJson]);
+
+		assert.ok(event, "event should not be null");
+		assert.equal(event!.type, "toolcall_end");
+		assert.equal((event as any).malformedArguments, undefined);
+		if (event!.type === "toolcall_end") {
+			assert.equal(event.toolCall.arguments.narrative, "text.");
+			assert.equal(event.toolCall.arguments.verification, "all tests pass");
+			assert.deepEqual(event.toolCall.arguments.verificationEvidence, ["npm test"]);
+			assert.equal(event.toolCall.arguments.oneLiner, "done");
+		}
+	});
 });

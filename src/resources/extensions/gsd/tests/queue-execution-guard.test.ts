@@ -13,6 +13,7 @@
  *   (e) write/edit to source path → block
  *   (f) bash command → block (could execute work)
  *   (g) registered GSD tools (gsd_milestone_generate_id, gsd_summary_save) → pass
+ *   (h) unknown custom tools → block
  */
 
 import test from 'node:test';
@@ -154,4 +155,12 @@ test('queue-guard: allows web search and library tools during queue mode', () =>
 
   const r4 = shouldBlockQueueExecution('fetch_page', '', true);
   assert.strictEqual(r4.block, false, 'fetch_page should pass');
+});
+
+// ─── Scenario 10: Unknown custom tools are blocked during queue mode ──
+
+test('queue-guard: blocks unknown custom tools during queue mode', () => {
+  const result = shouldBlockQueueExecution('custom_codegen_tool', '', true);
+  assert.strictEqual(result.block, true, 'unknown custom tools should be blocked');
+  assert.ok(result.reason, 'should explain the queue restriction');
 });

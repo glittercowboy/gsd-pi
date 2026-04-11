@@ -210,7 +210,9 @@ function _parsePlanImpl(content: string): SlicePlan {
     for (const line of lines) {
       const cbMatch = line.match(/^-\s+\[([ xX])\]\s+\*\*([\w.]+):\s+(.+?)\*\*\s*(.*)/);
       // Heading-style: ### T01 -- Title, ### T01: Title, ### T01 — Title
-      const hdMatch = !cbMatch ? line.match(/^#{2,4}\s+([\w.]+)\s*(?:--|—|:)\s*(.+)/) : null;
+      const hdMatch = !cbMatch
+        ? line.match(/^#{2,4}\s+([A-Z]+\d+(?:\.[A-Z]+\d+)*)\s*(?:--|—|:)\s*(.+)/)
+        : null;
       if (cbMatch || hdMatch) {
         const taskId = cbMatch ? cbMatch[2] : hdMatch![1];
         // Skip tasks already found in the Tasks section

@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 import {
   resolveExpectedArtifactPath,
@@ -11,6 +12,7 @@ import {
   diagnoseExpectedArtifact,
   buildLoopRemediationSteps,
   hasImplementationArtifacts,
+  reconcileMergeState,
 } from "../../auto-recovery.ts";
 import { parseRoadmap, parsePlan } from "../../parsers-legacy.ts";
 import { parseTaskPlanFile, clearParseCache } from "../../files.ts";
@@ -454,7 +456,7 @@ test("verifyExpectedArtifact accepts plan-slice with colon-style heading tasks (
   );
 });
 
-test("verifyExpectedArtifact execute-task passes for heading-style plan entry (#1691)", (t) => {
+test("verifyExpectedArtifact execute-task rejects heading-style plan without checked checkbox (#3607)", (t) => {
   const base = makeTmpBase();
   t.after(() => cleanup(base));
 
@@ -471,10 +473,12 @@ test("verifyExpectedArtifact execute-task passes for heading-style plan entry (#
     "Feature description.",
   ].join("\n"));
   writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\n\nDone.");
+  // Heading-style entries no longer count as verified — only checked
+  // checkboxes prove gsd_complete_task ran (#3607).
   assert.strictEqual(
     verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    true,
-    "execute-task should pass for heading-style plan entry when summary exists",
+    false,
+    "heading-style without checked checkbox should NOT pass verification",
   );
 });
 
@@ -667,8 +671,6 @@ test("#793: invalidateAllCaches clears all caches so deriveState sees fresh disk
 
 // ─── hasImplementationArtifacts (#1703) ───────────────────────────────────
 
-import { execFileSync } from "node:child_process";
-
 function makeGitBase(): string {
   const base = join(tmpdir(), `gsd-test-git-${randomUUID()}`);
   mkdirSync(base, { recursive: true });
@@ -682,7 +684,7 @@ function makeGitBase(): string {
   return base;
 }
 
-test("hasImplementationArtifacts returns false when only .gsd/ files committed (#1703)", (t) => {
+test("hasImplementationArtifacts returns 'absent' when only .gsd/ files committed (#1703)", (t) => {
   const base = makeGitBase();
   t.after(() => cleanup(base));
 
@@ -695,10 +697,10 @@ test("hasImplementationArtifacts returns false when only .gsd/ files committed (
   execFileSync("git", ["commit", "-m", "chore: add plan files"], { cwd: base, stdio: "ignore" });
 
   const result = hasImplementationArtifacts(base);
-  assert.equal(result, false, "should return false when only .gsd/ files were committed");
+  assert.equal(result, "absent", "should return 'absent' when only .gsd/ files were committed");
 });
 
-test("hasImplementationArtifacts returns true when implementation files committed (#1703)", (t) => {
+test("hasImplementationArtifacts returns 'present' when implementation files committed (#1703)", (t) => {
   const base = makeGitBase();
   t.after(() => cleanup(base));
 
@@ -712,16 +714,16 @@ test("hasImplementationArtifacts returns true when implementation files committe
   execFileSync("git", ["commit", "-m", "feat: add feature"], { cwd: base, stdio: "ignore" });
 
   const result = hasImplementationArtifacts(base);
-  assert.equal(result, true, "should return true when implementation files are present");
+  assert.equal(result, "present", "should return 'present' when implementation files are present");
 });
 
-test("hasImplementationArtifacts returns true on non-git directory (fail-open)", (t) => {
+test("hasImplementationArtifacts returns 'unknown' on non-git directory (fail-open)", (t) => {
   const base = join(tmpdir(), `gsd-test-nogit-${randomUUID()}`);
   mkdirSync(base, { recursive: true });
   t.after(() => cleanup(base));
 
   const result = hasImplementationArtifacts(base);
-  assert.equal(result, true, "should return true (fail-open) in non-git directory");
+  assert.equal(result, "unknown", "should return 'unknown' (fail-open) in non-git directory");
 });
 
 // ─── verifyExpectedArtifact: complete-milestone requires impl artifacts (#1703) ──
@@ -743,9 +745,6 @@ test("verifyExpectedArtifact complete-milestone fails with only .gsd/ files (#17
 
 // ─── reconcileMergeState: silent nativeCommit failure (#2542) ─────────────
 
-import { reconcileMergeState } from "../../auto-recovery.ts";
-import { chmodSync } from "node:fs";
-
 function makeMockCtx(): { ctx: any; notifications: Array<{ msg: string; level: string }> } {
   const notifications: Array<{ msg: string; level: string }> = [];
   const ctx = {
@@ -758,7 +757,7 @@ function makeMockCtx(): { ctx: any; notifications: Array<{ msg: string; level: s
   return { ctx, notifications };
 }
 
-test("reconcileMergeState returns false and notifies error when nativeCommit fails (#2542)", (t) => {
+test("reconcileMergeState returns blocked and notifies error when nativeCommit fails (#2542)", (t) => {
   const base = makeGitBase();
   t.after(() => cleanup(base));
 
@@ -784,9 +783,7 @@ test("reconcileMergeState returns false and notifies error when nativeCommit fai
   const { ctx, notifications } = makeMockCtx();
   const result = reconcileMergeState(base, ctx);
 
-  // The function should return false to signal reconciliation failure
-  // (Currently it silently swallows the error and returns true — this test should FAIL before the fix)
-  assert.equal(result, false, "reconcileMergeState should return false when nativeCommit fails");
+  assert.equal(result, "blocked", "reconcileMergeState should return blocked when nativeCommit fails");
   const errorNotifications = notifications.filter(n => n.level === "error");
   assert.ok(errorNotifications.length > 0, "should notify an error when nativeCommit fails");
   assert.ok(
@@ -795,16 +792,61 @@ test("reconcileMergeState returns false and notifies error when nativeCommit fai
   );
 });
 
-test("reconcileMergeState returns true when no merge state present", (t) => {
-  // When there's no MERGE_HEAD or SQUASH_MSG, reconcileMergeState returns false (no dirty state)
+test("reconcileMergeState returns clean when no merge state present", (t) => {
   const base = makeGitBase();
   t.after(() => cleanup(base));
 
   const { ctx, notifications } = makeMockCtx();
   const result = reconcileMergeState(base, ctx);
 
-  assert.equal(result, false, "should return false when no merge state exists");
+  assert.equal(result, "clean", "should return clean when no merge state exists");
   assert.equal(notifications.length, 0, "should not notify when no merge state present");
+});
+
+test("reconcileMergeState blocks and preserves unresolved code conflicts", (t) => {
+  const base = makeGitBase();
+  t.after(() => cleanup(base));
+
+  writeFileSync(join(base, "conflict.txt"), "base\n");
+  execFileSync("git", ["add", "conflict.txt"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "add conflict base"], { cwd: base, stdio: "ignore" });
+
+  execFileSync("git", ["checkout", "-b", "feature"], { cwd: base, stdio: "ignore" });
+  writeFileSync(join(base, "conflict.txt"), "feature\n");
+  execFileSync("git", ["add", "conflict.txt"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "feature change"], { cwd: base, stdio: "ignore" });
+
+  execFileSync("git", ["checkout", "main"], { cwd: base, stdio: "ignore" });
+  writeFileSync(join(base, "conflict.txt"), "main\n");
+  execFileSync("git", ["add", "conflict.txt"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "main change"], { cwd: base, stdio: "ignore" });
+
+  let mergeFailed = false;
+  try {
+    execFileSync("git", ["merge", "--no-ff", "feature"], { cwd: base, stdio: "ignore" });
+  } catch {
+    mergeFailed = true;
+  }
+  assert.equal(mergeFailed, true, "merge should produce a conflict");
+  assert.ok(existsSync(join(base, ".git", "MERGE_HEAD")), "MERGE_HEAD should remain present before reconcile");
+
+  const beforeContents = readFileSync(join(base, "conflict.txt"), "utf8");
+  assert.match(beforeContents, /<<<<<<<|=======|>>>>>>>/, "fixture should contain conflict markers");
+
+  const { ctx, notifications } = makeMockCtx();
+  const result = reconcileMergeState(base, ctx);
+
+  assert.equal(result, "blocked", "code conflicts should block reconciliation");
+  assert.ok(existsSync(join(base, ".git", "MERGE_HEAD")), "MERGE_HEAD should be preserved for manual resolution");
+  assert.equal(
+    readFileSync(join(base, "conflict.txt"), "utf8"),
+    beforeContents,
+    "reconcile should preserve the conflicted file contents",
+  );
+  assert.ok(
+    notifications.some((n) => n.level === "error" && n.msg.includes("manual conflict resolution is preserved")),
+    "should notify that auto-mode paused and preserved manual work",
+  );
 });
 
 test("verifyExpectedArtifact complete-milestone passes with impl files (#1703)", (t) => {

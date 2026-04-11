@@ -165,6 +165,7 @@ test('launchWebMode prefers the packaged standalone host and opens the resolved 
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
+      shell: false,
       env: {
         TEST_ENV: '1',
         HOSTNAME: '127.0.0.1',

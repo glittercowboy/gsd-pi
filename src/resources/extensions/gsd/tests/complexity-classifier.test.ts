@@ -1,7 +1,7 @@
-import test from "node:test";
+import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 
-import { classifyUnitComplexity, tierLabel, tierOrdinal } from "../complexity-classifier.js";
+import { classifyUnitComplexity, tierLabel, tierOrdinal, extractTaskMetadata } from "../complexity-classifier.js";
 import type { ComplexityTier, TaskMetadata } from "../complexity-classifier.js";
 
 // ─── tierLabel ───────────────────────────────────────────────────────────────
@@ -178,4 +178,29 @@ test("execute-task with few code blocks stays standard", () => {
   const metadata: TaskMetadata = { codeBlockCount: 2 };
   const result = classifyUnitComplexity("execute-task", "M001/S01/T01", "/tmp/fake", undefined, metadata);
   assert.equal(result.tier, "standard");
+});
+
+// ─── ClassificationResult taskMetadata passthrough ───────────────────────────
+
+describe("ClassificationResult taskMetadata", () => {
+  test("classifyUnitComplexity for execute-task returns result with taskMetadata populated", () => {
+    const metadata: TaskMetadata = { fileCount: 3, tags: ["docs"] };
+    const result = classifyUnitComplexity("execute-task", "M001/S01/T01", "/tmp/fake", undefined, metadata);
+    assert.ok(result.taskMetadata !== undefined, "taskMetadata should be populated for execute-task");
+    assert.equal(result.taskMetadata!.tags?.[0], "docs");
+  });
+
+  test("classifyUnitComplexity for hook/xyz returns result with taskMetadata undefined", () => {
+    const result = classifyUnitComplexity("hook/verify", "M001/S01/T01", "/tmp/fake");
+    assert.equal(result.taskMetadata, undefined, "taskMetadata should be undefined for hook units");
+  });
+
+  test("classifyUnitComplexity for plan-slice returns result with taskMetadata undefined", () => {
+    const result = classifyUnitComplexity("plan-slice", "M001/S01", "/tmp/fake");
+    assert.equal(result.taskMetadata, undefined, "taskMetadata should be undefined for plan-slice");
+  });
+
+  test("extractTaskMetadata is importable as a named export and is a function", () => {
+    assert.equal(typeof extractTaskMetadata, "function", "extractTaskMetadata should be a callable function");
+  });
 });

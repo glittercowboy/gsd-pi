@@ -20,7 +20,7 @@ import { createInterface } from 'readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
-const MAP_PATH = resolve(REPO_ROOT, 'docs/FILE-SYSTEM-MAP.md');
+const MAP_PATH = resolve(REPO_ROOT, 'docs/dev/FILE-SYSTEM-MAP.md');
 
 // ---------------------------------------------------------------------------
 // Risk tier definitions

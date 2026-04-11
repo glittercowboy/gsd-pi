@@ -15,6 +15,15 @@ import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
 
+/** Display names for providers in the model selector UI. */
+const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+	anthropic: "anthropic-api",
+};
+
+export function providerDisplayName(provider: string): string {
+	return PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+}
+
 function formatTokenCount(count: number): string {
 	if (count >= 1_000_000) {
 		const millions = count / 1_000_000;
@@ -391,7 +400,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			const ctx = formatTokenCount(item.model.contextWindow);
 			const ctxBadge = theme.fg("muted", `${ctx}`);
-			const providerBadge = theme.fg("muted", `[${item.provider}]`);
+			const providerBadge = theme.fg("muted", `[${providerDisplayName(item.provider)}]`);
 			const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 
 			let line: string;
@@ -447,7 +456,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			if (row.kind === "header") {
 				// Provider group header — always unselectable
-				const providerLabel = theme.fg("borderAccent", row.provider);
+				const providerLabel = theme.fg("borderAccent", providerDisplayName(row.provider));
 				const count = theme.fg("muted", ` (${row.count})`);
 				// Add blank line before header if not the very first visible row
 				if (i > startIndex) {

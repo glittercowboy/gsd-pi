@@ -2,6 +2,7 @@ import { type Component, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.js";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
 import { theme } from "../theme/theme.js";
+import { providerDisplayName } from "./model-selector.js";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -189,7 +190,7 @@ export class FooterComponent implements Component {
 		// Prepend the provider in parentheses if there are multiple providers and there's enough room
 		let rightSide = rightSideWithoutProvider;
 		if (this.footerData.getAvailableProviderCount() > 1 && displayModel) {
-			rightSide = `(${displayModel.provider}) ${rightSideWithoutProvider}`;
+			rightSide = `(${providerDisplayName(displayModel.provider)}) ${rightSideWithoutProvider}`;
 			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
 				// Too wide, fall back
 				rightSide = rightSideWithoutProvider;

@@ -149,7 +149,7 @@ test("rogue detection: DB not available → returns empty array (graceful degrad
   }
 });
 
-test("rogue detection: slice summary on disk, no DB row → detected as rogue", () => {
+test("rogue detection: slice summary on disk, no DB row → auto-remediated (not rogue)", () => {
   const basePath = createTmpBase();
   const dbPath = join(basePath, ".gsd", "gsd.db");
   mkdirSync(join(basePath, ".gsd"), { recursive: true });
@@ -160,11 +160,10 @@ test("rogue detection: slice summary on disk, no DB row → detected as rogue", 
     const summaryPath = createSliceSummaryOnDisk(basePath, "M001", "S01");
     assert.ok(existsSync(summaryPath), "Slice summary file should exist on disk");
 
+    // Fix #3633: stale slice DB status is auto-remediated via updateSliceStatus()
+    // instead of being reported as rogue, so rogues array should be empty.
     const rogues = detectRogueFileWrites("complete-slice", "M001/S01", basePath);
-    assert.equal(rogues.length, 1, "Should detect one rogue slice file");
-    assert.equal(rogues[0].path, summaryPath);
-    assert.equal(rogues[0].unitType, "complete-slice");
-    assert.equal(rogues[0].unitId, "M001/S01");
+    assert.equal(rogues.length, 0, "Should auto-remediate stale slice, not report as rogue");
   } finally {
     closeDatabase();
     rmSync(basePath, { recursive: true, force: true });

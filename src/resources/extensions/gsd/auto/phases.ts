@@ -15,6 +15,7 @@ import type { PostUnitContext, PreVerificationOpts } from "../auto-post-unit.js"
 import {
   MAX_RECOVERY_CHARS,
   BUDGET_THRESHOLDS,
+  MAX_FINALIZE_TIMEOUTS,
   type PhaseResult,
   type IterationContext,
   type LoopState,
@@ -26,13 +27,24 @@ import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
 import { PROJECT_FILES } from "../detection.js";
 import { MergeConflictError } from "../git-service.js";
-import { join, basename } from "node:path";
-import { existsSync, cpSync } from "node:fs";
+import { join, basename, dirname, parse as parsePath } from "node:path";
+import { existsSync, cpSync, readdirSync } from "node:fs";
 import { logWarning, logError } from "../workflow-logger.js";
 import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
-import { verifyExpectedArtifact } from "../auto-recovery.js";
+import { verifyExpectedArtifact, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.js";
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
+import { withTimeout, FINALIZE_PRE_TIMEOUT_MS, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
+import { getEligibleSlices } from "../slice-parallel-eligibility.js";
+import { startSliceParallel } from "../slice-parallel-orchestrator.js";
+import { isDbAvailable, getMilestoneSlices } from "../gsd-db.js";
+import { resetEvidence } from "../safety/evidence-collector.js";
+import { createCheckpoint, cleanupCheckpoint, rollbackToCheckpoint } from "../safety/git-checkpoint.js";
+import { resolveSafetyHarnessConfig } from "../safety/safety-harness.js";
+import {
+  getWorkflowTransportSupportError,
+  getRequiredWorkflowToolsForAutoUnit,
+} from "../workflow-mcp.js";
 
 // ─── generateMilestoneReport ──────────────────────────────────────────────────
 
@@ -182,7 +194,7 @@ export async function runPreDispatch(
     }
     if (!healthGate.proceed) {
       ctx.ui.notify(
-        healthGate.reason ?? "Pre-dispatch health check failed.",
+        healthGate.reason || "Pre-dispatch health check failed — run /gsd doctor for details.",
         "error",
       );
       await deps.pauseAuto(ctx, pi);
@@ -217,6 +229,63 @@ export async function runPreDispatch(
     mid,
     statePhase: state.phase,
   });
+
+  // ── Slice-level parallelism gate (#2340) ─────────────────────────────
+  // When slice_parallel is enabled, check if multiple slices are eligible
+  // for parallel execution. If so, dispatch them in parallel and stop the
+  // sequential loop. Workers are spawned via slice-parallel-orchestrator.ts.
+  if (
+    prefs?.slice_parallel?.enabled &&
+    mid &&
+    !process.env.GSD_PARALLEL_WORKER &&
+    isDbAvailable()
+  ) {
+    try {
+      const dbSlices = getMilestoneSlices(mid);
+      if (dbSlices.length > 0) {
+        const doneIds = new Set(dbSlices.filter(sl => sl.status === "complete" || sl.status === "done").map(sl => sl.id));
+        const sliceInputs = dbSlices.map(sl => ({
+          id: sl.id,
+          done: doneIds.has(sl.id),
+          depends: sl.depends ?? [],
+        }));
+        const eligible = getEligibleSlices(sliceInputs, doneIds);
+        if (eligible.length > 1) {
+          debugLog("autoLoop", {
+            phase: "slice-parallel-dispatch",
+            iteration: ic.iteration,
+            mid,
+            eligibleSlices: eligible.map(e => e.id),
+          });
+          ctx.ui.notify(
+            `Slice-parallel: dispatching ${eligible.length} eligible slices for ${mid}.`,
+            "info",
+          );
+          const result = await startSliceParallel(
+            s.basePath,
+            mid,
+            eligible,
+            { maxWorkers: prefs.slice_parallel.max_workers ?? 2 },
+          );
+          if (result.started.length > 0) {
+            ctx.ui.notify(
+              `Slice-parallel: started ${result.started.length} worker(s): ${result.started.join(", ")}.`,
+              "info",
+            );
+            await deps.stopAuto(ctx, pi, `Slice-parallel dispatched for ${mid}`);
+            return { action: "break", reason: "slice-parallel-dispatched" };
+          }
+          // Fall through to sequential if no workers started
+        }
+      }
+    } catch (err) {
+      debugLog("autoLoop", {
+        phase: "slice-parallel-check-error",
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // Non-fatal — fall through to sequential dispatch
+    }
+  }
 
   // ── Milestone transition ────────────────────────────────────────────
   if (mid && s.currentMilestoneId && mid !== s.currentMilestoneId) {
@@ -442,7 +511,13 @@ export async function runPreDispatch(
   }
 
   // Mid-merge safety check
-  if (deps.reconcileMergeState(s.basePath, ctx)) {
+  const mergeReconcileResult = deps.reconcileMergeState(s.basePath, ctx);
+  if (mergeReconcileResult === "blocked") {
+    await deps.pauseAuto(ctx, pi);
+    debugLog("autoLoop", { phase: "exit", reason: "merge-reconciliation-blocked" });
+    return { action: "break", reason: "merge-reconciliation-blocked" };
+  }
+  if (mergeReconcileResult === "reconciled") {
     deps.invalidateAllCaches();
     state = await deps.deriveState(s.basePath);
     mid = state.activeMilestone?.id;
@@ -628,14 +703,16 @@ export async function runDispatch(
           unitId,
           reason: stuckSignal.reason,
         });
+        const stuckDiag = diagnoseExpectedArtifact(unitType, unitId, s.basePath);
+        const stuckRemediation = buildLoopRemediationSteps(unitType, unitId, s.basePath);
+        const stuckParts = [`Stuck on ${unitType} ${unitId} — ${stuckSignal.reason}.`];
+        if (stuckDiag) stuckParts.push(`Expected: ${stuckDiag}`);
+        if (stuckRemediation) stuckParts.push(`To recover:\n${stuckRemediation}`);
+        ctx.ui.notify(stuckParts.join(" "), "error");
         await deps.stopAuto(
           ctx,
           pi,
           `Stuck: ${stuckSignal.reason}`,
-        );
-        ctx.ui.notify(
-          `Stuck on ${unitType} ${unitId} — ${stuckSignal.reason}. The expected artifact was not written.`,
-          "error",
         );
         return { action: "break", reason: "stuck-detected" };
       }
@@ -709,7 +786,7 @@ export async function runDispatch(
 // ─── runGuards ────────────────────────────────────────────────────────────────
 
 /**
- * Phase 2: Guards — budget ceiling, context window, secrets re-check.
+ * Phase 2: Guards — stop directives, budget ceiling, context window, secrets re-check.
  * Returns break to exit the loop, or next to proceed to dispatch.
  */
 export async function runGuards(
@@ -717,6 +794,55 @@ export async function runGuards(
   mid: string,
 ): Promise<PhaseResult> {
   const { ctx, pi, s, deps, prefs } = ic;
+
+  // ── Stop/Backtrack directive guard (#3487) ──
+  // Check for unexecuted stop or backtrack captures BEFORE dispatching any unit.
+  // This ensures user "halt" directives are honored immediately.
+  // IMPORTANT: Fail-closed — any exception during stop handling still breaks the loop
+  // to ensure user halt intent is never silently dropped.
+  try {
+    const { loadStopCaptures, markCaptureExecuted } = await import("../captures.js");
+    const stopCaptures = loadStopCaptures(s.basePath);
+    if (stopCaptures.length > 0) {
+      const first = stopCaptures[0];
+      const isBacktrack = first.classification === "backtrack";
+      const label = isBacktrack
+        ? `Backtrack directive: ${first.text}`
+        : `Stop directive: ${first.text}`;
+
+      ctx.ui.notify(label, "warning");
+      deps.sendDesktopNotification(
+        "GSD", label, "warning", "stop-directive",
+        basename(s.originalBasePath || s.basePath),
+      );
+
+      // Pause first — ensures auto-mode stops even if later steps fail
+      await deps.pauseAuto(ctx, pi);
+
+      // For backtrack captures, write the backtrack trigger after pausing
+      if (isBacktrack) {
+        try {
+          const { executeBacktrack } = await import("../triage-resolution.js");
+          executeBacktrack(s.basePath, mid, first);
+        } catch (e) {
+          debugLog("guards", { phase: "backtrack-execution-error", error: String(e) });
+        }
+      }
+
+      // Mark captures as executed only after successful pause/transition
+      for (const cap of stopCaptures) {
+        markCaptureExecuted(s.basePath, cap.id);
+      }
+
+      debugLog("autoLoop", { phase: "exit", reason: isBacktrack ? "user-backtrack" : "user-stop" });
+      return { action: "break", reason: isBacktrack ? "user-backtrack" : "user-stop" };
+    }
+  } catch (e) {
+    // Fail-closed: if anything in the stop guard throws, break the loop
+    // rather than silently continuing and dropping user halt intent
+    debugLog("guards", { phase: "stop-guard-error", error: String(e) });
+    return { action: "break", reason: "stop-guard-error" };
+  }
 
   // Budget ceiling guard
   const budgetCeiling = prefs?.budget_ceiling;
@@ -897,11 +1023,38 @@ export async function runUnitPhase(
     }
     const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
     const hasSrcDir = deps.existsSync(join(s.basePath, "src"));
-    if (!hasProjectFile && !hasSrcDir) {
+    // Xcode bundles have project-specific names (*.xcodeproj, *.xcworkspace)
+    // that cannot be matched by exact filename — scan the directory by suffix.
+    let hasXcodeBundle = false;
+    try {
+      const entries = deps.existsSync(s.basePath) ? readdirSync(s.basePath) : [];
+      hasXcodeBundle = entries.some((e: string) => e.endsWith(".xcodeproj") || e.endsWith(".xcworkspace"));
+    } catch (err) {
+      debugLog("runUnitPhase", { phase: "xcode-bundle-scan-failed", basePath: s.basePath, error: String(err) });
+    }
+    // Monorepo support (#2347): if no project files in the worktree directory,
+    // walk parent directories up to the filesystem root. In monorepos,
+    // package.json / Cargo.toml etc. live in a parent directory.
+    let hasProjectFileInParent = false;
+    if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle) {
+      let checkDir = dirname(s.basePath);
+      const { root } = parsePath(checkDir);
+      while (checkDir !== root) {
+        // Stop at git repository boundary — ancestors above the repo root
+        // (e.g. ~ or /usr/local) may contain unrelated project files.
+        if (deps.existsSync(join(checkDir, ".git"))) break;
+        if (PROJECT_FILES.some((f) => deps.existsSync(join(checkDir, f)))) {
+          hasProjectFileInParent = true;
+          break;
+        }
+        checkDir = dirname(checkDir);
+      }
+    }
+    if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle && !hasProjectFileInParent) {
       // Greenfield projects won't have project files yet — the first task creates them.
       // Log a warning but allow execution to proceed. The .git check above is sufficient
       // to ensure we're in a valid working directory.
-      debugLog("runUnitPhase", { phase: "worktree-health-warn-greenfield", basePath: s.basePath, hasProjectFile, hasSrcDir });
+      debugLog("runUnitPhase", { phase: "worktree-health-warn-greenfield", basePath: s.basePath, hasProjectFile, hasSrcDir, hasXcodeBundle });
       ctx.ui.notify(`Warning: ${s.basePath} has no recognized project files — proceeding as greenfield project`, "warning");
     }
   }
@@ -915,6 +1068,7 @@ export async function runUnitPhase(
   const previousTier = s.currentUnitRouting?.tier;
 
   s.currentUnit = { type: unitType, id: unitId, startedAt: Date.now() };
+  s.lastToolInvocationError = null; // #2883: clear stale error from previous unit
   const unitStartSeq = ic.nextSeq();
   deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: unitStartSeq, eventType: "unit-start", data: { unitType, unitId } });
   deps.captureAvailableSkills();
@@ -934,30 +1088,25 @@ export async function runUnitPhase(
     },
   );
 
-  // Select and apply model (with tier escalation on retry — normal units only)
-  const modelResult = await deps.selectAndApplyModel(
-    ctx,
-    pi,
-    unitType,
-    unitId,
-    s.basePath,
-    prefs,
-    s.verbose,
-    s.autoModeStartModel,
-    sidecarItem ? undefined : { isRetry, previousTier },
-  );
-  s.currentUnitRouting =
-    modelResult.routing as AutoSession["currentUnitRouting"];
-  s.currentUnitModel =
-    modelResult.appliedModel as AutoSession["currentUnitModel"];
-
-  // Status bar + progress widget
+  // Status bar (widget + preconditions deferred until after model selection — see #2899)
   ctx.ui.setStatus("gsd-auto", "auto");
   if (mid)
     deps.updateSliceProgressCache(s.basePath, mid, state.activeSlice?.id);
-  deps.updateProgressWidget(ctx, unitType, unitId, state);
 
-  deps.ensurePreconditions(unitType, unitId, s.basePath, state);
+  // ── Safety harness: reset evidence + create checkpoint ──
+  const safetyConfig = resolveSafetyHarnessConfig(
+    prefs?.safety_harness as Record<string, unknown> | undefined,
+  );
+  if (safetyConfig.enabled && safetyConfig.evidence_collection) {
+    resetEvidence();
+  }
+  // Only checkpoint code-executing units (not lifecycle/planning units)
+  if (safetyConfig.enabled && safetyConfig.checkpoints && unitType === "execute-task") {
+    s.checkpointSha = createCheckpoint(s.basePath, unitId);
+    if (s.checkpointSha) {
+      debugLog("runUnitPhase", { phase: "checkpoint-created", unitId, sha: s.checkpointSha.slice(0, 8) });
+    }
+  }
 
   // Prompt injection
   let finalPrompt = prompt;
@@ -1023,6 +1172,23 @@ export async function runUnitPhase(
     logWarning("engine", "Prompt reorder failed", { error: msg });
   }
 
+  // Select and apply model (with tier escalation on retry — normal units only)
+  const modelResult = await deps.selectAndApplyModel(
+    ctx,
+    pi,
+    unitType,
+    unitId,
+    s.basePath,
+    prefs,
+    s.verbose,
+    s.autoModeStartModel,
+    sidecarItem ? undefined : { isRetry, previousTier },
+  );
+  s.currentUnitRouting =
+    modelResult.routing as AutoSession["currentUnitRouting"];
+  s.currentUnitModel =
+    modelResult.appliedModel as AutoSession["currentUnitModel"];
+
   // Apply sidecar/pre-dispatch hook model override (takes priority over standard model selection)
   const hookModelOverride = sidecarItem?.model ?? iterData.hookModelOverride;
   if (hookModelOverride) {
@@ -1047,6 +1213,38 @@ export async function runUnitPhase(
       );
     }
   }
+
+  // Store the final dispatched model ID so the dashboard can read it (#2899).
+  // This accounts for hook model overrides applied after selectAndApplyModel.
+  s.currentDispatchedModelId = s.currentUnitModel
+    ? `${(s.currentUnitModel as any).provider ?? ""}/${(s.currentUnitModel as any).id ?? ""}`
+    : null;
+
+  const compatibilityError = getWorkflowTransportSupportError(
+    s.currentUnitModel?.provider ?? ctx.model?.provider,
+    getRequiredWorkflowToolsForAutoUnit(unitType),
+    {
+      projectRoot: s.basePath,
+      surface: "auto-mode",
+      unitType,
+      authMode: s.currentUnitModel?.provider
+        ? ctx.modelRegistry.getProviderAuthMode(s.currentUnitModel.provider)
+        : ctx.model?.provider
+          ? ctx.modelRegistry.getProviderAuthMode(ctx.model.provider)
+          : undefined,
+      baseUrl: (s.currentUnitModel as any)?.baseUrl ?? ctx.model?.baseUrl,
+    },
+  );
+  if (compatibilityError) {
+    ctx.ui.notify(compatibilityError, "error");
+    await deps.stopAuto(ctx, pi, compatibilityError);
+    return { action: "break", reason: "workflow-capability" };
+  }
+
+  // Progress widget + preconditions — deferred to after model selection so the
+  // widget's first render tick shows the correct model (#2899).
+  deps.updateProgressWidget(ctx, unitType, unitId, state);
+  deps.ensurePreconditions(unitType, unitId, s.basePath, state);
 
   // Start unit supervision
   deps.clearUnitTimeout();
@@ -1135,11 +1333,29 @@ export async function runUnitPhase(
       debugLog("autoLoop", { phase: "exit", reason: "provider-pause", isTransient: unitResult.errorContext.isTransient });
       return { action: "break", reason: "provider-pause" };
     }
+    // Session creation timeout (not a structural error): pause auto-mode
+    // and let the provider-error-resume timer handle recovery (#3767). This
+    // matches the provider-pause path — break out cleanly, don't hard-stop.
+    // Structural errors (TypeError, is not a function) are NOT transient
+    // and must hard-stop to avoid infinite retry loops.
+    if (
+      unitResult.errorContext?.isTransient &&
+      unitResult.errorContext?.category === "timeout"
+    ) {
+      ctx.ui.notify(
+        `Session creation timed out for ${unitType} ${unitId}. Pausing auto-mode (recoverable).`,
+        "warning",
+      );
+      debugLog("autoLoop", { phase: "session-timeout-pause", unitType, unitId });
+      await deps.pauseAuto(ctx, pi);
+      return { action: "break", reason: "session-timeout" };
+    }
+    // All other cancelled states (structural errors, non-transient failures): hard stop
     ctx.ui.notify(
-      `Session creation timed out or was cancelled for ${unitType} ${unitId}. Will retry.`,
+      `Session creation failed for ${unitType} ${unitId}: ${unitResult.errorContext?.message ?? "unknown"}. Stopping auto-mode.`,
       "warning",
     );
-    await deps.stopAuto(ctx, pi, "Session creation failed");
+    await deps.stopAuto(ctx, pi, `Session creation failed: ${unitResult.errorContext?.message ?? "unknown"}`);
     debugLog("autoLoop", { phase: "exit", reason: "session-failed" });
     return { action: "break", reason: "session-failed" };
   }
@@ -1160,11 +1376,13 @@ export async function runUnitPhase(
     );
   }
 
-  // ── Zero tool-call guard (#1833) ──────────────────────────────────
-  // An execute-task agent that completes with 0 tool calls made no
-  // real changes — its summary is hallucinated. Treat as failed so
-  // the task is retried instead of silently marked complete.
-  if (unitType === "execute-task") {
+  // ── Zero tool-call guard (#1833, #2653) ──────────────────────────
+  // Any unit that completes with 0 tool calls made no real progress —
+  // likely context exhaustion where all tool calls errored out. Treat
+  // as failed so the unit is retried in a fresh context instead of
+  // silently passing through to artifact verification (which loops
+  // forever when the unit never produced its artifact).
+  {
     const currentLedger = deps.getLedger() as { units: Array<{ type: string; id: string; startedAt: number; toolCalls: number }> } | null;
     if (currentLedger?.units) {
       const lastUnit = [...currentLedger.units].reverse().find(
@@ -1175,14 +1393,14 @@ export async function runUnitPhase(
           phase: "zero-tool-calls",
           unitType,
           unitId,
-          warning: "Task completed with 0 tool calls — likely hallucinated, marking as failed",
+          warning: "Unit completed with 0 tool calls — likely context exhaustion, marking as failed",
         });
         ctx.ui.notify(
-          `${unitType} ${unitId} completed with 0 tool calls — hallucinated summary, will retry`,
+          `${unitType} ${unitId} completed with 0 tool calls — context exhaustion, will retry`,
           "warning",
         );
         // Fall through to next iteration where dispatch will re-derive
-        // and re-dispatch this task.
+        // and re-dispatch this unit.
         return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt } };
       }
     }
@@ -1205,7 +1423,47 @@ export async function runUnitPhase(
     s.unitRecoveryCount.delete(`${unitType}/${unitId}`);
   }
 
+  // Write phase handoff anchor after successful research/planning completion
+  const anchorPhases = new Set(["research-milestone", "research-slice", "plan-milestone", "plan-slice"]);
+  if (artifactVerified && mid && anchorPhases.has(unitType)) {
+    try {
+      const { writePhaseAnchor } = await import("../phase-anchor.js");
+      writePhaseAnchor(s.basePath, mid, {
+        phase: unitType,
+        milestoneId: mid,
+        generatedAt: new Date().toISOString(),
+        intent: `Completed ${unitType} for ${unitId}`,
+        decisions: [],
+        blockers: [],
+        nextSteps: [],
+      });
+    } catch (err) { /* non-fatal — anchor is advisory */
+      logWarning("engine", `phase anchor failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   deps.emitJournalEvent({ ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(), eventType: "unit-end", data: { unitType, unitId, status: unitResult.status, artifactVerified, ...(unitResult.errorContext ? { errorContext: unitResult.errorContext } : {}) }, causedBy: { flowId: ic.flowId, seq: unitStartSeq } });
+
+  // ── Safety harness: checkpoint cleanup or rollback ──
+  if (s.checkpointSha) {
+    if (unitResult.status === "error" && safetyConfig.auto_rollback) {
+      const rolled = rollbackToCheckpoint(s.basePath, unitId, s.checkpointSha);
+      if (rolled) {
+        ctx.ui.notify(`Rolled back to pre-unit checkpoint for ${unitId}`, "info");
+        debugLog("runUnitPhase", { phase: "checkpoint-rollback", unitId });
+      }
+    } else if (unitResult.status === "error") {
+      ctx.ui.notify(
+        `Unit ${unitId} failed. Pre-unit checkpoint available at ${s.checkpointSha.slice(0, 8)}`,
+        "warning",
+      );
+    } else {
+      // Success — clean up checkpoint ref
+      cleanupCheckpoint(s.basePath, unitId);
+      debugLog("runUnitPhase", { phase: "checkpoint-cleaned", unitId });
+    }
+    s.checkpointSha = null;
+  }
 
   return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt } };
 }
@@ -1219,6 +1477,7 @@ export async function runUnitPhase(
 export async function runFinalize(
   ic: IterationContext,
   iterData: IterationData,
+  loopState: LoopState,
   sidecarItem?: SidecarItem,
 ): Promise<PhaseResult> {
   const { ctx, pi, s, deps } = ic;
@@ -1242,13 +1501,58 @@ export async function runFinalize(
   };
 
   // Pre-verification processing (commit, doctor, state rebuild, etc.)
+  // Timeout guard: if postUnitPreVerification hangs (e.g., safety harness
+  // deadlock, browser teardown hang, worktree sync stall), force-continue
+  // after timeout so the auto-loop is not permanently frozen (#3757).
+  //
+  // On timeout, null out s.currentUnit so the timed-out task's late async
+  // mutations are harmless — postUnitPreVerification guards all side effects
+  // behind `if (s.currentUnit)`. The next iteration sets a fresh currentUnit.
   // Sidecar items use lightweight pre-verification opts
   const preVerificationOpts: PreVerificationOpts | undefined = sidecarItem
     ? sidecarItem.kind === "hook"
       ? { skipSettleDelay: true, skipWorktreeSync: true }
       : { skipSettleDelay: true }
     : undefined;
-  const preResult = await deps.postUnitPreVerification(postUnitCtx, preVerificationOpts);
+  const preUnitSnapshot = s.currentUnit
+    ? { type: s.currentUnit.type, id: s.currentUnit.id, startedAt: s.currentUnit.startedAt }
+    : null;
+  const preResultGuard = await withTimeout(
+    deps.postUnitPreVerification(postUnitCtx, preVerificationOpts),
+    FINALIZE_PRE_TIMEOUT_MS,
+    "postUnitPreVerification",
+  );
+
+  if (preResultGuard.timedOut) {
+    // Detach session from the timed-out unit so late async completions
+    // cannot mutate state for the next unit (#3757).
+    s.currentUnit = null;
+    loopState.consecutiveFinalizeTimeouts++;
+    debugLog("autoLoop", {
+      phase: "pre-verification-timeout",
+      iteration: ic.iteration,
+      unitType: iterData.unitType,
+      unitId: iterData.unitId,
+      consecutiveTimeouts: loopState.consecutiveFinalizeTimeouts,
+    });
+
+    if (loopState.consecutiveFinalizeTimeouts >= MAX_FINALIZE_TIMEOUTS) {
+      ctx.ui.notify(
+        `postUnitPreVerification timed out ${loopState.consecutiveFinalizeTimeouts} consecutive times — stopping auto-mode to prevent budget waste`,
+        "error",
+      );
+      await deps.stopAuto(ctx, pi, `${loopState.consecutiveFinalizeTimeouts} consecutive finalize timeouts`);
+      return { action: "break", reason: "finalize-timeout-escalation" };
+    }
+
+    ctx.ui.notify(
+      `postUnitPreVerification timed out after ${FINALIZE_PRE_TIMEOUT_MS / 1000}s for ${iterData.unitType} ${iterData.unitId} (${loopState.consecutiveFinalizeTimeouts}/${MAX_FINALIZE_TIMEOUTS}) — continuing to next iteration`,
+      "warning",
+    );
+    return { action: "next", data: undefined as void };
+  }
+
+  const preResult = preResultGuard.value;
   if (preResult === "dispatched") {
     debugLog("autoLoop", {
       phase: "exit",
@@ -1307,7 +1611,45 @@ export async function runFinalize(
   }
 
   // Post-verification processing (DB dual-write, hooks, triage, quick-tasks)
-  const postResult = await deps.postUnitPostVerification(postUnitCtx);
+  // Timeout guard: if postUnitPostVerification hangs (e.g., module import
+  // deadlock, SQLite transaction hang), force-continue after timeout so the
+  // auto-loop is not permanently frozen (#2344).
+  const postResultGuard = await withTimeout(
+    deps.postUnitPostVerification(postUnitCtx),
+    FINALIZE_POST_TIMEOUT_MS,
+    "postUnitPostVerification",
+  );
+
+  if (postResultGuard.timedOut) {
+    // Detach session from the timed-out unit so late async completions
+    // cannot mutate state for the next unit (#3757).
+    s.currentUnit = null;
+    loopState.consecutiveFinalizeTimeouts++;
+    debugLog("autoLoop", {
+      phase: "post-verification-timeout",
+      iteration: ic.iteration,
+      unitType: iterData.unitType,
+      unitId: iterData.unitId,
+      consecutiveTimeouts: loopState.consecutiveFinalizeTimeouts,
+    });
+
+    if (loopState.consecutiveFinalizeTimeouts >= MAX_FINALIZE_TIMEOUTS) {
+      ctx.ui.notify(
+        `postUnitPostVerification timed out ${loopState.consecutiveFinalizeTimeouts} consecutive times — stopping auto-mode to prevent budget waste`,
+        "error",
+      );
+      await deps.stopAuto(ctx, pi, `${loopState.consecutiveFinalizeTimeouts} consecutive finalize timeouts`);
+      return { action: "break", reason: "finalize-timeout-escalation" };
+    }
+
+    ctx.ui.notify(
+      `postUnitPostVerification timed out after ${FINALIZE_POST_TIMEOUT_MS / 1000}s for ${iterData.unitType} ${iterData.unitId} (${loopState.consecutiveFinalizeTimeouts}/${MAX_FINALIZE_TIMEOUTS}) — continuing to next iteration`,
+      "warning",
+    );
+    return { action: "next", data: undefined as void };
+  }
+
+  const postResult = postResultGuard.value;
 
   if (postResult === "stopped") {
     debugLog("autoLoop", {
@@ -1322,6 +1664,9 @@ export async function runFinalize(
     debugLog("autoLoop", { phase: "exit", reason: "step-wizard" });
     return { action: "break", reason: "step-wizard" };
   }
+
+  // Both pre and post verification completed without timeout — reset counter
+  loopState.consecutiveFinalizeTimeouts = 0;
 
   return { action: "next", data: undefined as void };
 }

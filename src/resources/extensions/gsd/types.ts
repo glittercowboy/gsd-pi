@@ -316,6 +316,7 @@ export interface ClassificationResult {
   tier: ComplexityTier;
   reason: string;
   downgraded: boolean;
+  taskMetadata?: TaskMetadata;
 }
 
 export interface TaskMetadata {
@@ -452,6 +453,8 @@ export interface ParallelConfig {
   budget_ceiling?: number;
   merge_strategy: MergeStrategy;
   auto_merge: AutoMergeMode;
+  /** Optional model override for parallel milestone workers (e.g. "claude-haiku-4-5"). */
+  worker_model?: string;
 }
 
 // ─── Reactive Task Execution Types ───────────────────────────────────────
@@ -478,6 +481,8 @@ export interface ReactiveExecutionConfig {
   max_parallel: number;
   /** Isolation mode for parallel tasks within a slice. Currently only "same-tree" is supported. */
   isolation_mode: "same-tree";
+  /** Optional model override for subagents spawned during parallel execution. */
+  subagent_model?: string;
 }
 
 /** Per-slice reactive execution runtime state, persisted to disk. */
@@ -514,12 +519,18 @@ export interface CompleteTaskParams {
   oneLiner: string;
   narrative: string;
   verification: string;
-  keyFiles: string[];
-  keyDecisions: string[];
-  deviations: string;
-  knownIssues: string;
-  blockerDiscovered: boolean;
-  verificationEvidence: Array<{
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  keyFiles?: string[];
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  keyDecisions?: string[];
+  /** @optional — defaults to "None." when omitted */
+  deviations?: string;
+  /** @optional — defaults to "None." when omitted */
+  knownIssues?: string;
+  /** @optional — defaults to false when omitted */
+  blockerDiscovered?: boolean;
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  verificationEvidence?: Array<{
     command: string;
     exitCode: number;
     verdict: string;
@@ -540,23 +551,39 @@ export interface CompleteSliceParams {
   oneLiner: string;
   narrative: string;
   verification: string;
-  keyFiles: string[];
-  keyDecisions: string[];
-  patternsEstablished: string[];
-  observabilitySurfaces: string[];
-  deviations: string;
-  knownLimitations: string;
-  followUps: string;
-  requirementsAdvanced: Array<{ id: string; how: string }>;
-  requirementsValidated: Array<{ id: string; proof: string }>;
-  requirementsSurfaced: string[];
-  requirementsInvalidated: Array<{ id: string; what: string }>;
-  filesModified: Array<{ path: string; description: string }>;
   uatContent: string;
-  provides: string[];
-  requires: Array<{ slice: string; provides: string }>;
-  affects: string[];
-  drillDownPaths: string[];
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  keyFiles?: string[];
+  /** @optional — defaults to [] when omitted */
+  keyDecisions?: string[];
+  /** @optional — defaults to [] when omitted */
+  patternsEstablished?: string[];
+  /** @optional — defaults to [] when omitted */
+  observabilitySurfaces?: string[];
+  /** @optional — defaults to "None." when omitted */
+  deviations?: string;
+  /** @optional — defaults to "None." when omitted */
+  knownLimitations?: string;
+  /** @optional — defaults to "None." when omitted */
+  followUps?: string;
+  /** @optional — defaults to [] when omitted */
+  requirementsAdvanced?: Array<{ id: string; how: string }>;
+  /** @optional — defaults to [] when omitted */
+  requirementsValidated?: Array<{ id: string; proof: string }>;
+  /** @optional — defaults to [] when omitted */
+  requirementsSurfaced?: string[];
+  /** @optional — defaults to [] when omitted */
+  requirementsInvalidated?: Array<{ id: string; what: string }>;
+  /** @optional — defaults to [] when omitted */
+  filesModified?: Array<{ path: string; description: string }>;
+  /** @optional — defaults to [] when omitted */
+  provides?: string[];
+  /** @optional — defaults to [] when omitted */
+  requires?: Array<{ slice: string; provides: string }>;
+  /** @optional — defaults to [] when omitted */
+  affects?: string[];
+  /** @optional — defaults to [] when omitted */
+  drillDownPaths?: string[];
   /** Optional caller-provided identity for audit trail */
   actorName?: string;
   /** Optional caller-provided reason this action was triggered */

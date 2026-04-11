@@ -139,6 +139,24 @@ function SkillBadgeList({ label, skills }: { label: string; skills: string[] | u
   )
 }
 
+function ModelBadgeList({ models }: { models: Record<string, string> | undefined }) {
+  if (!models || Object.keys(models).length === 0) return null
+  return (
+    <div className="space-y-1">
+      <span className="text-[11px] text-muted-foreground">Phase Models</span>
+      <div className="flex flex-wrap gap-1">
+        {Object.entries(models)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([phase, model]) => (
+            <Badge key={phase} variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
+              {phase}: {model}
+            </Badge>
+          ))}
+      </div>
+    </div>
+  )
+}
+
 function KvRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 text-xs">
@@ -206,12 +224,17 @@ export function PrefsPanel() {
 
           {/* Skills */}
           <div className="space-y-2">
+            <ModelBadgeList models={prefs.models} />
             <SkillBadgeList label="Always use" skills={prefs.alwaysUseSkills} />
             <SkillBadgeList label="Prefer" skills={prefs.preferSkills} />
             <SkillBadgeList label="Avoid" skills={prefs.avoidSkills} />
-            {!prefs.alwaysUseSkills?.length && !prefs.preferSkills?.length && !prefs.avoidSkills?.length && (
-              <span className="text-[11px] text-muted-foreground">No skill preferences configured</span>
-            )}
+            {!prefs.models || Object.keys(prefs.models).length === 0
+              ? !prefs.alwaysUseSkills?.length && !prefs.preferSkills?.length && !prefs.avoidSkills?.length && (
+                <span className="text-[11px] text-muted-foreground">No model or skill preferences configured</span>
+              )
+              : !prefs.alwaysUseSkills?.length && !prefs.preferSkills?.length && !prefs.avoidSkills?.length && (
+                <span className="text-[11px] text-muted-foreground">No skill preferences configured</span>
+              )}
           </div>
 
           {/* Toggles */}

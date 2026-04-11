@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 import { resolvePreferredModelConfig, resolveModelId } from "../auto-model-selection.js";
 
@@ -140,17 +143,17 @@ test("resolvePreferredModelConfig keeps explicit phase models as the ceiling", (
 
 // ─── resolveModelId tests ─────────────────────────────────────────────────
 
-test("resolveModelId: bare ID resolves to anthropic over claude-code when session is claude-code (#2905)", () => {
+test("resolveModelId: bare ID resolves to claude-code when session is claude-code (#3772)", () => {
   const availableModels = [
     { id: "claude-sonnet-4-6", provider: "anthropic" },
     { id: "claude-sonnet-4-6", provider: "claude-code" },
   ];
 
-  // Bug: when currentProvider is "claude-code", bare ID "claude-sonnet-4-6"
-  // resolves to claude-code/claude-sonnet-4-6 instead of anthropic/claude-sonnet-4-6
+  // When currentProvider is "claude-code" (set by startup migration for subscription
+  // users), bare IDs must resolve to claude-code to avoid the third-party block (#3772).
   const result = resolveModelId("claude-sonnet-4-6", availableModels, "claude-code");
   assert.ok(result, "should resolve a model");
-  assert.equal(result.provider, "anthropic", "bare ID must resolve to anthropic, not claude-code");
+  assert.equal(result.provider, "claude-code", "bare ID must resolve to claude-code when session provider is claude-code");
 });
 
 test("resolveModelId: bare ID still prefers current provider when it is a first-class API provider", () => {
@@ -196,14 +199,56 @@ test("resolveModelId: bare ID with claude-code as only provider still resolves",
   assert.equal(result.provider, "claude-code");
 });
 
-test("resolveModelId: anthropic wins over claude-code regardless of list order", () => {
+// ─── selectAndApplyModel verbose-gating tests ──────────────────────────
+
+test("model change notify in selectAndApplyModel is gated behind verbose flag", () => {
+  // The Model [phase] [tier] notification should only fire when verbose=true.
+  // The dashboard header already shows the active model, so the notification
+  // is redundant noise during auto-mode (#3719).
+  const gsdDir = join(__dirname, "..");
+  const src = readFileSync(join(gsdDir, "auto-model-selection.ts"), "utf-8");
+
+  // Find the block where setModel succeeds (appliedModel = model) and
+  // verify notify is inside an `if (verbose)` guard.
+  const setModelBlock = src.match(
+    /const ok = await pi\.setModel\(model[\s\S]*?appliedModel = model;([\s\S]*?)break;/,
+  );
+  assert.ok(setModelBlock, "should find the setModel success block");
+
+  const blockBody = setModelBlock![1];
+  // The notify call must be inside an if (verbose) block
+  assert.ok(
+    blockBody.includes("if (verbose)"),
+    "Model change ctx.ui.notify must be gated behind if (verbose) to avoid auto-mode notification noise",
+  );
+  assert.ok(
+    blockBody.includes("ctx.ui.notify"),
+    "notify call should still exist (just verbose-gated)",
+  );
+});
+
+test("resolveModelId: anthropic wins over claude-code when session provider is not claude-code", () => {
   const availableModels = [
     { id: "claude-sonnet-4-6", provider: "claude-code" },
     { id: "claude-sonnet-4-6", provider: "anthropic" },
   ];
 
-  // Even when claude-code appears first in the list, anthropic should win
+  // When the session is NOT on claude-code, bare IDs should resolve to
+  // the canonical anthropic provider (original #2905 behavior preserved).
+  const result = resolveModelId("claude-sonnet-4-6", availableModels, undefined);
+  assert.ok(result, "should resolve a model");
+  assert.equal(result.provider, "anthropic", "anthropic must win when session is not claude-code");
+});
+
+test("resolveModelId: claude-code wins when session is claude-code regardless of list order", () => {
+  const availableModels = [
+    { id: "claude-sonnet-4-6", provider: "claude-code" },
+    { id: "claude-sonnet-4-6", provider: "anthropic" },
+  ];
+
+  // When session provider is claude-code (subscription user migration), it must
+  // win regardless of candidate ordering to avoid the third-party block (#3772).
   const result = resolveModelId("claude-sonnet-4-6", availableModels, "claude-code");
   assert.ok(result, "should resolve a model");
-  assert.equal(result.provider, "anthropic", "anthropic must win over claude-code regardless of list order");
+  assert.equal(result.provider, "claude-code", "claude-code must win when it is the session provider");
 });

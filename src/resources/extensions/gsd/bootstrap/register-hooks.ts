@@ -6,17 +6,25 @@ import { isToolCallEventType } from "@gsd/pi-coding-agent";
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
 import { buildBeforeAgentStartResult } from "./system-context.js";
 import { handleAgentEnd } from "./agent-end-recovery.js";
-import { clearDiscussionFlowState, isDepthVerified, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockQueueExecution } from "./write-gate.js";
+import { clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockQueueExecution, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { cleanupQuickBranch } from "../quick.js";
 import { getDiscussionMilestoneId } from "../guided-flow.js";
 import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
 import { deriveState } from "../state.js";
-import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart } from "../auto.js";
+import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart, recordToolInvocationError } from "../auto.js";
 import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
+import { resetAskUserQuestionsCache } from "../../ask-user-questions.js";
+import { recordToolCall as safetyRecordToolCall, recordToolResult as safetyRecordToolResult } from "../safety/evidence-collector.js";
+import { classifyCommand } from "../safety/destructive-guard.js";
+import { logWarning as safetyLogWarning } from "../workflow-logger.js";
+import { installNotifyInterceptor } from "./notify-interceptor.js";
+import { initNotificationStore } from "../notification-store.js";
+import { initNotificationWidget } from "../notification-widget.js";
+import { initHealthWidget } from "../health-widget.js";
 
 // Skip the welcome screen on the very first session_start — cli.ts already
 // printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
@@ -29,8 +37,13 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
 
 export function registerHooks(pi: ExtensionAPI): void {
   pi.on("session_start", async (_event, ctx) => {
+    initNotificationStore(process.cwd());
+    installNotifyInterceptor(ctx);
+    initNotificationWidget(ctx);
+    initHealthWidget(ctx);
     resetWriteGateState();
     resetToolCallLoopGuard();
+    resetAskUserQuestionsCache();
     await syncServiceTierStatus(ctx);
 
     // Apply show_token_cost preference (#1515)
@@ -65,8 +78,11 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("session_switch", async (_event, ctx) => {
+    initNotificationStore(process.cwd());
+    installNotifyInterceptor(ctx);
     resetWriteGateState();
     resetToolCallLoopGuard();
+    resetAskUserQuestionsCache();
     clearDiscussionFlowState();
     await syncServiceTierStatus(ctx);
     loadToolApiKeys();
@@ -78,6 +94,7 @@ export function registerHooks(pi: ExtensionAPI): void {
 
   pi.on("agent_end", async (event, ctx: ExtensionContext) => {
     resetToolCallLoopGuard();
+    resetAskUserQuestionsCache();
     await handleAgentEnd(pi, event, ctx);
   });
 
@@ -93,7 +110,10 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("session_before_compact", async () => {
-    if (isAutoActive() || isAutoPaused()) {
+    // Only cancel compaction while auto-mode is actively running.
+    // Paused auto-mode should allow compaction — the user may be doing
+    // interactive work (#3165).
+    if (isAutoActive()) {
       return { cancel: true };
     }
     const basePath = process.cwd();
@@ -144,10 +164,48 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_call", async (event) => {
+    const discussionBasePath = process.cwd();
     // ── Loop guard: block repeated identical tool calls ──
     const loopCheck = checkToolCallLoop(event.toolName, event.input as Record<string, unknown>);
     if (loopCheck.block) {
       return { block: true, reason: loopCheck.reason };
+    }
+
+    // ── Discussion gate enforcement: track pending gate questions ─────────
+    // Only gate-shaped ask_user_questions calls should block execution.
+    // The gate stays pending until the user selects the approval option.
+    if (event.toolName === "ask_user_questions") {
+      const milestoneId = getDiscussionMilestoneId(discussionBasePath);
+      const inDiscussion = milestoneId !== null || isQueuePhaseActive();
+      if (inDiscussion) {
+        const questions: any[] = (event.input as any)?.questions ?? [];
+        const questionId = questions.find((question) => typeof question?.id === "string" && isGateQuestionId(question.id))?.id;
+        if (typeof questionId === "string") {
+          setPendingGate(questionId);
+        }
+      }
+    }
+
+    // ── Discussion gate enforcement: block tool calls while gate is pending ──
+    // If ask_user_questions was called with a gate ID but hasn't been confirmed,
+    // block all non-read-only tool calls to prevent the model from skipping gates.
+    if (getPendingGate()) {
+      const milestoneId = getDiscussionMilestoneId(discussionBasePath);
+      if (isToolCallEventType("bash", event)) {
+        const bashGuard = shouldBlockPendingGateBash(
+          event.input.command,
+          milestoneId,
+          isQueuePhaseActive(),
+        );
+        if (bashGuard.block) return bashGuard;
+      } else {
+        const gateGuard = shouldBlockPendingGate(
+          event.toolName,
+          milestoneId,
+          isQueuePhaseActive(),
+        );
+        if (gateGuard.block) return gateGuard;
+      }
     }
 
     // ── Queue-mode execution guard (#2545): block source-code mutations ──
@@ -192,26 +250,72 @@ export function registerHooks(pi: ExtensionAPI): void {
     const result = shouldBlockContextWrite(
       event.toolName,
       event.input.path,
-      getDiscussionMilestoneId(),
-      isDepthVerified(),
+      getDiscussionMilestoneId(discussionBasePath),
       isQueuePhaseActive(),
     );
     if (result.block) return result;
   });
 
+  // ── Safety harness: evidence collection + destructive command warnings ──
+  pi.on("tool_call", async (event, ctx) => {
+    if (!isAutoActive()) return;
+    safetyRecordToolCall(event.toolName, event.input as Record<string, unknown>);
+
+    // Destructive command classification (warn only, never block)
+    if (isToolCallEventType("bash", event)) {
+      const classification = classifyCommand(event.input.command);
+      if (classification.destructive) {
+        safetyLogWarning("safety", `destructive command: ${classification.labels.join(", ")}`, {
+          command: String(event.input.command).slice(0, 200),
+        });
+        ctx.ui.notify(
+          `Destructive command detected: ${classification.labels.join(", ")}`,
+          "warning",
+        );
+      }
+    }
+  });
+
   pi.on("tool_result", async (event) => {
     if (event.toolName !== "ask_user_questions") return;
-    const milestoneId = getDiscussionMilestoneId();
+    const milestoneId = getDiscussionMilestoneId(process.cwd());
     const queueActive = isQueuePhaseActive();
     if (!milestoneId && !queueActive) return;
 
     const details = event.details as any;
+
+    // ── Discussion gate enforcement: handle gate question responses ──
+    // If the result is cancelled or has no response, the pending gate stays active
+    // so the model is blocked from non-read-only tools until it re-asks.
+    // If the user responded at all (even "needs adjustment"), clear the pending gate
+    // because the user engaged — the prompt handles the re-ask-after-adjustment flow.
+    const questions: any[] = (event.input as any)?.questions ?? [];
+    const currentPendingGate = getPendingGate();
+    if (currentPendingGate) {
+      if (details?.cancelled || !details?.response) {
+        // Gate stays pending — model will be blocked from non-read-only tools
+        // until it re-asks and gets a valid response
+      } else {
+        const pendingQuestion = questions.find((question) => question?.id === currentPendingGate);
+        if (pendingQuestion) {
+          const answer = details.response?.answers?.[currentPendingGate];
+          if (isDepthConfirmationAnswer(answer?.selected, pendingQuestion.options)) {
+            clearPendingGate();
+          }
+        }
+      }
+    }
+
     if (details?.cancelled || !details?.response) return;
 
-    const questions: any[] = (event.input as any)?.questions ?? [];
     for (const question of questions) {
       if (typeof question.id === "string" && question.id.includes("depth_verification")) {
-        markDepthVerified();
+        // Only unlock the gate if the user selected the first option (confirmation).
+        // Cross-references against the question's defined options to reject free-form "Other" text.
+        const answer = details.response?.answers?.[question.id];
+        if (isDepthConfirmationAnswer(answer?.selected, question.options)) {
+          markDepthVerified(extractDepthVerificationMilestoneId(question.id) ?? milestoneId);
+        }
         break;
       }
     }
@@ -256,6 +360,18 @@ export function registerHooks(pi: ExtensionAPI): void {
 
   pi.on("tool_execution_end", async (event) => {
     markToolEnd(event.toolCallId);
+    // #2883: Capture tool invocation errors (malformed/truncated JSON arguments)
+    // so postUnitPreVerification can break the retry loop instead of re-dispatching.
+    if (event.isError && event.toolName.startsWith("gsd_")) {
+      const errorText = typeof event.result === "string"
+        ? event.result
+        : (typeof event.result?.content?.[0]?.text === "string" ? event.result.content[0].text : String(event.result));
+      recordToolInvocationError(event.toolName, errorText);
+    }
+    // Safety harness: record tool execution results for evidence cross-referencing
+    if (isAutoActive()) {
+      safetyRecordToolResult(event.toolCallId, event.toolName, event.result, event.isError);
+    }
   });
 
   pi.on("model_select", async (_event, ctx) => {
@@ -263,14 +379,79 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("before_provider_request", async (event) => {
-    const modelId = event.model?.id;
-    if (!modelId) return;
-    const { getEffectiveServiceTier, supportsServiceTier } = await import("../service-tier.js");
-    const tier = getEffectiveServiceTier();
-    if (!tier || !supportsServiceTier(modelId)) return;
     const payload = event.payload as Record<string, unknown> | null;
     if (!payload || typeof payload !== "object") return;
+
+    // ── Observation Masking ─────────────────────────────────────────────
+    // Replace old tool results with placeholders to reduce context bloat.
+    // Only active during auto-mode when context_management.observation_masking is enabled.
+    if (isAutoActive()) {
+      try {
+        const { loadEffectiveGSDPreferences } = await import("../preferences.js");
+        const prefs = loadEffectiveGSDPreferences();
+        const cmConfig = prefs?.preferences.context_management;
+
+        // Observation masking: replace old tool results with placeholders
+        if (cmConfig?.observation_masking !== false) {
+          const keepTurns = cmConfig?.observation_mask_turns ?? 8;
+          const { createObservationMask } = await import("../context-masker.js");
+          const mask = createObservationMask(keepTurns);
+          const messages = payload.messages;
+          if (Array.isArray(messages)) {
+            payload.messages = mask(messages);
+          }
+        }
+
+        // Tool result truncation: cap individual tool result content length.
+        // In pi-ai format, toolResult messages have role: "toolResult" and content: TextContent[].
+        // Creates new objects to avoid mutating shared conversation state.
+        const maxChars = cmConfig?.tool_result_max_chars ?? 800;
+        const msgs = payload.messages;
+        if (Array.isArray(msgs)) {
+          payload.messages = msgs.map((msg: Record<string, unknown>) => {
+            // Match toolResult messages (role: "toolResult", content is array of content blocks)
+            if (msg?.role === "toolResult" && Array.isArray(msg.content)) {
+              const blocks = msg.content as Array<Record<string, unknown>>;
+              const totalLen = blocks.reduce((sum: number, b) => sum + (typeof b.text === "string" ? b.text.length : 0), 0);
+              if (totalLen > maxChars) {
+                const truncated = blocks.map(b => {
+                  if (typeof b.text === "string" && b.text.length > maxChars) {
+                    return { ...b, text: b.text.slice(0, maxChars) + "\n…[truncated]" };
+                  }
+                  return b;
+                });
+                return { ...msg, content: truncated };
+              }
+            }
+            return msg;
+          });
+        }
+      } catch { /* non-fatal */ }
+    }
+
+    // ── Service Tier ────────────────────────────────────────────────────
+    const modelId = event.model?.id;
+    if (!modelId) return payload;
+    const { getEffectiveServiceTier, supportsServiceTier } = await import("../service-tier.js");
+    const tier = getEffectiveServiceTier();
+    if (!tier || !supportsServiceTier(modelId)) return payload;
     payload.service_tier = tier;
     return payload;
+  });
+
+  // Capability-aware model routing hook (ADR-004)
+  // Extensions can override model selection by returning { modelId: "..." }
+  // Return undefined to let the built-in capability scoring proceed.
+  pi.on("before_model_select", async (_event) => {
+    // Default: no override — let capability scoring handle selection
+    return undefined;
+  });
+
+  // Tool set adaptation hook (ADR-005 Phase 4)
+  // Extensions can override tool set after model selection by returning { toolNames: [...] }
+  // Return undefined to let the built-in provider compatibility filtering proceed.
+  pi.on("adjust_tool_set", async (_event) => {
+    // Default: no override — let provider capability filtering handle tool set
+    return undefined;
   });
 }

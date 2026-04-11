@@ -17,6 +17,7 @@ import {
   detectProjectState,
   detectV1Planning,
   detectProjectSignals,
+  scanProjectFiles,
 } from "../detection.ts";
 
 function makeTempDir(prefix: string): string {
@@ -1184,6 +1185,42 @@ test("detectProjectSignals: Spring Boot settings-defined catalog accessor emits 
     );
     const signals = detectProjectSignals(dir);
     assert.ok(signals.detectedFiles.includes("dep:spring-boot"), "settings-defined catalog accessors should trigger Spring Boot detection");
+  } finally {
+    cleanup(dir);
+  }
+});
+
+// ─── scanProjectFiles: RECURSIVE_SCAN_IGNORED_DIRS ──────────────────────
+
+test("scanProjectFiles: excludes .claude, .gsd, .planning, .plans, .cursor, .vscode directories", () => {
+  const dir = makeTempDir("scan-ignore-dotdirs");
+  try {
+    // Create project files that should be included
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "main.ts"), "// main\n", "utf-8");
+    writeFileSync(join(dir, "README.md"), "# Project\n", "utf-8");
+
+    // Create tool directories that should be excluded
+    const excludedDirs = [".claude", ".gsd", ".planning", ".plans", ".cursor", ".vscode"];
+    for (const d of excludedDirs) {
+      mkdirSync(join(dir, d), { recursive: true });
+      writeFileSync(join(dir, d, "config.json"), "{}\n", "utf-8");
+    }
+    // Nested .claude directory
+    mkdirSync(join(dir, ".claude", "memory"), { recursive: true });
+    writeFileSync(join(dir, ".claude", "memory", "user.md"), "# Memory\n", "utf-8");
+
+    const files = scanProjectFiles(dir);
+
+    // Should include project files
+    assert.ok(files.includes("src/main.ts"), "should include src/main.ts");
+    assert.ok(files.includes("README.md"), "should include README.md");
+
+    // Should exclude all tool directories
+    for (const d of excludedDirs) {
+      const hasExcluded = files.some((f) => f.startsWith(`${d}/`));
+      assert.ok(!hasExcluded, `should exclude ${d}/ directory but found: ${files.filter((f) => f.startsWith(`${d}/`)).join(", ")}`);
+    }
   } finally {
     cleanup(dir);
   }

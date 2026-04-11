@@ -18,7 +18,8 @@ Read these files in order and act on what they say:
 3. **`.gsd/milestones/<active>/M###-CONTEXT.md`** — Milestone-level project decisions, reference paths, constraints. Read this before doing implementation work.
 4. If a slice is active and has one, read **`S##-CONTEXT.md`** — Slice-specific decisions and constraints.
 5. If a slice is active, read its **`S##-PLAN.md`** — Which tasks exist? Which are done?
-6. If a task was interrupted, check for **`continue.md`** in the active slice directory — Resume from there.
+6. If `.gsd/CODEBASE.md` exists, skim it for fast structural orientation before broad code exploration.
+7. If a task was interrupted, check for **`continue.md`** in the active slice directory — Resume from there.
 
 Then do the thing `STATE.md` says to do next.
 
@@ -44,6 +45,7 @@ All artifacts live in `.gsd/` at the project root:
 .gsd/
   STATE.md                                  # Dashboard — always read first (derived cache; runtime, gitignored)
   DECISIONS.md                              # Append-only decisions register
+  CODEBASE.md                               # Generated codebase map cache (auto-refreshed by GSD)
   milestones/
     M001/
       M001-ROADMAP.md                       # Milestone plan (checkboxes = state)

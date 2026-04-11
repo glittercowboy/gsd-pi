@@ -4,6 +4,12 @@ MCP server exposing GSD orchestration tools for Claude Code, Cursor, and other M
 
 Start GSD auto-mode sessions, poll progress, resolve blockers, and retrieve results — all through the [Model Context Protocol](https://modelcontextprotocol.io/).
 
+This package now exposes two tool surfaces:
+
+- session/read tools for starting and inspecting GSD sessions
+- MCP-native interactive tools for structured user input
+- headless-safe workflow tools for planning, completion, validation, reassessment, metadata persistence, and journal reads
+
 ## Installation
 
 ```bash
@@ -68,6 +74,57 @@ Add to `.cursor/mcp.json`:
 ```
 
 ## Tools
+
+### Workflow tools
+
+The workflow MCP surface includes:
+
+- `gsd_decision_save`
+- `gsd_save_decision`
+- `gsd_requirement_update`
+- `gsd_update_requirement`
+- `gsd_requirement_save`
+- `gsd_save_requirement`
+- `gsd_milestone_generate_id`
+- `gsd_generate_milestone_id`
+- `gsd_plan_milestone`
+- `gsd_plan_slice`
+- `gsd_plan_task`
+- `gsd_task_plan`
+- `gsd_replan_slice`
+- `gsd_slice_replan`
+- `gsd_task_complete`
+- `gsd_complete_task`
+- `gsd_slice_complete`
+- `gsd_complete_slice`
+- `gsd_skip_slice`
+- `gsd_validate_milestone`
+- `gsd_milestone_validate`
+- `gsd_complete_milestone`
+- `gsd_milestone_complete`
+- `gsd_reassess_roadmap`
+- `gsd_roadmap_reassess`
+- `gsd_save_gate_result`
+- `gsd_summary_save`
+- `gsd_milestone_status`
+- `gsd_journal_query`
+
+These tools use the same GSD workflow handlers as the native in-process tool path wherever a shared handler exists.
+
+### Interactive tools
+
+The packaged server now exposes `ask_user_questions` through MCP form elicitation. This keeps the existing GSD answer payload shape while allowing Claude Code CLI and other elicitation-capable clients to surface structured user choices.
+
+`secure_env_collect` is still not exposed by this package. That path needs MCP URL elicitation or an equivalent secure bridge because secrets should not flow through form elicitation.
+
+Current support boundary:
+
+- when running inside the GSD monorepo checkout, the MCP server auto-discovers the shared workflow executor module
+- outside the monorepo, set `GSD_WORKFLOW_EXECUTORS_MODULE` to an importable `workflow-tool-executors` module path if you want the mutation tools enabled
+- `ask_user_questions` requires an MCP client that supports form elicitation
+- session/read tools do not depend on this bridge
+
+If the executor bridge cannot be loaded, workflow mutation calls will fail with a precise configuration error instead of silently degrading.
 
 ### `gsd_execute`
 
@@ -175,6 +232,9 @@ Resolve a pending blocker in a session by sending a response to the blocked UI r
 | Variable | Description |
 |----------|-------------|
 | `GSD_CLI_PATH` | Absolute path to the GSD CLI binary. If not set, the server resolves `gsd` via `which`. |
+| `GSD_WORKFLOW_EXECUTORS_MODULE` | Optional absolute path or `file:` URL for the shared GSD workflow executor module used by workflow mutation tools. |
+
+The server also hydrates supported model-provider and tool credentials from `~/.gsd/agent/auth.json` on startup. Keys saved through `/gsd config` or `/gsd keys` become available to the MCP server process automatically, and any explicitly-set environment variable still wins.
 
 ## Architecture
 

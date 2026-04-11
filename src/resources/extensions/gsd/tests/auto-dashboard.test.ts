@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import {
   unitVerb,
@@ -11,10 +12,28 @@ import {
   formatWidgetTokens,
   estimateTimeRemaining,
   extractUatSliceId,
+  getWidgetMode,
+  cycleWidgetMode,
+  _resetWidgetModeForTests,
 } from "../auto-dashboard.ts";
 
 const autoSource = readFileSync(join(process.cwd(), "src", "resources", "extensions", "gsd", "auto.ts"), "utf-8");
 const dashboardSource = readFileSync(join(process.cwd(), "src", "resources", "extensions", "gsd", "auto-dashboard.ts"), "utf-8");
+
+function makeTempDir(prefix: string): string {
+  return join(
+    tmpdir(),
+    `gsd-auto-dashboard-test-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+}
+
+function cleanup(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // best-effort
+  }
+}
 
 // ─── unitVerb ─────────────────────────────────────────────────────────────
 
@@ -208,4 +227,36 @@ test("extractUatSliceId returns null for invalid formats", () => {
   assert.equal(extractUatSliceId("M001"), null);
   assert.equal(extractUatSliceId(""), null);
   assert.equal(extractUatSliceId("M001/T01"), null);
+});
+
+test("widget mode respects project preference precedence and persists there", (t) => {
+  const homeDir = makeTempDir("home");
+  const projectDir = makeTempDir("project");
+  const globalPrefsPath = join(homeDir, ".gsd", "preferences.md");
+  const projectPrefsPath = join(projectDir, ".gsd", "preferences.md");
+
+  mkdirSync(join(homeDir, ".gsd"), { recursive: true });
+  mkdirSync(join(projectDir, ".gsd"), { recursive: true });
+  writeFileSync(globalPrefsPath, "---\nversion: 1\nwidget_mode: off\n---\n", "utf-8");
+  writeFileSync(projectPrefsPath, "---\nversion: 1\nwidget_mode: small\n---\n", "utf-8");
+
+  t.after(() => {
+    cleanup(homeDir);
+    cleanup(projectDir);
+    _resetWidgetModeForTests();
+  });
+
+  _resetWidgetModeForTests();
+
+  assert.equal(getWidgetMode(projectPrefsPath, globalPrefsPath), "small", "project widget_mode overrides global");
+  assert.equal(
+    cycleWidgetMode(projectPrefsPath, globalPrefsPath),
+    "min",
+    "cycling advances from the project-owned mode",
+  );
+
+  const projectPrefs = readFileSync(projectPrefsPath, "utf-8");
+  const globalPrefs = readFileSync(globalPrefsPath, "utf-8");
+  assert.match(projectPrefs, /widget_mode:\s*min/);
+  assert.match(globalPrefs, /widget_mode:\s*off/);
 });

@@ -103,6 +103,8 @@ The user confirms or corrects before you write. One depth verification per miles
 
 **If you skip this step, the system will block the CONTEXT.md write and return an error telling you to complete verification first.**
 
+**CRITICAL — Non-bypassable gate:** The system mechanically blocks CONTEXT.md writes until the user selects the "(Recommended)" option. If the user declines, cancels, or the tool fails, you MUST re-ask — never rationalize past the block ("tool not responding, I'll proceed" is forbidden). The gate exists to protect the user's work; treat a block as an instruction, not an obstacle to work around.
+
 ## Output Phase
 
 Once the user is satisfied, in a single pass for **each** new milestone:

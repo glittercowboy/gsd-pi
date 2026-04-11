@@ -5,6 +5,7 @@ import { findMilestoneIds } from "./guided-flow.js";
 import { parseUnitId } from "./unit-id.js";
 import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
 import { parseRoadmap } from "./parsers-legacy.js";
+import { isClosedStatus } from "./status-guards.js";
 import { readFileSync } from "node:fs";
 
 const SLICE_DISPATCH_TYPES = new Set([
@@ -57,7 +58,7 @@ export function getPriorSliceCompletionBlocker(
       if (rows.length > 0) {
         slices = rows.map((r) => ({
           id: r.id,
-          done: r.status === "complete",
+          done: isClosedStatus(r.status),
           depends: r.depends ?? [],
         }));
       }

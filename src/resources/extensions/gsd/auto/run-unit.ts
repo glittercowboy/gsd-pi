@@ -12,6 +12,11 @@ import type { UnitResult } from "./types.js";
 import { _setCurrentResolve, _setSessionSwitchInFlight } from "./resolve.js";
 import { debugLog } from "../debug-logger.js";
 import { logWarning, logError } from "../workflow-logger.js";
+import { resolveAutoSupervisorConfig } from "../preferences.js";
+
+// Tracks the latest session-switch attempt so a late timeout settlement from an
+// older runUnit() call cannot clear the guard for a newer one.
+let sessionSwitchGeneration = 0;
 
 /**
  * Execute a single unit: create a new session, send the prompt, and await
@@ -36,10 +41,13 @@ export async function runUnit(
 
   let sessionResult: { cancelled: boolean };
   let sessionTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const mySessionSwitchGeneration = ++sessionSwitchGeneration;
   _setSessionSwitchInFlight(true);
   try {
     const sessionPromise = s.cmdCtx!.newSession().finally(() => {
-      _setSessionSwitchInFlight(false);
+      if (sessionSwitchGeneration === mySessionSwitchGeneration) {
+        _setSessionSwitchInFlight(false);
+      }
     });
     const timeoutPromise = new Promise<{ cancelled: true }>((resolve) => {
       sessionTimeoutHandle = setTimeout(
@@ -108,9 +116,23 @@ export async function runUnit(
     { triggerTurn: true },
   );
 
-  // ── Await agent_end ──
+  // ── Await agent_end with absolute timeout (H4 fix) ──
+  // If supervision fails to resolve unitPromise within 30s, treat as cancelled.
+  // Without this, a crashed agent that never emits agent_end hangs the loop (#3161).
   debugLog("runUnit", { phase: "awaiting-agent-end", unitType, unitId });
-  const result = await unitPromise;
+  const supervisor = resolveAutoSupervisorConfig();
+  const UNIT_HARD_TIMEOUT_MS = Math.max(
+    30_000,
+    ((supervisor.hard_timeout_minutes ?? 30) * 60 * 1000) + 30_000,
+  );
+  let unitTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  const timeoutResult = new Promise<UnitResult>((resolve) => {
+    unitTimeoutHandle = setTimeout(() => {
+      resolve({ status: "cancelled", errorContext: { message: "Unit hard timeout — supervision may have failed", category: "timeout", isTransient: true } });
+    }, UNIT_HARD_TIMEOUT_MS);
+  });
+  const result = await Promise.race([unitPromise, timeoutResult]);
+  if (unitTimeoutHandle) clearTimeout(unitTimeoutHandle);
   debugLog("runUnit", {
     phase: "agent-end-received",
     unitType,

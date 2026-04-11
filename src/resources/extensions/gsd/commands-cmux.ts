@@ -1,5 +1,5 @@
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { clearCmuxSidebar, CmuxClient, detectCmuxEnvironment, resolveCmuxConfig } from "../cmux/index.js";
 import { saveFile } from "./files.js";
 import {
@@ -8,6 +8,37 @@ import {
   loadProjectGSDPreferences,
 } from "./preferences.js";
 import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./commands-prefs-wizard.js";
+
+/**
+ * Auto-enable cmux in project preferences when detected but never configured.
+ * Called at boot (before agent start) — no ExtensionCommandContext needed.
+ * Returns true if preferences were written, false if skipped.
+ */
+export function autoEnableCmuxPreferences(): boolean {
+  const path = getProjectGSDPreferencesPath();
+  if (!existsSync(path)) return false;
+
+  const existing = loadProjectGSDPreferences();
+  const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : { version: 1 };
+  prefs.cmux = {
+    enabled: true,
+    notifications: true,
+    sidebar: true,
+    splits: false,
+    browser: false,
+    ...((prefs.cmux as Record<string, unknown> | undefined) ?? {}),
+  };
+  (prefs.cmux as Record<string, unknown>).enabled = true;
+  prefs.version = prefs.version || 1;
+
+  const frontmatter = serializePreferencesToFrontmatter(prefs);
+  let body = "\n# GSD Skill Preferences\n\nSee `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation and examples.\n";
+  const preserved = extractBodyAfterFrontmatter(readFileSync(path, "utf-8"));
+  if (preserved) body = preserved;
+
+  writeFileSync(path, `---\n${frontmatter}---${body}`, "utf-8");
+  return true;
+}
 
 function extractBodyAfterFrontmatter(content: string): string | null {
   const start = content.startsWith("---\n") ? 4 : content.startsWith("---\r\n") ? 5 : -1;

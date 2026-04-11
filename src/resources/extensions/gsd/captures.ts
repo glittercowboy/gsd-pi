@@ -15,7 +15,7 @@ import { gsdRoot } from "./paths.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type Classification = "quick-task" | "inject" | "defer" | "replan" | "note";
+export type Classification = "quick-task" | "inject" | "defer" | "replan" | "note" | "stop" | "backtrack";
 
 export interface CaptureEntry {
   id: string;
@@ -42,7 +42,7 @@ export interface TriageResult {
 
 const CAPTURES_FILENAME = "CAPTURES.md";
 const VALID_CLASSIFICATIONS: readonly string[] = [
-  "quick-task", "inject", "defer", "replan", "note",
+  "quick-task", "inject", "defer", "replan", "note", "stop", "backtrack",
 ];
 
 // ─── Path Resolution ──────────────────────────────────────────────────────────
@@ -283,6 +283,75 @@ export function loadActionableCaptures(basePath: string, currentMilestoneId?: st
         !c.resolvedInMilestone ||
         c.resolvedInMilestone === currentMilestoneId),
   );
+}
+
+/**
+ * Load unexecuted stop captures — user directives to halt auto-mode.
+ * These are checked in the pre-dispatch guard pipeline (runGuards) to
+ * pause auto-mode before the next unit is dispatched.
+ */
+export function loadStopCaptures(basePath: string): CaptureEntry[] {
+  return loadAllCaptures(basePath).filter(
+    c => c.status === "resolved" && !c.executed &&
+      (c.classification === "stop" || c.classification === "backtrack"),
+  );
+}
+
+/**
+ * Load unexecuted backtrack captures specifically — captures directing
+ * auto-mode to abandon current milestone and return to a previous one.
+ */
+export function loadBacktrackCaptures(basePath: string): CaptureEntry[] {
+  return loadAllCaptures(basePath).filter(
+    c => c.status === "resolved" && !c.executed && c.classification === "backtrack",
+  );
+}
+
+/**
+ * Revert captures that were silenced by non-triage agents.
+ *
+ * When an execute-task or other non-triage agent writes `**Status:** resolved`
+ * to CAPTURES.md, it bypasses the triage pipeline entirely. This function
+ * detects such captures (resolved but missing the Classification field that
+ * triage always writes) and reverts them to pending so the triage sidecar
+ * picks them up properly.
+ *
+ * Returns the number of captures reverted.
+ */
+export function revertExecutorResolvedCaptures(basePath: string): number {
+  const filePath = resolveCapturesPath(basePath);
+  if (!existsSync(filePath)) return 0;
+
+  let content = readFileSync(filePath, "utf-8");
+  let reverted = 0;
+
+  const all = loadAllCaptures(basePath);
+  for (const capture of all) {
+    // A properly triaged capture has both resolved status AND a classification.
+    // An executor-silenced capture has resolved status but NO classification.
+    if (capture.status === "resolved" && !capture.classification) {
+      const sectionRegex = new RegExp(
+        `(### ${escapeRegex(capture.id)}\\n(?:(?!### ).)*?)(?=### |$)`,
+        "s",
+      );
+      const match = sectionRegex.exec(content);
+      if (match) {
+        let section = match[1];
+        section = section.replace(
+          /\*\*Status:\*\*\s*resolved/i,
+          "**Status:** pending",
+        );
+        content = content.replace(sectionRegex, section);
+        reverted++;
+      }
+    }
+  }
+
+  if (reverted > 0) {
+    writeFileSync(filePath, content, "utf-8");
+  }
+
+  return reverted;
 }
 
 /**

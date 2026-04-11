@@ -179,7 +179,9 @@ export class CustomWorkflowEngine implements WorkflowEngine {
     state: EngineState,
     completedStep: CompletedStep,
   ): Promise<ReconcileResult> {
-    const graph = state.raw as WorkflowGraph;
+    // Re-read the graph from disk so we do not overwrite concurrent
+    // workflow edits with a stale in-memory snapshot from deriveState().
+    const graph = readGraph(this.runDir);
 
     // Extract stepId from "<workflowName>/<stepId>"
     const { milestone, slice, task } = parseUnitId(completedStep.unitId);

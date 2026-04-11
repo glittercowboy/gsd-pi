@@ -126,4 +126,34 @@ describe("forensics context persistence (#2941)", () => {
     // Should not throw
     clearForensicsMarker(join(tmpBase, "nonexistent"));
   });
+
+  it("buildForensicsContextInjection keeps marker for low-entropy resume prompts", async () => {
+    const { buildForensicsContextInjection } = await import("../bootstrap/system-context.ts");
+
+    const markerPath = join(tmpBase, ".gsd", "runtime", "active-forensics.json");
+    writeFileSync(markerPath, JSON.stringify({
+      reportPath: "/some/report.md",
+      promptContent: "forensics prompt",
+      createdAt: new Date().toISOString(),
+    }), "utf-8");
+
+    const result = buildForensicsContextInjection(tmpBase, "continue");
+    assert.equal(result, "forensics prompt");
+    assert.ok(existsSync(markerPath), "resume-like follow-up should keep marker intact");
+  });
+
+  it("buildForensicsContextInjection clears marker on unrelated user prompts", async () => {
+    const { buildForensicsContextInjection } = await import("../bootstrap/system-context.ts");
+
+    const markerPath = join(tmpBase, ".gsd", "runtime", "active-forensics.json");
+    writeFileSync(markerPath, JSON.stringify({
+      reportPath: "/some/report.md",
+      promptContent: "forensics prompt",
+      createdAt: new Date().toISOString(),
+    }), "utf-8");
+
+    const result = buildForensicsContextInjection(tmpBase, "please summarize the README");
+    assert.equal(result, null);
+    assert.ok(!existsSync(markerPath), "unrelated follow-up should clear the stale marker");
+  });
 });

@@ -39,7 +39,7 @@ export function markSliceDoneInRoadmap(basePath: string, mid: string, sid: strin
       new RegExp(`^(#{1,4}\\s+(?:\\*{0,2})(?:Slice\\s+)?${sid}\\*{0,2}[:\\s.\\u2014\\u2013-]+\\s*)(.+)`, "m"),
       (match, prefix, title) => {
         // Already marked done — no-op
-        if (/^\u2713/.test(title) || /\(Complete\)\s*$/i.test(title)) return match;
+        if (/^[\u2713\u2705]/.test(title) || /[\u2705]\s*$/.test(title) || /\(Complete\)\s*$/i.test(title)) return match;
         return `${prefix}\u2713 ${title}`;
       },
     );

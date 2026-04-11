@@ -123,6 +123,49 @@ test("Rule 3: A-A-A-A triggers Rule 2 not Rule 3", () => {
   );
 });
 
+// ─── Rule 4: ENOENT same path twice in window (#3575) ───────────────────────
+
+test("Rule 4: same ENOENT path in two entries triggers stuck", () => {
+  const result = detectStuck([
+    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.gsd/agent/skills/debug-like-expert/SKILL.md'" },
+    { key: "B" },
+    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.gsd/agent/skills/debug-like-expert/SKILL.md'" },
+  ]);
+  assert.notEqual(result, null);
+  assert.equal(result!.stuck, true);
+  assert.ok(result!.reason.includes("Missing file"), `reason was: ${result!.reason}`);
+  assert.ok(result!.reason.includes("ENOENT"), `reason was: ${result!.reason}`);
+});
+
+test("Rule 4: different ENOENT paths do not trigger stuck", () => {
+  const result = detectStuck([
+    { key: "A", error: "ENOENT: no such file or directory, access '/path/a'" },
+    { key: "B", error: "ENOENT: no such file or directory, access '/path/b'" },
+  ]);
+  assert.equal(result, null);
+});
+
+test("Rule 4: single ENOENT does not trigger stuck", () => {
+  const result = detectStuck([
+    { key: "A", error: "ENOENT: no such file or directory, access '/path/a'" },
+    { key: "B" },
+  ]);
+  assert.equal(result, null);
+});
+
+test("Rule 4: ENOENT paths non-consecutive still triggers", () => {
+  const result = detectStuck([
+    { key: "A", error: "ENOENT: no such file or directory, access '/missing/skill'" },
+    { key: "B" },
+    { key: "C" },
+    { key: "D", error: "ENOENT: no such file or directory, access '/missing/skill'" },
+  ]);
+  assert.notEqual(result, null);
+  assert.equal(result!.stuck, true);
+  assert.ok(result!.reason.includes("/missing/skill"), `reason was: ${result!.reason}`);
+});
+
+
 // ─── Gap documentation: 3-unit cycle evades detection ────────────────────────
 
 test("Three-unit cycle A-B-C-A-B-C does NOT trigger stuck (documents gap L13)", () => {

@@ -9,6 +9,7 @@ import {
   formatRelativeTime,
   type HealthWidgetData,
 } from "../health-widget-core.ts";
+import { registerHooks } from "../bootstrap/register-hooks.ts";
 
 function makeTempDir(prefix: string): string {
   const dir = join(
@@ -176,4 +177,48 @@ test("detectHealthWidgetProjectState: metrics file alone does not imply project"
     "utf-8",
   );
   assert.equal(detectHealthWidgetProjectState(dir), "initialized");
+});
+
+test("session_start bootstraps the health widget alongside notifications", async (t) => {
+  const dir = makeTempDir("bootstrap");
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+
+  const originalCwd = process.cwd();
+  process.chdir(dir);
+  t.after(() => {
+    process.chdir(originalCwd);
+    cleanup(dir);
+  });
+
+  const widgets: string[] = [];
+  const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void> | void>();
+  const pi = {
+    on(event: string, handler: (event: unknown, ctx: any) => Promise<void> | void) {
+      handlers.set(event, handler);
+    },
+  } as any;
+
+  registerHooks(pi);
+  const sessionStart = handlers.get("session_start");
+  assert.ok(sessionStart, "session_start handler is registered");
+
+  await sessionStart!({}, {
+    hasUI: true,
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setWorkingMessage: () => {},
+      onTerminalInput: () => () => {},
+      setWidget: (key: string) => {
+        widgets.push(key);
+      },
+    },
+    sessionManager: {
+      getSessionId: () => null,
+    },
+    model: null,
+  } as any);
+
+  assert.ok(widgets.includes("gsd-health"), "health widget is bootstrapped");
+  assert.ok(widgets.includes("gsd-notifications"), "notification widget still boots");
 });

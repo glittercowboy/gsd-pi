@@ -36,16 +36,18 @@ import {
 
 import { findMilestoneIds } from './milestone-ids.js';
 import { loadQueueOrder, sortByQueueOrder } from './queue-order.js';
+import { isClosedStatus, isDeferredStatus } from './status-guards.js';
 import { nativeBatchParseGsdFiles, type BatchParsedFile } from './native-parser-bridge.js';
 
 import { join, resolve } from 'path';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { debugCount, debugTime } from './debug-logger.js';
-import { extractVerdict } from './verdict-parser.js';
 import { logWarning, logError } from './workflow-logger.js';
+import { extractVerdict } from './verdict-parser.js';
 
 import {
   isDbAvailable,
+  wasDbOpenAttempted,
   getAllMilestones,
   getMilestone,
   getMilestoneSlices,
@@ -54,6 +56,7 @@ import {
   getSlice,
   insertMilestone,
   insertSlice,
+  insertTask,
   updateTaskStatus,
   getPendingSliceGateCount,
   type MilestoneRow,
@@ -77,10 +80,20 @@ import {
  * as ghosts, causing auto-mode to skip them entirely.
  */
 export function isGhostMilestone(basePath: string, mid: string): boolean {
-  // If the milestone has a DB row, it's a known milestone — not a ghost.
+  // If the milestone has a DB row, it's usually a known milestone — not a ghost.
+  // Exception: a "queued" row with no disk artifacts is a phantom from
+  // gsd_milestone_generate_id that was never planned (#3645).
   if (isDbAvailable()) {
     const dbRow = getMilestone(mid);
-    if (dbRow) return false;
+    if (dbRow) {
+      if (dbRow.status === 'queued') {
+        const hasContent = resolveMilestoneFile(basePath, mid, "CONTEXT")
+          || resolveMilestoneFile(basePath, mid, "ROADMAP")
+          || resolveMilestoneFile(basePath, mid, "SUMMARY");
+        return !hasContent;
+      }
+      return false;
+    }
   }
 
   // If a worktree exists for this milestone, it was legitimately created.
@@ -177,7 +190,7 @@ export async function getActiveMilestoneId(basePath: string): Promise<string | n
       const byId = new Map(allMilestones.map(m => [m.id, m]));
       for (const id of sortedIds) {
         const m = byId.get(id)!;
-        if (m.status === "complete" || m.status === "done" || m.status === "parked") continue;
+        if (isClosedStatus(m.status) || m.status === "parked") continue;
         return m.id;
       }
       return null;
@@ -259,6 +272,12 @@ export async function deriveState(basePath: string): Promise<GSDState> {
       _telemetry.markdownDeriveCount++;
     }
   } else {
+    // Only warn when DB initialization was attempted and failed — not when
+    // the DB simply hasn't been opened yet (e.g. during before_agent_start
+    // context injection which runs before any tool invocation opens the DB).
+    if (wasDbOpenAttempted()) {
+      logWarning("state", "DB unavailable — using filesystem state derivation (degraded mode)");
+    }
     result = await _deriveStateImpl(basePath);
     _telemetry.markdownDeriveCount++;
   }
@@ -291,12 +310,9 @@ function extractContextTitle(content: string | null, fallback: string): string {
 
 // ─── DB-backed State Derivation ────────────────────────────────────────────
 
-/**
- * Helper: check if a DB status counts as "done" (handles K002 ambiguity).
- */
-function isStatusDone(status: string): boolean {
-  return status === 'complete' || status === 'done';
-}
+// isStatusDone replaced by isClosedStatus from status-guards.ts (single source of truth).
+// Alias kept for backward compatibility within this file.
+const isStatusDone = isClosedStatus;
 
 /**
  * Derive GSD state from the milestones/slices/tasks DB tables.
@@ -429,13 +445,10 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
       continue;
     }
 
-    // Check roadmap: all slices done means milestone is complete
-    const slices = getMilestoneSlices(m.id);
-    if (slices.length > 0 && slices.every(s => isStatusDone(s.status))) {
-      // All slices done but no summary — still counts as complete for dep resolution
-      // if a summary file exists
-      // Note: without summary file, the milestone is in validating/completing state, not complete
-    }
+    // Milestones with all slices done but no SUMMARY file are in
+    // validating/completing state — intentionally NOT added to
+    // completeMilestoneIds.  The SUMMARY file (checked above) is the
+    // terminal artifact that proves completion per #864.
   }
 
   // Phase 2: Build registry and find active milestone
@@ -444,6 +457,10 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
   let activeMilestoneSlices: SliceRow[] = [];
   let activeMilestoneFound = false;
   let activeMilestoneHasDraft = false;
+  // Queued shells (DB row, no slices, no content files) are deferred during
+  // the main loop so they don't eclipse real active milestones (#3470).
+  // If no real active milestone is found, the first deferred shell is promoted.
+  let firstDeferredQueuedShell: { id: string; title: string; deps: string[] } | null = null;
 
   for (const m of milestones) {
     if (parkedMilestoneIds.has(m.id)) {
@@ -451,9 +468,10 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
       continue;
     }
 
-    // Ghost milestone check: no slices in DB AND no substantive files on disk
+    // Ghost milestone check: no slices in DB AND no substantive files on disk.
+    // Skip queued milestones — they are handled by the deferred-shell logic below (#3470).
     const slices = getMilestoneSlices(m.id);
-    if (slices.length === 0 && !isStatusDone(m.status)) {
+    if (slices.length === 0 && !isStatusDone(m.status) && m.status !== 'queued') {
       // Check disk for ghost detection
       if (isGhostMilestone(basePath, m.id)) continue;
     }
@@ -498,6 +516,23 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
         continue;
       }
 
+      // Defer queued shell milestones with no substantive content (#3470).
+      // A queued milestone with no slices and no context/draft file is a
+      // placeholder that should not block later real active milestones.
+      // If no real active milestone is found after the loop, the first
+      // deferred shell is promoted to active (#2921).
+      if (m.status === 'queued' && slices.length === 0) {
+        const contextFile = resolveMilestoneFile(basePath, m.id, "CONTEXT");
+        const draftFile = resolveMilestoneFile(basePath, m.id, "CONTEXT-DRAFT");
+        if (!contextFile && !draftFile) {
+          if (!firstDeferredQueuedShell) {
+            firstDeferredQueuedShell = { id: m.id, title, deps };
+          }
+          registry.push({ id: m.id, title, status: 'pending', ...(deps.length > 0 ? { dependsOn: deps } : {}) });
+          continue;
+        }
+      }
+
       // Handle all-slices-done case (validating/completing)
       if (allSlicesDone) {
         const validationFile = resolveMilestoneFile(basePath, m.id, "VALIDATION");
@@ -528,6 +563,16 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
       const deps = m.depends_on;
       registry.push({ id: m.id, title, status: 'pending', ...(deps.length > 0 ? { dependsOn: deps } : {}) });
     }
+  }
+
+  // Promote deferred queued shell if no real active milestone was found (#3470/#2921).
+  if (!activeMilestoneFound && firstDeferredQueuedShell) {
+    const shell = firstDeferredQueuedShell;
+    activeMilestone = { id: shell.id, title: shell.title };
+    activeMilestoneSlices = [];
+    activeMilestoneFound = true;
+    const entry = registry.find(e => e.id === shell.id);
+    if (entry) entry.status = 'active';
   }
 
   const milestoneProgress = {
@@ -634,12 +679,15 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
     const validationFile = resolveMilestoneFile(basePath, activeMilestone.id, "VALIDATION");
     const validationContent = validationFile ? await loadFile(validationFile) : null;
     const validationTerminal = validationContent ? isValidationTerminal(validationContent) : false;
+    const verdict = validationContent ? extractVerdict(validationContent) : undefined;
     const sliceProgress = {
       done: activeMilestoneSlices.length,
       total: activeMilestoneSlices.length,
     };
 
-    if (!validationTerminal) {
+    // Force re-validation when verdict is needs-remediation — remediation slices
+    // may have completed since the stale validation was written (#3596).
+    if (!validationTerminal || verdict === 'needs-remediation') {
       return {
         activeMilestone, activeSlice: null, activeTask: null,
         phase: 'validating-milestone',
@@ -673,12 +721,39 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
   let activeSlice: ActiveRef | null = null;
   let activeSliceRow: SliceRow | null = null;
 
-  for (const s of activeMilestoneSlices) {
-    if (isStatusDone(s.status)) continue;
-    if (s.depends.every(dep => doneSliceIds.has(dep))) {
-      activeSlice = { id: s.id, title: s.title };
-      activeSliceRow = s;
-      break;
+  // ── Slice-level parallel worker isolation ─────────────────────────────
+  // When GSD_SLICE_LOCK is set, this process is a parallel worker scoped
+  // to a single slice. Override activeSlice to only the locked slice ID.
+  const sliceLock = process.env.GSD_SLICE_LOCK;
+  if (sliceLock) {
+    const lockedSlice = activeMilestoneSlices.find(s => s.id === sliceLock);
+    if (lockedSlice) {
+      activeSlice = { id: lockedSlice.id, title: lockedSlice.title };
+      activeSliceRow = lockedSlice;
+    } else {
+      logWarning("state", `GSD_SLICE_LOCK=${sliceLock} not found in active slices — worker has no assigned work`);
+      // Don't silently continue — this is a dispatch error
+      return {
+        activeMilestone, activeSlice: null, activeTask: null,
+        phase: 'blocked',
+        recentDecisions: [], blockers: [`GSD_SLICE_LOCK=${sliceLock} not found in active milestone slices`],
+        nextAction: 'Slice lock references a non-existent slice — check orchestrator dispatch.',
+        registry, requirements,
+        progress: { milestones: milestoneProgress, slices: sliceProgress },
+      };
+    }
+  } else {
+    for (const s of activeMilestoneSlices) {
+      if (isStatusDone(s.status)) continue;
+      // #2661: Skip deferred slices — a decision explicitly deferred this work.
+      // Without this guard the dispatcher would keep dispatching deferred slices
+      // because DECISIONS.md is only contextual, not authoritative for dispatch.
+      if (isDeferredStatus(s.status)) continue;
+      if (s.depends.every(dep => doneSliceIds.has(dep))) {
+        activeSlice = { id: s.id, title: s.title };
+        activeSliceRow = s;
+        break;
+      }
     }
   }
 
@@ -708,6 +783,44 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
 
   // ── Get tasks from DB ────────────────────────────────────────────────
   let tasks = getSliceTasks(activeMilestone.id, activeSlice.id);
+
+  // ── Reconcile missing tasks: plan file has tasks but DB is empty (#3600) ──
+  // When the planning agent writes S##-PLAN.md with task entries but never
+  // calls the gsd_plan_slice persistence tool, the DB has zero task rows
+  // even though the plan file contains valid tasks. Without this reconciliation,
+  // deriveState returns phase='planning' forever — the dispatcher re-dispatches
+  // plan-slice in an infinite loop.
+  if (tasks.length === 0 && planFile) {
+    try {
+      const planContent = await loadFile(planFile);
+      if (planContent) {
+        const diskPlan = parsePlan(planContent);
+        if (diskPlan.tasks.length > 0) {
+          for (let i = 0; i < diskPlan.tasks.length; i++) {
+            const t = diskPlan.tasks[i];
+            try {
+              insertTask({
+                id: t.id,
+                sliceId: activeSlice.id,
+                milestoneId: activeMilestone.id,
+                title: t.title,
+                status: t.done ? 'complete' : 'pending',
+                sequence: i + 1,
+              });
+            } catch (insertErr) {
+              // Task may already exist from a partial previous import — skip
+              logWarning("reconcile", `failed to insert task ${t.id} from plan file: ${insertErr instanceof Error ? insertErr.message : String(insertErr)}`);
+            }
+          }
+          tasks = getSliceTasks(activeMilestone.id, activeSlice.id);
+          logWarning("reconcile", `imported ${tasks.length} tasks from plan file for ${activeMilestone.id}/${activeSlice.id} — DB was empty (#3600)`, { mid: activeMilestone.id, sid: activeSlice.id });
+        }
+      }
+    } catch (err) {
+      // Non-fatal — fall through to the existing "empty plan" logic
+      logError("reconcile", `plan-file task import failed for ${activeMilestone.id}/${activeSlice.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   // ── Reconcile stale task status (#2514) ──────────────────────────────
   // When a session disconnects after the agent writes SUMMARY + VERIFY
@@ -841,7 +954,12 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
   // ── REPLAN-TRIGGER detection ─────────────────────────────────────────
   if (!blockerTaskId) {
     const sliceRow = getSlice(activeMilestone.id, activeSlice.id);
-    if (sliceRow?.replan_triggered_at) {
+    // Check DB column first, fall back to disk trigger file when DB write
+    // was best-effort and failed (triage-resolution.ts dual-write gap).
+    const dbTriggered = !!sliceRow?.replan_triggered_at;
+    const diskTriggered = !dbTriggered &&
+      !!resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "REPLAN-TRIGGER");
+    if (dbTriggered || diskTriggered) {
       // Loop protection: if replan_history has entries, replan was already done
       const replanHistory = getReplanHistory(activeMilestone.id, activeSlice.id);
       if (replanHistory.length === 0) {
@@ -1070,22 +1188,25 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       const validationFile = resolveMilestoneFile(basePath, mid, "VALIDATION");
       const validationContent = validationFile ? await cachedLoadFile(validationFile) : null;
       const validationTerminal = validationContent ? isValidationTerminal(validationContent) : false;
+      const verdict = validationContent ? extractVerdict(validationContent) : undefined;
+      // needs-remediation is terminal but requires re-validation (#3596)
+      const needsRevalidation = !validationTerminal || verdict === 'needs-remediation';
 
       if (summaryFile) {
         // Summary exists → milestone is complete regardless of validation state.
         // The summary is the terminal artifact (#864).
         registry.push({ id: mid, title, status: 'complete' });
-      } else if (!validationTerminal && !activeMilestoneFound) {
-        // No summary and no terminal validation → validating-milestone
+      } else if (needsRevalidation && !activeMilestoneFound) {
+        // No summary and needs (re-)validation → validating-milestone
         activeMilestone = { id: mid, title };
         activeRoadmap = roadmap;
         activeMilestoneFound = true;
         registry.push({ id: mid, title, status: 'active' });
-      } else if (!validationTerminal && activeMilestoneFound) {
-        // No summary and no terminal validation, but another milestone is already active
+      } else if (needsRevalidation && activeMilestoneFound) {
+        // Needs (re-)validation, but another milestone is already active
         registry.push({ id: mid, title, status: 'pending' });
       } else if (!activeMilestoneFound) {
-        // Terminal validation but no summary → completing-milestone
+        // Terminal validation (pass/needs-attention) but no summary → completing-milestone
         activeMilestone = { id: mid, title };
         activeRoadmap = roadmap;
         activeMilestoneFound = true;
@@ -1202,7 +1323,8 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       ? `All milestones complete. ${activeReqs} active requirement${activeReqs === 1 ? '' : 's'} in REQUIREMENTS.md ${activeReqs === 1 ? 'has' : 'have'} not been mapped to a milestone.`
       : 'All milestones complete.';
     return {
-      activeMilestone: lastEntry ? { id: lastEntry.id, title: lastEntry.title } : null,
+      activeMilestone: null,
+      lastCompletedMilestone: lastEntry ? { id: lastEntry.id, title: lastEntry.title } : null,
       activeSlice: null,
       activeTask: null,
       phase: 'complete',
@@ -1270,12 +1392,15 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
     const validationFile = resolveMilestoneFile(basePath, activeMilestone.id, "VALIDATION");
     const validationContent = validationFile ? await cachedLoadFile(validationFile) : null;
     const validationTerminal = validationContent ? isValidationTerminal(validationContent) : false;
+    const verdict = validationContent ? extractVerdict(validationContent) : undefined;
     const sliceProgress = {
       done: activeRoadmap.slices.length,
       total: activeRoadmap.slices.length,
     };
 
-    if (!validationTerminal) {
+    // Force re-validation when verdict is needs-remediation — remediation slices
+    // may have completed since the stale validation was written (#3596).
+    if (!validationTerminal || verdict === 'needs-remediation') {
       return {
         activeMilestone,
         activeSlice: null,
@@ -1319,11 +1444,38 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
   const doneSliceIds = new Set(activeRoadmap.slices.filter(s => s.done).map(s => s.id));
   let activeSlice: ActiveRef | null = null;
 
-  for (const s of activeRoadmap.slices) {
-    if (s.done) continue;
-    if (s.depends.every(dep => doneSliceIds.has(dep))) {
-      activeSlice = { id: s.id, title: s.title };
-      break;
+  // ── Slice-level parallel worker isolation ─────────────────────────────
+  // When GSD_SLICE_LOCK is set, override activeSlice to only the locked slice.
+  const sliceLockLegacy = process.env.GSD_SLICE_LOCK;
+  if (sliceLockLegacy) {
+    const lockedSlice = activeRoadmap.slices.find(s => s.id === sliceLockLegacy);
+    if (lockedSlice) {
+      activeSlice = { id: lockedSlice.id, title: lockedSlice.title };
+    } else {
+      logWarning("state", `GSD_SLICE_LOCK=${sliceLockLegacy} not found in active slices — worker has no assigned work`);
+      return {
+        activeMilestone,
+        activeSlice: null,
+        activeTask: null,
+        phase: 'blocked',
+        recentDecisions: [],
+        blockers: [`GSD_SLICE_LOCK=${sliceLockLegacy} not found in active milestone slices`],
+        nextAction: 'Slice lock references a non-existent slice — check orchestrator dispatch.',
+        registry,
+        requirements,
+        progress: {
+          milestones: milestoneProgress,
+          slices: sliceProgress,
+        },
+      };
+    }
+  } else {
+    for (const s of activeRoadmap.slices) {
+      if (s.done) continue;
+      if (s.depends.every(dep => doneSliceIds.has(dep))) {
+        activeSlice = { id: s.id, title: s.title };
+        break;
+      }
     }
   }
 

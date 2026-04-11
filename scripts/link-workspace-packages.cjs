@@ -2,7 +2,8 @@
 /**
  * link-workspace-packages.cjs
  *
- * Creates node_modules/@gsd/* symlinks pointing to packages/* directories.
+ * Creates node_modules/@gsd/* and node_modules/@gsd-build/* symlinks pointing
+ * to shipped packages/* directories.
  *
  * During development, npm workspaces creates these automatically. But in the
  * published tarball, workspace packages are shipped under packages/ (via the
@@ -20,27 +21,33 @@ const { resolve, join } = require('path')
 
 const root = resolve(__dirname, '..')
 const packagesDir = join(root, 'packages')
-const nodeModulesGsd = join(root, 'node_modules', '@gsd')
-
-// Map directory names to package names
-const packageMap = {
-  'native': 'native',
-  'pi-agent-core': 'pi-agent-core',
-  'pi-ai': 'pi-ai',
-  'pi-coding-agent': 'pi-coding-agent',
-  'pi-tui': 'pi-tui',
+const scopeDirs = {
+  '@gsd': join(root, 'node_modules', '@gsd'),
+  '@gsd-build': join(root, 'node_modules', '@gsd-build'),
 }
 
-// Ensure @gsd scope directory exists
-if (!existsSync(nodeModulesGsd)) {
-  mkdirSync(nodeModulesGsd, { recursive: true })
+// Map directory names to scoped package names
+const packageMap = {
+  'native': { scope: '@gsd', name: 'native' },
+  'pi-agent-core': { scope: '@gsd', name: 'pi-agent-core' },
+  'pi-ai': { scope: '@gsd', name: 'pi-ai' },
+  'pi-coding-agent': { scope: '@gsd', name: 'pi-coding-agent' },
+  'pi-tui': { scope: '@gsd', name: 'pi-tui' },
+  'rpc-client': { scope: '@gsd-build', name: 'rpc-client' },
+}
+
+for (const scopeDir of Object.values(scopeDirs)) {
+  if (!existsSync(scopeDir)) {
+    mkdirSync(scopeDir, { recursive: true })
+  }
 }
 
 let linked = 0
 let copied = 0
-for (const [dir, name] of Object.entries(packageMap)) {
+for (const [dir, pkg] of Object.entries(packageMap)) {
   const source = join(packagesDir, dir)
-  const target = join(nodeModulesGsd, name)
+  const scopeDir = scopeDirs[pkg.scope]
+  const target = join(scopeDir, pkg.name)
 
   if (!existsSync(source)) continue
 
@@ -50,7 +57,7 @@ for (const [dir, name] of Object.entries(packageMap)) {
       const stat = lstatSync(target)
       if (stat.isSymbolicLink()) {
         const linkTarget = readlinkSync(target)
-        if (resolve(join(nodeModulesGsd, linkTarget)) === source || linkTarget === source) {
+        if (resolve(join(scopeDir, linkTarget)) === source || linkTarget === source) {
           continue // Already correct
         }
         unlinkSync(target) // Wrong target, relink

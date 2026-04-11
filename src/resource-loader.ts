@@ -87,9 +87,13 @@ function writeManagedResourceManifest(agentDir: string): void {
       installedExtensionDirs = entries
         .filter(e => e.isDirectory())
         .filter(e => {
-          // Only track directories that are actual extensions (contain index.js or index.ts)
+          // Track directories that are actual extensions — identified by an
+          // index.js/index.ts entry point OR an extension-manifest.json (e.g.
+          // remote-questions which uses mod.ts instead of index.ts).
           const dirPath = join(bundledExtensionsDir, e.name)
-          return existsSync(join(dirPath, 'index.js')) || existsSync(join(dirPath, 'index.ts'))
+          return existsSync(join(dirPath, 'index.js'))
+            || existsSync(join(dirPath, 'index.ts'))
+            || existsSync(join(dirPath, 'extension-manifest.json'))
         })
         .map(e => e.name)
     }
@@ -369,6 +373,16 @@ function pruneRemovedBundledExtensions(
     }
   }
 
+  // Sweep-based: also remove any installed extension subdirectory not in the current bundle,
+  // even if it was never tracked in the manifest (e.g. installed by a pre-manifest version).
+  try {
+    if (existsSync(extensionsDir)) {
+      for (const e of readdirSync(extensionsDir, { withFileTypes: true })) {
+        if (e.isDirectory()) removeDirIfStale(e.name)
+      }
+    }
+  } catch { /* non-fatal */ }
+
   // Always remove known stale files regardless of manifest state.
   // These were installed by pre-manifest versions so they may not appear in
   // installedExtensionRootFiles even when a manifest exists.
@@ -399,12 +413,14 @@ export function initResources(agentDir: string): void {
 
   const currentVersion = getBundledGsdVersion()
   const manifest = readManagedResourceManifest(agentDir)
+  const extensionsDir = join(agentDir, 'extensions')
 
   // Always prune root-level extension files that were removed from the bundle.
   // This is cheap (a few existence checks + at most one rmSync) and must run
   // unconditionally so that stale files left by a previous version are cleaned
   // up even when the version/hash match causes the full sync to be skipped.
   pruneRemovedBundledExtensions(manifest, agentDir)
+  pruneStaleSiblingFiles(bundledExtensionsDir, extensionsDir)
 
   // Ensure ~/.gsd/agent/node_modules symlinks to GSD's node_modules on EVERY
   // launch, not just during resource syncs. A stale/broken symlink makes ALL
@@ -421,7 +437,7 @@ export function initResources(agentDir: string): void {
   if (manifest && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
     const currentHash = computeResourceFingerprint()
-    const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(join(agentDir, 'extensions'))
+    const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(extensionsDir, bundledExtensionsDir)
     if (manifest.contentHash && manifest.contentHash === currentHash && !hasStaleExtensionFiles) {
       return
     }
@@ -557,12 +573,26 @@ function migrateSkillsToEcosystemDir(agentDir: string): void {
   }
 }
 
-export function hasStaleCompiledExtensionSiblings(extensionsDir: string): boolean {
+export function hasStaleCompiledExtensionSiblings(extensionsDir: string, sourceDir: string = bundledExtensionsDir): boolean {
   if (!existsSync(extensionsDir)) return false
+  const sourceFiles = existsSync(sourceDir)
+    ? new Set(
+        readdirSync(sourceDir, { withFileTypes: true })
+          .filter((entry) => entry.isFile())
+          .map((entry) => entry.name),
+      )
+    : new Set<string>()
   for (const entry of readdirSync(extensionsDir, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith('.ts')) continue
-    const jsName = entry.name.replace(/\.ts$/, '.js')
-    if (existsSync(join(extensionsDir, jsName))) {
+    if (!entry.isFile()) continue
+    if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.js')) continue
+
+    const siblingName = entry.name.endsWith('.ts')
+      ? entry.name.replace(/\.ts$/, '.js')
+      : entry.name.replace(/\.js$/, '.ts')
+
+    if (!existsSync(join(extensionsDir, siblingName))) continue
+    if (sourceFiles.has(entry.name) && sourceFiles.has(siblingName)) continue
+    if (sourceFiles.has(entry.name) || sourceFiles.has(siblingName)) {
       return true
     }
   }
@@ -602,7 +632,7 @@ export function buildResourceLoader(agentDir: string): DefaultResourceLoader {
   return new DefaultResourceLoader({
     agentDir,
     additionalExtensionPaths: piExtensionPaths,
-    bundledExtensionNames: bundledKeys,
+    bundledExtensionKeys: bundledKeys,
     extensionPathsTransform: (paths: string[]) => {
       // 1. Filter community extensions through the GSD registry
       const filteredPaths = paths.filter((entryPath) => {

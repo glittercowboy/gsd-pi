@@ -305,11 +305,13 @@ async function handleShareCommand(ctx: SlashCommandContext): Promise<void> {
 		ctx.showStatus("Share cancelled");
 	};
 
-	try {
-		const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-			proc = spawn("gh", ["gist", "create", "--public=false", tmpFile]);
-			let stdout = "";
-			let stderr = "";
+		try {
+			const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
+				proc = spawn("gh", ["gist", "create", "--public=false", tmpFile], {
+					shell: process.platform === "win32",
+				});
+				let stdout = "";
+				let stderr = "";
 			proc.stdout?.on("data", (data) => {
 				stdout += data.toString();
 			});

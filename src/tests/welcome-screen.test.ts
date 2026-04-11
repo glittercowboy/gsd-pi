@@ -83,3 +83,18 @@ test('omits remote channel when not provided', () => {
   assert.ok(!out.includes('Slack'), 'should not show Slack when no remote')
   assert.ok(!out.includes('Telegram'), 'should not show Telegram when no remote')
 })
+
+test('separator lines extend to full terminal width on wide terminals', (t) => {
+  const origColumns = process.stderr.columns
+  ;(process.stderr as any).columns = 250
+  t.after(() => { ;(process.stderr as any).columns = origColumns })
+
+  const out = strip(capture({ version: '1.0.0' }))
+  const lines = out.split('\n')
+  // Top and bottom separator bars should be 249 chars (columns - 1)
+  const separatorLines = lines.filter(l => /^─+$/.test(l.trim()))
+  assert.ok(separatorLines.length >= 2, 'expected at least 2 full-width separator lines')
+  for (const sep of separatorLines) {
+    assert.equal(sep.trim().length, 249, `separator should be 249 chars wide, got ${sep.trim().length}`)
+  }
+})

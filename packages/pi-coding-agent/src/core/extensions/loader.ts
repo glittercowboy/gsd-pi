@@ -38,6 +38,7 @@ import type { ExecOptions } from "../exec.js";
 import { execCommand } from "../exec.js";
 import { getUntrustedExtensionPaths } from "./project-trust.js";
 export { isProjectTrusted, trustProject, getUntrustedExtensionPaths } from "./project-trust.js";
+import { registerToolCompatibility } from "../tools/tool-compatibility-registry.js";
 import type {
 	Extension,
 	ExtensionAPI,
@@ -428,6 +429,9 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		unregisterProvider: (name) => {
 			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
 		},
+		// Stubs replaced by ExtensionRunner at construction time via bindEmitMethods().
+		emitBeforeModelSelect: async () => undefined,
+		emitAdjustToolSet: async () => undefined,
 	};
 
 	return runtime;
@@ -457,6 +461,10 @@ function createExtensionAPI(
 				definition: tool,
 				extensionPath: extension.path,
 			});
+			// ADR-005: auto-register tool compatibility metadata
+			if (tool.compatibility) {
+				registerToolCompatibility(tool.name, tool.compatibility);
+			}
 			runtime.refreshTools();
 		},
 
@@ -579,6 +587,14 @@ function createExtensionAPI(
 			runtime.unregisterProvider(name);
 		},
 
+		async emitBeforeModelSelect(event: Omit<import("./types.js").BeforeModelSelectEvent, "type">): Promise<import("./types.js").BeforeModelSelectResult | undefined> {
+			return runtime.emitBeforeModelSelect(event);
+		},
+
+		async emitAdjustToolSet(event: Omit<import("./types.js").AdjustToolSetEvent, "type">): Promise<import("./types.js").AdjustToolSetResult | undefined> {
+			return runtime.emitAdjustToolSet(event);
+		},
+
 		events: eventBus,
 	} as ExtensionAPI;
 
@@ -618,6 +634,39 @@ export function containsTypeScriptSyntax(source: string): boolean {
 	return TS_SYNTAX_PATTERNS.some((pattern) => pattern.test(source));
 }
 
+/**
+ * Shared jiti instance for loading extension modules.
+ *
+ * Before this fix (#2108), each extension created a NEW jiti instance with
+ * `moduleCache: false`, causing shared dependencies (e.g. @gsd/pi-agent-core)
+ * to be recompiled for every extension — turning a ~3s parallel load into a
+ * ~15-30s serial compilation bottleneck.
+ *
+ * Using a single shared instance with `moduleCache: true` means shared modules
+ * are compiled once and reused across all extensions.
+ */
+let _extensionLoaderJiti: ReturnType<typeof createJiti> | null = null;
+
+/**
+ * Reset the shared jiti singleton so the next call to getExtensionLoaderJiti()
+ * creates a fresh instance.  This prevents memory leaks in long-running daemon
+ * processes (every loaded module stays cached forever) and ensures stale modules
+ * are not returned when extension source changes on disk.
+ */
+export function resetExtensionLoaderCache(): void {
+	_extensionLoaderJiti = null;
+}
+
+function getExtensionLoaderJiti() {
+	if (!_extensionLoaderJiti) {
+		_extensionLoaderJiti = createJiti(import.meta.url, {
+			moduleCache: true,
+			...getJitiOptions(),
+		});
+	}
+	return _extensionLoaderJiti;
+}
+
 async function loadExtensionModule(extensionPath: string) {
 	// Pre-compiled extension loading: if the source is .ts and a sibling .js
 	// file exists with matching or newer mtime, use native import() to skip
@@ -637,10 +686,7 @@ async function loadExtensionModule(extensionPath: string) {
 		}
 	}
 
-	const jiti = createJiti(import.meta.url, {
-		moduleCache: false,
-		...getJitiOptions(),
-	});
+	const jiti = getExtensionLoaderJiti();
 
 	const module = await jiti.import(extensionPath, { default: true });
 	const factory = module as ExtensionFactory;

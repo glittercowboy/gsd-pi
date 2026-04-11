@@ -61,6 +61,33 @@ const WINDOWS_BLOCKED_PATHS = new Set([
   "C:\\Program Files (x86)",
 ]);
 
+const WINDOWS_BLOCKED_SUFFIXES = new Set([
+  "\\",
+  "\\windows",
+  "\\windows\\system32",
+  "\\program files",
+  "\\program files (x86)",
+]);
+
+function normalizePathForComparison(dirPath: string): string {
+  let normalized = dirPath.replace(/[/\\]+$/, "");
+  if (normalized === "") {
+    normalized = "/";
+  } else if (/^[A-Za-z]:$/.test(normalized)) {
+    normalized += "\\";
+  }
+  return platform() === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isBlockedWindowsPath(normalized: string): boolean {
+  if (!/^[a-z]:\\/.test(normalized)) {
+    return false;
+  }
+
+  const suffix = normalized.slice(2);
+  return WINDOWS_BLOCKED_SUFFIXES.has(suffix);
+}
+
 // ─── Core Validation ────────────────────────────────────────────────────────────
 
 /**
@@ -84,16 +111,11 @@ export function validateDirectory(dirPath: string): DirectoryValidationResult {
 
   // Normalize trailing slashes for consistent comparison.
   // Special cases: "/" → "/" (not ""), "C:\" → "C:\" (not "C:")
-  let normalized = resolved.replace(/[/\\]+$/, "");
-  if (normalized === "") {
-    normalized = "/";
-  } else if (/^[A-Za-z]:$/.test(normalized)) {
-    normalized = normalized + "\\";
-  }
+  const normalized = normalizePathForComparison(resolved);
 
   // ── Check 1: Blocked system paths ──────────────────────────────────────
   const blockedPaths = platform() === "win32" ? WINDOWS_BLOCKED_PATHS : UNIX_BLOCKED_PATHS;
-  if (blockedPaths.has(normalized)) {
+  if (platform() === "win32" ? isBlockedWindowsPath(normalized) : blockedPaths.has(normalized)) {
     return {
       safe: false,
       severity: "blocked",
@@ -104,9 +126,9 @@ export function validateDirectory(dirPath: string): DirectoryValidationResult {
   // ── Check 2: Home directory itself (not subdirs) ───────────────────────
   let resolvedHome: string;
   try {
-    resolvedHome = realpathSync(resolve(homedir())).replace(/[/\\]+$/, "");
+    resolvedHome = normalizePathForComparison(realpathSync(resolve(homedir())));
   } catch {
-    resolvedHome = resolve(homedir()).replace(/[/\\]+$/, "");
+    resolvedHome = normalizePathForComparison(resolve(homedir()));
   }
 
   if (normalized === resolvedHome) {
@@ -120,9 +142,9 @@ export function validateDirectory(dirPath: string): DirectoryValidationResult {
   // ── Check 3: Temp directory root ───────────────────────────────────────
   let resolvedTmp: string;
   try {
-    resolvedTmp = realpathSync(resolve(tmpdir())).replace(/[/\\]+$/, "");
+    resolvedTmp = normalizePathForComparison(realpathSync(resolve(tmpdir())));
   } catch {
-    resolvedTmp = resolve(tmpdir()).replace(/[/\\]+$/, "");
+    resolvedTmp = normalizePathForComparison(resolve(tmpdir()));
   }
 
   if (normalized === resolvedTmp) {

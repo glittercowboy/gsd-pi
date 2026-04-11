@@ -58,8 +58,17 @@ let cachedRegistry: TemplateRegistry | null = null;
 export function loadRegistry(): TemplateRegistry {
   if (cachedRegistry) return cachedRegistry;
 
-  const content = readFileSync(registryPath, "utf-8");
-  cachedRegistry = JSON.parse(content) as TemplateRegistry;
+  if (!existsSync(registryPath)) {
+    cachedRegistry = { version: 1, templates: {} };
+    return cachedRegistry;
+  }
+
+  try {
+    const content = readFileSync(registryPath, "utf-8");
+    cachedRegistry = JSON.parse(content) as TemplateRegistry;
+  } catch {
+    cachedRegistry = { version: 1, templates: {} };
+  }
   return cachedRegistry;
 }
 

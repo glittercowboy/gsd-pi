@@ -121,6 +121,27 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 			if (host.streamingComponent && event.message.role === "assistant") {
 				host.streamingMessage = event.message;
 				host.streamingComponent.updateContent(host.streamingMessage);
+
+				// When the stream adapter signals a completed tool call with an
+				// external result (from Claude Code SDK), update the pending
+				// ToolExecutionComponent immediately so output is visible in
+				// real-time instead of waiting for the session to end.
+				const innerEvent = event.assistantMessageEvent;
+				if (innerEvent.type === "toolcall_end" && innerEvent.toolCall) {
+					const tc = innerEvent.toolCall as any;
+					const externalResult = tc.externalResult;
+					if (externalResult) {
+						const component = host.pendingTools.get(tc.id);
+						if (component) {
+							component.updateResult({
+								content: externalResult.content ?? [{ type: "text", text: "" }],
+								details: externalResult.details ?? {},
+								isError: externalResult.isError ?? false,
+							});
+						}
+					}
+				}
+
 				const contentBlocks = host.streamingMessage.content;
 				for (let i = lastProcessedContentIndex; i < contentBlocks.length; i++) {
 					const content = contentBlocks[i];

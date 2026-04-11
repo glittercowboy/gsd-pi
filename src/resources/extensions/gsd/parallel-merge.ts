@@ -15,6 +15,7 @@ import { MergeConflictError } from "./git-service.js";
 import { removeSessionStatus } from "./session-status-io.js";
 import type { WorkerInfo } from "./parallel-orchestrator.js";
 import { getErrorMessage } from "./error-utils.js";
+import { logWarning } from "./workflow-logger.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,8 @@ export function isMilestoneCompleteInWorktreeDb(basePath: string, mid: string): 
       { timeout: 3000, encoding: "utf-8" },
     );
     return (result.stdout || "").trim() === "complete";
-  } catch {
+  } catch (e) {
+    logWarning("parallel", `spawnSync milestone completion check failed for ${mid}: ${(e as Error).message}`);
     return false;
   }
 }
@@ -65,8 +67,8 @@ function discoverDbCompletedMilestones(basePath: string): Set<string> {
         completed.add(entry);
       }
     }
-  } catch {
-    // worktrees dir may not exist
+  } catch (e) {
+    logWarning("parallel", `readdirSync for completed set failed: ${(e as Error).message}`);
   }
   return completed;
 }

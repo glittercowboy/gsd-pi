@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { exec } from "node:child_process";
+import { execFile } from "node:child_process";
 import type { GsdChangeTracker } from "./change-tracker.js";
 
 /**
@@ -31,11 +31,11 @@ export class GsdGitIntegration implements vscode.Disposable {
 		});
 		if (!message) return;
 
-		try {
-			// Stage the modified files
-			await this.git(`add ${files.map((f) => `"${f}"`).join(" ")}`);
-			// Commit
-			await this.git(`commit -m "${message.replace(/"/g, '\\"')}"`);
+			try {
+				// Stage the modified files
+				await this.git(["add", ...files]);
+				// Commit
+				await this.git(["commit", "-m", message]);
 
 			// Accept all changes (clear tracking since they're committed)
 			this.tracker.acceptAll();
@@ -62,8 +62,8 @@ export class GsdGitIntegration implements vscode.Disposable {
 		});
 		if (!branchName) return;
 
-		try {
-			await this.git(`checkout -b "${branchName}"`);
+			try {
+				await this.git(["checkout", "-b", branchName]);
 			vscode.window.showInformationMessage(`Created and switched to branch: ${branchName}`);
 		} catch (err) {
 			const msg = err instanceof Error ? err.message : String(err);
@@ -81,11 +81,11 @@ export class GsdGitIntegration implements vscode.Disposable {
 			return;
 		}
 
-		try {
-			const diff = await this.git("diff");
-			if (!diff.trim()) {
-				// Files may be untracked — show status instead
-				const status = await this.git("status --short");
+			try {
+				const diff = await this.git(["diff"]);
+				if (!diff.trim()) {
+					// Files may be untracked — show status instead
+					const status = await this.git(["status", "--short"]);
 				const channel = vscode.window.createOutputChannel("GSD Git Diff");
 				channel.appendLine("# Agent-modified files (unstaged):");
 				channel.appendLine(status);
@@ -108,9 +108,9 @@ export class GsdGitIntegration implements vscode.Disposable {
 		}
 	}
 
-	private git(args: string): Promise<string> {
+	private git(args: string[]): Promise<string> {
 		return new Promise((resolve, reject) => {
-			exec(`git ${args}`, { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+			execFile("git", args, { cwd: this.cwd, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
 				if (err) {
 					reject(new Error(stderr.trim() || err.message));
 				} else {

@@ -16,6 +16,7 @@ export interface ClassificationResult {
   tier: ComplexityTier;
   reason: string;
   downgraded: boolean;   // true if budget pressure lowered the tier
+  taskMetadata?: TaskMetadata;
 }
 
 export interface TaskMetadata {
@@ -71,17 +72,20 @@ export function classifyUnitComplexity(
 ): ClassificationResult {
   // Hook units default to light
   if (unitType.startsWith("hook/")) {
-    const result: ClassificationResult = { tier: "light", reason: "hook unit", downgraded: false };
+    const result: ClassificationResult = { tier: "light", reason: "hook unit", downgraded: false, taskMetadata: undefined };
     return applyBudgetPressure(result, budgetPct);
   }
 
   // Start with the default tier for this unit type
   let tier = UNIT_TYPE_TIERS[unitType] ?? "standard";
   let reason = `unit type: ${unitType}`;
+  let taskMeta: TaskMetadata | undefined;
 
   // For execute-task, analyze task metadata for complexity signals
   if (unitType === "execute-task") {
-    const taskAnalysis = analyzeTaskComplexity(unitId, basePath, metadata);
+    // Extract metadata once and reuse throughout to avoid double-extraction
+    taskMeta = metadata ?? extractTaskMetadata(unitId, basePath);
+    const taskAnalysis = analyzeTaskComplexity(unitId, basePath, taskMeta);
     tier = taskAnalysis.tier;
     reason = taskAnalysis.reason;
   }
@@ -96,14 +100,15 @@ export function classifyUnitComplexity(
   }
 
   // Adaptive learning: check if history suggests bumping the tier
-  const tags = metadata?.tags ?? extractTaskMetadata(unitId, basePath).tags;
+  // Use already-extracted taskMeta.tags if available to avoid double-extraction
+  const tags = taskMeta?.tags ?? metadata?.tags;
   const adaptiveAdjustment = getAdaptiveTierAdjustment(unitType, tier, tags);
   if (adaptiveAdjustment && tierOrdinal(adaptiveAdjustment) > tierOrdinal(tier)) {
     reason = `${reason} (adaptive: high failure rate at ${tier})`;
     tier = adaptiveAdjustment;
   }
 
-  const result: ClassificationResult = { tier, reason, downgraded: false };
+  const result: ClassificationResult = { tier, reason, downgraded: false, taskMetadata: taskMeta };
   return applyBudgetPressure(result, budgetPct);
 }
 
@@ -212,7 +217,7 @@ function analyzePlanComplexity(
 /**
  * Extract task metadata from the task plan file on disk.
  */
-function extractTaskMetadata(unitId: string, basePath: string): TaskMetadata {
+export function extractTaskMetadata(unitId: string, basePath: string): TaskMetadata {
   const meta: TaskMetadata = {};
   const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
   if (!mid || !sid || !tid) return meta;

@@ -16,6 +16,7 @@ import { gsdRoot } from "./paths.js";
 import { assertSafeDirectory } from "./validate-directory.js";
 import type { ProjectDetection, ProjectSignals } from "./detection.js";
 import { runSkillInstallStep } from "./skill-catalog.js";
+import { generateCodebaseMap, writeCodebaseMap } from "./codebase-generator.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -234,9 +235,59 @@ export async function showProjectInit(
   // ── Step 9: Bootstrap .gsd/ ────────────────────────────────────────────────
   bootstrapGsdDirectory(basePath, prefs, signals);
 
+  // Initialize SQLite database so GSD starts in full-capability mode (#3880).
+  // Without this, isDbAvailable() returns false and GSD enters degraded
+  // markdown-only mode until a tool handler happens to call ensureDbOpen().
+  try {
+    const { ensureDbOpen } = await import("./bootstrap/dynamic-tools.js");
+    await ensureDbOpen(basePath);
+  } catch {
+    // Non-fatal — DB creation failure should not block project init
+  }
+
   // Ensure .gitignore
   ensureGitignore(basePath);
   untrackRuntimeFiles(basePath);
+
+  // Auto-generate codebase map for instant agent orientation
+  try {
+    const result = generateCodebaseMap(basePath);
+    if (result.fileCount > 0) {
+      writeCodebaseMap(basePath, result.content);
+      ctx.ui.notify(`Codebase map generated: ${result.fileCount} files`, "info");
+    }
+  } catch {
+    // Non-fatal — codebase map generation failure should never block project init
+  }
+
+  // Write initial STATE.md so it exists before the first /gsd invocation.
+  // The explicit /gsd init path (ops.ts) returns without entering showSmartEntry(),
+  // which would otherwise generate STATE.md at guided-flow.ts:1358.
+  try {
+    const { deriveState } = await import("./state.js");
+    const { buildStateMarkdown } = await import("./doctor.js");
+    const { saveFile } = await import("./files.js");
+    const { resolveGsdRootFile } = await import("./paths.js");
+    const state = await deriveState(basePath);
+    await saveFile(resolveGsdRootFile(basePath, "STATE"), buildStateMarkdown(state));
+  } catch {
+    // Non-fatal — STATE.md will be regenerated on next /gsd invocation
+  }
+
+  if (ctx.model?.provider === "claude-code") {
+    try {
+      const { ensureProjectWorkflowMcpConfig } = await import("./mcp-project-config.js");
+      const result = ensureProjectWorkflowMcpConfig(basePath);
+      if (result.status !== "unchanged") {
+        ctx.ui.notify(`Claude Code MCP prepared at ${result.configPath}`, "info");
+      }
+    } catch (err) {
+      ctx.ui.notify(
+        `Claude Code MCP prep failed: ${err instanceof Error ? err.message : String(err)}`,
+        "warning",
+      );
+    }
+  }
 
   ctx.ui.notify("GSD initialized. Starting your first milestone...", "info");
 
@@ -421,6 +472,7 @@ function bootstrapGsdDirectory(
 
   const gsd = gsdRoot(basePath);
   mkdirSync(join(gsd, "milestones"), { recursive: true });
+  mkdirSync(join(gsd, "runtime"), { recursive: true });
 
   // Write PREFERENCES.md from wizard answers
   const preferencesContent = buildPreferencesFile(prefs);

@@ -1246,7 +1246,7 @@ describe('git-service', async () => {
   test('nativeAddAllWithExclusions: symlinked .gsd fallback', () => {
     // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
     // "fatal: pathspec '...' is beyond a symbolic link". The fix falls
-    // back to plain `git add -A`, which respects .gitignore.
+    // back to `git add -u` (tracked files only), NOT `git add -A`.
     const repo = initTempRepo();
 
     // Create the real .gsd directory outside the repo, then symlink it
@@ -1258,11 +1258,18 @@ describe('git-service', async () => {
     // Symlink .gsd -> external directory
     symlinkSync(externalGsd, join(repo, ".gsd"));
 
-    // Add .gitignore so git add -A fallback skips .gsd/
+    // Add .gitignore so .gsd/ is ignored
     writeFileSync(join(repo, ".gitignore"), ".gsd\n");
 
-    // Create a real file that should be staged
+    // Create a tracked file and commit it, then modify it
     createFile(repo, "src/app.ts", "export const x = 1;");
+    run("git add -A", repo);
+    run('git commit -m "add app"', repo);
+    writeFileSync(join(repo, "src/app.ts"), "export const x = 2;");
+
+    // Create an untracked file simulating large data (NOT in .gitignore)
+    // This is the key scenario: large untracked dirs that git add -A would traverse
+    createFile(repo, "data/large-model.bin", "pretend this is 10GB");
 
     // nativeAddAllWithExclusions should NOT throw despite .gsd being a symlink
     let threw = false;
@@ -1274,9 +1281,15 @@ describe('git-service', async () => {
     }
     assert.ok(!threw, "nativeAddAllWithExclusions does not throw with symlinked .gsd");
 
-    // Verify the real file was staged
+    // Verify the tracked modified file was staged
     const staged = run("git diff --cached --name-only", repo);
-    assert.ok(staged.includes("src/app.ts"), "real file staged despite symlinked .gsd");
+    assert.ok(staged.includes("src/app.ts"), "modified tracked file staged despite symlinked .gsd");
+
+    // CRITICAL: untracked files must NOT be staged — the symlink fallback
+    // should use `git add -u` (tracked only), not `git add -A` (all files).
+    // Using `git add -A` on a repo with large untracked data dirs hangs. (#1977)
+    assert.ok(!staged.includes("data/large-model.bin"),
+      "symlink fallback must not stage untracked files (would hang on large repos)");
     assert.ok(!staged.includes(".gsd"), ".gsd content not staged");
 
     rmSync(repo, { recursive: true, force: true });
@@ -1435,13 +1448,20 @@ describe('git-service', async () => {
     run('git add .gitignore', repo);
     run('git commit -m "add gitignore"', repo);
 
+    // Pre-commit a tracked source file so git add -u can stage modifications.
+    // The symlink fallback uses git add -u (tracked files only), so the file
+    // must be tracked before the autoCommit scenario runs.
+    createFile(repo, "src/feature.ts", "export const feature = true;");
+    run('git add src/feature.ts', repo);
+    run('git commit -m "add feature"', repo);
+
     // Simulate new milestone artifacts created during execution
     writeFileSync(join(externalGsd, "milestones", "M009", "M009-SUMMARY.md"), "# M009 Summary");
     writeFileSync(join(externalGsd, "milestones", "M009", "S01-SUMMARY.md"), "# S01 Summary");
     writeFileSync(join(externalGsd, "milestones", "M009", "T01-VERIFY.json"), '{"passed":true}');
 
-    // Also create a normal source file change
-    createFile(repo, "src/feature.ts", "export const feature = true;");
+    // Modify the tracked source file — git add -u will stage this change
+    writeFileSync(join(repo, "src/feature.ts"), "export const feature = false; // updated");
 
     const svc = new GitServiceImpl(repo);
     const msg = svc.autoCommit("complete-milestone", "M009");

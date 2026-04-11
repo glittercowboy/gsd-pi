@@ -387,7 +387,8 @@ test("resolution: executeTriageResolutions handles mixed classifications", () =>
     assert.strictEqual(result.injected, 1, "should inject 1 task");
     assert.strictEqual(result.replanned, 0);
     assert.strictEqual(result.quickTasks.length, 1, "should queue 1 quick-task");
-    assert.strictEqual(result.actions.length, 2, "should have 2 action entries (note/defer excluded)");
+    // inject + quick-task + note acknowledged = 3 actions (defer still excluded)
+    assert.strictEqual(result.actions.length, 3, "should have 3 action entries (defer excluded, note now included)");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

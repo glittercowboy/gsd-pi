@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Agent } from "./agent.ts";
+import { getModel, type AssistantMessageEventStream } from "@gsd/pi-ai";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -49,5 +51,85 @@ describe("Agent — activeInferenceModel (#1844 Bug 2)", () => {
 		assert.ok(setLine > -1 && abortLine > -1);
 		assert.ok(setLine < abortLine,
 			"activeInferenceModel must be set before streaming infrastructure is created");
+	});
+
+	it("getProviderOptions are forwarded into the provider stream call", async () => {
+		let capturedOptions: Record<string, unknown> | undefined;
+		const agent = new Agent({
+			initialState: {
+				model: getModel("anthropic", "claude-3-5-sonnet-20241022"),
+				systemPrompt: "test",
+				tools: [],
+			},
+			getProviderOptions: async () => ({ customRuntimeOption: "present" }),
+			streamFn: (_model, _context, options): AssistantMessageEventStream => {
+				capturedOptions = options as Record<string, unknown> | undefined;
+				return {
+					async *[Symbol.asyncIterator]() {
+						yield {
+							type: "start",
+							partial: {
+								role: "assistant",
+								content: [],
+								api: "anthropic-messages",
+								provider: "anthropic",
+								model: "claude-3-5-sonnet-20241022",
+								usage: {
+									input: 0,
+									output: 0,
+									cacheRead: 0,
+									cacheWrite: 0,
+									totalTokens: 0,
+									cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+								},
+								stopReason: "stop",
+								timestamp: Date.now(),
+							},
+						};
+						yield {
+							type: "done",
+							message: {
+								role: "assistant",
+								content: [{ type: "text", text: "ok" }],
+								api: "anthropic-messages",
+								provider: "anthropic",
+								model: "claude-3-5-sonnet-20241022",
+								usage: {
+									input: 0,
+									output: 0,
+									cacheRead: 0,
+									cacheWrite: 0,
+									totalTokens: 0,
+									cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+								},
+								stopReason: "stop",
+								timestamp: Date.now(),
+							},
+						};
+					},
+					result: async () => ({
+						role: "assistant",
+						content: [{ type: "text", text: "ok" }],
+						api: "anthropic-messages",
+						provider: "anthropic",
+						model: "claude-3-5-sonnet-20241022",
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "stop",
+						timestamp: Date.now(),
+					}),
+					[Symbol.asyncDispose]: async () => {},
+				} as AssistantMessageEventStream;
+			},
+		});
+
+		await agent.prompt("hello");
+		assert.equal(capturedOptions?.customRuntimeOption, "present");
 	});
 });

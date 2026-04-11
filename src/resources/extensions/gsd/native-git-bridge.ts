@@ -724,10 +724,12 @@ export function nativeAddAllWithExclusions(basePath: string, exclusions: readonl
       return;
     }
     // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
-    // "beyond a symbolic link". Fall back to plain `git add -A` which
-    // respects .gitignore (where .gsd/ is listed by default).
+    // "beyond a symbolic link". Fall back to `git add -u` which only
+    // stages changes to already-tracked files — O(tracked) not O(filesystem).
+    // Using `git add -A` here would traverse the entire working tree,
+    // hanging indefinitely on repos with large untracked data dirs. (#1977)
     if (stderr.includes("beyond a symbolic link")) {
-      nativeAddAll(basePath);
+      gitFileExec(basePath, ["add", "-u"]);
       return;
     }
     throw new GSDError(GSD_GIT_ERROR, `git add -A with exclusions failed in ${basePath}: ${getErrorMessage(err)}`);

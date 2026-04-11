@@ -17,6 +17,8 @@ import {
   parsePreferencesMarkdown,
   _resetParseWarningFlag,
 } from "../preferences.ts";
+import { formatConfiguredModel, toPersistedModelId } from "../commands-prefs-wizard.ts";
+import { _resetLogs, peekLogs } from "../workflow-logger.ts";
 import type { GSDPreferences, GSDModelConfigV2, GSDPhaseModelConfig } from "../preferences.ts";
 
 // ── Git preferences ──────────────────────────────────────────────────────────
@@ -346,6 +348,22 @@ test("handles model config with explicit provider field", () => {
   assert.equal(execution.provider, "bedrock");
 });
 
+test("formatConfiguredModel renders provider-qualified object config", () => {
+  assert.equal(
+    formatConfiguredModel({ model: "claude-opus-4-6", provider: "bedrock" }),
+    "bedrock/claude-opus-4-6",
+  );
+});
+
+test("toPersistedModelId prefixes provider chosen in prefs wizard", () => {
+  assert.equal(toPersistedModelId("openai", "gpt-5.4"), "openai/gpt-5.4");
+  assert.equal(
+    toPersistedModelId("openai", "openai/gpt-5.4"),
+    "openai/gpt-5.4",
+    "already-qualified IDs should be preserved",
+  );
+});
+
 test("handles empty models config", () => {
   const prefs = parsePreferencesMarkdown("---\nversion: 1\n---\n");
   assert.notEqual(prefs, null);
@@ -412,6 +430,35 @@ test("unrecognized format warning is emitted at most once (#2373)", () => {
   }
 });
 
+test("parsePreferencesMarkdown parses heading+list format without frontmatter (#2036)", () => {
+  // A GSD agent recovery session wrote preferences in markdown heading+list
+  // format instead of YAML frontmatter. Since the heading+list fallback parser
+  // was added, this format is now handled gracefully.
+  const content = "## Git\n\n- isolation: none\n";
+  const result = parsePreferencesMarkdown(content);
+  assert.notEqual(result, null, "heading+list content should be parsed");
+  assert.deepStrictEqual(result!.git, { isolation: "none" });
+});
+
+test("section parse warning is emitted at most once for heading+list YAML failures (#3759)", () => {
+  _resetParseWarningFlag();
+  _resetLogs();
+
+  const content = `## Git
+bad: [
+`;
+
+  parsePreferencesMarkdown(content);
+  parsePreferencesMarkdown(content);
+  parsePreferencesMarkdown(content);
+
+  const warnings = peekLogs().filter((entry) => entry.component === "guided" && entry.message.includes("preferences section parse failed"));
+  assert.equal(warnings.length, 1, `expected exactly 1 guided warning, got ${warnings.length}`);
+
+  _resetParseWarningFlag();
+  _resetLogs();
+});
+
 // ── Experimental preferences ─────────────────────────────────────────────────
 
 test("experimental.rtk: true is accepted and stored", () => {
@@ -460,4 +507,66 @@ test("experimental.rtk defaults to off in new project preferences", () => {
   const prefs = parsePreferencesMarkdown(content);
   assert.notEqual(prefs, null);
   assert.equal(prefs!.experimental?.rtk, undefined);
+});
+
+// ── Codebase Map Preferences ─────────────────────────────────────────────────
+
+test("codebase preferences validate and pass through correctly", () => {
+  const result = validatePreferences({
+    codebase: {
+      exclude_patterns: ["docs/", "fixtures/"],
+      max_files: 1000,
+      collapse_threshold: 15,
+    },
+  });
+  assert.equal(result.errors.length, 0);
+  assert.deepEqual(result.preferences.codebase?.exclude_patterns, ["docs/", "fixtures/"]);
+  assert.equal(result.preferences.codebase?.max_files, 1000);
+  assert.equal(result.preferences.codebase?.collapse_threshold, 15);
+});
+
+test("codebase preferences reject invalid types", () => {
+  const result = validatePreferences({
+    codebase: {
+      exclude_patterns: "not-an-array" as any,
+      max_files: -5,
+      collapse_threshold: 0,
+    },
+  });
+  assert.ok(result.errors.some(e => e.includes("exclude_patterns must be an array")));
+  assert.ok(result.errors.some(e => e.includes("max_files must be a positive")));
+  assert.ok(result.errors.some(e => e.includes("collapse_threshold must be a positive")));
+});
+
+test("codebase preferences warn on unknown keys", () => {
+  const result = validatePreferences({
+    codebase: {
+      exclude_patterns: ["docs/"],
+      unknown_key: true,
+    } as any,
+  });
+  assert.equal(result.errors.length, 0);
+  assert.ok(result.warnings.some(w => w.includes('unknown codebase key "unknown_key"')));
+  assert.deepEqual(result.preferences.codebase?.exclude_patterns, ["docs/"]);
+});
+
+test("codebase preferences parse from markdown frontmatter", () => {
+  const content = [
+    "---",
+    "version: 1",
+    "codebase:",
+    "  exclude_patterns:",
+    '    - "docs/"',
+    '    - ".cache/"',
+    "  max_files: 800",
+    "  collapse_threshold: 10",
+    "---",
+  ].join("\n");
+  const prefs = parsePreferencesMarkdown(content);
+  assert.notEqual(prefs, null);
+  const result = validatePreferences(prefs!);
+  assert.equal(result.errors.length, 0);
+  assert.deepEqual(result.preferences.codebase?.exclude_patterns, ["docs/", ".cache/"]);
+  assert.equal(result.preferences.codebase?.max_files, 800);
+  assert.equal(result.preferences.codebase?.collapse_threshold, 10);
 });

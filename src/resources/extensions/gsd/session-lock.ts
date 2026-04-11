@@ -288,6 +288,20 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
   const gsdDir = gsdRoot(basePath);
   const lockTarget = effectiveLockTarget(gsdDir);
 
+  // #3218: Pre-flight stale lock cleanup — if the .lock/ directory exists but
+  // no auto.lock metadata is present (or the PID is dead), remove the lock
+  // directory before attempting acquisition. This prevents the 30-min stale
+  // window from blocking /gsd after crashes, SIGKILL, or laptop sleep.
+  const lockDir = lockTarget + ".lock";
+  if (existsSync(lockDir)) {
+    const existingData = readExistingLockData(lp);
+    const isOrphan = !existingData || (existingData.pid && !isPidAlive(existingData.pid));
+    if (isOrphan) {
+      try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      try { if (existsSync(lp)) unlinkSync(lp); } catch { /* best-effort */ }
+    }
+  }
+
   try {
     // Try to acquire an exclusive OS-level lock on the lock target.
     // We lock a directory since proper-lockfile works best on directories,
@@ -344,9 +358,11 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
       }
     }
 
+    // #3218: Provide actionable workaround when lock recovery fails
+    const lockDirPath = lockTarget + ".lock";
     const reason = existingPid
       ? `Another auto-mode session (PID ${existingPid}) appears to be running.\nStop it with \`kill ${existingPid}\` before starting a new session.`
-      : `Another auto-mode session is already running on this project.`;
+      : `Another auto-mode session lock is stuck on this project.\nRun: rm -rf "${lockDirPath}" && rm -f "${lp}"`;
 
     return { acquired: false, reason, existingPid };
   }

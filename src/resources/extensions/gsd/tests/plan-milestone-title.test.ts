@@ -38,8 +38,9 @@ test("upsertMilestonePlanning updates title when DB row pre-exists with empty ti
 
     // Step 3: upsertMilestonePlanning should update the title
     upsertMilestonePlanning("M099", {
+      title: "My Important Milestone",
       vision: "Test vision",
-    }, "My Important Milestone");
+    });
     const afterUpsert = getMilestone("M099");
     assert.ok(afterUpsert);
     assert.equal(

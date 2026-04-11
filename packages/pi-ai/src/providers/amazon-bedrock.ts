@@ -43,7 +43,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.js";
-import { transformMessages } from "./transform-messages.js";
+import { transformMessagesWithReport } from "./transform-messages.js";
 
 export interface BedrockOptions extends StreamOptions {
 	region?: string;
@@ -487,7 +487,7 @@ function convertMessages(
 	cacheRetention: CacheRetention,
 ): Message[] {
 	const result: Message[] = [];
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const transformedMessages = transformMessagesWithReport(context.messages, model, normalizeToolCallId, "bedrock-converse-stream");
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const m = transformedMessages[i];

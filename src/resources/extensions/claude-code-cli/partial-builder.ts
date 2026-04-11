@@ -16,7 +16,7 @@ import type {
 	Usage,
 	WebSearchResultContent,
 } from "@gsd/pi-ai";
-import { repairToolJson } from "@gsd/pi-ai";
+import { hasXmlParameterTags, repairToolJson } from "@gsd/pi-ai";
 import type { BetaContentBlock, BetaRawMessageStreamEvent, NonNullableUsage } from "./sdk-types.js";
 
 // ---------------------------------------------------------------------------
@@ -242,13 +242,14 @@ export class PartialMessageBuilder {
 				}
 				if (block.type === "toolCall") {
 					const jsonStr = this.toolJsonAccum.get(streamIndex) ?? "{}";
+					const jsonForParse = hasXmlParameterTags(jsonStr) ? repairToolJson(jsonStr) : jsonStr;
 					try {
-						block.arguments = JSON.parse(jsonStr);
+						block.arguments = JSON.parse(jsonForParse);
 					} catch {
 						// JSON.parse failed — attempt repair for YAML-style bullet
 						// lists that LLMs copy from template formatting (#2660).
 						try {
-							block.arguments = JSON.parse(repairToolJson(jsonStr));
+							block.arguments = JSON.parse(repairToolJson(jsonForParse));
 						} catch {
 							// Repair also failed — stream was truncated or garbage.
 							// Preserve the raw string for diagnostics but signal the

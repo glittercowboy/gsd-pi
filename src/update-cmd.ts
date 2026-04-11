@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process'
-import { compareSemver } from './update-check.js'
+import { compareSemver, fetchLatestVersionFromRegistry } from './update-check.js'
 
 const NPM_PACKAGE = 'gsd-pi'
 
@@ -14,17 +14,13 @@ export async function runUpdate(): Promise<void> {
   process.stdout.write(`${dim}Current version:${reset} v${current}\n`)
   process.stdout.write(`${dim}Checking npm registry...${reset}\n`)
 
-  // Fetch latest version
-  let latest: string
-  try {
-    latest = execSync(`npm view ${NPM_PACKAGE} version`, {
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim()
-  } catch {
+  const latest = await fetchLatestVersionFromRegistry()
+  if (!latest) {
     process.stderr.write(`${yellow}Failed to reach npm registry.${reset}\n`)
     process.exit(1)
   }
+
+  process.stdout.write(`${dim}Latest version:${reset}  v${latest}\n`)
 
   if (compareSemver(latest, current) <= 0) {
     process.stdout.write(`${green}Already up to date.${reset}\n`)

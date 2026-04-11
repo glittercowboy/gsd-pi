@@ -14,16 +14,78 @@ import type {
 	Context,
 	Model,
 	SimpleStreamOptions,
+	ToolCall,
 } from "@gsd/pi-ai";
+import type { ExtensionUIContext } from "@gsd/pi-coding-agent";
 import { EventStream } from "@gsd/pi-ai";
 import { execSync } from "node:child_process";
 import { PartialMessageBuilder, ZERO_USAGE, mapUsage } from "./partial-builder.js";
+import { buildWorkflowMcpServers } from "../gsd/workflow-mcp.js";
+import { showInterviewRound, type Question, type RoundResult } from "../shared/tui.js";
 import type {
 	SDKAssistantMessage,
 	SDKMessage,
 	SDKPartialAssistantMessage,
 	SDKResultMessage,
+	SDKUserMessage,
 } from "./sdk-types.js";
+
+export interface ExternalToolResultContentBlock {
+	type: string;
+	text?: string;
+	data?: string;
+	mimeType?: string;
+}
+
+export interface ExternalToolResultPayload {
+	content: ExternalToolResultContentBlock[];
+	details?: Record<string, unknown>;
+	isError: boolean;
+}
+
+type ToolCallWithExternalResult = ToolCall & {
+	externalResult?: ExternalToolResultPayload;
+};
+
+interface ClaudeCodeStreamOptions extends SimpleStreamOptions {
+	extensionUIContext?: ExtensionUIContext;
+}
+
+interface SdkElicitationRequestOption {
+	const?: string;
+	title?: string;
+}
+
+interface SdkElicitationFieldSchema {
+	type?: string;
+	title?: string;
+	description?: string;
+	oneOf?: SdkElicitationRequestOption[];
+	items?: {
+		anyOf?: SdkElicitationRequestOption[];
+	};
+}
+
+interface SdkElicitationRequest {
+	serverName: string;
+	message: string;
+	mode?: "form" | "url";
+	requestedSchema?: {
+		type?: string;
+		properties?: Record<string, SdkElicitationFieldSchema>;
+	};
+}
+
+interface SdkElicitationResult {
+	action: "accept" | "decline" | "cancel";
+	content?: Record<string, string | string[]>;
+}
+
+interface ParsedElicitationQuestion extends Question {
+	noteFieldId?: string;
+}
+
+const OTHER_OPTION_LABEL = "None of the above";
 
 // ---------------------------------------------------------------------------
 // Stream factory
@@ -50,6 +112,17 @@ function createAssistantStream(): AssistantMessageEventStream {
 
 let cachedClaudePath: string | null = null;
 
+export function getClaudeLookupCommand(platform: NodeJS.Platform = process.platform): string {
+	return platform === "win32" ? "where claude" : "which claude";
+}
+
+export function parseClaudeLookupOutput(output: Buffer | string): string {
+	return output
+		.toString()
+		.trim()
+		.split(/\r?\n/)[0] ?? "";
+}
+
 /**
  * Resolve the path to the system-installed `claude` binary.
  * The SDK defaults to a bundled cli.js which doesn't exist when
@@ -58,9 +131,7 @@ let cachedClaudePath: string | null = null;
 function getClaudePath(): string {
 	if (cachedClaudePath) return cachedClaudePath;
 	try {
-		cachedClaudePath = execSync("which claude", { timeout: 5_000, stdio: "pipe" })
-			.toString()
-			.trim();
+		cachedClaudePath = parseClaudeLookupOutput(execSync(getClaudeLookupCommand(), { timeout: 5_000, stdio: "pipe" }));
 	} catch {
 		cachedClaudePath = "claude"; // fall back to PATH resolution
 	}
@@ -143,6 +214,174 @@ export function makeStreamExhaustedErrorMessage(model: string, lastTextContent: 
 	return message;
 }
 
+function readElicitationChoices(options: SdkElicitationRequestOption[] | undefined): string[] {
+	if (!Array.isArray(options)) return [];
+	return options
+		.map((option) => (typeof option?.const === "string" ? option.const : typeof option?.title === "string" ? option.title : ""))
+		.filter((option): option is string => option.length > 0);
+}
+
+export function parseAskUserQuestionsElicitation(
+	request: Pick<SdkElicitationRequest, "mode" | "requestedSchema">,
+): ParsedElicitationQuestion[] | null {
+	if (request.mode && request.mode !== "form") return null;
+	const properties = request.requestedSchema?.properties;
+	if (!properties || typeof properties !== "object") return null;
+
+	const questions: ParsedElicitationQuestion[] = [];
+
+	for (const [fieldId, rawField] of Object.entries(properties)) {
+		if (fieldId.endsWith("__note")) continue;
+		if (!rawField || typeof rawField !== "object") return null;
+
+		const header = typeof rawField.title === "string" && rawField.title.length > 0 ? rawField.title : fieldId;
+		const question = typeof rawField.description === "string" ? rawField.description : "";
+
+		if (rawField.type === "array") {
+			const options = readElicitationChoices(rawField.items?.anyOf).map((label) => ({ label, description: "" }));
+			if (options.length === 0) return null;
+			questions.push({
+				id: fieldId,
+				header,
+				question,
+				options,
+				allowMultiple: true,
+			});
+			continue;
+		}
+
+		if (rawField.type === "string") {
+			const noteFieldId = Object.prototype.hasOwnProperty.call(properties, `${fieldId}__note`)
+				? `${fieldId}__note`
+				: undefined;
+			const options = readElicitationChoices(rawField.oneOf)
+				.filter((label) => label !== OTHER_OPTION_LABEL)
+				.map((label) => ({ label, description: "" }));
+			if (options.length === 0) return null;
+			questions.push({
+				id: fieldId,
+				header,
+				question,
+				options,
+				noteFieldId,
+			});
+			continue;
+		}
+
+		return null;
+	}
+
+	return questions.length > 0 ? questions : null;
+}
+
+export function roundResultToElicitationContent(
+	questions: ParsedElicitationQuestion[],
+	result: RoundResult,
+): Record<string, string | string[]> {
+	const content: Record<string, string | string[]> = {};
+
+	for (const question of questions) {
+		const answer = result.answers[question.id];
+		if (!answer) continue;
+
+		if (question.allowMultiple) {
+			const selected = Array.isArray(answer.selected) ? answer.selected : [answer.selected];
+			content[question.id] = selected;
+			continue;
+		}
+
+		const selected = Array.isArray(answer.selected) ? answer.selected[0] ?? "" : answer.selected;
+		content[question.id] = selected;
+		if (question.noteFieldId && selected === OTHER_OPTION_LABEL && answer.notes.trim().length > 0) {
+			content[question.noteFieldId] = answer.notes.trim();
+		}
+	}
+
+	return content;
+}
+
+function buildElicitationPromptTitle(request: SdkElicitationRequest, question: ParsedElicitationQuestion): string {
+	const parts = [
+		request.serverName ? `[${request.serverName}]` : "",
+		question.header,
+		question.question,
+	].filter((part) => part && part.trim().length > 0);
+	return parts.join("\n\n");
+}
+
+async function promptElicitationWithDialogs(
+	request: SdkElicitationRequest,
+	questions: ParsedElicitationQuestion[],
+	ui: ExtensionUIContext,
+	signal: AbortSignal,
+): Promise<SdkElicitationResult> {
+	const content: Record<string, string | string[]> = {};
+
+	for (const question of questions) {
+		const title = buildElicitationPromptTitle(request, question);
+
+		if (question.allowMultiple) {
+			const selected = await ui.select(title, question.options.map((option) => option.label), {
+				allowMultiple: true,
+				signal,
+			});
+			if (Array.isArray(selected)) {
+				if (selected.length === 0) return { action: "cancel" };
+				content[question.id] = selected;
+				continue;
+			}
+			if (typeof selected === "string" && selected.length > 0) {
+				content[question.id] = [selected];
+				continue;
+			}
+			return { action: "cancel" };
+		}
+
+		const selected = await ui.select(title, [...question.options.map((option) => option.label), OTHER_OPTION_LABEL], { signal });
+		if (typeof selected !== "string" || selected.length === 0) {
+			return { action: "cancel" };
+		}
+
+		content[question.id] = selected;
+		if (question.noteFieldId && selected === OTHER_OPTION_LABEL) {
+			const note = await ui.input(`${question.header} note`, "Explain your answer", { signal });
+			if (note === undefined) return { action: "cancel" };
+			if (note.trim().length > 0) {
+				content[question.noteFieldId] = note.trim();
+			}
+		}
+	}
+
+	return { action: "accept", content };
+}
+
+export function createClaudeCodeElicitationHandler(
+	ui: ExtensionUIContext | undefined,
+): ((request: SdkElicitationRequest, options: { signal: AbortSignal }) => Promise<SdkElicitationResult>) | undefined {
+	if (!ui) return undefined;
+
+	return async (request, { signal }) => {
+		if (request.mode === "url") {
+			return { action: "decline" };
+		}
+
+		const questions = parseAskUserQuestionsElicitation(request);
+		if (!questions) {
+			return { action: "decline" };
+		}
+
+		const interviewResult = await showInterviewRound(questions, { signal }, { ui } as any).catch(() => undefined);
+		if (interviewResult && Object.keys(interviewResult.answers).length > 0) {
+			return {
+				action: "accept",
+				content: roundResultToElicitationContent(questions, interviewResult),
+			};
+		}
+
+		return promptElicitationWithDialogs(request, questions, ui, signal);
+	};
+}
+
 // ---------------------------------------------------------------------------
 // SDK options builder
 // ---------------------------------------------------------------------------
@@ -153,7 +392,12 @@ export function makeStreamExhaustedErrorMessage(model: string, lastTextContent: 
  * Extracted for testability — callers can verify session persistence,
  * beta flags, and other configuration without mocking the full SDK.
  */
-export function buildSdkOptions(modelId: string, prompt: string): Record<string, unknown> {
+export function buildSdkOptions(
+	modelId: string,
+	prompt: string,
+	extraOptions: Record<string, unknown> = {},
+): Record<string, unknown> {
+	const mcpServers = buildWorkflowMcpServers();
 	return {
 		pathToClaudeCodeExecutable: getClaudePath(),
 		model: modelId,
@@ -164,8 +408,114 @@ export function buildSdkOptions(modelId: string, prompt: string): Record<string,
 		allowDangerouslySkipPermissions: true,
 		settingSources: ["project"],
 		systemPrompt: { type: "preset", preset: "claude_code" },
+		...(mcpServers ? { mcpServers } : {}),
 		betas: modelId.includes("sonnet") ? ["context-1m-2025-08-07"] : [],
+		...extraOptions,
 	};
+}
+
+function normalizeToolResultContent(content: unknown): ExternalToolResultContentBlock[] {
+	if (typeof content === "string") {
+		return [{ type: "text", text: content }];
+	}
+
+	if (!Array.isArray(content)) {
+		if (content == null) return [{ type: "text", text: "" }];
+		return [{ type: "text", text: JSON.stringify(content) }];
+	}
+
+	const blocks: ExternalToolResultContentBlock[] = [];
+
+	for (const item of content) {
+		if (typeof item === "string") {
+			blocks.push({ type: "text", text: item });
+			continue;
+		}
+		if (!item || typeof item !== "object") {
+			blocks.push({ type: "text", text: String(item) });
+			continue;
+		}
+
+		const block = item as Record<string, unknown>;
+		if (block.type === "text") {
+			blocks.push({ type: "text", text: typeof block.text === "string" ? block.text : "" });
+			continue;
+		}
+		if (
+			block.type === "image"
+			&& typeof block.data === "string"
+			&& typeof block.mimeType === "string"
+		) {
+			blocks.push({ type: "image", data: block.data, mimeType: block.mimeType });
+			continue;
+		}
+
+		blocks.push({ type: "text", text: JSON.stringify(block) });
+	}
+
+	return blocks.length > 0 ? blocks : [{ type: "text", text: "" }];
+}
+
+export function extractToolResultsFromSdkUserMessage(message: SDKUserMessage): Array<{
+	toolUseId: string;
+	result: ExternalToolResultPayload;
+}> {
+	const extracted: Array<{ toolUseId: string; result: ExternalToolResultPayload }> = [];
+	const seen = new Set<string>();
+	const rawMessage = message.message as Record<string, unknown> | null | undefined;
+	const content = Array.isArray(rawMessage?.content) ? rawMessage.content : [];
+
+	for (const item of content) {
+		if (!item || typeof item !== "object") continue;
+		const block = item as Record<string, unknown>;
+		const type = typeof block.type === "string" ? block.type : "";
+		if (type !== "tool_result" && type !== "mcp_tool_result") continue;
+
+		const toolUseId = typeof block.tool_use_id === "string" ? block.tool_use_id : "";
+		if (!toolUseId || seen.has(toolUseId)) continue;
+		seen.add(toolUseId);
+
+		extracted.push({
+			toolUseId,
+			result: {
+				content: normalizeToolResultContent(block.content),
+				details: {},
+				isError: block.is_error === true,
+			},
+		});
+	}
+
+	if (extracted.length === 0) {
+		const fallback = message.tool_use_result;
+		if (fallback && typeof fallback === "object") {
+			const toolResult = fallback as Record<string, unknown>;
+			const toolUseId = typeof toolResult.tool_use_id === "string" ? toolResult.tool_use_id : "";
+			if (toolUseId) {
+				extracted.push({
+					toolUseId,
+					result: {
+						content: normalizeToolResultContent(toolResult.content),
+						details: {},
+						isError: toolResult.is_error === true,
+					},
+				});
+			}
+		}
+	}
+
+	return extracted;
+}
+
+function attachExternalResultsToToolCalls(
+	toolCalls: AssistantMessage["content"],
+	toolResultsById: ReadonlyMap<string, ExternalToolResultPayload>,
+): void {
+	for (const block of toolCalls) {
+		if (block.type !== "toolCall") continue;
+		const externalResult = toolResultsById.get(block.id);
+		if (!externalResult) continue;
+		(block as ToolCallWithExternalResult).externalResult = externalResult;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +554,8 @@ async function pumpSdkMessages(
 	let lastThinkingContent = "";
 	/** Collect tool calls from intermediate SDK turns for tool_execution events. */
 	const intermediateToolCalls: AssistantMessage["content"] = [];
+	/** Preserve real external tool results from Claude Code's synthetic user messages. */
+	const toolResultsById = new Map<string, ExternalToolResultPayload>();
 
 	try {
 		// Dynamic import — the SDK is an optional dependency.
@@ -222,7 +574,17 @@ async function pumpSdkMessages(
 		}
 
 		const prompt = buildPromptFromContext(context);
-		const sdkOpts = buildSdkOptions(modelId, prompt);
+		const sdkOpts = buildSdkOptions(
+			modelId,
+			prompt,
+			typeof (options as ClaudeCodeStreamOptions | undefined)?.extensionUIContext === "object"
+				? {
+						onElicitation: createClaudeCodeElicitationHandler(
+							(options as ClaudeCodeStreamOptions | undefined)?.extensionUIContext,
+						),
+					}
+				: {},
+		);
 
 		const queryResult = sdk.query({
 			prompt,
@@ -273,14 +635,7 @@ async function pumpSdkMessages(
 
 					const assistantEvent = builder.handleEvent(event);
 					if (assistantEvent) {
-						// Skip toolcall events — the agent loop's externalToolExecution
-						// path emits tool_execution_start/end events after streamSimple
-						// returns. Streaming toolcall events would render tool calls
-						// out of order in the TUI's accumulated message content.
-						const t = assistantEvent.type;
-						if (t !== "toolcall_start" && t !== "toolcall_delta" && t !== "toolcall_end") {
-							stream.push(assistantEvent);
-						}
+						stream.push(assistantEvent);
 					}
 					break;
 				}
@@ -315,6 +670,33 @@ async function pumpSdkMessages(
 							}
 						}
 					}
+
+					// Extract tool results from the SDK's synthetic user message
+					// and attach to corresponding tool call blocks immediately.
+					for (const { toolUseId, result } of extractToolResultsFromSdkUserMessage(msg as SDKUserMessage)) {
+						toolResultsById.set(toolUseId, result);
+					}
+					attachExternalResultsToToolCalls(intermediateToolCalls, toolResultsById);
+
+					// Push a synthetic toolcall_end for each tool call from this turn
+					// so the TUI can render tool results in real-time during the SDK
+					// session instead of waiting until the entire session completes.
+					if (builder) {
+						for (const block of builder.message.content) {
+							if (block.type !== "toolCall") continue;
+							const extResult = (block as ToolCallWithExternalResult).externalResult;
+							if (!extResult) continue;
+							// Push a toolcall_end with result attached so the chat-controller
+							// can call updateResult on the pending ToolExecutionComponent.
+							stream.push({
+								type: "toolcall_end",
+								contentIndex: builder.message.content.indexOf(block),
+								toolCall: block,
+								partial: builder.message,
+							});
+						}
+					}
+
 					builder = null;
 					break;
 				}
@@ -329,6 +711,7 @@ async function pumpSdkMessages(
 					const finalContent: AssistantMessage["content"] = [];
 
 					// Add tool calls from intermediate turns first (renders above text)
+					attachExternalResultsToToolCalls(intermediateToolCalls, toolResultsById);
 					finalContent.push(...intermediateToolCalls);
 
 					// Add text/thinking from the last turn

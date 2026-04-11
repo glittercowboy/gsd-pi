@@ -5,6 +5,7 @@ import type {
 } from "@gsd/pi-coding-agent";
 
 import { getAutoDashboardData, startAuto, type AutoDashboardData } from "../auto.js";
+import { resetTransientRetryState } from "./agent-end-recovery.js";
 
 type AutoResumeSnapshot = Pick<AutoDashboardData, "active" | "paused" | "stepMode" | "basePath">;
 
@@ -41,6 +42,11 @@ export async function resumeAutoAfterProviderDelay(
     );
     return "missing-base";
   }
+
+  // Reset the transient retry counter before restarting — without this,
+  // consecutiveTransientCount accumulates across pause/resume cycles and
+  // permanently locks out auto-resume after MAX_TRANSIENT_AUTO_RESUMES errors.
+  resetTransientRetryState();
 
   await deps.startAuto(
     ctx as ExtensionCommandContext,

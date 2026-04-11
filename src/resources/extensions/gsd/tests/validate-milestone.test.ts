@@ -9,9 +9,11 @@ import { deriveState, isValidationTerminal } from "../state.ts";
 import { resolveExpectedArtifactPath, diagnoseExpectedArtifact } from "../auto-artifact-paths.ts";
 import { verifyExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.ts";
 import { resolveDispatch, type DispatchContext } from "../auto-dispatch.ts";
+import { buildCompleteMilestonePrompt, buildValidateMilestonePrompt } from "../auto-prompts.ts";
 import type { GSDState } from "../types.ts";
 import { clearPathCache } from "../paths.ts";
 import { clearParseCache } from "../files.ts";
+import { closeDatabase, insertMilestone, insertSlice, openDatabase } from "../gsd-db.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -24,7 +26,13 @@ function makeTmpBase(): string {
 function cleanup(base: string): void {
   clearPathCache();
   clearParseCache();
+  closeDatabase();
   try { rmSync(base, { recursive: true, force: true }); } catch { /* */ }
+}
+
+function openTestDb(base: string): void {
+  const dbPath = join(base, ".gsd", "gsd.db");
+  assert.equal(openDatabase(dbPath), true, "test DB should open");
 }
 
 function writeRoadmap(base: string, mid: string, content: string): void {
@@ -55,6 +63,12 @@ function writeSliceSummary(base: string, mid: string, sid: string, content: stri
   const dir = join(base, ".gsd", "milestones", mid, "slices", sid);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${sid}-SUMMARY.md`), content);
+}
+
+function writeSliceAssessment(base: string, mid: string, sid: string, content: string): void {
+  const dir = join(base, ".gsd", "milestones", mid, "slices", sid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${sid}-ASSESSMENT.md`), content);
 }
 
 const ALL_DONE_ROADMAP = `# M001: Test Milestone
@@ -163,16 +177,15 @@ test("deriveState returns completing-milestone when VALIDATION exists with termi
   }
 });
 
-test("deriveState treats needs-remediation as terminal — does not re-enter validating-milestone (#832)", async () => {
+test("deriveState treats needs-remediation as non-terminal — re-enters validating-milestone (#832)", async () => {
   const base = makeTmpBase();
   try {
     writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
     writeValidation(base, "M001", "---\nverdict: needs-remediation\nremediation_round: 0\n---\n\n# Validation\nNeeds fixes.");
 
     const state = await deriveState(base);
-    // needs-remediation is now terminal — milestone needs a SUMMARY to be fully complete
-    // Without SUMMARY, it enters completing-milestone (not validating-milestone)
-    assert.notEqual(state.phase, "validating-milestone");
+    // needs-remediation routes back to validating-milestone for re-validation
+    assert.equal(state.phase, "validating-milestone");
     assert.equal(state.activeMilestone?.id, "M001");
   } finally {
     cleanup(base);
@@ -188,6 +201,104 @@ test("deriveState returns complete when both VALIDATION and SUMMARY exist", asyn
 
     const state = await deriveState(base);
     assert.equal(state.phase, "complete");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildValidateMilestonePrompt inlines ASSESSMENT evidence instead of UAT spec", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    const dir = join(base, ".gsd", "milestones", "M001");
+    writeFileSync(join(dir, "M001-CONTEXT.md"), CONTEXT_FILE);
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
+    writeFileSync(join(dir, "slices", "S01", "S01-UAT.md"), "# UAT Spec\nDo the thing.\n");
+    writeSliceAssessment(base, "M001", "S01", "---\nverdict: PASS\n---\n# Assessment\nEvidence captured.");
+
+    const prompt = await buildValidateMilestonePrompt("M001", "Test Milestone", base);
+    assert.match(prompt, /S01 Assessment/i, "prompt should inline assessment evidence");
+    assert.match(prompt, /verdict: PASS/i, "prompt should include the assessment verdict");
+    assert.doesNotMatch(prompt, /UAT Spec/i, "prompt should not inline the raw UAT spec as evidence");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildCompleteMilestonePrompt skips skipped slices from DB-backed summary inlining", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", `# M001: Test Milestone
+
+## Vision
+Test
+
+## Success Criteria
+- It works
+
+## Slices
+
+- [x] **S01: First slice** \`risk:low\` \`depends:[]\`
+  > Done
+- [ ] **S02: Skipped slice** \`risk:low\` \`depends:[]\`
+  > Intentionally skipped
+
+## Boundary Map
+
+| From | To | Produces | Consumes |
+|------|-----|----------|----------|
+| S01  | terminal | output | nothing |
+`);
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [], sequence: 1 });
+    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [], sequence: 2 });
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
+
+    const prompt = await buildCompleteMilestonePrompt("M001", "Test Milestone", base);
+    assert.match(prompt, /S01 Summary/i, "prompt should inline non-skipped slice summaries");
+    assert.doesNotMatch(prompt, /### S02 Summary/i, "prompt should not inline skipped slice summaries");
+    assert.doesNotMatch(prompt, /not found — file does not exist yet/i, "prompt should not emit skipped-slice missing-file placeholders");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildValidateMilestonePrompt skips skipped slices from DB-backed summary inlining", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", `# M001: Test Milestone
+
+## Vision
+Test
+
+## Success Criteria
+- It works
+
+## Slices
+
+- [x] **S01: First slice** \`risk:low\` \`depends:[]\`
+  > Done
+- [ ] **S02: Skipped slice** \`risk:low\` \`depends:[]\`
+  > Intentionally skipped
+
+## Boundary Map
+
+| From | To | Produces | Consumes |
+|------|-----|----------|----------|
+| S01  | terminal | output | nothing |
+`);
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [], sequence: 1 });
+    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [], sequence: 2 });
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
+    writeSliceAssessment(base, "M001", "S01", "---\nverdict: PASS\n---\n# Assessment\nEvidence captured.");
+
+    const prompt = await buildValidateMilestonePrompt("M001", "Test Milestone", base);
+    assert.match(prompt, /S01 Summary/i, "prompt should inline non-skipped slice summaries");
+    assert.doesNotMatch(prompt, /### S02 Summary/i, "prompt should not inline skipped slice summaries");
+    assert.doesNotMatch(prompt, /not found — file does not exist yet/i, "prompt should not emit skipped-slice missing-file placeholders");
   } finally {
     cleanup(base);
   }

@@ -7,6 +7,7 @@ import { renderTaskPlanFromDb } from "../markdown-renderer.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface PlanTaskParams {
   milestoneId: string;
@@ -135,9 +136,7 @@ export async function handlePlanTask(
         trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
-      process.stderr.write(
-        `gsd: plan-task post-mutation hook warning: ${(hookErr as Error).message}\n`,
-      );
+      logWarning("tool", `plan-task post-mutation hook warning: ${(hookErr as Error).message}`);
     }
 
     return {

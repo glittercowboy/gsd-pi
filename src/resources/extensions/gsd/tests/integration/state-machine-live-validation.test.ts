@@ -11,6 +11,8 @@
 
 // GSD State Machine Live Validation (#3161)
 
+
+
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -721,10 +723,10 @@ describe("state-machine-live-validation", () => {
       const result = await handleCompleteTask(makeTaskParams("T01", "S99", "M099") as any, base);
       assert.ok(!("error" in result), `expected success: ${JSON.stringify(result)}`);
 
-      // Phantom milestone created
+      // Phantom milestone created — H6 fix: now uses ID as title instead of empty string
       const milestone = getMilestone("M099");
       assert.ok(milestone, "phantom milestone M099 should exist");
-      assert.equal(milestone!.title, "", "phantom milestone has empty title");
+      assert.equal(milestone!.title, "M099", "H6 fix: phantom milestone uses ID as title");
 
       // Phantom slice created
       const slice = getSlice("M099", "S99");
@@ -895,13 +897,10 @@ describe("state-machine-live-validation", () => {
   // ─────────────────────────────────────────────────────────────────────────
 
   describe("reopen-then-redo cycle", () => {
-    test("complete → reopen → M12: stale SUMMARY causes immediate auto-reconcile", async () => {
-      // Finding M12: reopen-task does NOT delete the SUMMARY.md from disk.
-      // The reopen handler's own post-mutation hook calls renderAllProjections
-      // which triggers deriveStateFromDb, which sees the stale SUMMARY.md and
-      // auto-reconciles the task BACK to "complete" (#2514) within the same call.
-      //
-      // Result: the reopen is effectively a no-op when filesystem artifacts exist.
+    test("complete → reopen → re-complete task works end-to-end (M12 fixed)", async () => {
+      // M12 fix: reopen-task now deletes SUMMARY.md from disk before the
+      // post-mutation hook runs, preventing the reconciler from auto-correcting
+      // the task back to "complete".
       base = createFullFixture();
       openDatabase(join(base, ".gsd", "gsd.db"));
       insertMilestone({ id: "M001", title: "Active", status: "active" });
@@ -915,23 +914,23 @@ describe("state-machine-live-validation", () => {
       const summaryPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-SUMMARY.md");
       assert.ok(existsSync(summaryPath), "SUMMARY.md exists after completion");
 
-      // Reopen — handler sets DB to "pending" in transaction, but post-mutation
-      // hook triggers reconciler which immediately sets it back to "complete"
+      // Reopen — now deletes SUMMARY.md from disk (M12 fix)
       const r2 = await handleReopenTask({ milestoneId: "M001", sliceId: "S01", taskId: "T01" }, base);
-      assert.ok(!("error" in r2), `reopen handler succeeded: ${JSON.stringify(r2)}`);
+      assert.ok(!("error" in r2), `reopen: ${JSON.stringify(r2)}`);
 
-      // M12: After reopen completes, DB shows "complete" not "pending" because
-      // the reconciler auto-corrected it from the stale SUMMARY.md
-      const task = getTask("M001", "S01", "T01");
-      assert.equal(task!.status, "complete", "M12: reconciler overrides reopen — task is back to complete");
-      assert.ok(existsSync(summaryPath), "M12: SUMMARY.md was never cleaned up");
+      // Task is now properly pending — SUMMARY.md was cleaned up
+      assert.equal(getTask("M001", "S01", "T01")!.status, "pending");
+      assert.ok(!existsSync(summaryPath), "M12 fix: SUMMARY.md cleaned up by reopen");
+
+      // Re-complete succeeds
+      const r3 = await handleCompleteTask(makeTaskParams("T01", "S01", "M001") as any, base);
+      assert.ok(!("error" in r3), `re-complete: ${JSON.stringify(r3)}`);
+      assert.ok(isClosedStatus(getTask("M001", "S01", "T01")!.status));
     });
 
-    test("complete slice → reopen → M12: reconciler overrides task reset via stale SUMMARY", async () => {
-      // Same M12 pattern at the slice level: reopen-slice resets all tasks to
-      // "pending" in DB, but task SUMMARY.md artifacts remain on disk. The
-      // reopen handler's post-mutation hook triggers reconciler which sees the
-      // stale artifacts and auto-corrects tasks back to "complete".
+    test("complete slice → reopen → re-complete all works end-to-end (M12 fixed)", async () => {
+      // M12 fix: reopen-slice now deletes all SUMMARY.md and UAT.md artifacts
+      // from disk, preventing reconciler interference.
       base = createFullFixture();
       openDatabase(join(base, ".gsd", "gsd.db"));
       insertMilestone({ id: "M001", title: "Active", status: "active" });
@@ -943,17 +942,16 @@ describe("state-machine-live-validation", () => {
       await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base);
       assert.ok(isClosedStatus(getSlice("M001", "S01")!.status));
 
-      // Reopen slice — transaction resets slice to in_progress and task to pending,
-      // but post-mutation hook triggers reconciler which sees stale SUMMARY.md
+      // Reopen slice — now cleans up all artifacts (M12 fix)
       await handleReopenSlice({ milestoneId: "M001", sliceId: "S01" }, base);
-
-      // Slice status is correctly in_progress (no slice SUMMARY reconciliation)
       assert.equal(getSlice("M001", "S01")!.status, "in_progress");
+      assert.equal(getTask("M001", "S01", "T01")!.status, "pending");
 
-      // M12: Task was reset to "pending" in the transaction, but reconciler
-      // already corrected it back to "complete" from the stale SUMMARY.md
-      const task = getTask("M001", "S01", "T01");
-      assert.equal(task!.status, "complete", "M12: reconciler overrides reopen — task back to complete");
+      // Re-complete task + slice succeeds
+      await handleCompleteTask(makeTaskParams("T01", "S01", "M001") as any, base);
+      const r = await handleCompleteSlice(makeSliceParams("S01", "M001") as any, base);
+      assert.ok(!("error" in r), `re-complete slice: ${JSON.stringify(r)}`);
+      assert.ok(isClosedStatus(getSlice("M001", "S01")!.status));
     });
   });
 });

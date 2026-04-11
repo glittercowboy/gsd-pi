@@ -21,6 +21,7 @@ import {
 import { invalidateAllCaches } from "./cache.js";
 import { loadQueueOrder, saveQueueOrder } from "./queue-order.js";
 import { isDbAvailable, updateMilestoneStatus } from "./gsd-db.js";
+import { logWarning } from "./workflow-logger.js";
 
 // ─── Park ──────────────────────────────────────────────────────────────────
 
@@ -58,7 +59,7 @@ export function parkMilestone(basePath: string, milestoneId: string, reason: str
     try {
       updateMilestoneStatus(milestoneId, "parked");
     } catch (err) {
-      process.stderr.write(`gsd: parkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}\n`);
+      logWarning("engine", `parkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}`);
     }
   }
   invalidateAllCaches();
@@ -84,7 +85,7 @@ export function unparkMilestone(basePath: string, milestoneId: string): boolean 
     try {
       updateMilestoneStatus(milestoneId, "active");
     } catch (err) {
-      process.stderr.write(`gsd: unparkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}\n`);
+      logWarning("engine", `unparkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}`);
     }
   }
   invalidateAllCaches();

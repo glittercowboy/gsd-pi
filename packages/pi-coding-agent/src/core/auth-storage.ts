@@ -34,6 +34,46 @@ export type OAuthCredential = {
 
 export type AuthCredential = ApiKeyCredential | OAuthCredential;
 
+// ============================================================================
+// Google OAuth token detection
+// ============================================================================
+
+/**
+ * Providers that use Google AI Studio API keys (not OAuth tokens).
+ * OAuth access tokens (ya29.*) are not valid API keys for these providers.
+ */
+const GOOGLE_API_KEY_PROVIDERS = new Set(["google"]);
+
+/**
+ * Detect if a string is a Google OAuth access token rather than an API key.
+ * Google OAuth access tokens start with "ya29." — these are issued by
+ * Google's OAuth2 token endpoint and are not valid as AI Studio API keys.
+ *
+ * Users who installed Google's Gemini CLI may have these tokens and
+ * mistakenly set them as GEMINI_API_KEY.
+ */
+export function isGoogleOAuthToken(key: string): boolean {
+	return key.startsWith("ya29.");
+}
+
+/**
+ * Validate that an API key is not a Google OAuth token being used for
+ * a provider that requires actual API keys (e.g., Google AI Studio).
+ * Throws a descriptive error if the key appears to be an OAuth token.
+ */
+function validateNotGoogleOAuthToken(provider: string, key: string): void {
+	if (GOOGLE_API_KEY_PROVIDERS.has(provider) && isGoogleOAuthToken(key)) {
+		throw new Error(
+			`The provided key for "${provider}" appears to be a Google OAuth access token (ya29.*), ` +
+				`not a valid API key. Google AI Studio requires an API key starting with "AIza...". ` +
+				`\n\nIf you're using Google's Gemini CLI, its OAuth tokens are not compatible. ` +
+				`Either:\n` +
+				`  1. Get an API key from https://aistudio.google.com/apikey and set GEMINI_API_KEY\n` +
+				`  2. Use '/login google-gemini-cli' to authenticate via Cloud Code Assist`,
+		);
+	}
+}
+
 /**
  * On-disk format: each provider maps to a single credential or an array of credentials.
  * Single credentials are normalized to arrays at load time for internal use.
@@ -360,6 +400,9 @@ export class AuthStorage {
 	 */
 	set(provider: string, credential: AuthCredential): void {
 		if (credential.type === "api_key") {
+			// Block Google OAuth tokens being stored as API keys for AI Studio providers
+			validateNotGoogleOAuthToken(provider, credential.key);
+
 			const existing = this.getCredentialsForProvider(provider);
 			// Deduplicate: don't add if same key already exists
 			const isDuplicate = existing.some(
@@ -762,6 +805,16 @@ export class AuthStorage {
 		// Runtime override takes highest priority
 		const runtimeKey = this.runtimeOverrides.get(providerId);
 		if (runtimeKey) {
+			// Block Google OAuth tokens used as runtime API key overrides
+			if (GOOGLE_API_KEY_PROVIDERS.has(providerId) && isGoogleOAuthToken(runtimeKey)) {
+				this.recordError(
+					new Error(
+						`Blocked Google OAuth access token (ya29.*) for provider "${providerId}". ` +
+							`Use an API key from https://aistudio.google.com/apikey or '/login google-gemini-cli'.`,
+					),
+				);
+				return undefined;
+			}
 			return runtimeKey;
 		}
 
@@ -780,7 +833,19 @@ export class AuthStorage {
 
 		// Fall back to environment variable
 		const envKey = getEnvApiKey(providerId);
-		if (envKey) return envKey;
+		if (envKey) {
+			// Block Google OAuth tokens from environment variables (e.g., GEMINI_API_KEY=ya29.*)
+			if (GOOGLE_API_KEY_PROVIDERS.has(providerId) && isGoogleOAuthToken(envKey)) {
+				this.recordError(
+					new Error(
+						`GEMINI_API_KEY contains a Google OAuth access token (ya29.*), not an API key. ` +
+							`Get an API key from https://aistudio.google.com/apikey or use '/login google-gemini-cli'.`,
+					),
+				);
+				return undefined;
+			}
+			return envKey;
+		}
 
 		// Fall back to custom resolver (e.g., models.json custom providers)
 		return this.fallbackResolver?.(providerId) ?? undefined;

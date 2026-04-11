@@ -27,6 +27,27 @@ import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
 
 import { createAutoWorktree, mergeMilestoneToMain } from "../auto-worktree.ts";
+import { _resetServiceCache } from "../worktree.ts";
+import { _clearGsdRootCache } from "../paths.ts";
+
+// Isolate from user's global preferences (which may have git.main_branch set)
+let originalHome: string | undefined;
+let fakeHome: string;
+
+test.before(() => {
+  originalHome = process.env.HOME;
+  fakeHome = realpathSync(mkdtempSync(join(tmpdir(), "gsd-fake-home-")));
+  process.env.HOME = fakeHome;
+  _clearGsdRootCache();
+  _resetServiceCache();
+});
+
+test.after(() => {
+  process.env.HOME = originalHome;
+  _clearGsdRootCache();
+  _resetServiceCache();
+  rmSync(fakeHome, { recursive: true, force: true });
+});
 
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, {

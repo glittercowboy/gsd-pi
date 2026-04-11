@@ -1040,8 +1040,8 @@ describe("state-machine-full-walkthrough", () => {
   // FAILURE MODES: What happens when things go wrong
   // ═══════════════════════════════════════════════════════════════════════════
 
-  describe("Failure: DB has slice but no task rows (partial migration)", () => {
-    test("DB tasks empty but PLAN on disk has tasks → wrong phase (planning)", async () => {
+  describe("Recovery: DB has slice but no task rows (partial migration)", () => {
+    test("DB tasks empty but PLAN on disk has tasks → reconciles to executing", async () => {
       const base = createFixtureBase();
       const dbPath = join(base, ".gsd", "gsd.db");
       openDatabase(dbPath);
@@ -1056,11 +1056,10 @@ describe("state-machine-full-walkthrough", () => {
       invalidateStateCache();
       const state = await deriveStateFromDb(base);
 
-      // BUG: Returns "planning" because getSliceTasks() returns []
-      // and line 703 treats empty tasks as "no tasks defined".
-      // PLAN file on disk has T01/T02 but DB doesn't know about them.
-      assert.equal(state.phase, "planning",
-        "KNOWN ISSUE: DB empty tasks → planning even though PLAN has tasks on disk");
+      // FIX (#3600): plan-file tasks are now reconciled into the DB,
+      // so the phase correctly advances to executing instead of planning.
+      assert.equal(state.phase, "executing",
+        "reconciled plan-file tasks → executing (not stuck in planning)");
     });
   });
 

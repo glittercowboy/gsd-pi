@@ -13,6 +13,7 @@ import {
 } from "@gsd/pi-tui";
 import type { AuthStorage } from "../../../core/auth-storage.js";
 import { getDiscoverableProviders } from "../../../core/model-discovery.js";
+import { providerDisplayName } from "./model-selector.js";
 import type { ModelRegistry } from "../../../core/model-registry.js";
 import { ModelsJsonWriter } from "../../../core/models-json-writer.js";
 import { theme } from "../theme/theme.js";
@@ -43,6 +44,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
 	private modelsJsonWriter: ModelsJsonWriter;
 	private onDone: () => void;
 	private onDiscover: (provider: string) => void;
+	private onSetupAuth: (provider: string) => void;
 	private confirmingRemove = false;
 	private hintsContainer: Container;
 
@@ -52,6 +54,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
 		modelRegistry: ModelRegistry,
 		onDone: () => void,
 		onDiscover: (provider: string) => void,
+		onSetupAuth?: (provider: string) => void,
 	) {
 		super();
 
@@ -61,6 +64,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
 		this.modelsJsonWriter = new ModelsJsonWriter(this.modelRegistry.modelsJsonPath);
 		this.onDone = onDone;
 		this.onDiscover = onDiscover;
+		this.onSetupAuth = onSetupAuth ?? (() => {});
 
 		// Header
 		this.addChild(new Text(theme.fg("accent", "Provider Manager"), 0, 0));
@@ -125,6 +129,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
 			this.hintsContainer.addChild(new Text(hints, 0, 0));
 		} else {
 			const hints = [
+				rawKeyHint("enter", "setup auth"),
 				rawKeyHint("d", "discover"),
 				rawKeyHint("r", "remove auth"),
 				rawKeyHint("esc", "close"),
@@ -145,7 +150,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
 			const countBadge = theme.fg("muted", `(${p.modelCount} models)`);
 
 			const prefix = isSelected ? theme.fg("accent", "> ") : "  ";
-			const nameText = isSelected ? theme.fg("accent", p.name) : p.name;
+			const nameText = isSelected ? theme.fg("accent", providerDisplayName(p.name)) : providerDisplayName(p.name);
 
 			const parts = [prefix, nameText, " ", authBadge];
 			if (discoveryBadge) parts.push(" ", discoveryBadge);
@@ -202,6 +207,12 @@ export class ProviderManagerComponent extends Container implements Focusable {
 					this.updateHints();
 					this.tui.requestRender();
 				}
+			}
+		} else if (kb.matches(keyData, "selectConfirm")) {
+			// Enter key → initiate auth setup for the selected provider (#3579)
+			const provider = this.providers[this.selectedIndex];
+			if (provider) {
+				this.onSetupAuth(provider.name);
 			}
 		}
 	}

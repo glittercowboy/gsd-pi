@@ -1098,16 +1098,17 @@ describe('derive-state-db', async () => {
       // M001: complete milestone with summary
       writeFile(base, 'milestones/M001/M001-SUMMARY.md', '# M001 Summary\n\nDone.');
 
-      // M002: queued milestone — directory exists, no content files, but has DB row
+      // M002: queued milestone — directory exists with CONTEXT file and DB row
       mkdirSync(join(base, '.gsd', 'milestones', 'M002', 'slices'), { recursive: true });
+      writeFile(base, 'milestones/M002/M002-CONTEXT.md', '# M002 Context\n\nPlanned milestone.');
 
       // DB has both M001 complete and M002 queued
       openDatabase(':memory:');
       insertMilestone({ id: 'M001', title: 'First', status: 'complete' });
       insertMilestone({ id: 'M002', title: 'Second', status: 'queued' });
 
-      // isGhostMilestone should NOT treat M002 as ghost when DB row exists
-      assert.ok(!isGhostMilestone(base, 'M002'), 'ghost-dbrow: M002 with DB row is NOT a ghost');
+      // isGhostMilestone should NOT treat M002 as ghost when DB row + content files exist
+      assert.ok(!isGhostMilestone(base, 'M002'), 'ghost-dbrow: M002 with DB row and content is NOT a ghost');
 
       invalidateStateCache();
       const dbState = await deriveStateFromDb(base);

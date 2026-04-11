@@ -154,3 +154,30 @@ test("input-controller: truly unknown slash commands stop before session.prompt"
 	);
 	assert.equal(getEditorText(), "", "unknown slash commands should clear the editor after showing the error");
 });
+
+test("input-controller: absolute file paths are not treated as slash commands (#3478)", async () => {
+	const { host, prompted, errors } = createHost();
+
+	await host.defaultEditor.onSubmit("/Users/name/Desktop/screenshot.png");
+
+	assert.deepEqual(errors, [], "file paths should not trigger unknown command error");
+	assert.deepEqual(prompted, ["/Users/name/Desktop/screenshot.png"], "file paths should be sent as plain input");
+});
+
+test("input-controller: Linux absolute paths are not treated as slash commands (#3478)", async () => {
+	const { host, prompted, errors } = createHost();
+
+	await host.defaultEditor.onSubmit("/home/user/documents/file.txt");
+
+	assert.deepEqual(errors, [], "Linux paths should not trigger unknown command error");
+	assert.deepEqual(prompted, ["/home/user/documents/file.txt"], "Linux paths should be sent as plain input");
+});
+
+test("input-controller: /tmp paths are not treated as slash commands (#3478)", async () => {
+	const { host, prompted, errors } = createHost();
+
+	await host.defaultEditor.onSubmit("/tmp/some-file.log");
+
+	assert.deepEqual(errors, []);
+	assert.deepEqual(prompted, ["/tmp/some-file.log"]);
+});

@@ -178,7 +178,7 @@ function makeMockDeps(overrides?: Partial<LoopDeps>): LoopDeps & { callLog: stri
     getCurrentBranch: () => "main",
     autoWorktreeBranch: () => "auto/M001",
     resolveMilestoneFile: () => null,
-    reconcileMergeState: () => false,
+    reconcileMergeState: () => "clean",
     getLedger: () => null,
     getProjectTotals: () => ({ cost: 0 }),
     formatCost: (c: number) => `$${c.toFixed(2)}`,
@@ -309,6 +309,12 @@ describe("Custom engine loop integration", () => {
     assert.ok(
       stopEntry!.includes("Workflow complete"),
       `stopAuto reason should include "Workflow complete", got: ${stopEntry}`,
+    );
+
+    assert.equal(
+      deps.callLog.filter((e: string) => e === "deriveState").length,
+      3,
+      "custom engine should stop immediately after a milestone-complete reconcile",
     );
 
     // Verify dev path was NOT used (resolveDispatch should not appear)

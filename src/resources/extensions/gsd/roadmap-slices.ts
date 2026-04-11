@@ -66,6 +66,17 @@ function parseTableSlices(section: string): RoadmapSliceEntry[] {
   const lines = section.split("\n");
   const slices: RoadmapSliceEntry[] = [];
 
+  // Detect dependency column index from the header row (#3383, #3336).
+  // Only parse deps from this column (or cells with explicit "depends"/"deps" keywords).
+  let depColumnIndex = -1;
+  for (const line of lines) {
+    if (!line.includes("|")) continue;
+    if (/S\d+/.test(line)) break; // reached data rows
+    const headerCells = line.split("|").map(c => c.trim()).filter(Boolean);
+    depColumnIndex = headerCells.findIndex(c => /^(depends|deps|depend)/i.test(c));
+    if (depColumnIndex >= 0) break;
+  }
+
   for (const line of lines) {
     // Skip non-table lines, separator lines (|---|---|), and header rows
     if (!line.includes("|")) continue;
@@ -82,7 +93,7 @@ function parseTableSlices(section: string): RoadmapSliceEntry[] {
     const fullRow = line.toLowerCase();
     const done =
       /\[x\]/i.test(line) ||
-      /[✅☑✓]/.test(line) ||
+      /[✅☑✓✔]/.test(line) ||
       /\bdone\b/.test(fullRow) ||
       /\bcomplete(?:d)?\b/.test(fullRow);
 
@@ -95,12 +106,17 @@ function parseTableSlices(section: string): RoadmapSliceEntry[] {
       if (/\bmedium\b/.test(cellLower) || /\bmed\b/.test(cellLower)) { risk = "medium"; break; }
     }
 
-    // Extract dependencies from cells containing S-prefixed IDs (excluding the slice's own ID)
+    // Extract dependencies only from the dependency column or cells with
+    // explicit "depends"/"deps" keywords — never from title cells (#3383).
     let depends: string[] = [];
-    for (const cell of cells) {
-      if (/depends|deps/i.test(cell) || (cell.match(/S\d+/g)?.length ?? 0) > 0) {
-        const depIds = (cell.match(/S\d+/g) ?? []).filter(d => d !== id);
-        if (depIds.length > 0 || /none|—|-/i.test(cell)) {
+    if (depColumnIndex >= 0 && cells[depColumnIndex]) {
+      const depCell = cells[depColumnIndex]!;
+      const depIds = (depCell.match(/S\d+/g) ?? []).filter(d => d !== id);
+      depends = expandDependencies(depIds);
+    } else {
+      for (const cell of cells) {
+        if (/depends|deps/i.test(cell)) {
+          const depIds = (cell.match(/S\d+/g) ?? []).filter(d => d !== id);
           depends = expandDependencies(depIds);
           break;
         }
@@ -222,11 +238,11 @@ function parseProseSliceHeaders(content: string): RoadmapSliceEntry[] {
   // numeric prefixes (e.g., "1.", "(1)"), bracketed IDs (e.g., "[S01]"),
   // optional checkmark completion marker, and optional leading indentation.
   // Separator after the ID is flexible: colon, dash, em/en dash, dot, or just whitespace.
-  const headerPattern = /^\s*#{1,4}\s+\*{0,2}(?:\u2713\s+)?(?:\d+[.)]\s+)?(?:\(\d+\)\s+)?(?:Slice\s+)?\[?(S\d+)\]?\*{0,2}[:\s.\u2014\u2013-]*\s*(.+)/gm;
+  const headerPattern = /^\s*#{1,4}\s+\*{0,2}(?:[\u2713\u2705]\s+)?(?:\d+[.)]\s+)?(?:\(\d+\)\s+)?(?:Slice\s+)?\[?(S\d+)\]?\*{0,2}[:\s.\u2014\u2013-]*\s*(.+)/gm;
   let match: RegExpExecArray | null;
 
   // Check for checkmark before the slice ID (e.g., "## checkmark S01: Title")
-  const prefixCheckPattern = /^\s*#{1,4}\s+\*{0,2}\u2713\s+/;
+  const prefixCheckPattern = /^\s*#{1,4}\s+\*{0,2}[\u2713\u2705]\s+/;
 
   while ((match = headerPattern.exec(content)) !== null) {
     const id = match[1]!;
@@ -240,9 +256,14 @@ function parseProseSliceHeaders(content: string): RoadmapSliceEntry[] {
     const line = match[0];
     let done = prefixCheckPattern.test(line);
 
-    if (!done && title.startsWith("\u2713")) {
+    if (!done && /^[\u2713\u2705]/.test(title)) {
       done = true;
-      title = title.replace(/^\u2713\s*/, "");
+      title = title.replace(/^[\u2713\u2705]\s*/, "");
+    }
+
+    if (!done && /[\u2705]\s*$/.test(title)) {
+      done = true;
+      title = title.replace(/\s*[\u2705]\s*$/, "");
     }
 
     if (!done && /\(Complete\)\s*$/i.test(title)) {

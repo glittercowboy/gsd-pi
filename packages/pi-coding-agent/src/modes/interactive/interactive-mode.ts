@@ -7,6 +7,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { listDescendants } from "@gsd/native";
 import type { AgentMessage } from "@gsd/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, OAuthProviderId } from "@gsd/pi-ai";
 import type {
@@ -78,7 +79,7 @@ import { ExtensionSelectorComponent } from "./components/extension-selector.js";
 import { FooterComponent } from "./components/footer.js";
 import { appKey, appKeyHint, editorKey, formatKeyForDisplay, keyHint, rawKeyHint } from "./components/keybinding-hints.js";
 import { LoginDialogComponent } from "./components/login-dialog.js";
-import { ModelSelectorComponent } from "./components/model-selector.js";
+import { ModelSelectorComponent, providerDisplayName } from "./components/model-selector.js";
 import { OAuthSelectorComponent } from "./components/oauth-selector.js";
 import { ProviderManagerComponent } from "./components/provider-manager.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
@@ -89,6 +90,7 @@ import { ToolExecutionComponent } from "./components/tool-execution.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
+import { ContextualTips } from "../../core/contextual-tips.js";
 import { type SlashCommandContext, dispatchSlashCommand, getAppKeyDisplay } from "./slash-command-handlers.js";
 import { handleAgentEvent } from "./controllers/chat-controller.js";
 import { createExtensionUIContext as buildExtensionUIContext } from "./controllers/extension-ui-controller.js";
@@ -157,6 +159,10 @@ export interface InteractiveModeOptions {
 }
 
 export class InteractiveMode {
+	// Cap rendered chat components to prevent unbounded memory/CPU growth.
+	// Only render-components are removed — session transcript stays on disk.
+	private static readonly MAX_CHAT_COMPONENTS = 100;
+
 	private session: AgentSession;
 	private ui: TUI;
 	private chatContainer: Container;
@@ -208,6 +214,9 @@ export class InteractiveMode {
 
 	// Track if editor is in bash mode (text starts with !)
 	private isBashMode = false;
+
+	// Contextual tips — session-scoped, non-intrusive hints
+	private contextualTips = new ContextualTips();
 
 	// Track current bash execution component
 	private bashComponent: BashExecutionComponent | undefined = undefined;
@@ -333,7 +342,7 @@ export class InteractiveMode {
 				return filtered.map((item) => ({
 					value: item.label,
 					label: item.id,
-					description: item.provider,
+					description: providerDisplayName(item.provider),
 				}));
 			};
 		}
@@ -2138,6 +2147,18 @@ export class InteractiveMode {
 				const _exhaustive: never = message;
 			}
 		}
+		this.trimChatHistory();
+	}
+
+	/**
+	 * Remove oldest components when chat exceeds MAX_CHAT_COMPONENTS.
+	 * Only render-components are removed — session data stays in SessionManager.
+	 */
+	private trimChatHistory(): void {
+		while (this.chatContainer.children.length > InteractiveMode.MAX_CHAT_COMPONENTS) {
+			const oldest = this.chatContainer.children[0];
+			this.chatContainer.removeChild(oldest);
+		}
 	}
 
 	/**
@@ -2232,6 +2253,7 @@ export class InteractiveMode {
 		}
 
 		this.pendingTools.clear();
+		this.trimChatHistory();
 		this.ui.requestRender();
 	}
 
@@ -2325,6 +2347,21 @@ export class InteractiveMode {
 		if (shutdownBehavior === "stop_ui") {
 			return;
 		}
+
+		// Kill ALL descendant processes to prevent orphans (next-server, pnpm dev, etc.)
+		try {
+			const descendants = listDescendants(process.pid);
+			for (const childPid of descendants) {
+				try { process.kill(childPid, "SIGTERM"); } catch {}
+			}
+			if (descendants.length > 0) {
+				await new Promise(resolve => setTimeout(resolve, 500));
+				for (const childPid of descendants) {
+					try { process.kill(childPid, "SIGKILL"); } catch {}
+				}
+			}
+		} catch {}
+
 		process.exit(0);
 	}
 
@@ -2558,6 +2595,16 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warningMessage}`), 1, 0));
 		this.ui.requestRender();
+	}
+
+	showTip(message: string): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", `💡 ${message}`), 1, 0));
+		this.ui.requestRender();
+	}
+
+	getContextPercent(): number | undefined {
+		return this.session.getContextUsage()?.percent ?? undefined;
 	}
 
 	showNewVersionNotification(newVersion: string): void {
@@ -3378,6 +3425,11 @@ export class InteractiveMode {
 					done();
 					this.ui.requestRender();
 				},
+				async (provider: string) => {
+					// Enter key → auth setup for selected provider (#3579)
+					done();
+					await this.showLoginDialog(provider);
+				},
 			);
 			return { component, focus: component };
 		});
@@ -3640,6 +3692,9 @@ export class InteractiveMode {
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
+
+		// Reset contextual tips for the new session
+		this.contextualTips.reset();
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));

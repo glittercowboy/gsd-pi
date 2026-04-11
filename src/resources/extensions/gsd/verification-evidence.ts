@@ -52,6 +52,32 @@ export interface BrowserEvidenceJSON {
   duration: number;
 }
 
+export interface PreExecutionCheckJSON {
+  /** Check category: package, file, tool, endpoint, schema */
+  category: "package" | "file" | "tool" | "endpoint" | "schema";
+  /** What was checked (e.g., package name, file path) */
+  target: string;
+  /** Whether the check passed */
+  passed: boolean;
+  /** Human-readable message explaining the result */
+  message: string;
+  /** Whether this failure should block execution (only meaningful when passed=false) */
+  blocking?: boolean;
+}
+
+export interface PostExecutionCheckJSON {
+  /** Check category: import, signature, pattern */
+  category: "import" | "signature" | "pattern";
+  /** What was checked (e.g., file:line, function name) */
+  target: string;
+  /** Whether the check passed */
+  passed: boolean;
+  /** Human-readable message explaining the result */
+  message: string;
+  /** Whether this failure should block completion (only meaningful when passed=false) */
+  blocking?: boolean;
+}
+
 export interface EvidenceJSON {
   schemaVersion: 1;
   taskId: string;
@@ -65,6 +91,10 @@ export interface EvidenceJSON {
   runtimeErrors?: RuntimeErrorJSON[];
   auditWarnings?: AuditWarningJSON[];
   browser?: BrowserEvidenceJSON;
+  /** Pre-execution checks run before task execution (package existence, file refs, etc.) */
+  preExecutionChecks?: PreExecutionCheckJSON[];
+  /** Post-execution checks run after task completion (import resolution, signature drift, pattern consistency) */
+  postExecutionChecks?: PostExecutionCheckJSON[];
 }
 
 /**
@@ -121,6 +151,44 @@ export function writeVerificationJSON(
   }
 
   const filePath = join(tasksDir, `${taskId}-VERIFY.json`);
+  writeFileSync(filePath, JSON.stringify(evidence, null, 2) + "\n", "utf-8");
+}
+
+// ─── Pre-Execution Evidence ──────────────────────────────────────────────────
+
+export interface PreExecutionEvidenceJSON {
+  schemaVersion: 1;
+  milestoneId: string;
+  sliceId: string;
+  timestamp: number;
+  status: "pass" | "warn" | "fail";
+  durationMs: number;
+  checks: PreExecutionCheckJSON[];
+}
+
+/**
+ * Write pre-execution check results to a PRE-EXEC-VERIFY.json artifact
+ * in the slice directory.
+ */
+export function writePreExecutionEvidence(
+  result: { status: "pass" | "warn" | "fail"; checks: PreExecutionCheckJSON[]; durationMs: number },
+  sliceDir: string,
+  milestoneId: string,
+  sliceId: string,
+): void {
+  mkdirSync(sliceDir, { recursive: true });
+
+  const evidence: PreExecutionEvidenceJSON = {
+    schemaVersion: 1,
+    milestoneId,
+    sliceId,
+    timestamp: Date.now(),
+    status: result.status,
+    durationMs: result.durationMs,
+    checks: result.checks,
+  };
+
+  const filePath = join(sliceDir, `${sliceId}-PRE-EXEC-VERIFY.json`);
   writeFileSync(filePath, JSON.stringify(evidence, null, 2) + "\n", "utf-8");
 }
 

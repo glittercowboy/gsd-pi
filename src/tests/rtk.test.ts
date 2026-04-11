@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,6 +18,24 @@ import {
   validateRtkBinary,
 } from "../rtk.ts";
 import { createFakeRtk } from "./rtk-test-utils.ts";
+
+// Store original env values for restoration
+let originalRtkDisabled: string | undefined;
+
+beforeEach(() => {
+  // Save and clear GSD_RTK_DISABLED so tests can use fake RTK binaries
+  originalRtkDisabled = process.env.GSD_RTK_DISABLED;
+  delete process.env.GSD_RTK_DISABLED;
+});
+
+afterEach(() => {
+  // Restore original env
+  if (originalRtkDisabled !== undefined) {
+    process.env.GSD_RTK_DISABLED = originalRtkDisabled;
+  } else {
+    delete process.env.GSD_RTK_DISABLED;
+  }
+});
 
 test("resolveRtkAssetName maps supported release assets correctly", () => {
   assert.equal(resolveRtkAssetName("darwin", "arm64"), "rtk-aarch64-apple-darwin.tar.gz");

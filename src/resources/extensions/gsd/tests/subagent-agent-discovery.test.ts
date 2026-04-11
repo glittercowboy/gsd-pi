@@ -42,3 +42,50 @@ test("discoverAgents falls back to legacy .pi/agents when needed", (t) => {
 	assert.equal(discovery.projectAgentsDir, agentsDir);
 	assert.deepEqual(discovery.agents.map((agent) => agent.name), ["ping"]);
 });
+
+test("discoverAgents accepts tools frontmatter as a YAML list", (t) => {
+	const root = makeProjectRoot(t);
+	const agentsDir = join(root, ".gsd", "agents");
+	mkdirSync(agentsDir, { recursive: true });
+	writeFileSync(
+		join(agentsDir, "reviewer.md"),
+		[
+			"---",
+			"name: reviewer",
+			"description: review agent",
+			"tools:",
+			"  - bash",
+			"  - read",
+			"---",
+			"Review code",
+			"",
+		].join("\n"),
+	);
+
+	const discovery = discoverAgents(root, "project");
+
+	assert.deepEqual(discovery.agents.map((agent) => agent.name), ["reviewer"]);
+	assert.deepEqual(discovery.agents[0]?.tools, ["bash", "read"]);
+});
+
+test("discoverAgents still accepts comma-separated tools frontmatter", (t) => {
+	const root = makeProjectRoot(t);
+	const agentsDir = join(root, ".gsd", "agents");
+	mkdirSync(agentsDir, { recursive: true });
+	writeFileSync(
+		join(agentsDir, "reviewer.md"),
+		[
+			"---",
+			"name: reviewer",
+			"description: review agent",
+			"tools: bash, read",
+			"---",
+			"Review code",
+			"",
+		].join("\n"),
+	);
+
+	const discovery = discoverAgents(root, "project");
+
+	assert.deepEqual(discovery.agents[0]?.tools, ["bash", "read"]);
+});

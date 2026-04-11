@@ -353,6 +353,10 @@ function getSpawnCommandForSourceHost(platform: NodeJS.Platform): string {
   return platform === 'win32' ? 'npm.cmd' : 'npm'
 }
 
+function needsWindowsShell(command: string, platform: NodeJS.Platform): boolean {
+  return platform === 'win32' && /\.(cmd|bat)$/i.test(command)
+}
+
 function formatLaunchStatus(status: WebModeLaunchStatus): string {
   if (status.ok) {
     return `[gsd] Web mode startup: status=started cwd=${status.cwd} port=${status.port} host=${status.hostPath} kind=${status.hostKind} url=${status.url}\n`
@@ -636,6 +640,7 @@ export async function launchWebMode(
       detached: true,
       stdio: 'ignore',
       windowsHide: true,
+      shell: needsWindowsShell(spawnSpec.command, deps.platform ?? process.platform),
       env,
     },
   )

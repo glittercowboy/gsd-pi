@@ -1,4 +1,5 @@
-import type { ExtensionCommandContext, ExtensionContext } from "@gsd/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@gsd/pi-coding-agent";
+import type { Model } from "@gsd/pi-ai";
 import type { GSDState } from "../../types.js";
 
 import { computeProgressScore, formatProgressLine } from "../../progress-score.js";
@@ -8,6 +9,7 @@ import { runEnvironmentChecks } from "../../doctor-environment.js";
 import { deriveState } from "../../state.js";
 import { handleCmux } from "../../commands-cmux.js";
 import { projectRoot } from "../context.js";
+import { formatShortcut } from "../../files.js";
 
 export function showHelp(ctx: ExtensionCommandContext): void {
   const lines = [
@@ -24,11 +26,12 @@ export function showHelp(ctx: ExtensionCommandContext): void {
     "  /gsd new-milestone  Create milestone from headless context (used by gsd headless)",
     "",
     "VISIBILITY",
-    "  /gsd status         Show progress dashboard  (Ctrl+Alt+G)",
+    `  /gsd status         Show progress dashboard  (${formatShortcut("Ctrl+Alt+G")})`,
     "  /gsd visualize      Interactive 10-tab TUI (progress, timeline, deps, metrics, health, agent, changes, knowledge, captures, export)",
     "  /gsd queue          Show queued/dispatched units and execution order",
     "  /gsd history        View execution history  [--cost] [--phase] [--model] [N]",
     "  /gsd changelog      Show categorized release notes  [version]",
+    `  /gsd notifications  View persistent notification history  [clear|tail|filter]  (${formatShortcut("Ctrl+Alt+N")})`,
     "",
     "COURSE CORRECTION",
     "  /gsd steer <desc>   Apply user override to active work",
@@ -42,19 +45,22 @@ export function showHelp(ctx: ExtensionCommandContext): void {
     "",
     "PROJECT KNOWLEDGE",
     "  /gsd knowledge <type> <text>   Add rule, pattern, or lesson to KNOWLEDGE.md",
+    "  /gsd codebase [generate|update|stats]   Manage the CODEBASE.md cache used in prompt context",
     "",
     "SETUP & CONFIGURATION",
     "  /gsd init           Project init wizard — detect, configure, bootstrap .gsd/",
     "  /gsd setup          Global setup status  [llm|search|remote|keys|prefs]",
+    "  /gsd model          Switch active session model  [provider/model|model-id]",
     "  /gsd mode           Set workflow mode (solo/team)  [global|project]",
     "  /gsd prefs          Manage preferences  [global|project|status|wizard|setup|import-claude]",
     "  /gsd cmux           Manage cmux integration  [status|on|off|notifications|sidebar|splits|browser]",
     "  /gsd config         Set API keys for external tools",
     "  /gsd keys           API key manager  [list|add|remove|test|rotate|doctor]",
+    "  /gsd show-config    Show effective configuration (models, routing, toggles)",
     "  /gsd hooks          Show post-unit hook configuration",
     "  /gsd extensions     Manage extensions  [list|enable|disable|info]",
     "  /gsd fast           Toggle OpenAI service tier  [on|off|flex|status]",
-    "  /gsd mcp            MCP server status and connectivity  [status|check <server>]",
+    "  /gsd mcp            MCP server status and connectivity  [status|check <server>|init [dir]]",
     "",
     "MAINTENANCE",
     "  /gsd doctor         Diagnose and repair .gsd/ state  [audit|fix|heal] [scope]",
@@ -70,6 +76,9 @@ export function showHelp(ctx: ExtensionCommandContext): void {
 
 export async function handleStatus(ctx: ExtensionCommandContext): Promise<void> {
   const basePath = projectRoot();
+  // Open DB in cold sessions so status uses DB-backed state, not filesystem fallback (#3385)
+  const { ensureDbOpen } = await import("../../bootstrap/dynamic-tools.js");
+  await ensureDbOpen();
   const state = await deriveState(basePath);
 
   if (state.registry.length === 0) {
@@ -78,8 +87,8 @@ export async function handleStatus(ctx: ExtensionCommandContext): Promise<void> 
   }
 
   const { GSDDashboardOverlay } = await import("../../dashboard-overlay.js");
-  const result = await ctx.ui.custom<void>(
-    (tui, theme, _kb, done) => new GSDDashboardOverlay(tui, theme, () => done()),
+  const result = await ctx.ui.custom<boolean>(
+    (tui, theme, _kb, done) => new GSDDashboardOverlay(tui, theme, () => done(true)),
     {
       overlay: true,
       overlayOptions: {
@@ -107,8 +116,8 @@ export async function handleVisualize(ctx: ExtensionCommandContext): Promise<voi
   }
 
   const { GSDVisualizerOverlay } = await import("../../visualizer-overlay.js");
-  const result = await ctx.ui.custom<void>(
-    (tui, theme, _kb, done) => new GSDVisualizerOverlay(tui, theme, () => done()),
+  const result = await ctx.ui.custom<boolean>(
+    (tui, theme, _kb, done) => new GSDVisualizerOverlay(tui, theme, () => done(true)),
     {
       overlay: true,
       overlayOptions: {
@@ -173,7 +182,133 @@ export async function handleSetup(args: string, ctx: ExtensionCommandContext): P
   );
 }
 
-export async function handleCoreCommand(trimmed: string, ctx: ExtensionCommandContext): Promise<boolean> {
+function sortModelsForSelection(models: Model<any>[], currentModel: Model<any> | undefined): Model<any>[] {
+  return [...models].sort((a, b) => {
+    const aCurrent = currentModel && a.provider === currentModel.provider && a.id === currentModel.id;
+    const bCurrent = currentModel && b.provider === currentModel.provider && b.id === currentModel.id;
+    if (aCurrent && !bCurrent) return -1;
+    if (!aCurrent && bCurrent) return 1;
+    const providerCmp = a.provider.localeCompare(b.provider);
+    if (providerCmp !== 0) return providerCmp;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+function buildProviderModelGroups(
+  models: Model<any>[],
+  currentModel: Model<any> | undefined,
+): Map<string, Model<any>[]> {
+  const byProvider = new Map<string, Model<any>[]>();
+
+  for (const model of sortModelsForSelection(models, currentModel)) {
+    let group = byProvider.get(model.provider);
+    if (!group) {
+      group = [];
+      byProvider.set(model.provider, group);
+    }
+    group.push(model);
+  }
+  return byProvider;
+}
+
+async function selectModelByProvider(
+  title: string,
+  models: Model<any>[],
+  ctx: ExtensionCommandContext,
+  currentModel: Model<any> | undefined,
+): Promise<Model<any> | undefined> {
+  const byProvider = buildProviderModelGroups(models, currentModel);
+  const providerOptions = Array.from(byProvider.entries()).map(([provider, group]) =>
+    `${provider} (${group.length} model${group.length === 1 ? "" : "s"})`,
+  );
+  providerOptions.push("(cancel)");
+
+  const providerChoice = await ctx.ui.select(`${title} — choose provider:`, providerOptions);
+  if (!providerChoice || typeof providerChoice !== "string" || providerChoice === "(cancel)") return undefined;
+
+  const providerName = providerChoice.replace(/ \(\d+ models?\)$/, "");
+  const providerModels = byProvider.get(providerName);
+  if (!providerModels || providerModels.length === 0) return undefined;
+
+  const optionToModel = new Map<string, Model<any>>();
+  const modelOptions = providerModels.map((model) => {
+    const isCurrent = currentModel && model.provider === currentModel.provider && model.id === currentModel.id;
+    const label = `${isCurrent ? "* " : ""}${model.id}`;
+    optionToModel.set(label, model);
+    return label;
+  });
+  modelOptions.push("(cancel)");
+
+  const modelChoice = await ctx.ui.select(`${title} — ${providerName}:`, modelOptions);
+  if (!modelChoice || typeof modelChoice !== "string" || modelChoice === "(cancel)") return undefined;
+  return optionToModel.get(modelChoice);
+}
+
+async function resolveRequestedModel(
+  query: string,
+  ctx: ExtensionCommandContext,
+): Promise<Model<any> | undefined> {
+  const { resolveModelId } = await import("../../auto-model-selection.js");
+  const models = ctx.modelRegistry.getAvailable();
+  const exact = resolveModelId(query, models, ctx.model?.provider);
+  if (exact) return exact;
+
+  const lowerQuery = query.toLowerCase();
+  const partialMatches = models.filter((model) =>
+    model.id.toLowerCase().includes(lowerQuery)
+      || `${model.provider}/${model.id}`.toLowerCase().includes(lowerQuery),
+  );
+
+  if (partialMatches.length === 1) return partialMatches[0];
+  if (partialMatches.length === 0 || !ctx.hasUI) return undefined;
+  return selectModelByProvider(`Multiple models match "${query}"`, partialMatches, ctx, ctx.model);
+}
+
+async function handleModel(trimmedArgs: string, ctx: ExtensionCommandContext, pi: ExtensionAPI | undefined): Promise<void> {
+  const availableModels = ctx.modelRegistry.getAvailable();
+  if (availableModels.length === 0) {
+    ctx.ui.notify("No available models found. Check provider auth and model discovery.", "warning");
+    return;
+  }
+  if (!pi) {
+    ctx.ui.notify("Model switching is unavailable in this context.", "warning");
+    return;
+  }
+
+  const trimmed = trimmedArgs.trim();
+  let targetModel: Model<any> | undefined;
+
+  if (!trimmed) {
+    if (!ctx.hasUI) {
+      const current = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "(none)";
+      ctx.ui.notify(`Current model: ${current}\nUsage: /gsd model <provider/model|model-id>`, "info");
+      return;
+    }
+
+    targetModel = await selectModelByProvider("Select session model:", availableModels, ctx, ctx.model);
+  } else {
+    targetModel = await resolveRequestedModel(trimmed, ctx);
+  }
+
+  if (!targetModel) {
+    ctx.ui.notify(`Model "${trimmed}" not found. Use /gsd model with an exact provider/model or a unique model ID.`, "warning");
+    return;
+  }
+
+  const ok = await pi.setModel(targetModel);
+  if (!ok) {
+    ctx.ui.notify(`No API key for ${targetModel.provider}/${targetModel.id}`, "warning");
+    return;
+  }
+
+  ctx.ui.notify(`Model: ${targetModel.provider}/${targetModel.id}`, "info");
+}
+
+export async function handleCoreCommand(
+  trimmed: string,
+  ctx: ExtensionCommandContext,
+  pi?: ExtensionAPI,
+): Promise<boolean> {
   if (trimmed === "help" || trimmed === "h" || trimmed === "?") {
     showHelp(ctx);
     return true;
@@ -197,6 +332,10 @@ export async function handleCoreCommand(trimmed: string, ctx: ExtensionCommandCo
     ctx.ui.notify(`Widget: ${getWidgetMode()}`, "info");
     return true;
   }
+  if (trimmed === "model" || trimmed.startsWith("model ")) {
+    await handleModel(trimmed.replace(/^model\s*/, "").trim(), ctx, pi);
+    return true;
+  }
   if (trimmed === "mode" || trimmed.startsWith("mode ")) {
     const modeArgs = trimmed.replace(/^mode\s*/, "").trim();
     const scope = modeArgs === "project" ? "project" : "global";
@@ -211,6 +350,25 @@ export async function handleCoreCommand(trimmed: string, ctx: ExtensionCommandCo
   }
   if (trimmed === "cmux" || trimmed.startsWith("cmux ")) {
     await handleCmux(trimmed.replace(/^cmux\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "show-config") {
+    const { GSDConfigOverlay, formatConfigText } = await import("../../config-overlay.js");
+    const result = await ctx.ui.custom<boolean>(
+      (tui, theme, _kb, done) => new GSDConfigOverlay(tui, theme, () => done(true)),
+      {
+        overlay: true,
+        overlayOptions: {
+          width: "65%",
+          minWidth: 55,
+          maxHeight: "85%",
+          anchor: "center",
+        },
+      },
+    );
+    if (result === undefined) {
+      ctx.ui.notify(formatConfigText(), "info");
+    }
     return true;
   }
   if (trimmed === "setup" || trimmed.startsWith("setup ")) {

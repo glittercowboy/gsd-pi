@@ -20,9 +20,30 @@ import {
   selectDoctorScope,
   filterDoctorIssues,
 } from "./doctor.js";
-import { isAutoActive } from "./auto.js";
+import { isAutoActive, checkRemoteAutoSession } from "./auto.js";
+import { getAutoWorktreePath } from "./auto-worktree.js";
 import { projectRoot } from "./commands/context.js";
 import { loadPrompt } from "./prompt-loader.js";
+
+const UPDATE_REGISTRY_URL = "https://registry.npmjs.org/gsd-pi/latest";
+const UPDATE_FETCH_TIMEOUT_MS = 5000;
+
+async function fetchLatestVersionForCommand(): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPDATE_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(UPDATE_REGISTRY_URL, { signal: controller.signal });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { version?: string };
+    const latest = typeof data.version === "string" ? data.version.trim().replace(/^v/, "") : "";
+    return latest.length > 0 ? latest : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 export function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, reportText: string, structuredIssues: string): void {
   const workflowPath = process.env.GSD_WORKFLOW_PATH ?? join(process.env.HOME ?? "~", ".gsd", "agent", "GSD-WORKFLOW.md");
@@ -42,21 +63,27 @@ export function dispatchDoctorHeal(pi: ExtensionAPI, scope: string | undefined, 
   );
 }
 
-export async function handleDoctor(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+/** Parse doctor command args into structured flags and positionals (pure, no I/O). */
+export function parseDoctorArgs(args: string) {
   const trimmed = args.trim();
-  // Extract flags before positional parsing
   const jsonMode = trimmed.includes("--json");
   const dryRun = trimmed.includes("--dry-run");
+  const fixFlag = trimmed.includes("--fix");
   const includeBuild = trimmed.includes("--build");
   const includeTests = trimmed.includes("--test");
-  const stripped = trimmed.replace(/--json|--dry-run|--build|--test/g, "").trim();
+  const stripped = trimmed.replace(/--json|--dry-run|--build|--test|--fix/g, "").trim();
   const parts = stripped ? stripped.split(/\s+/) : [];
   const mode = parts[0] === "fix" || parts[0] === "heal" || parts[0] === "audit" ? parts[0] : "doctor";
   const requestedScope = mode === "doctor" ? parts[0] : parts[1];
+  return { jsonMode, dryRun, fixFlag, includeBuild, includeTests, mode, requestedScope };
+}
+
+export async function handleDoctor(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
+  const { jsonMode, dryRun, fixFlag, includeBuild, includeTests, mode, requestedScope } = parseDoctorArgs(args);
   const scope = await selectDoctorScope(projectRoot(), requestedScope);
   const effectiveScope = mode === "audit" ? requestedScope : scope;
   const report = await runGSDDoctor(projectRoot(), {
-    fix: mode === "fix" || mode === "heal" || dryRun,
+    fix: mode === "fix" || mode === "heal" || dryRun || fixFlag,
     dryRun,
     scope: effectiveScope,
     includeBuild,
@@ -222,7 +249,19 @@ export async function handleSteer(change: string, ctx: ExtensionCommandContext, 
   const sid = state.activeSlice?.id ?? "none";
   const tid = state.activeTask?.id ?? "none";
   const appliedAt = `${mid}/${sid}/${tid}`;
-  await appendOverride(basePath, change, appliedAt);
+
+  // Resolve the correct target path: only route to a worktree when auto-mode
+  // is actively running there (in-process or remote). A worktree directory may
+  // exist from a previous session without being the active runtime path —
+  // writing there without a live session would silently drop the override.
+  const autoRunning = isAutoActive() || checkRemoteAutoSession(basePath).running;
+  const wtPath = autoRunning && mid !== "none"
+    ? getAutoWorktreePath(basePath, mid)
+    : null;
+  const targetPath = wtPath ?? basePath;
+  await appendOverride(targetPath, change, appliedAt);
+
+  const overrideLoc = wtPath ? "worktree `.gsd/OVERRIDES.md`" : "`.gsd/OVERRIDES.md`";
 
   if (isAutoActive()) {
     pi.sendMessage({
@@ -232,14 +271,14 @@ export async function handleSteer(change: string, ctx: ExtensionCommandContext, 
         "",
         `**Override:** ${change}`,
         "",
-        "This override has been saved to `.gsd/OVERRIDES.md` and will be injected into all future task prompts.",
+        `This override has been saved to ${overrideLoc} and will be injected into all future task prompts.`,
         "A document rewrite unit will run before the next task to propagate this change across all active plan documents.",
         "",
         "If you are mid-task, finish your current work respecting this override. The next dispatched unit will be a document rewrite.",
       ].join("\n"),
       display: false,
     }, { triggerTurn: true });
-    ctx.ui.notify(`Override registered: "${change}". Will be applied before next task dispatch.`, "info");
+    ctx.ui.notify(`Override registered (${overrideLoc}): "${change}". Will be applied before next task dispatch.`, "info");
   } else {
     pi.sendMessage({
       customType: "gsd-hard-steer",
@@ -248,13 +287,13 @@ export async function handleSteer(change: string, ctx: ExtensionCommandContext, 
         "",
         `**Override:** ${change}`,
         "",
-        "This override has been saved to `.gsd/OVERRIDES.md`.",
-        "Before continuing, read `.gsd/OVERRIDES.md` and update the current plan documents to reflect this change.",
+        `This override has been saved to ${overrideLoc}.`,
+        `Before continuing, read ${overrideLoc} and update the current plan documents to reflect this change.`,
         "Focus on: active slice plan, incomplete task plans, and DECISIONS.md.",
       ].join("\n"),
       display: false,
     }, { triggerTurn: true });
-    ctx.ui.notify(`Override registered: "${change}". Update plan documents to reflect this change.`, "info");
+    ctx.ui.notify(`Override registered (${overrideLoc}): "${change}". Update plan documents to reflect this change.`, "info");
   }
 }
 
@@ -375,13 +414,8 @@ export async function handleUpdate(ctx: ExtensionCommandContext): Promise<void> 
 
   ctx.ui.notify(`Current version: v${current}\nChecking npm registry...`, "info");
 
-  let latest: string;
-  try {
-    latest = execSync(`npm view ${NPM_PACKAGE} version`, {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
+  const latest = await fetchLatestVersionForCommand();
+  if (!latest) {
     ctx.ui.notify("Failed to reach npm registry. Check your network connection.", "error");
     return;
   }

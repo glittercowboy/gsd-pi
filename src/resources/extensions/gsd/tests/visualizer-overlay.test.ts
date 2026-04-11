@@ -233,3 +233,62 @@ assert.ok(
   overlaySrc.includes('from "../shared/mod.js"'),
   "imports from shared barrel",
 );
+
+test("visualizer overlay closes on escape in filter and help submodes", async () => {
+  const mod = await import("../visualizer-overlay.js");
+
+  const mockTui = { requestRender: () => {} };
+  const mockTheme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  };
+
+  let closedFilter = false;
+  const filterOverlay = new mod.GSDVisualizerOverlay(
+    mockTui,
+    mockTheme as any,
+    () => { closedFilter = true; },
+  );
+  filterOverlay.filterMode = true;
+  filterOverlay.handleInput("\u0003");
+  assert.equal(closedFilter, true, "Ctrl+C closes while filter mode is active");
+  filterOverlay.dispose();
+
+  let closedHelp = false;
+  const helpOverlay = new mod.GSDVisualizerOverlay(
+    mockTui,
+    mockTheme as any,
+    () => { closedHelp = true; },
+  );
+  helpOverlay.showHelp = true;
+  helpOverlay.handleInput("\u001b");
+  assert.equal(closedHelp, true, "Escape closes while help overlay is visible");
+  helpOverlay.dispose();
+});
+
+test("visualizer overlay tab hitboxes include rendered badges", async () => {
+  const mod = await import("../visualizer-overlay.js");
+
+  const mockTui = { requestRender: () => {} };
+  const mockTheme = {
+    fg: (_color: string, text: string) => text,
+    bold: (text: string) => text,
+  };
+
+  const overlay = new mod.GSDVisualizerOverlay(
+    mockTui,
+    mockTheme as any,
+    () => {},
+  );
+  overlay.loading = true;
+  overlay.data = { captures: { pendingCount: 3 } } as any;
+
+  const lines = overlay.render(120);
+  const tabLine = lines.find((line: string) => line.includes("Captures") && line.includes("(3)"));
+  assert.ok(tabLine, "rendered tab bar includes captures badge");
+  const plain = tabLine!.replace(/\x1b\[[0-9;]*m/g, "");
+  const badgeColumn = plain.indexOf("(3)") + 2;
+  overlay.handleInput(`\x1b[<0;${badgeColumn};2M`);
+  assert.equal(overlay.activeTab, 8, "clicking the badge area selects the captures tab");
+  overlay.dispose();
+});

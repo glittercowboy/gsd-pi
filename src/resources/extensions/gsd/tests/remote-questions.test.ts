@@ -739,6 +739,125 @@ test("config source-level: hydration skips api_key entries with empty keys", () 
   );
 });
 
+test("ask-user-questions source-level: tryRemoteQuestions is called before the hasUI guard", () => {
+  // Regression test for #3480 — remote questions were silently skipped in interactive
+  // mode because tryRemoteQuestions was gated behind `if (!ctx.hasUI)`.
+  // The fix moved the remote call before that guard so configured channels
+  // (Telegram/Slack/Discord) fire regardless of UI availability.
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+
+  const remoteCallIdx = src.indexOf("tryRemoteQuestions(params.questions");
+  const hasUIGuardIdx = src.indexOf("if (!ctx.hasUI)");
+
+  assert.ok(remoteCallIdx !== -1, "tryRemoteQuestions call should exist in ask-user-questions.ts");
+  assert.ok(hasUIGuardIdx !== -1, "!ctx.hasUI guard should exist in ask-user-questions.ts");
+  assert.ok(
+    remoteCallIdx < hasUIGuardIdx,
+    "tryRemoteQuestions must be called before the !ctx.hasUI guard — otherwise remote questions are skipped in interactive mode",
+  );
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Race model tests (#3810) — local TUI races against remote channel
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("ask-user-questions source-level: raceRemoteAndLocal function exists", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("async function raceRemoteAndLocal("),
+    "raceRemoteAndLocal helper should exist for racing local TUI against remote channel",
+  );
+});
+
+test("ask-user-questions source-level: race path uses isRemoteConfigured for routing", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("isRemoteConfigured()"),
+    "execute() should call isRemoteConfigured() for lightweight routing decision",
+  );
+});
+
+test("ask-user-questions source-level: race path checks both hasRemote and ctx.hasUI", () => {
+  // Regression: #3810 — the race should only activate when BOTH remote and local UI
+  // are available. Headless mode should still use remote-only, and no-remote should
+  // use local-only.
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("hasRemote && ctx.hasUI"),
+    "Race path should require both remote configured and local UI available",
+  );
+  assert.ok(
+    src.includes("hasRemote && !ctx.hasUI"),
+    "Headless path should handle remote-only when no local UI",
+  );
+});
+
+test("ask-user-questions source-level: race treats remote timeout as non-win", () => {
+  // Regression: the whole point of the race is that a remote timeout should NOT
+  // block the local TUI. The race helper must filter out timed_out results.
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  const raceFnStart = src.indexOf("async function raceRemoteAndLocal(");
+  const raceFnEnd = src.indexOf("\n}", raceFnStart);
+  const raceFnBody = src.slice(raceFnStart, raceFnEnd);
+  assert.ok(
+    raceFnBody.includes("timed_out"),
+    "raceRemoteAndLocal should check for timed_out in remote results",
+  );
+  assert.ok(
+    raceFnBody.includes("details?.error"),
+    "raceRemoteAndLocal should check for error in remote results",
+  );
+});
+
+test("ask-user-questions source-level: race uses AbortController to cancel loser", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "..", "ask-user-questions.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("new AbortController()"),
+    "Race path should create an AbortController for cancellation",
+  );
+  assert.ok(
+    src.includes("controller.abort()"),
+    "raceRemoteAndLocal should abort the controller to cancel the losing side",
+  );
+});
+
+test("manager source-level: isRemoteConfigured export exists", () => {
+  const src = readFileSync(
+    join(__dirname, "..", "..", "remote-questions", "manager.ts"),
+    "utf-8",
+  );
+  assert.ok(
+    src.includes("export function isRemoteConfigured()"),
+    "manager.ts should export isRemoteConfigured for lightweight config checking",
+  );
+  // Must delegate to resolveRemoteConfig — no separate config parsing
+  const fnStart = src.indexOf("export function isRemoteConfigured()");
+  const fnEnd = src.indexOf("\n}", fnStart);
+  const fnBody = src.slice(fnStart, fnEnd);
+  assert.ok(
+    fnBody.includes("resolveRemoteConfig()"),
+    "isRemoteConfigured should delegate to resolveRemoteConfig",
+  );
+});
+
 test("config source-level: removeProviderToken uses auth.remove not auth.set with empty key", () => {
   const commandSrc = readFileSync(
     join(__dirname, "..", "..", "remote-questions", "remote-command.ts"),

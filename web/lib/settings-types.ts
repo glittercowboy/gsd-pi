@@ -87,6 +87,7 @@ export interface SettingsProjectTotals {
 
 export interface SettingsPreferencesData {
   mode?: SettingsWorkflowMode
+  models?: Record<string, string>
   budgetCeiling?: number
   budgetEnforcement?: SettingsBudgetEnforcement
   tokenProfile?: SettingsTokenProfile

@@ -1,5 +1,3 @@
-#!/usr/bin/env node
-
 /**
  * @gsd-build/mcp-server CLI — stdio transport entry point.
  *
@@ -9,13 +7,17 @@
 
 import { SessionManager } from './session-manager.js';
 import { createMcpServer } from './server.js';
+import { loadStoredCredentialEnvKeys } from './tool-credentials.js';
 
 const MCP_PKG = '@modelcontextprotocol/sdk';
 
 async function main(): Promise<void> {
+  loadStoredCredentialEnvKeys();
+
   const sessionManager = new SessionManager();
 
-  // Create the configured MCP server with all 6 tools
+  // Create the configured MCP server with session, interactive, read-only,
+  // and workflow tools.
   const { server } = await createMcpServer(sessionManager);
 
   // Dynamic import for StdioServerTransport (same TS subpath workaround)

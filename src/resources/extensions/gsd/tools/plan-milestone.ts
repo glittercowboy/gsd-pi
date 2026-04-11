@@ -5,6 +5,7 @@ import {
   transaction,
   getMilestone,
   getMilestoneSlices,
+  getSlice,
   insertMilestone,
   insertSlice,
   upsertMilestonePlanning,
@@ -15,6 +16,7 @@ import { renderRoadmapFromDb } from "../markdown-renderer.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface PlanMilestoneSliceInput {
   sliceId: string;
@@ -32,24 +34,34 @@ export interface PlanMilestoneSliceInput {
 export interface PlanMilestoneParams {
   milestoneId: string;
   title: string;
+  vision: string;
+  slices: PlanMilestoneSliceInput[];
   status?: string;
   dependsOn?: string[];
   /** Optional caller-provided identity for audit trail */
   actorName?: string;
   /** Optional caller-provided reason this action was triggered */
   triggerReason?: string;
-  vision: string;
-  successCriteria: string[];
-  keyRisks: Array<{ risk: string; whyItMatters: string }>;
-  proofStrategy: Array<{ riskOrUnknown: string; retireIn: string; whatWillBeProven: string }>;
-  verificationContract: string;
-  verificationIntegration: string;
-  verificationOperational: string;
-  verificationUat: string;
-  definitionOfDone: string[];
-  requirementCoverage: string;
-  boundaryMapMarkdown: string;
-  slices: PlanMilestoneSliceInput[];
+  /** @optional — defaults to [] when omitted by models with limited tool-calling */
+  successCriteria?: string[];
+  /** @optional — defaults to [] when omitted */
+  keyRisks?: Array<{ risk: string; whyItMatters: string }>;
+  /** @optional — defaults to [] when omitted */
+  proofStrategy?: Array<{ riskOrUnknown: string; retireIn: string; whatWillBeProven: string }>;
+  /** @optional — defaults to "" when omitted */
+  verificationContract?: string;
+  /** @optional — defaults to "" when omitted */
+  verificationIntegration?: string;
+  /** @optional — defaults to "" when omitted */
+  verificationOperational?: string;
+  /** @optional — defaults to "" when omitted */
+  verificationUat?: string;
+  /** @optional — defaults to [] when omitted */
+  definitionOfDone?: string[];
+  /** @optional — defaults to "Not provided." when omitted */
+  requirementCoverage?: string;
+  /** @optional — defaults to "Not provided." when omitted */
+  boundaryMapMarkdown?: string;
 }
 
 export interface PlanMilestoneResult {
@@ -148,20 +160,21 @@ function validateParams(params: PlanMilestoneParams): PlanMilestoneParams {
   if (!isNonEmptyString(params?.milestoneId)) throw new Error("milestoneId is required");
   if (!isNonEmptyString(params?.title)) throw new Error("title is required");
   if (!isNonEmptyString(params?.vision)) throw new Error("vision is required");
-  if (!isNonEmptyString(params?.verificationContract)) throw new Error("verificationContract is required");
-  if (!isNonEmptyString(params?.verificationIntegration)) throw new Error("verificationIntegration is required");
-  if (!isNonEmptyString(params?.verificationOperational)) throw new Error("verificationOperational is required");
-  if (!isNonEmptyString(params?.verificationUat)) throw new Error("verificationUat is required");
-  if (!isNonEmptyString(params?.requirementCoverage)) throw new Error("requirementCoverage is required");
-  if (!isNonEmptyString(params?.boundaryMapMarkdown)) throw new Error("boundaryMapMarkdown is required");
 
   return {
     ...params,
     dependsOn: params.dependsOn ? validateStringArray(params.dependsOn, "dependsOn") : [],
-    successCriteria: validateStringArray(params.successCriteria, "successCriteria"),
-    keyRisks: validateRiskEntries(params.keyRisks),
-    proofStrategy: validateProofStrategy(params.proofStrategy),
-    definitionOfDone: validateStringArray(params.definitionOfDone, "definitionOfDone"),
+    // Apply defaults for optional enrichment fields (#2771)
+    successCriteria: params.successCriteria ? validateStringArray(params.successCriteria, "successCriteria") : [],
+    keyRisks: params.keyRisks ? validateRiskEntries(params.keyRisks) : [],
+    proofStrategy: params.proofStrategy ? validateProofStrategy(params.proofStrategy) : [],
+    verificationContract: params.verificationContract ?? "",
+    verificationIntegration: params.verificationIntegration ?? "",
+    verificationOperational: params.verificationOperational ?? "",
+    verificationUat: params.verificationUat ?? "",
+    definitionOfDone: params.definitionOfDone ? validateStringArray(params.definitionOfDone, "definitionOfDone") : [],
+    requirementCoverage: params.requirementCoverage ?? "Not provided.",
+    boundaryMapMarkdown: params.boundaryMapMarkdown ?? "Not provided.",
     slices: validateSlices(params.slices),
   };
 }
@@ -190,15 +203,19 @@ export async function handlePlanMilestone(
         return;
       }
 
-      // Guard: refuse to re-plan a milestone that has completed slices (#2960).
-      // INSERT OR IGNORE on slices won't overwrite existing rows, but a full
-      // re-plan after worktree recreation or DB resync can create new slice rows
-      // that shadow completed work. Block early when any slice is already done.
+      // Guard: refuse to re-plan a milestone that would drop completed slices (#2960).
+      // Allow re-planning when all completed slices are still present in the
+      // incoming plan — their status is preserved below (#2558). Block only when
+      // the new plan omits a completed slice, which could shadow completed work.
       const existingSlices = getMilestoneSlices(params.milestoneId);
       const completedSlices = existingSlices.filter(s => isClosedStatus(s.status));
       if (completedSlices.length > 0) {
-        guardError = `cannot re-plan milestone ${params.milestoneId}: ${completedSlices.length} slice(s) already completed (${completedSlices.map(s => s.id).join(", ")}). Use gsd_reassess_roadmap to modify the roadmap.`;
-        return;
+        const incomingSliceIds = new Set(params.slices.map(s => s.sliceId));
+        const droppedCompleted = completedSlices.filter(s => !incomingSliceIds.has(s.id));
+        if (droppedCompleted.length > 0) {
+          guardError = `cannot re-plan milestone ${params.milestoneId}: ${droppedCompleted.length} completed slice(s) would be dropped (${droppedCompleted.map(s => s.id).join(", ")}). Use gsd_reassess_roadmap to modify the roadmap.`;
+          return;
+        }
       }
 
       // Validate depends_on: all dependencies must exist and be complete
@@ -224,6 +241,8 @@ export async function handlePlanMilestone(
       });
 
       upsertMilestonePlanning(params.milestoneId, {
+        title: params.title,
+        status: params.status ?? "active",
         vision: params.vision,
         successCriteria: params.successCriteria,
         keyRisks: params.keyRisks,
@@ -235,17 +254,26 @@ export async function handlePlanMilestone(
         definitionOfDone: params.definitionOfDone,
         requirementCoverage: params.requirementCoverage,
         boundaryMapMarkdown: params.boundaryMapMarkdown,
-      }, params.title);
+      });
 
-      for (const slice of params.slices) {
+      for (let i = 0; i < params.slices.length; i++) {
+        const slice = params.slices[i]!;
+        // Preserve completed/done status on re-plan (#2558).
+        // Without this, a re-plan after milestone transition would reset
+        // already-completed slices back to "pending".
+        const existing = getSlice(params.milestoneId, slice.sliceId);
+        const status = existing && (existing.status === "complete" || existing.status === "done")
+          ? existing.status
+          : "pending";
         insertSlice({
           id: slice.sliceId,
           milestoneId: params.milestoneId,
           title: slice.title,
-          status: "pending",
+          status,
           risk: slice.risk,
           depends: slice.depends,
           demo: slice.demo,
+          sequence: i + 1, // Preserve agent-ordered sequence (#3356)
         });
         upsertSlicePlanning(params.milestoneId, slice.sliceId, {
           goal: slice.goal,
@@ -269,9 +297,7 @@ export async function handlePlanMilestone(
     const renderResult = await renderRoadmapFromDb(basePath, params.milestoneId);
     roadmapPath = renderResult.roadmapPath;
   } catch (renderErr) {
-    process.stderr.write(
-      `gsd-db: plan_milestone — render failed (DB rows preserved for debugging): ${(renderErr as Error).message}\n`,
-    );
+    logWarning("tool", `plan_milestone — render failed (DB rows preserved for debugging): ${(renderErr as Error).message}`);
     invalidateStateCache();
     return { error: `render failed: ${(renderErr as Error).message}` };
   }
@@ -292,9 +318,7 @@ export async function handlePlanMilestone(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    process.stderr.write(
-      `gsd: plan-milestone post-mutation hook warning: ${(hookErr as Error).message}\n`,
-    );
+    logWarning("tool", `plan-milestone post-mutation hook warning: ${(hookErr as Error).message}`);
   }
 
   return {

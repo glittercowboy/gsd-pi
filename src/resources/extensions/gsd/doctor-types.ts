@@ -78,6 +78,7 @@ export type DoctorIssueCode =
   | "db_orphaned_slice"
   | "db_done_task_no_summary"
   | "db_duplicate_id"
+  | "db_unavailable"
   | "projection_drift";
 
 /**

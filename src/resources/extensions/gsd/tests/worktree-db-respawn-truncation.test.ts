@@ -100,8 +100,87 @@ describe('worktree-db-respawn-truncation (#2815)', async () => {
     }
   }
 
-  // ─── 3. Milestone artifacts still synced when DB is preserved ────────
-  console.log('\n=== 3. milestone artifacts still synced even when DB preserved ===');
+  // ─── 3. WAL/SHM sidecar files cleaned up when empty DB is deleted (#2478) ──
+  console.log('\n=== 3. orphaned WAL/SHM cleaned up alongside empty gsd.db (#2478) ===');
+  {
+    const mainBase = createBase('main');
+    const wtBase = createBase('wt');
+
+    try {
+      const m001Dir = join(mainBase, '.gsd', 'milestones', 'M001');
+      mkdirSync(m001Dir, { recursive: true });
+      writeFileSync(join(m001Dir, 'M001-ROADMAP.md'), '# Roadmap');
+
+      // Create an empty (0-byte) gsd.db plus orphaned WAL and SHM files —
+      // this is the exact state that causes Node 24 node:sqlite CPU spin (#2478).
+      const wtGsd = join(wtBase, '.gsd');
+      writeFileSync(join(wtGsd, 'gsd.db'), '');
+      writeFileSync(join(wtGsd, 'gsd.db-wal'), Buffer.alloc(605672, 0xAA));
+      writeFileSync(join(wtGsd, 'gsd.db-shm'), Buffer.alloc(32768, 0xBB));
+
+      assert.ok(existsSync(join(wtGsd, 'gsd.db')), 'gsd.db exists before sync');
+      assert.ok(existsSync(join(wtGsd, 'gsd.db-wal')), 'gsd.db-wal exists before sync');
+      assert.ok(existsSync(join(wtGsd, 'gsd.db-shm')), 'gsd.db-shm exists before sync');
+
+      syncProjectRootToWorktree(mainBase, wtBase, 'M001');
+
+      assert.ok(
+        !existsSync(join(wtGsd, 'gsd.db')),
+        '#2478: empty gsd.db must be deleted',
+      );
+      assert.ok(
+        !existsSync(join(wtGsd, 'gsd.db-wal')),
+        '#2478: orphaned gsd.db-wal must be deleted alongside gsd.db',
+      );
+      assert.ok(
+        !existsSync(join(wtGsd, 'gsd.db-shm')),
+        '#2478: orphaned gsd.db-shm must be deleted alongside gsd.db',
+      );
+    } finally {
+      cleanup(mainBase);
+      cleanup(wtBase);
+    }
+  }
+
+  // ─── 4. Orphaned WAL/SHM cleaned up even when gsd.db already missing (#2478) ──
+  console.log('\n=== 4. orphaned WAL/SHM cleaned up even without gsd.db (#2478) ===');
+  {
+    const mainBase = createBase('main');
+    const wtBase = createBase('wt');
+
+    try {
+      const m001Dir = join(mainBase, '.gsd', 'milestones', 'M001');
+      mkdirSync(m001Dir, { recursive: true });
+      writeFileSync(join(m001Dir, 'M001-ROADMAP.md'), '# Roadmap');
+
+      // Orphaned WAL/SHM with NO gsd.db at all — can happen from a previous
+      // partial cleanup. These must still be cleaned up.
+      const wtGsd = join(wtBase, '.gsd');
+      writeFileSync(join(wtGsd, 'gsd.db-wal'), Buffer.alloc(1024, 0xAA));
+      writeFileSync(join(wtGsd, 'gsd.db-shm'), Buffer.alloc(1024, 0xBB));
+
+      assert.ok(!existsSync(join(wtGsd, 'gsd.db')), 'gsd.db does not exist');
+      assert.ok(existsSync(join(wtGsd, 'gsd.db-wal')), 'orphaned gsd.db-wal exists');
+      assert.ok(existsSync(join(wtGsd, 'gsd.db-shm')), 'orphaned gsd.db-shm exists');
+
+      syncProjectRootToWorktree(mainBase, wtBase, 'M001');
+
+      assert.ok(
+        !existsSync(join(wtGsd, 'gsd.db-wal')),
+        '#2478: orphaned gsd.db-wal must be deleted even without main db file',
+      );
+      assert.ok(
+        !existsSync(join(wtGsd, 'gsd.db-shm')),
+        '#2478: orphaned gsd.db-shm must be deleted even without main db file',
+      );
+    } finally {
+      cleanup(mainBase);
+      cleanup(wtBase);
+    }
+  }
+
+  // ─── 5. Milestone artifacts still synced when DB is preserved ────────
+  console.log('\n=== 5. milestone artifacts still synced even when DB preserved ===');
   {
     const mainBase = createBase('main');
     const wtBase = createBase('wt');

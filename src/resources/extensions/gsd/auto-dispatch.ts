@@ -27,8 +27,9 @@ import {
   buildMilestoneFileName,
   buildSliceFileName,
 } from "./paths.js";
+import { parseRoadmap } from "./parsers-legacy.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { logError } from "./workflow-logger.js";
+import { logWarning, logError } from "./workflow-logger.js";
 import { join } from "node:path";
 import { hasImplementationArtifacts } from "./auto-recovery.js";
 import {
@@ -47,6 +48,7 @@ import {
   buildRewriteDocsPrompt,
   buildReactiveExecutePrompt,
   buildGateEvaluatePrompt,
+  buildParallelResearchSlicesPrompt,
   checkNeedsReassessment,
   checkNeedsRunUat,
 } from "./auto-prompts.js";
@@ -93,14 +95,22 @@ function missingSliceStop(mid: string, phase: string): DispatchAction {
 /**
  * Check for milestone slices missing SUMMARY files.
  * Returns array of missing slice IDs, or empty array if all present or DB unavailable.
+ *
+ * Excludes skipped slices (intentionally summary-less) and legacy-complete
+ * slices whose DB status is authoritative even without on-disk SUMMARY (#3620).
  */
 function findMissingSummaries(basePath: string, mid: string): string[] {
   if (!isDbAvailable()) return [];
-  const sliceIds = getMilestoneSlices(mid).map(s => s.id);
-  return sliceIds.filter(sid => {
-    const summaryPath = resolveSliceFile(basePath, mid, sid, "SUMMARY");
-    return !summaryPath || !existsSync(summaryPath);
-  });
+  const slices = getMilestoneSlices(mid);
+  // Skipped slices never produce SUMMARYs; legacy-complete slices may lack them
+  const CLOSED_STATUSES = new Set(["skipped", "complete", "done"]);
+  return slices
+    .filter(s => !CLOSED_STATUSES.has(s.status))
+    .filter(s => {
+      const summaryPath = resolveSliceFile(basePath, mid, s.id, "SUMMARY");
+      return !summaryPath || !existsSync(summaryPath);
+    })
+    .map(s => s.id);
 }
 
 // ─── Rewrite Circuit Breaker ──────────────────────────────────────────────
@@ -130,6 +140,32 @@ export function setRewriteCount(basePath: string, count: number): void {
   writeFileSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
 }
 
+// ─── Run-UAT dispatch counter (per-slice) ────────────────────────────────
+// Caps run-uat dispatches to prevent infinite replay when verification
+// commands fail before writing a verdict (#3624).
+const MAX_UAT_ATTEMPTS = 3;
+
+function uatCountPath(basePath: string, mid: string, sid: string): string {
+  return join(gsdRoot(basePath), "runtime", `uat-count-${mid}-${sid}.json`);
+}
+
+export function getUatCount(basePath: string, mid: string, sid: string): number {
+  try {
+    const data = JSON.parse(readFileSync(uatCountPath(basePath, mid, sid), "utf-8"));
+    return typeof data.count === "number" ? data.count : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function incrementUatCount(basePath: string, mid: string, sid: string): number {
+  const count = getUatCount(basePath, mid, sid) + 1;
+  const filePath = uatCountPath(basePath, mid, sid);
+  mkdirSync(join(gsdRoot(basePath), "runtime"), { recursive: true });
+  writeFileSync(filePath, JSON.stringify({ count, updatedAt: new Date().toISOString() }) + "\n");
+  return count;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
 /**
@@ -140,9 +176,9 @@ export function setRewriteCount(basePath: string, count: number): void {
  * @see https://github.com/gsd-build/gsd-2/issues/2931
  */
 export function isVerificationNotApplicable(value: string): boolean {
-  const v = (value ?? "").toLowerCase().trim();
+  const v = (value ?? "").toLowerCase().trim().replace(/[.\s]+$/, "");
   if (!v || v === "none") return true;
-  return /^(?:none[\s._-]*(?:required|needed|planned)?|n\/?a|not[\s._-]+(?:applicable|required|needed)|no[\s._-]+operational[\s\S]*)$/i.test(v);
+  return /^(?:none(?:[\s._\u2014-]+[\s\S]*)?|n\/?a|not[\s._-]+(?:applicable|required|needed|provided)|no[\s._-]+operational[\s\S]*)$/i.test(v);
 }
 
 // ─── Rules ────────────────────────────────────────────────────────────────
@@ -203,6 +239,16 @@ export const DISPATCH_RULES: DispatchRule[] = [
       const needsRunUat = await checkNeedsRunUat(basePath, mid, state, prefs);
       if (!needsRunUat) return null;
       const { sliceId, uatType } = needsRunUat;
+
+      // Cap run-uat dispatch attempts to prevent infinite replay (#3624)
+      const attempts = incrementUatCount(basePath, mid, sliceId);
+      if (attempts > MAX_UAT_ATTEMPTS) {
+        return {
+          action: "stop" as const,
+          reason: `run-uat for ${mid}/${sliceId} has been dispatched ${attempts - 1} times without producing a verdict. Verification commands may be broken — fix the UAT spec or manually write an ASSESSMENT verdict.`,
+          level: "warning" as const,
+        };
+      }
       const uatFile = resolveSliceFile(basePath, mid, sliceId, "UAT")!;
       const uatContent = await loadFile(uatFile);
       return {
@@ -329,6 +375,55 @@ export const DISPATCH_RULES: DispatchRule[] = [
         unitType: "plan-milestone",
         unitId: mid,
         prompt: await buildPlanMilestonePrompt(mid, midTitle, basePath),
+      };
+    },
+  },
+  {
+    // Keep this rule before the single-slice research rule so the multi-slice
+    // path wins whenever 2+ slices are ready.
+    name: "planning (multiple slices need research) → parallel-research-slices",
+    match: async ({ state, mid, midTitle, basePath, prefs }) => {
+      if (state.phase !== "planning") return null;
+      if (prefs?.phases?.skip_research || prefs?.phases?.skip_slice_research) return null;
+
+      // Load roadmap to find all slices
+      const roadmapFile = resolveMilestoneFile(basePath, mid, "ROADMAP");
+      const roadmapContent = roadmapFile ? await loadFile(roadmapFile) : null;
+      if (!roadmapContent) return null;
+      const roadmap = parseRoadmap(roadmapContent);
+
+      // Find slices that need research (no RESEARCH file, dependencies done)
+      const milestoneResearchFile = resolveMilestoneFile(basePath, mid, "RESEARCH");
+      const researchReadySlices: Array<{ id: string; title: string }> = [];
+
+      for (const slice of roadmap.slices) {
+        if (slice.done) continue;
+        // Skip S01 when milestone research exists
+        if (milestoneResearchFile && slice.id === "S01") continue;
+        // Skip if already has research
+        if (resolveSliceFile(basePath, mid, slice.id, "RESEARCH")) continue;
+        // Skip if dependencies aren't done (check for SUMMARY files)
+        const depsComplete = (slice.depends ?? []).every((depId) =>
+          !!resolveSliceFile(basePath, mid, depId, "SUMMARY"),
+        );
+        if (!depsComplete) continue;
+
+        researchReadySlices.push({ id: slice.id, title: slice.title });
+      }
+
+      // Only dispatch parallel if 2+ slices are ready
+      if (researchReadySlices.length < 2) return null;
+
+      return {
+        action: "dispatch",
+        unitType: "research-slice",
+        unitId: `${mid}/parallel-research`,
+        prompt: await buildParallelResearchSlicesPrompt(
+          mid,
+          midTitle,
+          researchReadySlices,
+          basePath,
+        ),
       };
     },
   },
@@ -674,12 +769,16 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // Safety guard (#1703): verify the milestone produced implementation
       // artifacts (non-.gsd/ files). A milestone with only plan files and
       // zero implementation code should not be marked complete.
-      if (!hasImplementationArtifacts(basePath)) {
+      const artifactCheck = hasImplementationArtifacts(basePath);
+      if (artifactCheck === "absent") {
         return {
           action: "stop",
           reason: `Cannot complete milestone ${mid}: no implementation files found outside .gsd/. The milestone has only plan files — actual code changes are required.`,
           level: "error",
         };
+      }
+      if (artifactCheck === "unknown") {
+        logWarning("dispatch", `Implementation artifact check inconclusive for ${mid} — proceeding (git context unavailable)`);
       }
 
       // Verification class compliance: if operational verification was planned,
@@ -693,6 +792,10 @@ export const DISPATCH_RULES: DispatchRule[] = [
             if (validationPath) {
               const validationContent = await loadFile(validationPath);
               if (validationContent) {
+                // Allow completion when validation was intentionally skipped by
+                // preference/budget profile (#3399, #3344).
+                const skippedByPreference = /skip(?:ped)?[\s\-]+(?:by|per|due to)\s+(?:preference|budget|profile)/i.test(validationContent);
+
                 // Accept either the structured template format (table with MET/N/A/SATISFIED)
                 // or prose evidence patterns the validation agent may emit.
                 const structuredMatch =
@@ -700,7 +803,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
                   (validationContent.includes("MET") || validationContent.includes("N/A") || validationContent.includes("SATISFIED"));
                 const proseMatch =
                   /[Oo]perational[\s\S]{0,500}?(?:✅|pass|verified|confirmed|met|complete|true|yes|addressed|covered|satisfied|partially|n\/a|not[\s-]+applicable)/i.test(validationContent);
-                const hasOperationalCheck = structuredMatch || proseMatch;
+                const hasOperationalCheck = skippedByPreference || structuredMatch || proseMatch;
                 if (!hasOperationalCheck) {
                   return {
                     action: "stop" as const,
@@ -712,7 +815,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
             }
           }
         }
-      } catch { /* fall through — don't block on DB errors */ }
+      } catch (err) { /* fall through — don't block on DB errors */
+        logWarning("dispatch", `verification class check failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
 
       return {
         action: "dispatch",
@@ -754,8 +859,9 @@ export async function resolveDispatch(
   try {
     const registry = getRegistry();
     return await registry.evaluateDispatch(ctx);
-  } catch {
+  } catch (err) {
     // Registry not initialized — fall back to inline loop
+    logWarning("dispatch", `registry dispatch failed, falling back to inline rules: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   for (const rule of DISPATCH_RULES) {

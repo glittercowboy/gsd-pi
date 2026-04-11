@@ -77,6 +77,36 @@ describe('ensure-db-open', () => {
     }
   });
 
+  test('ensureDbOpen: explicit basePath opens target project without cwd override', async () => {
+    const tmpDir = makeTmpDir();
+    const gsdDir = path.join(tmpDir, '.gsd');
+    fs.mkdirSync(gsdDir, { recursive: true });
+    fs.writeFileSync(path.join(gsdDir, 'DECISIONS.md'), `# Decisions
+
+| # | When | Scope | Decision | Choice | Rationale | Revisable |
+|---|------|-------|----------|--------|-----------|-----------|
+| D777 | M001 | architecture | Use explicit basePath | BasePath | Avoid cwd coupling | Yes |
+`);
+
+    try {
+      closeDatabase();
+    } catch { /* ok */ }
+
+    const originalCwd = process.cwd();
+    try {
+      const { ensureDbOpen } = await import('../bootstrap/dynamic-tools.ts');
+      const result = await ensureDbOpen(tmpDir);
+
+      assert.ok(result === true, 'ensureDbOpen should honor explicit basePath');
+      assert.equal(process.cwd(), originalCwd, 'ensureDbOpen should not mutate process.cwd');
+      assert.ok(isDbAvailable(), 'DB should be available after explicit open');
+      assert.ok(getDecisionById('D777') !== null, 'explicit basePath DB should be opened');
+    } finally {
+      closeDatabase();
+      cleanupDir(tmpDir);
+    }
+  });
+
   // ═══════════════════════════════════════════════════════════════════════════
   // ensureDbOpen returns false when no .gsd/ exists
   // ═══════════════════════════════════════════════════════════════════════════
@@ -156,6 +186,42 @@ describe('ensure-db-open', () => {
       process.cwd = origCwd;
       closeDatabase();
       cleanupDir(tmpDir);
+    }
+  });
+
+  test('ensureDbOpen: switches open database when basePath changes', async () => {
+    const firstDir = makeTmpDir();
+    const secondDir = makeTmpDir();
+    fs.mkdirSync(path.join(firstDir, '.gsd'), { recursive: true });
+    fs.mkdirSync(path.join(secondDir, '.gsd'), { recursive: true });
+    fs.writeFileSync(path.join(firstDir, '.gsd', 'DECISIONS.md'), `# Decisions
+
+| # | When | Scope | Decision | Choice | Rationale | Revisable |
+|---|------|-------|----------|--------|-----------|-----------|
+| D101 | M001 | architecture | First DB | First | First rationale | Yes |
+`);
+    fs.writeFileSync(path.join(secondDir, '.gsd', 'DECISIONS.md'), `# Decisions
+
+| # | When | Scope | Decision | Choice | Rationale | Revisable |
+|---|------|-------|----------|--------|-----------|-----------|
+| D202 | M001 | architecture | Second DB | Second | Second rationale | Yes |
+`);
+
+    try {
+      closeDatabase();
+    } catch { /* ok */ }
+
+    try {
+      const { ensureDbOpen } = await import('../bootstrap/dynamic-tools.ts');
+      assert.equal(await ensureDbOpen(firstDir), true);
+      assert.ok(getDecisionById('D101') !== null, 'first DB should be active');
+      assert.equal(await ensureDbOpen(secondDir), true);
+      assert.ok(getDecisionById('D202') !== null, 'second DB should be active after switch');
+      assert.equal(getDecisionById('D101'), null, 'first DB should no longer be active after switch');
+    } finally {
+      closeDatabase();
+      cleanupDir(firstDir);
+      cleanupDir(secondDir);
     }
   });
 

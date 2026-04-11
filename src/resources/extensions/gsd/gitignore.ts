@@ -42,6 +42,7 @@ const BASELINE_PATTERNS = [
   // ── GSD state directory (symlink to external storage) ──
   ".gsd",
   ".gsd-id",
+  ".bg-shell/",
 
   // ── OS junk ──
   ".DS_Store",

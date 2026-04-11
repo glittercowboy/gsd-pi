@@ -1,3 +1,5 @@
+// GSD2 — Extension registration: wires all GSD tools, commands, and hooks into pi
+
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import { registerGSDCommand } from "../commands.js";
@@ -6,6 +8,7 @@ import { registerWorktreeCommand } from "../worktree-command.js";
 import { registerDbTools } from "./db-tools.js";
 import { registerDynamicTools } from "./dynamic-tools.js";
 import { registerJournalTools } from "./journal-tools.js";
+import { registerQueryTools } from "./query-tools.js";
 import { registerHooks } from "./register-hooks.js";
 import { registerShortcuts } from "./register-shortcuts.js";
 
@@ -33,7 +36,10 @@ function installEpipeGuard(): void {
       if (handleRecoverableExtensionProcessError(err)) {
         return;
       }
-      throw err;
+      // Log unhandled errors instead of re-throwing — throwing inside an
+      // uncaughtException handler is a fatal double-fault in Node.js (#3163).
+      process.stderr.write(`[gsd] uncaught extension error (non-fatal): ${err.message}\n`);
+      if (err.stack) process.stderr.write(`${err.stack}\n`);
     };
     process.on("uncaughtException", _gsdEpipeGuard);
   }
@@ -56,6 +62,7 @@ export function registerGsdExtension(pi: ExtensionAPI): void {
   registerDynamicTools(pi);
   registerDbTools(pi);
   registerJournalTools(pi);
+  registerQueryTools(pi);
   registerShortcuts(pi);
   registerHooks(pi);
 }

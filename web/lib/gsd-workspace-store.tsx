@@ -65,6 +65,7 @@ import type {
   SessionManageResponse,
 } from "./session-browser-contract"
 import { authFetch, appendAuthParam } from "./auth"
+import { ContextualTips } from "../../packages/pi-coding-agent/src/core/contextual-tips.ts"
 
 export type WorkspaceStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated"
 export type WorkspaceConnectionState =
@@ -411,6 +412,18 @@ export interface ToolExecutionStartEvent {
   [key: string]: unknown
 }
 
+export interface ToolExecutionUpdateEvent {
+  type: "tool_execution_update"
+  toolCallId: string
+  toolName: string
+  partialResult?: {
+    content?: Array<{ type: string; text?: string }>
+    details?: Record<string, unknown>
+    isError?: boolean
+  }
+  [key: string]: unknown
+}
+
 export interface ToolExecutionEndEvent {
   type: "tool_execution_end"
   toolCallId: string
@@ -436,10 +449,11 @@ export type WorkspaceEvent =
   | ExtensionErrorEvent
   | MessageUpdateEvent
   | ToolExecutionStartEvent
+  | ToolExecutionUpdateEvent
   | ToolExecutionEndEvent
   | AgentEndEvent
   | TurnEndEvent
-  | ({ type: Exclude<string, "bridge_status" | "live_state_invalidation" | "extension_ui_request" | "extension_error" | "message_update" | "tool_execution_start" | "tool_execution_end" | "agent_end" | "turn_end">; [key: string]: unknown } & Record<string, unknown>)
+  | ({ type: Exclude<string, "bridge_status" | "live_state_invalidation" | "extension_ui_request" | "extension_error" | "message_update" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "agent_end" | "turn_end">; [key: string]: unknown } & Record<string, unknown>)
 
 export function isWorkspaceEvent(value: unknown): value is WorkspaceEvent {
   return value !== null && typeof value === "object" && typeof (value as Record<string, unknown>).type === "string"
@@ -491,6 +505,11 @@ export interface ActiveToolExecution {
   id: string
   name: string
   args?: Record<string, unknown>
+  result?: {
+    content?: Array<{ type: string; text?: string }>
+    details?: Record<string, unknown>
+    isError?: boolean
+  }
 }
 
 /** Completed tool execution with result — kept for chat rendering */
@@ -692,6 +711,8 @@ function summarizeEvent(event: WorkspaceEvent): { type: TerminalLineType; messag
         type: "output",
         message: `[Tool] ${typeof event.toolName === "string" ? event.toolName : "tool"} started`,
       }
+    case "tool_execution_update":
+      return null
     case "tool_execution_end":
       return {
         type: event.isError ? "error" : "success",
@@ -1835,6 +1856,7 @@ export class GSDWorkspaceStore {
 
   private state = createInitialState()
   private readonly listeners = new Set<() => void>()
+  private readonly contextualTips = new ContextualTips()
   private bootPromise: Promise<void> | null = null
   private eventSource: EventSource | null = null
   private onboardingPollTimer: ReturnType<typeof setInterval> | null = null
@@ -4012,6 +4034,26 @@ export class GSDWorkspaceStore {
       lastSlashCommandOutcome: trimmed.startsWith("/") ? outcome : null,
     })
 
+    // Evaluate contextual tips before sending to agent
+    if (outcome.kind === "prompt") {
+      const sessionState = this.state.boot?.bridge.sessionState
+      const tip = this.contextualTips.evaluate({
+        input: trimmed,
+        isStreaming: Boolean(sessionState?.isStreaming),
+        thinkingLevel: sessionState?.thinkingLevel,
+        // contextPercent not available in web — compaction nudge won't fire here
+        contextPercent: undefined,
+      })
+      if (tip) {
+        this.patchState({
+          terminalLines: withTerminalLine(
+            this.state.terminalLines,
+            createTerminalLine("system", `💡 ${tip}`),
+          ),
+        })
+      }
+    }
+
     switch (outcome.kind) {
       case "prompt":
       case "rpc": {
@@ -4654,6 +4696,11 @@ export class GSDWorkspaceStore {
         })
       }
 
+      // Reset contextual tips on new session
+      if (payload.command === "new_session" && payload.success) {
+        this.contextualTips.reset()
+      }
+
       if (payload.code === "onboarding_locked" && payload.details?.onboarding && this.state.boot) {
         this.patchState({
           boot: cloneBootWithPartialOnboarding(this.state.boot, payload.details.onboarding),
@@ -4924,6 +4971,9 @@ export class GSDWorkspaceStore {
       case "tool_execution_start":
         this.handleToolExecutionStart(event as ToolExecutionStartEvent)
         break
+      case "tool_execution_update":
+        this.handleToolExecutionUpdate(event as ToolExecutionUpdateEvent)
+        break
       case "tool_execution_end":
         this.handleToolExecutionEnd(event as ToolExecutionEndEvent)
         break
@@ -5103,6 +5153,23 @@ export class GSDWorkspaceStore {
         streamingAssistantText: "",
         streamingThinkingText: "",
       } : {}),
+    })
+  }
+
+  private handleToolExecutionUpdate(event: ToolExecutionUpdateEvent): void {
+    const active = this.state.activeToolExecution
+    if (!active || active.id !== event.toolCallId) return
+    this.patchState({
+      activeToolExecution: {
+        ...active,
+        result: event.partialResult
+          ? {
+              content: event.partialResult.content,
+              details: event.partialResult.details,
+              isError: Boolean(event.partialResult.isError),
+            }
+          : active.result,
+      },
     })
   }
 

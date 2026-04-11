@@ -1,5 +1,10 @@
 /**
- * MCP Server — registers 6 GSD orchestration tools on McpServer.
+ * MCP Server — registers GSD orchestration, project-state, and workflow tools.
+ *
+ * Session tools (6): gsd_execute, gsd_status, gsd_result, gsd_cancel, gsd_query, gsd_resolve_blocker
+ * Interactive tools (1): ask_user_questions via MCP form elicitation
+ * Read-only tools (6): gsd_progress, gsd_roadmap, gsd_history, gsd_doctor, gsd_captures, gsd_knowledge
+ * Workflow tools (29): headless-safe planning, metadata persistence, replanning, completion, validation, reassessment, gate result, status, and journal tools
  *
  * Uses dynamic imports for @modelcontextprotocol/sdk because TS Node16
  * cannot resolve the SDK's subpath exports statically (same pattern as
@@ -10,6 +15,13 @@ import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { z } from 'zod';
 import type { SessionManager } from './session-manager.js';
+import { readProgress } from './readers/state.js';
+import { readRoadmap } from './readers/roadmap.js';
+import { readHistory } from './readers/metrics.js';
+import { readCaptures } from './readers/captures.js';
+import { readKnowledge } from './readers/knowledge.js';
+import { runDoctorLite } from './readers/doctor-lite.js';
+import { registerWorkflowTools } from './workflow-tools.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -17,7 +29,7 @@ import type { SessionManager } from './session-manager.js';
 
 const MCP_PKG = '@modelcontextprotocol/sdk';
 const SERVER_NAME = 'gsd';
-const SERVER_VERSION = '2.51.0';
+const SERVER_VERSION = '2.53.0';
 
 // ---------------------------------------------------------------------------
 // Tool result helpers
@@ -31,6 +43,11 @@ function jsonContent(data: unknown): { content: Array<{ type: 'text'; text: stri
 /** Return an MCP error response. */
 function errorContent(message: string): { isError: true; content: Array<{ type: 'text'; text: string }> } {
   return { isError: true, content: [{ type: 'text' as const, text: message }] };
+}
+
+/** Return raw text content without JSON wrapping. */
+function textContent(text: string): { content: Array<{ type: 'text'; text: string }> } {
+  return { content: [{ type: 'text' as const, text }] };
 }
 
 // ---------------------------------------------------------------------------
@@ -97,8 +114,153 @@ async function fileExists(path: string): Promise<boolean> {
 
 interface McpServerInstance {
   tool(name: string, description: string, params: Record<string, unknown>, handler: (args: Record<string, unknown>) => Promise<unknown>): unknown;
+  server: {
+    elicitInput(
+      params: AskUserQuestionsElicitRequest,
+      options?: unknown,
+    ): Promise<AskUserQuestionsElicitResult>;
+  };
   connect(transport: unknown): Promise<void>;
   close(): Promise<void>;
+}
+
+interface AskUserQuestionOption {
+  label: string;
+  description: string;
+}
+
+interface AskUserQuestion {
+  id: string;
+  header: string;
+  question: string;
+  options: AskUserQuestionOption[];
+  allowMultiple?: boolean;
+}
+
+interface AskUserQuestionsParams {
+  questions: AskUserQuestion[];
+}
+
+type AskUserQuestionsContentValue = string | number | boolean | string[];
+
+interface AskUserQuestionsElicitResult {
+  action: 'accept' | 'decline' | 'cancel';
+  content?: Record<string, AskUserQuestionsContentValue>;
+}
+
+interface AskUserQuestionsElicitRequest {
+  mode: 'form';
+  message: string;
+  requestedSchema: {
+    type: 'object';
+    properties: Record<string, Record<string, unknown>>;
+    required?: string[];
+  };
+}
+
+const OTHER_OPTION_LABEL = 'None of the above';
+
+function normalizeAskUserQuestionsNote(value: AskUserQuestionsContentValue | undefined): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function normalizeAskUserQuestionsAnswers(
+  value: AskUserQuestionsContentValue | undefined,
+  allowMultiple: boolean,
+): string[] {
+  if (allowMultiple) {
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  }
+
+  return typeof value === 'string' && value.length > 0 ? [value] : [];
+}
+
+function validateAskUserQuestionsPayload(questions: AskUserQuestion[]): string | null {
+  if (questions.length === 0 || questions.length > 3) {
+    return 'Error: questions must contain 1-3 items';
+  }
+
+  for (const question of questions) {
+    if (!question.options || question.options.length === 0) {
+      return `Error: ask_user_questions requires non-empty options for every question (question "${question.id}" has none)`;
+    }
+  }
+
+  return null;
+}
+
+export function buildAskUserQuestionsElicitRequest(questions: AskUserQuestion[]): AskUserQuestionsElicitRequest {
+  const properties: Record<string, Record<string, unknown>> = {};
+  const required = questions.map((question) => question.id);
+
+  for (const question of questions) {
+    if (question.allowMultiple) {
+      properties[question.id] = {
+        type: 'array',
+        title: question.header,
+        description: question.question,
+        minItems: 1,
+        maxItems: question.options.length,
+        items: {
+          anyOf: question.options.map((option) => ({
+            const: option.label,
+            title: option.label,
+          })),
+        },
+      };
+      continue;
+    }
+
+    properties[question.id] = {
+      type: 'string',
+      title: question.header,
+      description: question.question,
+      oneOf: [...question.options, { label: OTHER_OPTION_LABEL, description: 'Choose this when the listed options do not fit.' }].map((option) => ({
+        const: option.label,
+        title: option.label,
+      })),
+    };
+
+    properties[`${question.id}__note`] = {
+      type: 'string',
+      title: `${question.header} Note`,
+      description: `Optional note for "${OTHER_OPTION_LABEL}".`,
+      maxLength: 500,
+    };
+  }
+
+  return {
+    mode: 'form',
+    message: 'Please answer the following question(s). For single-select questions, choose "None of the above" and add a note if the provided options do not fit.',
+    requestedSchema: {
+      type: 'object',
+      properties,
+      required,
+    },
+  };
+}
+
+export function formatAskUserQuestionsElicitResult(
+  questions: AskUserQuestion[],
+  result: AskUserQuestionsElicitResult,
+): string {
+  const answers: Record<string, { answers: string[] }> = {};
+  const content = result.content ?? {};
+
+  for (const question of questions) {
+    const answerList = normalizeAskUserQuestionsAnswers(content[question.id], !!question.allowMultiple);
+
+    if (!question.allowMultiple && answerList[0] === OTHER_OPTION_LABEL) {
+      const note = normalizeAskUserQuestionsNote(content[`${question.id}__note`]);
+      if (note) {
+        answerList.push(`user_note: ${note}`);
+      }
+    }
+
+    answers[question.id] = { answers: answerList };
+  }
+
+  return JSON.stringify({ answers });
 }
 
 // ---------------------------------------------------------------------------
@@ -106,7 +268,7 @@ interface McpServerInstance {
 // ---------------------------------------------------------------------------
 
 /**
- * Create and configure an MCP server with 6 GSD orchestration tools.
+ * Create and configure an MCP server with session, read-only, and workflow tools.
  *
  * Returns the McpServer instance — call `connect(transport)` to start serving.
  * Uses dynamic imports for the MCP SDK to avoid TS subpath resolution issues.
@@ -273,6 +435,166 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       }
     },
   );
+
+  // -----------------------------------------------------------------------
+  // ask_user_questions — structured user input via MCP form elicitation
+  // -----------------------------------------------------------------------
+  server.tool(
+    'ask_user_questions',
+    'Request user input for one to three short questions and wait for the response. Single-select questions include a free-form "None of the above" path. Multi-select questions allow multiple choices.',
+    {
+      questions: z.array(z.object({
+        id: z.string().describe('Stable identifier for mapping answers (snake_case)'),
+        header: z.string().describe('Short header label shown in the UI (12 or fewer chars)'),
+        question: z.string().describe('Single-sentence prompt shown to the user'),
+        options: z.array(z.object({
+          label: z.string().describe('User-facing label (1-5 words)'),
+          description: z.string().describe('One short sentence explaining impact/tradeoff if selected'),
+        })).describe('Provide 2-3 mutually exclusive choices. Put the recommended option first and suffix its label with "(Recommended)". Do not include an "Other" option for single-select questions.'),
+        allowMultiple: z.boolean().optional().describe('If true, the user can select multiple options. No "None of the above" option is added.'),
+      })).describe('Questions to show the user. Prefer 1 and do not exceed 3.'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { questions } = args as unknown as AskUserQuestionsParams;
+      try {
+        const validationError = validateAskUserQuestionsPayload(questions);
+        if (validationError) return errorContent(validationError);
+
+        const elicitation = await server.server.elicitInput(buildAskUserQuestionsElicitRequest(questions));
+        if (elicitation.action !== 'accept' || !elicitation.content) {
+          return textContent('ask_user_questions was cancelled before receiving a response');
+        }
+
+        return textContent(formatAskUserQuestionsElicitResult(questions, elicitation));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // =======================================================================
+  // READ-ONLY TOOLS — no session required, pure filesystem reads
+  // =======================================================================
+
+  // -----------------------------------------------------------------------
+  // gsd_progress — structured project progress metrics
+  // -----------------------------------------------------------------------
+  server.tool(
+    'gsd_progress',
+    'Get structured project progress: active milestone/slice/task, phase, completion counts, blockers, and next action. No session required — reads directly from .gsd/ on disk.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir } = args as { projectDir: string };
+      try {
+        return jsonContent(readProgress(projectDir));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // gsd_roadmap — milestone/slice/task structure with status
+  // -----------------------------------------------------------------------
+  server.tool(
+    'gsd_roadmap',
+    'Get the full project roadmap structure: milestones with their slices, tasks, status, risk, and dependencies. Optionally filter to a single milestone. No session required.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+      milestoneId: z.string().optional().describe('Filter to a specific milestone (e.g. "M001")'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir, milestoneId } = args as { projectDir: string; milestoneId?: string };
+      try {
+        return jsonContent(readRoadmap(projectDir, milestoneId));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // gsd_history — execution history with cost/token metrics
+  // -----------------------------------------------------------------------
+  server.tool(
+    'gsd_history',
+    'Get execution history with cost, token usage, model, and duration per unit. Returns totals across all units. No session required.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+      limit: z.number().optional().describe('Max entries to return (most recent first). Default: all.'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir, limit } = args as { projectDir: string; limit?: number };
+      try {
+        return jsonContent(readHistory(projectDir, limit));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // gsd_doctor — lightweight structural health check
+  // -----------------------------------------------------------------------
+  server.tool(
+    'gsd_doctor',
+    'Run a lightweight structural health check on the .gsd/ directory. Checks for missing files, status inconsistencies, and orphaned state. No session required.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+      scope: z.string().optional().describe('Limit checks to a specific milestone (e.g. "M001")'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir, scope } = args as { projectDir: string; scope?: string };
+      try {
+        return jsonContent(runDoctorLite(projectDir, scope));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // gsd_captures — pending captures and ideas
+  // -----------------------------------------------------------------------
+  server.tool(
+    'gsd_captures',
+    'Get captured ideas and thoughts from CAPTURES.md with triage status. Filter by pending, actionable, or all. No session required.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+      filter: z.enum(['all', 'pending', 'actionable']).optional().describe('Filter captures (default: "all")'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir, filter } = args as { projectDir: string; filter?: 'all' | 'pending' | 'actionable' };
+      try {
+        return jsonContent(readCaptures(projectDir, filter ?? 'all'));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // gsd_knowledge — project knowledge base
+  // -----------------------------------------------------------------------
+  server.tool(
+    'gsd_knowledge',
+    'Get the project knowledge base: rules, patterns, and lessons learned accumulated during development. No session required.',
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir } = args as { projectDir: string };
+      try {
+        return jsonContent(readKnowledge(projectDir));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  registerWorkflowTools(server);
 
   return { server };
 }

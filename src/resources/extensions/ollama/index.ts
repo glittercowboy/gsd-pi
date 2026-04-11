@@ -17,19 +17,10 @@
  */
 
 import { importExtensionModule, type ExtensionAPI } from "@gsd/pi-coding-agent";
-import type { OpenAICompletionsCompat } from "@gsd/pi-ai";
 import * as client from "./ollama-client.js";
-import { discoverModels, getOllamaOpenAIBaseUrl } from "./ollama-discovery.js";
+import { discoverModels } from "./ollama-discovery.js";
 import { registerOllamaCommands } from "./ollama-commands.js";
-
-/** Default compat settings for Ollama models via OpenAI-compat endpoint */
-const OLLAMA_COMPAT: OpenAICompletionsCompat = {
-	supportsDeveloperRole: false,
-	supportsReasoningEffort: false,
-	supportsUsageInStreaming: false,
-	maxTokensField: "max_tokens",
-	supportsStore: false,
-};
+import { streamOllamaChat } from "./ollama-chat-provider.js";
 
 let toolsPromise: Promise<void> | null = null;
 
@@ -68,12 +59,18 @@ async function probeAndRegister(pi: ExtensionAPI): Promise<boolean> {
 	const models = await discoverModels();
 	if (models.length === 0) return true; // Running but no models pulled
 
-	const baseUrl = getOllamaOpenAIBaseUrl();
+	const baseUrl = client.getOllamaHost();
 
+	// Use authMode "apiKey" with a dummy key (#3440).
+	// authMode "none" requires a custom streamSimple handler, but Ollama uses
+	// the standard OpenAI-compatible streaming endpoint. Ollama ignores the
+	// Authorization header so the dummy key is harmless.
 	pi.registerProvider("ollama", {
-		authMode: "none",
+		authMode: "apiKey",
+		apiKey: "ollama",
 		baseUrl,
-		api: "openai-completions",
+		api: "ollama-chat",
+		streamSimple: streamOllamaChat,
 		isReady: () => true,
 		models: models.map((m) => ({
 			id: m.id,
@@ -83,7 +80,7 @@ async function probeAndRegister(pi: ExtensionAPI): Promise<boolean> {
 			cost: m.cost,
 			contextWindow: m.contextWindow,
 			maxTokens: m.maxTokens,
-			compat: OLLAMA_COMPAT,
+			providerOptions: (m.ollamaOptions ?? {}) as Record<string, unknown>,
 		})),
 	});
 
@@ -108,16 +105,20 @@ export default function ollama(pi: ExtensionAPI) {
 			await registerOllamaTools(pi);
 		}
 
-		// Async probe — don't block startup
-		probeAndRegister(pi)
-			.then((found) => {
-				if (found && ctx.hasUI) {
-					ctx.ui.setStatus("ollama", "Ollama");
-				}
-			})
-			.catch(() => {
-				// Silently ignore probe failures
-			});
+		// In headless/auto mode, await the probe so the fallback resolver can
+		// see Ollama before the first LLM call (#3531 race condition).
+		// In interactive mode, keep it async for fast startup.
+		if (!ctx.hasUI) {
+			try {
+				await probeAndRegister(pi);
+			} catch { /* non-fatal */ }
+		} else {
+			probeAndRegister(pi)
+				.then((found) => {
+					if (found) ctx.ui.setStatus("ollama", "Ollama");
+				})
+				.catch(() => {});
+		}
 	});
 
 	pi.on("session_shutdown", async () => {

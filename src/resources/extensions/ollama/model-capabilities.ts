@@ -8,11 +8,15 @@
  * Fallback: estimate from parameter count if model isn't in the table.
  */
 
+import type { OllamaChatOptions } from "./types.js";
+
 export interface ModelCapability {
 	contextWindow?: number;
 	maxTokens?: number;
 	input?: ("text" | "image")[];
 	reasoning?: boolean;
+	/** Ollama-specific default inference options for this model family. */
+	ollamaOptions?: OllamaChatOptions;
 }
 
 /**
@@ -20,58 +24,61 @@ export interface ModelCapability {
  * Keys are matched as prefixes against the model name (before the colon/tag).
  * More specific entries should appear first.
  */
+// Note: ollamaOptions.num_ctx is set for known model families where the context
+// window is authoritative. For unknown/estimated models, num_ctx is NOT sent
+// to avoid OOM risk — Ollama uses its own safe default instead.
 const KNOWN_MODELS: Array<[pattern: string, caps: ModelCapability]> = [
 	// ─── Reasoning models ───────────────────────────────────────────────
-	["deepseek-r1", { contextWindow: 131072, reasoning: true }],
-	["qwq", { contextWindow: 131072, reasoning: true }],
+	["deepseek-r1", { contextWindow: 131072, reasoning: true, ollamaOptions: { num_ctx: 131072 } }],
+	["qwq", { contextWindow: 131072, reasoning: true, ollamaOptions: { num_ctx: 131072 } }],
 
 	// ─── Vision models ──────────────────────────────────────────────────
-	["llava", { contextWindow: 4096, input: ["text", "image"] }],
-	["bakllava", { contextWindow: 4096, input: ["text", "image"] }],
-	["moondream", { contextWindow: 8192, input: ["text", "image"] }],
-	["llama3.2-vision", { contextWindow: 131072, input: ["text", "image"] }],
-	["minicpm-v", { contextWindow: 4096, input: ["text", "image"] }],
+	["llava", { contextWindow: 4096, input: ["text", "image"], ollamaOptions: { num_ctx: 4096 } }],
+	["bakllava", { contextWindow: 4096, input: ["text", "image"], ollamaOptions: { num_ctx: 4096 } }],
+	["moondream", { contextWindow: 8192, input: ["text", "image"], ollamaOptions: { num_ctx: 8192 } }],
+	["llama3.2-vision", { contextWindow: 131072, input: ["text", "image"], ollamaOptions: { num_ctx: 131072 } }],
+	["minicpm-v", { contextWindow: 4096, input: ["text", "image"], ollamaOptions: { num_ctx: 4096 } }],
 
 	// ─── Code models ────────────────────────────────────────────────────
-	["codestral", { contextWindow: 262144, maxTokens: 32768 }],
-	["qwen2.5-coder", { contextWindow: 131072, maxTokens: 32768 }],
-	["deepseek-coder-v2", { contextWindow: 131072, maxTokens: 16384 }],
-	["starcoder2", { contextWindow: 16384, maxTokens: 8192 }],
-	["codegemma", { contextWindow: 8192, maxTokens: 8192 }],
-	["codellama", { contextWindow: 16384, maxTokens: 8192 }],
-	["devstral", { contextWindow: 131072, maxTokens: 32768 }],
+	["codestral", { contextWindow: 262144, maxTokens: 32768, ollamaOptions: { num_ctx: 262144 } }],
+	["qwen2.5-coder", { contextWindow: 131072, maxTokens: 32768, ollamaOptions: { num_ctx: 131072 } }],
+	["deepseek-coder-v2", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["starcoder2", { contextWindow: 16384, maxTokens: 8192, ollamaOptions: { num_ctx: 16384 } }],
+	["codegemma", { contextWindow: 8192, maxTokens: 8192, ollamaOptions: { num_ctx: 8192 } }],
+	["codellama", { contextWindow: 16384, maxTokens: 8192, ollamaOptions: { num_ctx: 16384 } }],
+	["devstral", { contextWindow: 131072, maxTokens: 32768, ollamaOptions: { num_ctx: 131072 } }],
 
 	// ─── Llama family ───────────────────────────────────────────────────
-	["llama3.3", { contextWindow: 131072, maxTokens: 16384 }],
-	["llama3.2", { contextWindow: 131072, maxTokens: 16384 }],
-	["llama3.1", { contextWindow: 131072, maxTokens: 16384 }],
-	["llama3", { contextWindow: 8192, maxTokens: 8192 }],
-	["llama2", { contextWindow: 4096, maxTokens: 4096 }],
+	["llama3.3", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["llama3.2", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["llama3.1", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["llama3", { contextWindow: 8192, maxTokens: 8192, ollamaOptions: { num_ctx: 8192 } }],
+	["llama2", { contextWindow: 4096, maxTokens: 4096, ollamaOptions: { num_ctx: 4096 } }],
 
 	// ─── Qwen family ────────────────────────────────────────────────────
-	["qwen3", { contextWindow: 131072, maxTokens: 32768 }],
-	["qwen2.5", { contextWindow: 131072, maxTokens: 32768 }],
-	["qwen2", { contextWindow: 131072, maxTokens: 32768 }],
+	["qwen3", { contextWindow: 131072, maxTokens: 32768, ollamaOptions: { num_ctx: 131072 } }],
+	["qwen2.5", { contextWindow: 131072, maxTokens: 32768, ollamaOptions: { num_ctx: 131072 } }],
+	["qwen2", { contextWindow: 131072, maxTokens: 32768, ollamaOptions: { num_ctx: 131072 } }],
 
 	// ─── Gemma family ───────────────────────────────────────────────────
-	["gemma3", { contextWindow: 131072, maxTokens: 16384 }],
-	["gemma2", { contextWindow: 8192, maxTokens: 8192 }],
+	["gemma3", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["gemma2", { contextWindow: 8192, maxTokens: 8192, ollamaOptions: { num_ctx: 8192 } }],
 
 	// ─── Mistral family ─────────────────────────────────────────────────
-	["mistral-large", { contextWindow: 131072, maxTokens: 16384 }],
-	["mistral-small", { contextWindow: 131072, maxTokens: 16384 }],
-	["mistral-nemo", { contextWindow: 131072, maxTokens: 16384 }],
-	["mistral", { contextWindow: 32768, maxTokens: 8192 }],
-	["mixtral", { contextWindow: 32768, maxTokens: 8192 }],
+	["mistral-large", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["mistral-small", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["mistral-nemo", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["mistral", { contextWindow: 32768, maxTokens: 8192, ollamaOptions: { num_ctx: 32768 } }],
+	["mixtral", { contextWindow: 32768, maxTokens: 8192, ollamaOptions: { num_ctx: 32768 } }],
 
 	// ─── Phi family ─────────────────────────────────────────────────────
-	["phi4", { contextWindow: 16384, maxTokens: 16384 }],
-	["phi3.5", { contextWindow: 131072, maxTokens: 16384 }],
-	["phi3", { contextWindow: 131072, maxTokens: 4096 }],
+	["phi4", { contextWindow: 16384, maxTokens: 16384, ollamaOptions: { num_ctx: 16384 } }],
+	["phi3.5", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["phi3", { contextWindow: 131072, maxTokens: 4096, ollamaOptions: { num_ctx: 131072 } }],
 
 	// ─── Command R ──────────────────────────────────────────────────────
-	["command-r-plus", { contextWindow: 131072, maxTokens: 16384 }],
-	["command-r", { contextWindow: 131072, maxTokens: 16384 }],
+	["command-r-plus", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
+	["command-r", { contextWindow: 131072, maxTokens: 16384, ollamaOptions: { num_ctx: 131072 } }],
 ];
 
 /**

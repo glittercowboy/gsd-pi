@@ -4,9 +4,10 @@
 // handleResetSlice: Reset a slice and all its tasks, re-rendering plan + roadmap.
 
 import type { ExtensionCommandContext, ExtensionAPI } from "@gsd/pi-coding-agent";
-import { existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, readdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { nativeRevertCommit, nativeRevertAbort } from "./native-git-bridge.js";
+import { atomicWriteSync } from "./atomic-write.js";
 import { parseUnitId } from "./unit-id.js";
 import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
@@ -393,7 +394,7 @@ export function uncheckTaskInPlan(basePath: string, mid: string, sid: string, ti
   const regex = new RegExp(`^(\\s*-\\s*)\\[x\\](\\s*\\**${tid}\\**[:\\s])`, "mi");
   if (regex.test(content)) {
     content = content.replace(regex, "$1[ ]$2");
-    writeFileSync(planFile, content, "utf-8");
+    atomicWriteSync(planFile, content);
     return true;
   }
   return false;

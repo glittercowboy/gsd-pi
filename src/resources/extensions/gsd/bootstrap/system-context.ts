@@ -4,20 +4,49 @@ import { join } from "node:path";
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 
+import { logWarning } from "../workflow-logger.js";
 import { debugTime } from "../debug-logger.js";
-import { loadPrompt } from "../prompt-loader.js";
+import { loadPrompt, getTemplatesDir } from "../prompt-loader.js";
 import { readForensicsMarker } from "../forensics.js";
 import { resolveAllSkillReferences, renderPreferencesForSystemPrompt, loadEffectiveGSDPreferences } from "../preferences.js";
+import { resolveSkillReference } from "../preferences-skills.js";
 import { resolveGsdRootFile, resolveSliceFile, resolveSlicePath, resolveTaskFile, resolveTaskFiles, resolveTasksDir, relSliceFile, relSlicePath, relTaskFile } from "../paths.js";
+import { ensureCodebaseMapFresh, readCodebaseMap } from "../codebase-generator.js";
 import { hasSkillSnapshot, detectNewSkills, formatSkillsXml } from "../skill-discovery.js";
 import { getActiveAutoWorktreeContext } from "../auto-worktree.js";
 import { getActiveWorktreeName, getWorktreeOriginalCwd } from "../worktree-command.js";
 import { deriveState } from "../state.js";
-import { formatOverridesSection, loadActiveOverrides, loadFile, parseContinue, parseSummary } from "../files.js";
+import { formatOverridesSection, formatShortcut, loadActiveOverrides, loadFile, parseContinue, parseSummary } from "../files.js";
 import { toPosixPath } from "../../shared/mod.js";
 import { markCmuxPromptShown, shouldPromptToEnableCmux } from "../../cmux/index.js";
+import { autoEnableCmuxPreferences } from "../commands-cmux.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
+
+/**
+ * Bundled skill triggers — resolved dynamically at runtime instead of
+ * hardcoding absolute paths in the system prompt template. Only skills
+ * that actually exist on disk are included in the table. (#3575)
+ */
+const BUNDLED_SKILL_TRIGGERS: Array<{ trigger: string; skill: string }> = [
+  { trigger: "Frontend UI - web components, pages, landing pages, dashboards, React/HTML/CSS, styling", skill: "frontend-design" },
+  { trigger: "macOS or iOS apps - SwiftUI, Xcode, App Store", skill: "swiftui" },
+  { trigger: "Debugging - complex bugs, failing tests, root-cause investigation after standard approaches fail", skill: "debug-like-expert" },
+];
+
+function buildBundledSkillsTable(): string {
+  const cwd = process.cwd();
+  const rows: string[] = [];
+  for (const { trigger, skill } of BUNDLED_SKILL_TRIGGERS) {
+    const resolution = resolveSkillReference(skill, cwd);
+    if (resolution.method === "unresolved") continue; // skill not installed — omit from prompt
+    rows.push(`| ${trigger} | \`${resolution.resolvedPath}\` |`);
+  }
+  if (rows.length === 0) {
+    return "*No bundled skills found. Install skills to `~/.agents/skills/` or `~/.claude/skills/`.*";
+  }
+  return `| Trigger | Skill to load |\n|---|---|\n${rows.join("\n")}`;
+}
 
 function warnDeprecatedAgentInstructions(): void {
   const paths = [
@@ -42,14 +71,22 @@ export async function buildBeforeAgentStartResult(
   if (!existsSync(join(process.cwd(), ".gsd"))) return undefined;
 
   const stopContextTimer = debugTime("context-inject");
-  const systemContent = loadPrompt("system");
-  const loadedPreferences = loadEffectiveGSDPreferences();
+  const systemContent = loadPrompt("system", {
+    bundledSkillsTable: buildBundledSkillsTable(),
+    templatesDir: getTemplatesDir(),
+    shortcutDashboard: formatShortcut("Ctrl+Alt+G"),
+    shortcutShell: formatShortcut("Ctrl+Alt+B"),
+  });
+  let loadedPreferences = loadEffectiveGSDPreferences();
   if (shouldPromptToEnableCmux(loadedPreferences?.preferences)) {
     markCmuxPromptShown();
-    ctx.ui.notify(
-      "cmux detected. Run /gsd cmux on to enable sidebar metadata, notifications, and visual subagent splits for this project.",
-      "info",
-    );
+    if (autoEnableCmuxPreferences()) {
+      loadedPreferences = loadEffectiveGSDPreferences();
+      ctx.ui.notify(
+        "cmux detected — auto-enabled. Run /gsd cmux off to disable.",
+        "info",
+      );
+    }
   }
 
   let preferenceBlock = "";
@@ -83,8 +120,8 @@ export async function buildBeforeAgentStartResult(
         memoryBlock = `\n\n${formatted}`;
       }
     }
-  } catch {
-    // non-fatal
+  } catch (e) {
+    logWarning("bootstrap", `memory block fetch failed: ${(e as Error).message}`);
   }
 
   let newSkillsBlock = "";
@@ -96,10 +133,24 @@ export async function buildBeforeAgentStartResult(
   }
 
   let codebaseBlock = "";
+  try {
+    const codebaseOptions = loadedPreferences?.preferences?.codebase
+      ? {
+          excludePatterns: loadedPreferences.preferences.codebase.exclude_patterns,
+          maxFiles: loadedPreferences.preferences.codebase.max_files,
+          collapseThreshold: loadedPreferences.preferences.codebase.collapse_threshold,
+        }
+      : undefined;
+    ensureCodebaseMapFresh(process.cwd(), codebaseOptions);
+  } catch (e) {
+    logWarning("bootstrap", `CODEBASE refresh failed: ${(e as Error).message}`);
+  }
+
   const codebasePath = resolveGsdRootFile(process.cwd(), "CODEBASE");
-  if (existsSync(codebasePath)) {
+  const rawCodebase = readCodebaseMap(process.cwd());
+  if (existsSync(codebasePath) && rawCodebase) {
     try {
-      const rawContent = readFileSync(codebasePath, "utf-8").trim();
+      const rawContent = rawCodebase.trim();
       if (rawContent) {
         // Cap injection size to ~2 000 tokens to avoid bloating every request.
         // Full map is always available at .gsd/CODEBASE.md.
@@ -109,10 +160,10 @@ export async function buildBeforeAgentStartResult(
         const content = rawContent.length > MAX_CODEBASE_CHARS
           ? rawContent.slice(0, MAX_CODEBASE_CHARS) + "\n\n*(truncated — see .gsd/CODEBASE.md for full map)*"
           : rawContent;
-        codebaseBlock = `\n\n[PROJECT CODEBASE — File structure and descriptions (generated ${generatedAt}, may be stale — run /gsd codebase update to refresh)]\n\n${content}`;
+        codebaseBlock = `\n\n[PROJECT CODEBASE — File structure and descriptions (generated ${generatedAt}, auto-refreshed when GSD detects tracked file changes; use /gsd codebase stats for status)]\n\n${content}`;
       }
-    } catch {
-      // skip
+    } catch (e) {
+      logWarning("bootstrap", `CODEBASE file read failed: ${(e as Error).message}`);
     }
   }
 
@@ -121,7 +172,7 @@ export async function buildBeforeAgentStartResult(
   const injection = await buildGuidedExecuteContextInjection(event.prompt, process.cwd());
 
   // Re-inject forensics context on follow-up turns (#2941)
-  const forensicsInjection = !injection ? buildForensicsContextInjection(process.cwd()) : null;
+  const forensicsInjection = !injection ? buildForensicsContextInjection(process.cwd(), event.prompt) : null;
 
   const worktreeBlock = buildWorktreeContextBlock();
   const fullSystem = `${event.systemPrompt}\n\n[SYSTEM CONTEXT — GSD]\n\n${systemContent}${preferenceBlock}${knowledgeBlock}${codebaseBlock}${memoryBlock}${newSkillsBlock}${worktreeBlock}`;
@@ -158,8 +209,8 @@ export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: st
         globalSizeKb = Buffer.byteLength(content, "utf-8") / 1024;
         globalKnowledge = content;
       }
-    } catch {
-      // skip
+    } catch (e) {
+      logWarning("bootstrap", `global knowledge file read failed: ${(e as Error).message}`);
     }
   }
 
@@ -170,8 +221,8 @@ export function loadKnowledgeBlock(gsdHomeDir: string, cwd: string): { block: st
     try {
       const content = readFileSync(knowledgePath, "utf-8").trim();
       if (content) projectKnowledge = content;
-    } catch {
-      // skip
+    } catch (e) {
+      logWarning("bootstrap", `project knowledge file read failed: ${(e as Error).message}`);
     }
   }
 
@@ -234,6 +285,13 @@ function buildWorktreeContextBlock(): string {
   return "";
 }
 
+/**
+ * Low-entropy resume intent patterns — short phrases a user types to
+ * continue work after a pause, rate limit, or context reset (#3615).
+ * Tested against the trimmed, lowercased prompt with trailing punctuation stripped.
+ */
+const RESUME_INTENT_PATTERNS = /^(continue|resume|ok|go|go ahead|proceed|keep going|carry on|next|yes|yeah|yep|sure|do it|let's go|pick up where you left off)$/;
+
 async function buildGuidedExecuteContextInjection(prompt: string, basePath: string): Promise<string | null> {
   const executeMatch = prompt.match(/Execute the next task:\s+(T\d+)\s+\("([^"]+)"\)\s+in slice\s+(S\d+)\s+of milestone\s+(M\d+(?:-[a-z0-9]{6})?)/i);
   if (executeMatch) {
@@ -247,6 +305,27 @@ async function buildGuidedExecuteContextInjection(prompt: string, basePath: stri
     const state = await deriveState(basePath);
     if (state.activeMilestone?.id === milestoneId && state.activeSlice?.id === sliceId && state.activeTask) {
       return buildTaskExecutionContextInjection(basePath, milestoneId, sliceId, state.activeTask.id, state.activeTask.title);
+    }
+  }
+
+  // Fallback: low-entropy resume prompt (e.g., "continue", "ok", "go ahead")
+  // during an active executing task — inject task context so the agent
+  // doesn't rebuild from scratch (#3615).
+  // Intent-gated: only fire for short, resume-like prompts to avoid hijacking
+  // control/help/diagnostic prompts with unrelated execution context.
+  // Phase-gated: only fire during "executing" to avoid misrouting during
+  // replanning, gate evaluation, or other non-execution phases.
+  const trimmed = prompt.trim().toLowerCase().replace(/[.!?,]+$/g, "");
+  if (RESUME_INTENT_PATTERNS.test(trimmed)) {
+    const state = await deriveState(basePath);
+    if (state.phase === "executing" && state.activeTask && state.activeMilestone && state.activeSlice) {
+      return buildTaskExecutionContextInjection(
+        basePath,
+        state.activeMilestone.id,
+        state.activeSlice.id,
+        state.activeTask.id,
+        state.activeTask.title,
+      );
     }
   }
 
@@ -406,13 +485,19 @@ function oneLine(text: string): string {
  * Check for an active forensics session and return the prompt content
  * so it can be re-injected on follow-up turns.
  */
-function buildForensicsContextInjection(basePath: string): string | null {
+export function buildForensicsContextInjection(basePath: string, prompt: string): string | null {
   const marker = readForensicsMarker(basePath);
   if (!marker) return null;
 
   // Expire markers older than 2 hours to avoid stale context
   const age = Date.now() - new Date(marker.createdAt).getTime();
   if (age > 2 * 60 * 60 * 1000) {
+    clearForensicsMarker(basePath);
+    return null;
+  }
+
+  const trimmed = prompt.trim().toLowerCase().replace(/[.!?,]+$/g, "");
+  if (trimmed && !RESUME_INTENT_PATTERNS.test(trimmed)) {
     clearForensicsMarker(basePath);
     return null;
   }
@@ -429,9 +514,8 @@ export function clearForensicsMarker(basePath: string): void {
   if (existsSync(markerPath)) {
     try {
       unlinkSync(markerPath);
-    } catch {
-      // non-fatal
+    } catch (e) {
+      logWarning("bootstrap", `unlinkSync forensics marker failed: ${(e as Error).message}`);
     }
   }
 }
-

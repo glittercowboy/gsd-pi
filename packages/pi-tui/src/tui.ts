@@ -141,6 +141,8 @@ export interface OverlayOptions {
 	visible?: (termWidth: number, termHeight: number) => boolean;
 	/** If true, don't capture keyboard focus when shown */
 	nonCapturing?: boolean;
+	/** If true, dim the background behind the overlay */
+	backdrop?: boolean;
 }
 
 /**
@@ -166,20 +168,33 @@ export interface OverlayHandle {
  */
 export class Container implements Component {
 	children: Component[] = [];
+	private _prevRender: string[] | null = null;
 
 	addChild(component: Component): void {
 		this.children.push(component);
+		this._prevRender = null;
 	}
 
 	removeChild(component: Component): void {
 		const index = this.children.indexOf(component);
 		if (index !== -1) {
+			const child = this.children[index];
 			this.children.splice(index, 1);
+			if ('dispose' in child && typeof (child as any).dispose === 'function') {
+				(child as any).dispose();
+			}
+			this._prevRender = null;
 		}
 	}
 
 	clear(): void {
+		for (const child of this.children) {
+			if ('dispose' in child && typeof (child as any).dispose === 'function') {
+				(child as any).dispose();
+			}
+		}
 		this.children = [];
+		this._prevRender = null;
 	}
 
 	invalidate(): void {
@@ -194,6 +209,17 @@ export class Container implements Component {
 			const rendered = child.render(width);
 			for (let i = 0; i < rendered.length; i++) lines.push(rendered[i]);
 		}
+		// Return stable reference if output unchanged — allows doRender()
+		// to skip ALL post-processing (isImageLine, applyLineResets, diffs)
+		const prev = this._prevRender;
+		if (prev && prev.length === lines.length) {
+			let same = true;
+			for (let i = 0; i < lines.length; i++) {
+				if (lines[i] !== prev[i]) { same = false; break; }
+			}
+			if (same) return prev;
+		}
+		this._prevRender = lines;
 		return lines;
 	}
 }
@@ -222,6 +248,7 @@ export class TUI extends Container {
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
 	private stopped = false;
+	private _lastRenderedComponents: string[] | null = null;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
@@ -563,6 +590,15 @@ export class TUI extends Container {
 			this.cellSizeQueryPending = false;
 		}
 
+		// Don't hold a bare Escape keypress hostage while waiting for the
+		// optional cell-size response. This is the most common early input race.
+		if (this.inputBuffer === "\x1b") {
+			const result = this.inputBuffer;
+			this.inputBuffer = "";
+			this.cellSizeQueryPending = false;
+			return result;
+		}
+
 		// Check if we have a partial cell size response starting (wait for more data)
 		// Patterns that could be incomplete cell size response: \x1b, \x1b[, \x1b[6, \x1b[6;...(no t yet)
 		const partialCellSizePattern = /\x1b(\[6?;?[\d;]*)?$/;
@@ -598,6 +634,13 @@ export class TUI extends Container {
 
 		// Render all components to get new lines
 		let newLines = this.render(width);
+
+		// Skip ALL post-processing if component output is unchanged.
+		// Container.render() returns the same array reference when stable.
+		if (newLines === this._lastRenderedComponents && this.overlayStack.length === 0) {
+			return;
+		}
+		this._lastRenderedComponents = newLines;
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {
