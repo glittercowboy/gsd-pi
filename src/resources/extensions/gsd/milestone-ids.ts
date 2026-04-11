@@ -37,9 +37,17 @@ export function parseMilestoneId(id: string): { suffix?: string; num: number } {
 
 // ─── Sorting ────────────────────────────────────────────────────────────────
 
-/** Comparator for sorting milestone IDs by sequential number. */
+/** Comparator for sorting milestone IDs by sequential number.
+ * When two IDs share the same sequence number (e.g. M001-fkbvng vs M001-1jp4m8),
+ * the suffix is used as a lexicographic tiebreaker so the sort is deterministic
+ * and does not depend on the runtime's unstable sort behaviour (#3340).
+ */
 export function milestoneIdSort(a: string, b: string): number {
-  return extractMilestoneSeq(a) - extractMilestoneSeq(b);
+  const seqDiff = extractMilestoneSeq(a) - extractMilestoneSeq(b);
+  if (seqDiff !== 0) return seqDiff;
+  // Same sequence number — fall back to full-ID lexicographic comparison so that
+  // unique IDs (M001-abc vs M001-xyz) always sort in a deterministic order.
+  return a < b ? -1 : a > b ? 1 : 0;
 }
 
 // ─── Generation ─────────────────────────────────────────────────────────────

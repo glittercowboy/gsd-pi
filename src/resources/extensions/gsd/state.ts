@@ -338,7 +338,16 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
   let synced = false;
   for (const diskId of diskIds) {
     if (!dbIdSet.has(diskId) && !isGhostMilestone(basePath, diskId)) {
-      insertMilestone({ id: diskId, status: 'active' });
+      // Parse depends_on from CONTEXT.md (or CONTEXT-DRAFT.md) so the DB row
+      // reflects the real dependency list. Without this, the row is inserted
+      // with depends_on:[] and Phase 2 promotes the milestone to 'active' even
+      // when its dependencies are unmet (#3340).
+      const contextPath = resolveMilestoneFile(basePath, diskId, "CONTEXT");
+      const draftPath = !contextPath ? resolveMilestoneFile(basePath, diskId, "CONTEXT-DRAFT") : null;
+      let contextContent: string | null = null;
+      try { contextContent = contextPath ? readFileSync(contextPath, "utf-8") : (draftPath ? readFileSync(draftPath, "utf-8") : null); }
+      catch { /* leave null — insertMilestone will default to [] */ }
+      insertMilestone({ id: diskId, status: 'active', depends_on: parseContextDependsOn(contextContent) });
       synced = true;
     }
   }
@@ -384,11 +393,18 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
     if (!dbMilestoneIds.has(diskId)) {
       // Synthesize a minimal MilestoneRow for the disk-only milestone.
       // Title and status will be resolved from disk files in the loop below.
+      // Parse depends_on from CONTEXT.md / CONTEXT-DRAFT.md so dep resolution
+      // in Phase 2 (m.depends_on) reflects the real dependency list (#3340).
+      const contextPath2 = resolveMilestoneFile(basePath, diskId, "CONTEXT");
+      const draftPath2 = !contextPath2 ? resolveMilestoneFile(basePath, diskId, "CONTEXT-DRAFT") : null;
+      let contextContent2: string | null = null;
+      try { contextContent2 = contextPath2 ? readFileSync(contextPath2, "utf-8") : (draftPath2 ? readFileSync(draftPath2, "utf-8") : null); }
+      catch { /* leave null — parseContextDependsOn(null) returns [] */ }
       allMilestones.push({
         id: diskId,
         title: diskId,
         status: 'active',
-        depends_on: [] as string[],
+        depends_on: parseContextDependsOn(contextContent2),
         created_at: new Date().toISOString(),
       } as MilestoneRow);
     }
