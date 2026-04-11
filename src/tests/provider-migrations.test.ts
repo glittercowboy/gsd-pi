@@ -55,7 +55,7 @@ test("shouldMigrateAnthropicToClaudeCode blocks migration for direct-key users",
 test("shouldMigrateAnthropicToClaudeCode allows OAuth-only anthropic users", () => {
   assert.equal(
     shouldMigrateAnthropicToClaudeCode({
-      authStorage: makeAuthStorage([{ type: "oauth", accessToken: "oauth-token" }]) as any,
+      authStorage: makeAuthStorage([{ type: "oauth" }]) as any,
       isClaudeCodeReady: true,
       defaultProvider: "anthropic",
       env: {} as NodeJS.ProcessEnv,
@@ -67,7 +67,7 @@ test("shouldMigrateAnthropicToClaudeCode allows OAuth-only anthropic users", () 
 test("shouldMigrateAnthropicToClaudeCode stays off for other providers", () => {
   assert.equal(
     shouldMigrateAnthropicToClaudeCode({
-      authStorage: makeAuthStorage([{ type: "oauth", accessToken: "oauth-token" }]) as any,
+      authStorage: makeAuthStorage([{ type: "oauth" }]) as any,
       isClaudeCodeReady: true,
       defaultProvider: "openai",
       env: {} as NodeJS.ProcessEnv,
