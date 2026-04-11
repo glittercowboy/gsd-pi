@@ -123,7 +123,7 @@ describe("CustomWorkflowEngine.deriveState", () => {
 
 describe("CustomWorkflowEngine.resolveDispatch", () => {
   it("returns dispatch for first pending step", async () => {
-    const { engine } = setupEngine([
+    const { engine, runDir } = setupEngine([
       makeStep({ id: "step-1", prompt: "Do the first thing" }),
       makeStep({ id: "step-2", dependsOn: ["step-1"] }),
     ], "my-workflow");
@@ -137,6 +137,11 @@ describe("CustomWorkflowEngine.resolveDispatch", () => {
       assert.equal(dispatch.step.unitId, "my-workflow/step-1");
       assert.equal(dispatch.step.prompt, "Do the first thing");
     }
+
+    const graph = readGraph(runDir);
+    assert.equal(graph.steps[0].status, "active");
+    assert.ok(graph.steps[0].startedAt, "startedAt should be written before dispatch returns");
+    assert.equal(graph.steps[1].status, "pending");
   });
 
   it("returns stop when all steps are complete", async () => {

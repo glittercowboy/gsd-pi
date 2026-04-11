@@ -174,6 +174,26 @@ export function getNextPendingStep(graph: WorkflowGraph): GraphStep | null {
   return null;
 }
 
+export function markStepActive(
+  graph: WorkflowGraph,
+  stepId: string,
+): WorkflowGraph {
+  const found = graph.steps.some((s) => s.id === stepId);
+  if (!found) {
+    throw new Error(`Step not found: ${stepId}`);
+  }
+
+  const startedAt = new Date().toISOString();
+  return {
+    ...graph,
+    steps: graph.steps.map((s) =>
+      s.id === stepId
+        ? { ...s, status: "active" as const, startedAt }
+        : s,
+    ),
+  };
+}
+
 /**
  * Return a new graph with the specified step marked as "complete".
  * Immutable — does not mutate the input graph.

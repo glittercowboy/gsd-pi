@@ -27,6 +27,7 @@ import {
   readGraph,
   writeGraph,
   getNextPendingStep,
+  markStepActive,
   markStepComplete,
   expandIteration,
   type WorkflowGraph,
@@ -156,6 +157,9 @@ export class CustomWorkflowEngine implements WorkflowEngine {
 
     // Enrich prompt with context from prior step artifacts
     const enrichedPrompt = injectContext(this.runDir, next.id, next.prompt);
+
+    const updatedGraph = markStepActive(graph, next.id);
+    writeGraph(this.runDir, updatedGraph);
 
     return {
       action: "dispatch",

@@ -16,6 +16,7 @@ import {
   readGraph,
   writeGraph,
   getNextPendingStep,
+  markStepActive,
   markStepComplete,
   expandIteration,
   initializeGraph,
@@ -233,6 +234,36 @@ describe("getNextPendingStep", () => {
 
     const next = getNextPendingStep(graph);
     assert.equal(next?.id, "b");
+  });
+});
+
+describe("markStepActive", () => {
+  it("returns new graph with step status 'active' and startedAt (original unchanged)", () => {
+    const original = makeGraph([
+      makeStep({ id: "a" }),
+      makeStep({ id: "b" }),
+    ]);
+
+    const updated = markStepActive(original, "a");
+
+    assert.equal(original.steps[0].status, "pending");
+    assert.equal(original.steps[0].startedAt, undefined);
+
+    assert.equal(updated.steps[0].status, "active");
+    assert.ok(updated.steps[0].startedAt, "startedAt should be set");
+    assert.equal(updated.steps[1].status, "pending");
+  });
+
+  it("throws for unknown step ID", () => {
+    const graph = makeGraph([makeStep({ id: "a" })]);
+    assert.throws(
+      () => markStepActive(graph, "nonexistent"),
+      (err: Error) => {
+        assert.ok(err.message.includes("Step not found"));
+        assert.ok(err.message.includes("nonexistent"));
+        return true;
+      },
+    );
   });
 });
 
