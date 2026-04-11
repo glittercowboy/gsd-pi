@@ -83,7 +83,7 @@ import { join } from "node:path";
 import { sep as pathSep } from "node:path";
 
 import { resolveProjectRootDbPath } from "./bootstrap/dynamic-tools.js";
-import { resolveDefaultSessionModel } from "./preferences-models.js";
+import { resolveDefaultSessionModel, resolveDynamicRoutingConfig } from "./preferences-models.js";
 import type { WorktreeResolver } from "./worktree-resolver.js";
 
 export interface BootstrapDeps {
@@ -777,6 +777,39 @@ export async function bootstrapAutoSession(
         ? `Will loop through ${pendingCount} milestones.`
         : "Will loop until milestone complete.";
     ctx.ui.notify(`${modeLabel} started. ${scopeMsg}`, "info");
+
+    // Show dynamic routing status so users know upfront if models will be
+    // downgraded for simple tasks (#3962).
+    // Use the same effective logic as selectAndApplyModel: check flat-rate
+    // provider suppression and resolve the actual ceiling model.
+    const routingConfig = resolveDynamicRoutingConfig();
+    const startModelLabel = s.autoModeStartModel
+      ? `${s.autoModeStartModel.provider}/${s.autoModeStartModel.id}`
+      : ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "default";
+
+    // Flat-rate providers (e.g. GitHub Copilot, claude-code) suppress routing
+    // at dispatch time (#3453) — reflect that in the banner.
+    const { isFlatRateProvider } = await import("./auto-model-selection.js");
+    const effectiveProvider = s.autoModeStartModel?.provider ?? ctx.model?.provider;
+    const effectivelyEnabled = routingConfig.enabled
+      && !(effectiveProvider && isFlatRateProvider(effectiveProvider));
+
+    // The actual ceiling may come from tier_models.heavy, not the start model.
+    const effectiveCeiling = (routingConfig.enabled && routingConfig.tier_models?.heavy)
+      ? routingConfig.tier_models.heavy
+      : startModelLabel;
+
+    if (effectivelyEnabled) {
+      ctx.ui.notify(
+        `Dynamic routing: enabled — simple tasks may use cheaper models (ceiling: ${effectiveCeiling})`,
+        "info",
+      );
+    } else {
+      ctx.ui.notify(
+        `Dynamic routing: disabled — all tasks will use ${startModelLabel}`,
+        "info",
+      );
+    }
 
     updateSessionLock(
       lockBase(),

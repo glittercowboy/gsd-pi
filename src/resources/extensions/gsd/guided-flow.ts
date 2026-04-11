@@ -295,6 +295,7 @@ async function dispatchWorkflow(
     const result = await selectAndApplyModel(
       ctx, pi, unitType, /* unitId */ "", /* basePath */ process.cwd(),
       prefs, /* verbose */ false, /* autoModeStartModel */ null,
+      /* retryContext */ undefined, /* isAutoMode */ false,
     );
     if (result.appliedModel) {
       debugLog("guided-flow-model-applied", {
