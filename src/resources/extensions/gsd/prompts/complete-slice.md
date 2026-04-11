@@ -21,7 +21,7 @@ All relevant context has been preloaded below — the slice plan, all task summa
 Then:
 1. Use the **Slice Summary** and **UAT** output templates from the inlined context above
 2. {{skillActivation}}
-3. Run all slice-level verification checks defined in the slice plan. All must pass before marking the slice done. If any fail, fix them first.
+3. Run all slice-level verification checks defined in the slice plan. All must pass before marking the slice done. If any fail, fix them first. Task artifacts use a **flat file layout** directly inside `tasks/` (for example `T01-SUMMARY.md`, `T02-SUMMARY.md`) rather than per-task subdirectories. If you need to count or re-read task summaries during verification, use `find .gsd/milestones/{{milestoneId}}/slices/{{sliceId}}/tasks -name "*-SUMMARY.md"` or `ls .gsd/milestones/{{milestoneId}}/slices/{{sliceId}}/tasks/*-SUMMARY.md`. Never use `tasks/*/SUMMARY.md` — that glob expects subdirectories that do not exist.
 4. If the slice plan includes observability/diagnostic surfaces, confirm they work. Skip this for simple slices that don't have observability sections.
 5. If the slice involved runtime behavior, fill the **Operational Readiness** section (Q8) in the slice summary: health signal, failure signal, recovery procedure, and monitoring gaps. Omit entirely for simple slices with no runtime concerns.
 6. If this slice produced evidence that a requirement changed status (Active → Validated, Active → Deferred, etc.), call `gsd_requirement_update` with the requirement ID, updated `status`, and `validation` evidence. Do NOT write `.gsd/REQUIREMENTS.md` directly — the engine renders it from the database.
@@ -35,7 +35,7 @@ Then:
 
 **Autonomous execution:** Do not call `ask_user_questions` or `secure_env_collect`. You are running in auto-mode — there is no human available to answer questions. Make reasonable assumptions and document them in the slice summary. If a decision genuinely requires human input, note it in the summary and proceed with the best available option.
 
-**File system safety:** Task summaries are preloaded in the inlined context above. If you need to re-read any of them, use `find .gsd/milestones/{{milestoneId}}/slices/{{sliceId}}/tasks -name "*-SUMMARY.md"` to list file paths first — never pass `{{slicePath}}` or any other directory path directly to the `read` tool. The `read` tool only accepts file paths, not directories.
+**File system safety:** Task summaries are preloaded in the inlined context above. Task artifacts use a **flat file layout** — files such as `T01-SUMMARY.md` and `T02-SUMMARY.md` live directly inside the `tasks/` directory, not inside per-task subdirectories like `tasks/T01/SUMMARY.md`. If you need to re-read any of them, use `find .gsd/milestones/{{milestoneId}}/slices/{{sliceId}}/tasks -name "*-SUMMARY.md"` to list file paths first. Never use `tasks/*/SUMMARY.md`, and never pass `{{slicePath}}` or any other directory path directly to the `read` tool. The `read` tool only accepts file paths, not directories.
 
 **You MUST call `gsd_complete_slice` with the slice summary and UAT content before finishing. The tool persists to both DB and disk and renders `{{sliceSummaryPath}}` and `{{sliceUatPath}}` automatically.**
 
