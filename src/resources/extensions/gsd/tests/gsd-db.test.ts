@@ -347,15 +347,13 @@ describe('gsd-db', () => {
     assert.deepStrictEqual(ar, [], 'getActiveRequirements returns [] when DB closed');
   });
 
-  test('gsd-db: wasDbOpenAttempted tracks openDatabase calls', () => {
-    // wasDbOpenAttempted should return true once openDatabase has been called
-    // (previous tests in this suite already called openDatabase, so the flag is set)
+  test('gsd-db: closeDatabase resets wasDbOpenAttempted after an intentional close', () => {
+    openDatabase(':memory:');
     assert.ok(wasDbOpenAttempted(), 'wasDbOpenAttempted should be true after openDatabase was called');
 
-    // Verify the flag persists even after closeDatabase
     closeDatabase();
     assert.ok(!isDbAvailable(), 'DB should not be available after close');
-    assert.ok(wasDbOpenAttempted(), 'wasDbOpenAttempted should remain true after closeDatabase');
+    assert.ok(!wasDbOpenAttempted(), 'wasDbOpenAttempted should reset after closeDatabase');
   });
 
   // ─── Final Report ──────────────────────────────────────────────────────────

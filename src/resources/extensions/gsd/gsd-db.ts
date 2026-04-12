@@ -856,6 +856,7 @@ export function closeDatabase(): void {
     currentDb = null;
     currentPath = null;
     currentPid = 0;
+    _dbOpenAttempted = false;
   }
 }
 
