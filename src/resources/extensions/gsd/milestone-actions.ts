@@ -20,7 +20,8 @@ import {
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadQueueOrder, saveQueueOrder } from "./queue-order.js";
-import { getMilestone, isDbAvailable, updateMilestoneStatus } from "./gsd-db.js";
+import { deleteMilestone, getMilestone, isDbAvailable, updateMilestoneStatus } from "./gsd-db.js";
+import { removeWorktree } from "./worktree-manager.js";
 import { logWarning } from "./workflow-logger.js";
 
 // ─── Park ──────────────────────────────────────────────────────────────────
@@ -110,12 +111,29 @@ export function discardMilestone(basePath: string, milestoneId: string): boolean
   const mDir = resolveMilestonePath(basePath, milestoneId);
   if (!mDir || !existsSync(mDir)) return false;
 
+  try {
+    removeWorktree(basePath, milestoneId, {
+      branch: `milestone/${milestoneId}`,
+      deleteBranch: true,
+    });
+  } catch (err) {
+    logWarning("engine", `discardMilestone worktree cleanup failed for ${milestoneId}: ${(err as Error).message}`);
+  }
+
   rmSync(mDir, { recursive: true, force: true });
 
   // Prune from queue order if present
   const order = loadQueueOrder(basePath);
   if (order && order.includes(milestoneId)) {
     saveQueueOrder(basePath, order.filter(id => id !== milestoneId));
+  }
+
+  if (isDbAvailable()) {
+    try {
+      deleteMilestone(milestoneId);
+    } catch (err) {
+      logWarning("engine", `discardMilestone DB cleanup failed for ${milestoneId}: ${(err as Error).message}`);
+    }
   }
 
   invalidateAllCaches();

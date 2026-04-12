@@ -2200,6 +2200,39 @@ export function deleteSlice(milestoneId: string, sliceId: string): void {
   });
 }
 
+export function deleteMilestone(milestoneId: string): void {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  transaction(() => {
+    currentDb!.prepare(
+      `DELETE FROM verification_evidence WHERE milestone_id = :mid`,
+    ).run({ ":mid": milestoneId });
+    currentDb!.prepare(
+      `DELETE FROM quality_gates WHERE milestone_id = :mid`,
+    ).run({ ":mid": milestoneId });
+    currentDb!.prepare(
+      `DELETE FROM tasks WHERE milestone_id = :mid`,
+    ).run({ ":mid": milestoneId });
+    currentDb!.prepare(
+      `DELETE FROM slice_dependencies WHERE milestone_id = :mid`,
+    ).run({ ":mid": milestoneId });
+    currentDb!.prepare(
+      `DELETE FROM slices WHERE milestone_id = :mid`,
+    ).run({ ":mid": milestoneId });
+    currentDb!.prepare(
+      `DELETE FROM replan_history WHERE milestone_id = :mid`,
+    ).run({ ":mid": milestoneId });
+    currentDb!.prepare(
+      `DELETE FROM assessments WHERE milestone_id = :mid`,
+    ).run({ ":mid": milestoneId });
+    currentDb!.prepare(
+      `DELETE FROM artifacts WHERE milestone_id = :mid`,
+    ).run({ ":mid": milestoneId });
+    currentDb!.prepare(
+      `DELETE FROM milestones WHERE id = :mid`,
+    ).run({ ":mid": milestoneId });
+  });
+}
+
 export function updateSliceFields(milestoneId: string, sliceId: string, fields: {
   title?: string;
   risk?: string;
