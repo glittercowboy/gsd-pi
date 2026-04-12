@@ -93,9 +93,6 @@ export function registerShortcuts(pi: ExtensionAPI): void {
     handler: openParallelOverlay,
   });
 
-  // Fallback for terminals where Ctrl+Alt letter chords are not forwarded reliably.
-  pi.registerShortcut(Key.ctrlShift(GSD_SHORTCUTS.parallel.key), {
-    description: shortcutDesc(`${GSD_SHORTCUTS.parallel.action} (fallback)`, GSD_SHORTCUTS.parallel.command),
-    handler: openParallelOverlay,
-  });
+  // No Ctrl+Shift+P fallback — conflicts with cycleModelBackward (shift+ctrl+p).
+  // Use Ctrl+Alt+P or /gsd parallel watch instead.
 }

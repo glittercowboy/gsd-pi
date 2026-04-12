@@ -82,3 +82,19 @@ test("shortcut-defs: formats shortcut pair using platform symbols", () => {
     assert.equal(pair, "Ctrl+Alt+N / Ctrl+Shift+N");
   }
 });
+
+test("shortcut-defs: parallel shortcut omits fallback (hasFallback: false)", () => {
+  const pair = formattedShortcutPair("parallel");
+  if (process.platform === "darwin") {
+    assert.equal(pair, "⌃⌥P", "parallel should only show primary combo");
+  } else {
+    assert.equal(pair, "Ctrl+Alt+P", "parallel should only show primary combo");
+  }
+  // Verify it does NOT contain the fallback separator
+  assert.ok(!pair.includes("/"), "parallel pair should not contain fallback separator");
+});
+
+test("shortcut-defs: dashboard shortcut includes fallback (hasFallback: true)", () => {
+  const pair = formattedShortcutPair("dashboard");
+  assert.ok(pair.includes("/"), "dashboard pair should contain fallback separator");
+});

@@ -323,10 +323,11 @@ function _withLock<T>(basePath: string, fn: () => T): T {
     }
   }
 
-  // Only run the mutation if we actually own the lock
-  const ownsLock = fd !== null;
+  // Best-effort: mutation runs regardless of lock status (idempotent overwrites).
+  // createdLock gates cleanup only — never skip fn() on lock failure.
+  const createdLock = fd !== null;
   try {
-    if (ownsLock && fd !== null) {
+    if (createdLock && fd !== null) {
       // Write our PID timestamp into the lock for stale detection
       writeFileSync(lockPath, String(Date.now()), "utf-8");
       closeSync(fd);
@@ -334,7 +335,7 @@ function _withLock<T>(basePath: string, fn: () => T): T {
     return fn();
   } finally {
     // Only delete the lock if we created it — never remove another process's lock
-    if (ownsLock) {
+    if (createdLock) {
       try { unlinkSync(lockPath); } catch { /* best-effort cleanup */ }
     }
   }

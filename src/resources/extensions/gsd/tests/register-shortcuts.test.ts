@@ -69,14 +69,15 @@ test("dashboard shortcut resolves the project root instead of the current worktr
 
   assert.ok(customCalls > 0, "shortcut opens the dashboard overlay when project root is resolved");
   assert.equal(notices.length, 0, "shortcut does not fall back to the missing-.gsd warning");
-  assert.equal(shortcuts.length, 6, "all GSD shortcuts are still registered");
+  assert.equal(shortcuts.length, 5, "all GSD shortcuts are still registered");
   const keys = shortcuts.map((shortcut) => shortcut.key);
   assert.ok(keys.includes("ctrl+alt+g"), "primary dashboard shortcut is registered");
   assert.ok(keys.includes("ctrl+shift+g"), "fallback dashboard shortcut is registered");
   assert.ok(keys.includes("ctrl+alt+n"), "primary notifications shortcut is registered");
   assert.ok(keys.includes("ctrl+shift+n"), "fallback notifications shortcut is registered");
   assert.ok(keys.includes("ctrl+alt+p"), "primary parallel shortcut is registered");
-  assert.ok(keys.includes("ctrl+shift+p"), "fallback parallel shortcut is registered");
+  // No Ctrl+Shift+P fallback — conflicts with cycleModelBackward (shift+ctrl+p)
+  assert.ok(!keys.includes("ctrl+shift+p"), "parallel fallback must not be registered (conflicts with cycleModelBackward)");
 });
 
 test("parallel shortcut passes resolved project root into overlay", async (t) => {

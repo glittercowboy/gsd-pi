@@ -9,6 +9,7 @@ import {
   readNotifications,
   markAllRead,
   clearNotifications,
+  onNotificationStoreChange,
   type NotificationEntry,
   type NotifySeverity,
 } from "./notification-store.js";
@@ -82,6 +83,7 @@ export class GSDNotificationOverlay {
   private refreshTimer: ReturnType<typeof setInterval>;
   private disposed = false;
   private resizeHandler: (() => void) | null = null;
+  private unsubscribeStore: (() => void) | null = null;
 
   constructor(
     tui: { requestRender: () => void },
@@ -105,19 +107,17 @@ export class GSDNotificationOverlay {
     };
     process.stdout.on("resize", this.resizeHandler);
 
-    // Refresh every 3s for new notifications
+    // Subscribe to store mutations for immediate updates
+    this.unsubscribeStore = onNotificationStoreChange(() => {
+      if (this.disposed) return;
+      this._refreshFromDisk();
+    });
+
+    // 30s safety-net for cross-process edits (web subprocess, parallel workers)
     this.refreshTimer = setInterval(() => {
       if (this.disposed) return;
-      const fresh = readNotifications();
-      const signature = notificationSignature(fresh);
-      if (signature !== this.entriesSignature) {
-        markAllRead();
-        this.entries = readNotifications();
-        this.entriesSignature = notificationSignature(this.entries);
-        this.invalidate();
-        this.tui.requestRender();
-      }
-    }, 3000);
+      this._refreshFromDisk();
+    }, 30_000);
   }
 
   private get filter(): FilterMode {
@@ -215,9 +215,25 @@ export class GSDNotificationOverlay {
   dispose(): void {
     this.disposed = true;
     clearInterval(this.refreshTimer);
+    if (this.unsubscribeStore) {
+      this.unsubscribeStore();
+      this.unsubscribeStore = null;
+    }
     if (this.resizeHandler) {
       process.stdout.removeListener("resize", this.resizeHandler);
       this.resizeHandler = null;
+    }
+  }
+
+  private _refreshFromDisk(): void {
+    const fresh = readNotifications();
+    const signature = notificationSignature(fresh);
+    if (signature !== this.entriesSignature) {
+      markAllRead();
+      this.entries = readNotifications();
+      this.entriesSignature = notificationSignature(this.entries);
+      this.invalidate();
+      this.tui.requestRender();
     }
   }
 
