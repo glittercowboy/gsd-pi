@@ -12,7 +12,7 @@
  * -------
  * GSD is a local development CLI tool. When you run `gsd --web`, it:
  * 1. Spawns a detached Next.js server process (src/web-mode.ts)
- * 2. Opens your browser to http://127.0.0.1:3000/#token=<random>
+ * 2. Opens your browser to http://<host>:<port>/#token=<random>
  * 3. The server runs until you close the browser tab
  *
  * This is a UX feature: close tab → server shuts down automatically. The server
@@ -29,16 +29,19 @@
  *
  * SECURITY PROTECTIONS
  * --------------------
- * 1. AUTH REQUIRED: The /api/shutdown endpoint (web/app/api/shutdown/route.ts)
- *    is protected by middleware (web/proxy.ts) that requires:
+ * 1. AUTH REQUIRED: All /api/* routes are protected by middleware
+ *    (web/middleware.ts → web/proxy.ts) that requires:
  *    - Bearer token matching GSD_WEB_AUTH_TOKEN, OR
  *    - _token query parameter matching GSD_WEB_AUTH_TOKEN
- *    The token is 32 random hex bytes generated at server launch (src/web-mode.ts:585)
+ *    The token is 32 random bytes, encoded as 64 hex characters,
+ *    generated at server launch (src/web-mode.ts:585)
  *
- * 2. ORIGIN VALIDATION: The proxy checks the Origin header and only allows
- *    localhost or GSD_WEB_ALLOWED_ORIGINS whitelist (prevents CSRF)
+ * 2. ORIGIN VALIDATION: If an Origin header is present, the proxy requires it
+ *    to match an allowed local/launched origin or GSD_WEB_ALLOWED_ORIGINS
+ *    whitelist (helps prevent CSRF from other origins)
  *
- * 3. LOCALHOST BINDING: Server binds to 127.0.0.1 by default, not network-accessible
+ * 3. DEFAULT LOCALHOST BINDING: Server binds to 127.0.0.1 by default unless
+ *    configured otherwise (GSD_WEB_HOST/GSD_WEB_PORT)
  *
  * 4. DAEMON MODE: GSD_WEB_DAEMON_MODE=1 disables auto-shutdown for remote access
  *
