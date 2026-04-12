@@ -72,6 +72,19 @@ export const IDLE_TIMEOUT_MS = 15_000
 export const NEW_MILESTONE_IDLE_TIMEOUT_MS = 120_000
 const INTERACTIVE_HEADLESS_TOOLS = new Set(['ask_user_questions', 'secure_env_collect'])
 
+export function getHeadlessIdleTimeout(command: string): number {
+  if (command === 'new-milestone') return NEW_MILESTONE_IDLE_TIMEOUT_MS
+  // auto-mode workers can spend long stretches in internal orchestration or
+  // await_job waits without emitting RPC events. Let terminal notifications
+  // drive completion there instead of the generic idle fallback (#3428).
+  if (command === 'auto') return 0
+  return IDLE_TIMEOUT_MS
+}
+
+export function shouldArmIdleTimeout(toolCallCount: number, idleTimeoutMs: number): boolean {
+  return toolCallCount > 0 && idleTimeoutMs > 0
+}
+
 export function isTerminalNotification(event: Record<string, unknown>): boolean {
   if (event.type !== 'extension_ui_request' || event.method !== 'notify') return false
   const message = String(event.message ?? '').toLowerCase()
