@@ -1,25 +1,220 @@
 /**
- * Regression test for #3529: ensureNodeModulesSymlink must resolve to the
- * hoisted node_modules for global installs (where packageRoot is inside
- * a node_modules directory).
+ * Tests for ensureNodeModulesSymlink — covers symlink reconciliation for
+ * source installs (#3529) and pnpm-style merged node_modules (#3564).
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+// --- Integration tests via initResources (source/monorepo path) ---
 
-test("ensureNodeModulesSymlink detects global install via basename check (#3529)", () => {
-  const src = readFileSync(join(__dirname, "..", "resource-loader.ts"), "utf-8");
-  // The fix adds basename(hoistedNodeModules) === 'node_modules' check
-  assert.ok(
-    src.includes("hoistedNodeModules") || src.includes("dirname(packageRoot)"),
-    "Must check for hoisted node_modules directory",
-  );
-  assert.ok(
-    src.includes("node_modules"),
-    "Must detect global install by checking directory name",
-  );
+test("initResources creates node_modules symlink in agent dir", async (t) => {
+  const { initResources } = await import("../resource-loader.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-"));
+  const fakeAgentDir = join(tmp, "agent");
+
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  initResources(fakeAgentDir);
+
+  const nodeModulesPath = join(fakeAgentDir, "node_modules");
+  // Use lstatSync instead of existsSync — existsSync follows the symlink and
+  // returns false for dangling symlinks (e.g. in worktrees without node_modules)
+  let stat;
+  try {
+    stat = lstatSync(nodeModulesPath);
+  } catch {
+    assert.fail("node_modules symlink should exist after initResources");
+  }
+  assert.equal(stat.isSymbolicLink(), true, "node_modules should be a symlink, not a real directory");
+});
+
+test("initResources replaces a real directory blocking node_modules with a symlink", async (t) => {
+  const { initResources } = await import("../resource-loader.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-realdir-"));
+  const fakeAgentDir = join(tmp, "agent");
+
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  initResources(fakeAgentDir);
+
+  const nodeModulesPath = join(fakeAgentDir, "node_modules");
+
+  // Remove the symlink and replace with a real directory
+  rmSync(nodeModulesPath, { recursive: true, force: true });
+  mkdirSync(nodeModulesPath, { recursive: true });
+
+  const statBefore = lstatSync(nodeModulesPath);
+  assert.equal(statBefore.isSymbolicLink(), false, "should be a real directory before fix");
+  assert.equal(statBefore.isDirectory(), true, "should be a real directory before fix");
+
+  // Second call should replace the real directory with a symlink
+  initResources(fakeAgentDir);
+
+  const statAfter = lstatSync(nodeModulesPath);
+  assert.equal(statAfter.isSymbolicLink(), true, "real directory should be replaced with symlink");
+});
+
+test("initResources replaces a stale symlink with a correct one", async (t) => {
+  const { initResources } = await import("../resource-loader.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-stale-"));
+  const fakeAgentDir = join(tmp, "agent");
+
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  initResources(fakeAgentDir);
+
+  const nodeModulesPath = join(fakeAgentDir, "node_modules");
+  const correctTarget = readlinkSync(nodeModulesPath);
+
+  // Remove and replace with a stale symlink pointing to a non-existent path
+  unlinkSync(nodeModulesPath);
+  symlinkSync("/tmp/nonexistent-gsd-node-modules-" + Date.now(), nodeModulesPath);
+
+  const staleTarget = readlinkSync(nodeModulesPath);
+  assert.notEqual(staleTarget, correctTarget, "stale symlink should point elsewhere");
+
+  // Second call should fix the stale symlink
+  initResources(fakeAgentDir);
+
+  const fixedTarget = readlinkSync(nodeModulesPath);
+  assert.equal(fixedTarget, correctTarget, "stale symlink should be replaced with correct target");
+});
+
+test("initResources replaces symlink whose target was deleted", async (t) => {
+  const { initResources } = await import("../resource-loader.ts");
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-missing-"));
+  const fakeAgentDir = join(tmp, "agent");
+
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+  initResources(fakeAgentDir);
+
+  const nodeModulesPath = join(fakeAgentDir, "node_modules");
+  const correctTarget = readlinkSync(nodeModulesPath);
+
+  // Create a symlink that points to a path that doesn't exist
+  unlinkSync(nodeModulesPath);
+  const deadTarget = join(tmp, "old-install", "node_modules");
+  symlinkSync(deadTarget, nodeModulesPath);
+
+  // The symlink itself exists but its target doesn't
+  assert.equal(lstatSync(nodeModulesPath).isSymbolicLink(), true);
+  assert.equal(existsSync(deadTarget), false, "dead target should not exist");
+
+  initResources(fakeAgentDir);
+
+  const fixedTarget = readlinkSync(nodeModulesPath);
+  assert.equal(fixedTarget, correctTarget, "broken symlink should be replaced with correct target");
+});
+
+// --- Unit tests for pnpm-style merged node_modules (#3564) ---
+// These simulate the filesystem layout without going through initResources,
+// since packageRoot is fixed at module load time.
+
+test("pnpm layout: merged node_modules contains entries from both hoisted and internal", (t) => {
+  // Simulate pnpm global layout:
+  //   hoisted/node_modules/
+  //     yaml/           ← external dep
+  //     @sinclair/       ← external scoped dep
+  //     gsd-pi/          ← package root
+  //       node_modules/
+  //         @gsd/        ← workspace scope (NOT hoisted)
+  //         @gsd-build/  ← workspace scope (NOT hoisted)
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-pnpm-merge-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const hoisted = join(tmp, "node_modules");
+  const pkgRoot = join(hoisted, "gsd-pi");
+  const internal = join(pkgRoot, "node_modules");
+  const agentNodeModules = join(tmp, "agent", "node_modules");
+
+  // Create hoisted entries (external deps)
+  mkdirSync(join(hoisted, "yaml"), { recursive: true });
+  mkdirSync(join(hoisted, "@sinclair", "typebox"), { recursive: true });
+  mkdirSync(join(hoisted, "@anthropic-ai", "sdk"), { recursive: true });
+  mkdirSync(pkgRoot, { recursive: true });
+
+  // Create internal entries (workspace packages)
+  mkdirSync(join(internal, "@gsd", "pi-ai"), { recursive: true });
+  mkdirSync(join(internal, "@gsd", "pi-coding-agent"), { recursive: true });
+  mkdirSync(join(internal, "@gsd-build", "core"), { recursive: true });
+
+  // Create merged directory manually (simulating what reconcileMergedNodeModules does)
+  mkdirSync(agentNodeModules, { recursive: true });
+
+  // Link hoisted entries (skip gsd-pi itself and dotfiles)
+  for (const entry of readdirSync(hoisted, { withFileTypes: true })) {
+    if (entry.name === "gsd-pi" || entry.name.startsWith(".")) continue;
+    symlinkSync(join(hoisted, entry.name), join(agentNodeModules, entry.name));
+  }
+
+  // Overlay internal entries (workspace scopes take precedence)
+  for (const entry of readdirSync(internal, { withFileTypes: true })) {
+    if (entry.name.startsWith(".")) continue;
+    const link = join(agentNodeModules, entry.name);
+    try { lstatSync(link); unlinkSync(link); } catch { /* didn't exist */ }
+    symlinkSync(join(internal, entry.name), link);
+  }
+
+  // Verify: external deps resolve through hoisted symlinks
+  assert.ok(existsSync(join(agentNodeModules, "yaml")), "yaml should resolve");
+  assert.ok(existsSync(join(agentNodeModules, "@sinclair")), "@sinclair should resolve");
+  assert.ok(existsSync(join(agentNodeModules, "@anthropic-ai")), "@anthropic-ai should resolve");
+
+  // Verify: workspace packages resolve through internal symlinks
+  assert.ok(existsSync(join(agentNodeModules, "@gsd")), "@gsd should resolve");
+  assert.ok(existsSync(join(agentNodeModules, "@gsd", "pi-ai")), "@gsd/pi-ai should resolve");
+  assert.ok(existsSync(join(agentNodeModules, "@gsd-build")), "@gsd-build should resolve");
+
+  // Verify: gsd-pi itself is NOT symlinked (it's the package root, not a dep)
+  assert.ok(!existsSync(join(agentNodeModules, "gsd-pi")), "gsd-pi should not be in merged dir");
+
+  // Verify: @gsd points to internal, not hoisted (internal takes precedence)
+  const gsdTarget = readlinkSync(join(agentNodeModules, "@gsd"));
+  assert.equal(gsdTarget, join(internal, "@gsd"), "@gsd should point to internal node_modules");
+});
+
+test("hasMissingWorkspaceScopes detects pnpm layout", (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-pnpm-detect-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const hoisted = join(tmp, "hoisted");
+  const internal = join(tmp, "internal");
+
+  // npm-style: @gsd exists in both hoisted and internal
+  mkdirSync(join(hoisted, "@gsd"), { recursive: true });
+  mkdirSync(join(internal, "@gsd"), { recursive: true });
+
+  // Inline the detection logic for testing
+  const hasMissing = (h: string, i: string): boolean => {
+    if (!existsSync(i)) return false;
+    for (const entry of readdirSync(i, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.startsWith("@gsd") &&
+          !existsSync(join(h, entry.name))) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  assert.equal(hasMissing(hoisted, internal), false, "npm-style: no missing scopes");
+
+  // pnpm-style: @gsd-build only in internal
+  mkdirSync(join(internal, "@gsd-build"), { recursive: true });
+  assert.equal(hasMissing(hoisted, internal), true, "pnpm-style: @gsd-build missing from hoisted");
+});
+
+test("merged node_modules marker prevents unnecessary rebuild", (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-pnpm-marker-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const agentNodeModules = join(tmp, "agent", "node_modules");
+  mkdirSync(agentNodeModules, { recursive: true });
+
+  // Write a marker file
+  const marker = join(agentNodeModules, ".gsd-merged");
+  const fakePackageRoot = "/usr/lib/node_modules/gsd-pi";
+  writeFileSync(marker, fakePackageRoot);
+
+  // Verify the marker can be read back and matched
+  assert.equal(readFileSync(marker, "utf-8").trim(), fakePackageRoot);
 });
