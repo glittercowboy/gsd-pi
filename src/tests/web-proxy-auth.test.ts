@@ -1,5 +1,5 @@
 /**
- * web/proxy.test.ts — unit tests for auth middleware
+ * web-proxy-auth.test.ts — unit tests for web auth middleware
  *
  * Tests the proxy() function that protects /api/* routes with:
  * - Bearer token or _token query parameter auth
@@ -9,7 +9,7 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { proxy } from "./proxy.ts";
+import { proxy } from "../web/proxy.ts";
 
 // ---------------------------------------------------------------------------
 // Mock NextRequest (minimal implementation for testing)
