@@ -5,13 +5,11 @@
  * This would have caught the bug where middleware.ts wasn't wiring in proxy.ts.
  */
 
-const { test } = require("node:test");
-const assert = require("node:assert/strict");
-const jiti = require("jiti")(__filename, { interopDefault: true, debug: false });
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { proxy } from "../../proxy.ts";
 
-const { proxy } = jiti("../../proxy.ts");
-
-function mockEnv(token) {
+function mockEnv(token: string | null): () => void {
   const originalEnv = { ...process.env };
 
   if (token !== null) {
@@ -36,7 +34,11 @@ function mockEnv(token) {
 
 // Minimal NextRequest mock for testing
 class MockNextRequest {
-  constructor(url, options = {}) {
+  url: string;
+  nextUrl: { pathname: string; searchParams: URLSearchParams };
+  private _headers: Map<string, string>;
+
+  constructor(url: string, options: { method?: string; headers?: Record<string, string> } = {}) {
     this.url = url;
     const parsed = new URL(url);
     this.nextUrl = {
@@ -51,9 +53,9 @@ class MockNextRequest {
 
   get headers() {
     return {
-      get: (name) => this._headers.get(name.toLowerCase()),
-      set: (name, value) => this._headers.set(name.toLowerCase(), value),
-      has: (name) => this._headers.has(name.toLowerCase()),
+      get: (name: string) => this._headers.get(name.toLowerCase()),
+      set: (name: string, value: string) => this._headers.set(name.toLowerCase(), value),
+      has: (name: string) => this._headers.has(name.toLowerCase()),
     };
   }
 }
@@ -99,13 +101,7 @@ test.describe("/api/shutdown route is protected by middleware", () => {
     });
 
     const result = proxy(request);
-    // Should allow through (no error status)
-    if (result) {
-      assert.ok(
-        result.status !== 401 && result.status !== 403,
-        "should allow request with valid token"
-      );
-    }
+    assert.equal(result?.status, 200, "should allow request with valid token");
   });
 
   test("allows shutdown request with valid _token parameter", (t) => {
@@ -119,12 +115,7 @@ test.describe("/api/shutdown route is protected by middleware", () => {
     );
 
     const result = proxy(request);
-    if (result) {
-      assert.ok(
-        result.status !== 401 && result.status !== 403,
-        "should allow request with valid _token"
-      );
-    }
+    assert.equal(result?.status, 200, "should allow request with valid _token");
   });
 
   test("rejects shutdown request with non-matching origin", (t) => {

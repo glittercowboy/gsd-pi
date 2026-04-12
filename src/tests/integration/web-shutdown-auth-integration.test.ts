@@ -8,9 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { setTimeout as sleep } from "node:timers/promises";
 
 let server: ReturnType<typeof spawn> | null = null;
@@ -81,8 +79,8 @@ async function makeShutdownRequest(options: {
 
   if (options.token) {
     if (options.token.includes("?")) {
-      // Query param format
-      url.searchParams.set("_token", options.token);
+      // Query param format - strip the "?" marker before setting
+      url.searchParams.set("_token", options.token.slice(1));
     } else {
       // Bearer header format
       headers["Authorization"] = `Bearer ${options.token}`;
@@ -102,8 +100,14 @@ async function makeShutdownRequest(options: {
   return { status: response.status, body };
 }
 
+import { existsSync } from "node:fs";
+
 // Only run these tests if the web server is built
-test.describe.skip("/api/shutdown auth integration (requires built web server)", () => {
+const describe = existsSync(join(process.cwd(), "dist", "web", "server.js"))
+  ? test.describe
+  : test.describe.skip;
+
+describe("/api/shutdown auth integration", () => {
   test.before(async () => {
     await startTestServer();
   });

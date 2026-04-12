@@ -1,4 +1,4 @@
-import { NextResponse, type NextRequest } from "next/server"
+import { NextResponse, type NextRequest } from "next/server.js"
 
 /**
  * Next.js proxy — validates bearer token and origin on all API routes.
