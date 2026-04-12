@@ -92,7 +92,7 @@ export function clearInFlightTools(): void {
  * handler. When these errors occur, retrying the same unit will produce the same
  * failure, so the retry loop must be broken.
  */
-const TOOL_INVOCATION_ERROR_RE = /Validation failed for tool|Expected ',' or '\}' in JSON|Unexpected end of JSON|Unexpected token.*in JSON/i;
+const TOOL_INVOCATION_ERROR_RE = /Validation failed for tool|Expected ',' or '\}'(?: after property value)?(?: in JSON)?|Unexpected end of JSON|Unexpected token.*in JSON/i;
 
 /**
  * Returns true if the error message indicates a tool invocation failure due to

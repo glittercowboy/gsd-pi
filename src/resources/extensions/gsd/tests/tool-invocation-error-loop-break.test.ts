@@ -61,6 +61,13 @@ describe("#2883: isToolInvocationError classification", () => {
     );
   });
 
+  test("detects Node v18+ JSON parse variant with property-value text", () => {
+    assert.equal(
+      isToolInvocationError("Expected ',' or '}' after property value in JSON at position 4096"),
+      true,
+    );
+  });
+
   test("detects Unexpected end of JSON input", () => {
     assert.equal(
       isToolInvocationError("Unexpected end of JSON input"),
