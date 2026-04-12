@@ -61,4 +61,22 @@ describe("Editor", () => {
 
 		assert.ok(rendered.includes(CURSOR_MARKER));
 	});
+
+	it("maps kitty keypad digits to plain editor text", () => {
+		const editor = new Editor(new TUI(makeTerminal()), theme);
+		editor.focused = true;
+
+		editor.handleInput("\x1b[57404;129u");
+
+		assert.equal(editor.getText(), "5");
+	});
+
+	it("does not insert kitty keypad navigation private-use glyphs into the editor", () => {
+		const editor = new Editor(new TUI(makeTerminal()), theme);
+		editor.focused = true;
+
+		editor.handleInput("\x1b[57419u");
+
+		assert.equal(editor.getText(), "");
+	});
 });
