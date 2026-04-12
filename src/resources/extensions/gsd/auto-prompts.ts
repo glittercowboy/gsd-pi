@@ -36,6 +36,7 @@ import { readPhaseAnchor, formatAnchorForPrompt } from "./phase-anchor.js";
 import { logWarning } from "./workflow-logger.js";
 import { inlineGraphSubgraph } from "./graph-context.js";
 import { buildExtractionStepsBlock } from "./commands-extract-learnings.js";
+import { toPosixPath } from "../shared/mod.js";
 
 // ─── Preamble Cap ─────────────────────────────────────────────────────────────
 
@@ -1103,7 +1104,7 @@ export async function buildResearchMilestonePrompt(mid: string, midTitle: string
 
   const outputRelPath = relMilestoneFile(base, mid, "RESEARCH");
   return loadPrompt("research-milestone", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid, milestoneTitle: midTitle,
     milestonePath: relMilestonePath(base, mid),
     contextPath: contextRel,
@@ -1176,7 +1177,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   const researchOutputPath = join(base, relMilestoneFile(base, mid, "RESEARCH"));
   const secretsOutputPath = join(base, relMilestoneFile(base, mid, "SECRETS"));
   return loadPrompt("plan-milestone", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid, milestoneTitle: midTitle,
     milestonePath: relMilestonePath(base, mid),
     contextPath: contextRel,
@@ -1254,7 +1255,7 @@ export async function buildResearchSlicePrompt(
 
   const outputRelPath = relSliceFile(base, mid, sid, "RESEARCH");
   return loadPrompt("research-slice", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
     slicePath: relSlicePath(base, mid, sid),
     roadmapPath: roadmapRel,
@@ -1356,7 +1357,7 @@ async function renderSlicePrompt(options: {
   const commitInstruction = "Do not commit — .gsd/ planning docs are managed externally and not tracked in git.";
 
   return loadPrompt(promptTemplate, {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
     slicePath: relSlicePath(base, mid, sid),
     roadmapPath: roadmapRel,
@@ -1627,7 +1628,7 @@ export async function buildExecuteTaskPrompt(
     overridesSection,
     runtimeContext,
     phaseAnchorSection,
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle, taskId: tid, taskTitle: tTitle,
     planPath: join(base, relSliceFile(base, mid, sid, "PLAN")),
     slicePath: relSlicePath(base, mid, sid),
@@ -1720,7 +1721,7 @@ export async function buildCompleteSlicePrompt(
   );
 
   return loadPrompt("complete-slice", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
     slicePath: sliceRel,
     roadmapPath: join(base, roadmapRel),
@@ -1800,7 +1801,7 @@ export async function buildCompleteMilestonePrompt(
   });
 
   return loadPrompt("complete-milestone", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid,
     milestoneTitle: midTitle,
     roadmapPath: roadmapRel,
@@ -1938,7 +1939,7 @@ export async function buildValidateMilestonePrompt(
   });
 
   return loadPrompt("validate-milestone", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid,
     milestoneTitle: midTitle,
     roadmapPath: roadmapOutputPath,
@@ -2016,7 +2017,7 @@ export async function buildReplanSlicePrompt(
   }
 
   return loadPrompt("replan-slice", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid,
     sliceId: sid,
     sliceTitle: sTitle,
@@ -2059,7 +2060,7 @@ export async function buildRunUatPrompt(
   const uatType = getUatType(uatContent);
 
   return loadPrompt("run-uat", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid,
     sliceId,
     uatPath,
@@ -2123,7 +2124,7 @@ export async function buildReassessRoadmapPrompt(
   const reassessCommitInstruction = "Do not commit — .gsd/ planning docs are managed externally and not tracked in git.";
 
   return loadPrompt("reassess-roadmap", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid,
     milestoneTitle: midTitle,
     completedSliceId,
@@ -2211,7 +2212,7 @@ export async function buildReactiveExecutePrompt(
   const inlinedTemplates = inlineTemplate("task-summary", "Task Summary");
 
   return loadPrompt("reactive-execute", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid,
     milestoneTitle: midTitle,
     sliceId: sid,
@@ -2371,7 +2372,7 @@ export async function buildGateEvaluatePrompt(
   }
 
   return loadPrompt("gate-evaluate", {
-    workingDirectory: base,
+    workingDirectory: toPosixPath(base),
     milestoneId: mid,
     milestoneTitle: midTitle,
     sliceId: sid,
