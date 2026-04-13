@@ -60,15 +60,33 @@ function isSupportedImageMimeType(mimeType: string): boolean {
 }
 
 /**
- * Convert unsupported image formats to PNG using the native Rust image module.
- * Returns null if conversion fails.
+ * Convert unsupported image formats to PNG.
+ *
+ * Primary path uses native Rust image decoding. For WSLg BMP clipboard payloads,
+ * fall back to ImageMagick when native decoding doesn't support BMP.
  */
-async function convertToPng(bytes: Uint8Array): Promise<Uint8Array | null> {
+async function convertToPng(
+	bytes: Uint8Array,
+	sourceMimeType?: string,
+): Promise<Uint8Array | null> {
 	try {
 		const image = await parseImage(bytes);
 		const pngBytes = await image.encode(ImageFormat.PNG, 100);
 		return new Uint8Array(pngBytes);
 	} catch {
+		if (sourceMimeType && baseMimeType(sourceMimeType) === "image/bmp") {
+			const converted = spawnSync("convert", ["bmp:-", "png:-"], {
+				input: Buffer.from(bytes),
+				timeout: 5000,
+				maxBuffer: DEFAULT_MAX_BUFFER_BYTES,
+			});
+			if (!converted.error && converted.status === 0 && converted.stdout.length > 0) {
+				const stdout = Buffer.isBuffer(converted.stdout)
+					? converted.stdout
+					: Buffer.from(converted.stdout);
+				return new Uint8Array(stdout);
+			}
+		}
 		return null;
 	}
 }
@@ -117,7 +135,15 @@ function readClipboardImageViaWlPaste(): ClipboardImage | null {
 	if (selectedType) {
 		const data = runCommand("wl-paste", ["--type", selectedType, "--no-newline"]);
 		if (data.ok && data.stdout.length > 0) {
-			return { bytes: data.stdout, mimeType: baseMimeType(selectedType) };
+			const selectedBase = baseMimeType(selectedType);
+			if (selectedBase === "image/bmp") {
+				// WSLg often advertises only BMP; ask wl-paste to transcode to PNG first.
+				const pngData = runCommand("wl-paste", ["--type", "image/png", "--no-newline"]);
+				if (pngData.ok && pngData.stdout.length > 0) {
+					return { bytes: pngData.stdout, mimeType: "image/png" };
+				}
+			}
+			return { bytes: data.stdout, mimeType: selectedBase };
 		}
 	}
 
@@ -216,7 +242,7 @@ export async function readClipboardImage(options?: {
 
 	// Convert unsupported formats (e.g., BMP from WSLg) to PNG
 	if (!isSupportedImageMimeType(image.mimeType)) {
-		const pngBytes = await convertToPng(image.bytes);
+		const pngBytes = await convertToPng(image.bytes, image.mimeType);
 		if (!pngBytes) {
 			return null;
 		}
