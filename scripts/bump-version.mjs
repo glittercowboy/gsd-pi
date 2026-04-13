@@ -37,3 +37,8 @@ execSync("node native/scripts/sync-platform-versions.cjs", { cwd: root, stdio: "
 
 // 4. Sync pkg/package.json (reads from pi-coding-agent)
 execSync("node scripts/sync-pkg-version.cjs", { cwd: root, stdio: "inherit" });
+
+// 5. Regenerate package-lock.json to match the new version.
+//    --package-lock-only updates the lockfile in-place without touching node_modules.
+execSync("npm install --package-lock-only", { cwd: root, stdio: "inherit" });
+console.log(`[bump-version] package-lock.json regenerated at ${newVersion}`);
