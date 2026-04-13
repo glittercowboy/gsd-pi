@@ -343,6 +343,26 @@ describe("stream-adapter — session persistence (#2859)", () => {
 		);
 	});
 
+	test("buildSdkOptions maps reasoning to effort for adaptive Claude Code models (#3917)", () => {
+		const options = buildSdkOptions("claude-sonnet-4-6", "test", undefined, { reasoning: "high" });
+		assert.equal(options.effort, "high");
+	});
+
+	test("buildSdkOptions upgrades xhigh reasoning to max for opus 4.6 (#3917)", () => {
+		const options = buildSdkOptions("claude-opus-4-6", "test", undefined, { reasoning: "xhigh" });
+		assert.equal(options.effort, "max");
+	});
+
+	test("buildSdkOptions omits effort when reasoning is undefined (#3917)", () => {
+		const options = buildSdkOptions("claude-sonnet-4-6", "test");
+		assert.equal("effort" in options, false);
+	});
+
+	test("buildSdkOptions omits effort for non-adaptive Claude models (#3917)", () => {
+		const options = buildSdkOptions("claude-sonnet-4-20250514", "test", undefined, { reasoning: "high" });
+		assert.equal("effort" in options, false);
+	});
+
 	test("buildSdkOptions includes workflow MCP server config when env is set", () => {
 		const prev = {
 			GSD_WORKFLOW_MCP_COMMAND: process.env.GSD_WORKFLOW_MCP_COMMAND,
@@ -774,11 +794,12 @@ describe("stream-adapter — MCP elicitation bridge", () => {
 			},
 		};
 
+		const secureValue = "ui-collected-value";
 		const inputCalls: Array<{ opts?: { secure?: boolean } }> = [];
 		const handler = createClaudeCodeElicitationHandler({
 			input: async (_title: string, _placeholder?: string, opts?: { secure?: boolean }) => {
 				inputCalls.push({ opts });
-				return "example-secure-input";
+				return secureValue;
 			},
 		} as any);
 		assert.ok(handler);
@@ -787,7 +808,7 @@ describe("stream-adapter — MCP elicitation bridge", () => {
 		assert.deepEqual(result, {
 			action: "accept",
 			content: {
-				TEST_SECURE_FIELD: "example-secure-input",
+				TEST_SECURE_FIELD: secureValue,
 			},
 		});
 		assert.equal(inputCalls.length, 1);

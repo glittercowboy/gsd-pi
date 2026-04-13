@@ -14,10 +14,11 @@ import type {
 	Context,
 	Model,
 	SimpleStreamOptions,
+	ThinkingLevel,
 	ToolCall,
 } from "@gsd/pi-ai";
 import type { ExtensionUIContext } from "@gsd/pi-coding-agent";
-import { EventStream } from "@gsd/pi-ai";
+import { EventStream, mapThinkingLevelToEffort, supportsAdaptiveThinking } from "@gsd/pi-ai";
 import { execSync } from "node:child_process";
 import { PartialMessageBuilder, ZERO_USAGE, mapUsage } from "./partial-builder.js";
 import { buildWorkflowMcpServers } from "../gsd/workflow-mcp.js";
@@ -600,8 +601,9 @@ export function buildSdkOptions(
 	modelId: string,
 	prompt: string,
 	overrides?: { permissionMode?: "bypassPermissions" | "acceptEdits" | "default" | "plan" },
-	extraOptions: Record<string, unknown> = {},
+	extraOptions: Record<string, unknown> & { reasoning?: ThinkingLevel } = {},
 ): Record<string, unknown> {
+	const { reasoning, ...sdkExtraOptions } = extraOptions;
 	const mcpServers = buildWorkflowMcpServers();
 	const permissionMode = overrides?.permissionMode ?? "bypassPermissions";
 	const disallowedTools = ["AskUserQuestion"];
@@ -620,6 +622,10 @@ export function buildSdkOptions(
 		"Bash(pwd)",
 		...(mcpServers ? Object.keys(mcpServers).map((serverName) => `mcp__${serverName}__*`) : []),
 	];
+	const effort =
+		reasoning && supportsAdaptiveThinking(modelId)
+			? mapThinkingLevelToEffort(reasoning, modelId)
+			: undefined;
 	return {
 		pathToClaudeCodeExecutable: getClaudePath(),
 		model: modelId,
@@ -634,7 +640,8 @@ export function buildSdkOptions(
 		...(allowedTools.length > 0 ? { allowedTools } : {}),
 		...(mcpServers ? { mcpServers } : {}),
 		betas: modelId.includes("sonnet") ? ["context-1m-2025-08-07"] : [],
-		...extraOptions,
+		...(effort ? { effort } : {}),
+		...sdkExtraOptions,
 	};
 }
 
@@ -828,11 +835,12 @@ async function pumpSdkMessages(
 			{ permissionMode },
 			typeof (options as ClaudeCodeStreamOptions | undefined)?.extensionUIContext === "object"
 				? {
+						reasoning: options?.reasoning,
 						onElicitation: createClaudeCodeElicitationHandler(
 							(options as ClaudeCodeStreamOptions | undefined)?.extensionUIContext,
 						),
 					}
-				: {},
+				: { reasoning: options?.reasoning },
 		);
 
 		const queryResult = sdk.query({
