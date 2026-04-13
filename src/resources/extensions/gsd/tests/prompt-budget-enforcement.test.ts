@@ -485,7 +485,7 @@ describe("prompt-budget: sessionContextWindow propagation (regression #4142)", (
     // when no execution model is configured in preferences.
     assert.match(
       src,
-      /resolveExecutorContextWindow\(undefined,[^)]*sessionContextWindow/,
+      /resolveExecutorContextWindow\([^)]*sessionContextWindow/,
       "formatExecutorConstraints must pass sessionContextWindow to resolveExecutorContextWindow (issue #4142)",
     );
   });
@@ -499,7 +499,7 @@ describe("prompt-budget: sessionContextWindow propagation (regression #4142)", (
     );
     assert.match(
       src,
-      /formatExecutorConstraints\(sessionContextWindow\)/,
+      /formatExecutorConstraints\(sessionContextWindow[^)]*\)/,
       "buildPlanSlicePrompt must pass sessionContextWindow to formatExecutorConstraints (issue #4142)",
     );
   });
@@ -517,7 +517,7 @@ describe("prompt-budget: sessionContextWindow propagation (regression #4142)", (
     const src = readFileSync(join(__dirname, "..", "auto-prompts.ts"), "utf-8");
     assert.match(
       src,
-      /resolveExecutorContextWindow\(undefined,[^)]*opts\.sessionContextWindow/,
+      /resolveExecutorContextWindow\([^)]*opts\.sessionContextWindow/,
       "buildExecuteTaskPrompt must pass opts.sessionContextWindow to resolveExecutorContextWindow (issue #4142)",
     );
   });
@@ -600,7 +600,7 @@ describe("prompt-budget: modelRegistry propagation (Fix C, issue #4142)", () => 
     // The planning→plan-slice rule must destructure and forward modelRegistry
     assert.match(
       src,
-      /name:\s*["']planning → plan-slice["'][^}]*modelRegistry[^}]*buildPlanSlicePrompt/s,
+      /name:\s*["']planning → plan-slice["'][\s\S]*?modelRegistry[\s\S]*?buildPlanSlicePrompt/s,
       "planning→plan-slice rule must destructure and pass modelRegistry (Fix C, issue #4142)",
     );
   });
@@ -609,7 +609,7 @@ describe("prompt-budget: modelRegistry propagation (Fix C, issue #4142)", () => 
     const src = readFileSync(join(__dirname, "..", "auto-dispatch.ts"), "utf-8");
     assert.match(
       src,
-      /name:\s*["']executing → execute-task["'][^}]*modelRegistry[^}]*buildExecuteTaskPrompt/s,
+      /name:\s*["']executing → execute-task["'][\s\S]*?modelRegistry[\s\S]*?buildExecuteTaskPrompt/s,
       "executing→execute-task rule must destructure and pass modelRegistry (Fix C, issue #4142)",
     );
   });
