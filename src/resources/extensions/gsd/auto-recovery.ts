@@ -272,6 +272,16 @@ export function verifyExpectedArtifact(
     if (!isValidationTerminal(validationContent)) return false;
   }
 
+  if (unitType === "plan-milestone") {
+    try {
+      const roadmap = parseLegacyRoadmap(readFileSync(absPath, "utf-8"));
+      if (roadmap.slices.length === 0) return false;
+    } catch (err) {
+      logWarning("recovery", `plan-milestone roadmap verification failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
   // plan-slice must produce a plan with actual task entries, not just a scaffold.
   // The plan file may exist from a prior discussion/context step with only headings
   // but no tasks. Without this check the artifact is considered "complete" and the
