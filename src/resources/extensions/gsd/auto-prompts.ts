@@ -23,7 +23,7 @@ import type { GSDPreferences } from "./preferences.js";
 import { getLoadedSkills, type Skill } from "@gsd/pi-coding-agent";
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
-import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary } from "./context-budget.js";
+import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary, type MinimalModelRegistry } from "./context-budget.js";
 import { getPendingGates, getPendingGatesForTurn } from "./gsd-db.js";
 import {
   GATE_REGISTRY,
@@ -51,11 +51,11 @@ function capPreamble(preamble: string): string {
  * Uses the budget engine to compute task count ranges and inline context budgets
  * based on the configured executor model's context window.
  */
-function formatExecutorConstraints(sessionContextWindow?: number): string {
+function formatExecutorConstraints(sessionContextWindow?: number, modelRegistry?: MinimalModelRegistry): string {
   let windowTokens: number;
   try {
     const prefs = loadEffectiveGSDPreferences();
-    windowTokens = resolveExecutorContextWindow(undefined, prefs?.preferences, sessionContextWindow);
+    windowTokens = resolveExecutorContextWindow(modelRegistry, prefs?.preferences, sessionContextWindow);
   } catch (e) {
     logWarning("prompt", `resolveExecutorContextWindow failed: ${(e as Error).message}`);
     windowTokens = sessionContextWindow && sessionContextWindow > 0 ? sessionContextWindow : 200_000;
@@ -1207,7 +1207,7 @@ export async function buildResearchSlicePrompt(
 }
 
 export async function buildPlanSlicePrompt(
-  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel, sessionContextWindow?: number,
+  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel, sessionContextWindow?: number, modelRegistry?: MinimalModelRegistry,
 ): Promise<string> {
   const inlineLevel = level ?? resolveInlineLevel();
   const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
@@ -1263,7 +1263,7 @@ export async function buildPlanSlicePrompt(
   const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
 
   // Build executor context constraints from the budget engine
-  const executorContextConstraints = formatExecutorConstraints(sessionContextWindow);
+  const executorContextConstraints = formatExecutorConstraints(sessionContextWindow, modelRegistry);
 
   const outputRelPath = relSliceFile(base, mid, sid, "PLAN");
   const commitInstruction = "Do not commit — .gsd/ planning docs are managed externally and not tracked in git.";
@@ -1297,6 +1297,9 @@ export interface ExecuteTaskPromptOptions {
   /** Session model context window in tokens — passed through to the budget engine so budgets
    *  reflect the real executor window instead of the 200K fallback (issue #4142). */
   sessionContextWindow?: number;
+  /** Model registry — passed to the budget engine so it can look up the configured executor
+   *  model's context window (Step 1 of resolution chain, issue #4142). */
+  modelRegistry?: MinimalModelRegistry;
 }
 
 export async function buildExecuteTaskPrompt(
@@ -1384,7 +1387,7 @@ export async function buildExecuteTaskPrompt(
 
   // Compute verification budget for the executor's context window (issue #707, #4142)
   const prefs = loadEffectiveGSDPreferences();
-  const contextWindow = resolveExecutorContextWindow(undefined, prefs?.preferences, opts.sessionContextWindow);
+  const contextWindow = resolveExecutorContextWindow(opts.modelRegistry, prefs?.preferences, opts.sessionContextWindow);
   const budgets = computeBudgets(contextWindow);
   const verificationBudget = `~${Math.round(budgets.verificationBudgetChars / 1000)}K chars`;
 

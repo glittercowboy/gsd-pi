@@ -531,3 +531,86 @@ describe("prompt-budget: sessionContextWindow propagation (regression #4142)", (
     );
   });
 });
+
+// ─── Regression: issue #4142 Fix C — modelRegistry threading ─────────────────
+
+describe("prompt-budget: modelRegistry propagation (Fix C, issue #4142)", () => {
+  it("formatExecutorConstraints accepts modelRegistry parameter", () => {
+    const src = readFileSync(join(__dirname, "..", "auto-prompts.ts"), "utf-8");
+    assert.match(
+      src,
+      /function formatExecutorConstraints\([^)]*modelRegistry[^)]*\)/,
+      "formatExecutorConstraints must accept a modelRegistry parameter (Fix C, issue #4142)",
+    );
+  });
+
+  it("formatExecutorConstraints passes modelRegistry (not undefined) to resolveExecutorContextWindow", () => {
+    const src = readFileSync(join(__dirname, "..", "auto-prompts.ts"), "utf-8");
+    // The call must pass modelRegistry as first arg (not hardcoded undefined) so Step 1 works
+    assert.match(
+      src,
+      /resolveExecutorContextWindow\(modelRegistry[^)]*\)/,
+      "formatExecutorConstraints must pass modelRegistry as first arg to resolveExecutorContextWindow (Fix C, issue #4142)",
+    );
+  });
+
+  it("buildPlanSlicePrompt accepts modelRegistry parameter and threads it to formatExecutorConstraints", () => {
+    const src = readFileSync(join(__dirname, "..", "auto-prompts.ts"), "utf-8");
+    assert.match(
+      src,
+      /function buildPlanSlicePrompt\([^)]*modelRegistry[^)]*\)/,
+      "buildPlanSlicePrompt must accept modelRegistry (Fix C, issue #4142)",
+    );
+    assert.match(
+      src,
+      /formatExecutorConstraints\(sessionContextWindow,\s*modelRegistry\)/,
+      "buildPlanSlicePrompt must pass modelRegistry to formatExecutorConstraints (Fix C, issue #4142)",
+    );
+  });
+
+  it("ExecuteTaskPromptOptions declares modelRegistry field", () => {
+    const src = readFileSync(join(__dirname, "..", "auto-prompts.ts"), "utf-8");
+    assert.match(
+      src,
+      /interface ExecuteTaskPromptOptions \{[^}]*modelRegistry\?/s,
+      "ExecuteTaskPromptOptions must include modelRegistry (Fix C, issue #4142)",
+    );
+  });
+
+  it("buildExecuteTaskPrompt passes opts.modelRegistry to resolveExecutorContextWindow", () => {
+    const src = readFileSync(join(__dirname, "..", "auto-prompts.ts"), "utf-8");
+    assert.match(
+      src,
+      /resolveExecutorContextWindow\(opts\.modelRegistry[^)]*\)/,
+      "buildExecuteTaskPrompt must pass opts.modelRegistry to resolveExecutorContextWindow (Fix C, issue #4142)",
+    );
+  });
+
+  it("DispatchContext declares modelRegistry field", () => {
+    const src = readFileSync(join(__dirname, "..", "auto-dispatch.ts"), "utf-8");
+    assert.match(
+      src,
+      /interface DispatchContext \{[^}]*modelRegistry\?/s,
+      "DispatchContext must include modelRegistry so dispatch rules can thread it through (Fix C, issue #4142)",
+    );
+  });
+
+  it("DISPATCH_RULES planning→plan-slice passes modelRegistry to buildPlanSlicePrompt", () => {
+    const src = readFileSync(join(__dirname, "..", "auto-dispatch.ts"), "utf-8");
+    // The planning→plan-slice rule must destructure and forward modelRegistry
+    assert.match(
+      src,
+      /name:\s*["']planning → plan-slice["'][^}]*modelRegistry[^}]*buildPlanSlicePrompt/s,
+      "planning→plan-slice rule must destructure and pass modelRegistry (Fix C, issue #4142)",
+    );
+  });
+
+  it("DISPATCH_RULES executing→execute-task passes modelRegistry to buildExecuteTaskPrompt", () => {
+    const src = readFileSync(join(__dirname, "..", "auto-dispatch.ts"), "utf-8");
+    assert.match(
+      src,
+      /name:\s*["']executing → execute-task["'][^}]*modelRegistry[^}]*buildExecuteTaskPrompt/s,
+      "executing→execute-task rule must destructure and pass modelRegistry (Fix C, issue #4142)",
+    );
+  });
+});

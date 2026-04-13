@@ -622,6 +622,7 @@ export async function runDispatch(
     prefs,
     session: s,
     sessionContextWindow: ctx.model?.contextWindow,
+    modelRegistry: ctx.modelRegistry as import("../context-budget.js").MinimalModelRegistry | undefined,
   });
 
   if (dispatchResult.action === "stop") {
