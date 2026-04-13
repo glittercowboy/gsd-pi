@@ -819,7 +819,7 @@ export class AuthStorage {
 	 */
 	async getApiKey(providerId: string, sessionId?: string, options?: { baseUrl?: string }): Promise<string | undefined> {
 		// If the model has a local baseUrl, return a dummy key to avoid auth blocking
-		if (options?.baseUrl) {
+		if (options?.baseUrl && !this.fallbackResolver?.(providerId)) {
 			try {
 				const hostname = new URL(options.baseUrl).hostname;
 				if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1") {

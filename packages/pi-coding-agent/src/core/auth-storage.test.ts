@@ -531,3 +531,41 @@ describe("AuthStorage — getEarliestBackoffExpiry", () => {
 		assert.equal(expiry, nearExpiry, "should return the nearest (smallest) expiry");
 	});
 });
+
+// ─── localhost baseUrl shortcut ────────────────────────────────────────────────
+
+describe("AuthStorage — localhost baseUrl shortcut", () => {
+	it("returns 'local-no-key-needed' for localhost provider with no configured key", async () => {
+		const storage = inMemory({});
+		const key = await storage.getApiKey("ollama", undefined, { baseUrl: "http://localhost:11434" });
+		assert.equal(key, "local-no-key-needed");
+	});
+
+	it("returns 'local-no-key-needed' for 127.0.0.1 provider with no configured key", async () => {
+		const storage = inMemory({});
+		const key = await storage.getApiKey("custom", undefined, { baseUrl: "http://127.0.0.1:8080/v1" });
+		assert.equal(key, "local-no-key-needed");
+	});
+
+	it("returns configured key from fallback resolver for localhost custom provider (#4106)", async () => {
+		// Regression test: compaction called getApiKey(model) where model.baseUrl is localhost.
+		// The localhost shortcut must NOT override an explicitly configured apiKey from models.json.
+		const storage = inMemory({});
+		storage.setFallbackResolver((provider) =>
+			provider === "cliproxy" ? "sk-real-proxy-key" : undefined,
+		);
+
+		const key = await storage.getApiKey("cliproxy", undefined, { baseUrl: "http://localhost:8317/v1" });
+		assert.equal(key, "sk-real-proxy-key");
+	});
+
+	it("returns configured key from fallback resolver when baseUrl uses 127.0.0.1 (#4106)", async () => {
+		const storage = inMemory({});
+		storage.setFallbackResolver((provider) =>
+			provider === "myproxy" ? "sk-myproxy-key" : undefined,
+		);
+
+		const key = await storage.getApiKey("myproxy", undefined, { baseUrl: "http://127.0.0.1:9000/v1" });
+		assert.equal(key, "sk-myproxy-key");
+	});
+});
