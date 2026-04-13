@@ -135,7 +135,7 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
  * Environment variable TELEGRAM_PROXY_URL takes precedence over config file.
  * Falls back to standard proxy environment variables if no explicit proxy is set.
  */
-function resolveProxyUrl(configProxyUrl?: string): string | undefined {
+export function resolveProxyUrl(configProxyUrl?: string): string | undefined {
   // TELEGRAM_PROXY_URL env var takes highest precedence
   const envProxy = process.env.TELEGRAM_PROXY_URL;
   if (envProxy) {
