@@ -52,6 +52,7 @@ import {
   checkNeedsReassessment,
   checkNeedsRunUat,
 } from "./auto-prompts.js";
+import { resolveModelWithFallbacksForUnit } from "./preferences-models.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -423,6 +424,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
           midTitle,
           researchReadySlices,
           basePath,
+          resolveModelWithFallbacksForUnit("subagent")?.primary,
         ),
       };
     },
@@ -510,6 +512,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
           sid,
           sTitle,
           basePath,
+          resolveModelWithFallbacksForUnit("subagent")?.primary,
         ),
       };
     },
@@ -548,6 +551,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       const sid = state.activeSlice.id;
       const sTitle = state.activeSlice.title;
       const maxParallel = reactiveConfig.max_parallel ?? 2;
+      const subagentModel = reactiveConfig.subagent_model ?? resolveModelWithFallbacksForUnit("subagent")?.primary;
 
       // Dry-run mode: max_parallel=1 means graph is derived and logged but
       // execution remains sequential
@@ -618,6 +622,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
             sTitle,
             selected,
             basePath,
+            subagentModel,
           ),
         };
       } catch (err) {

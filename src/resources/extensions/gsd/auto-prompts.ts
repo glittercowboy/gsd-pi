@@ -1926,6 +1926,7 @@ export async function buildReassessRoadmapPrompt(
 export async function buildReactiveExecutePrompt(
   mid: string, midTitle: string, sid: string, sTitle: string,
   readyTaskIds: string[], base: string,
+  subagentModel?: string,
 ): Promise<string> {
   const { loadSliceTaskIO, deriveTaskGraph, graphMetrics } = await import("./reactive-graph.js");
 
@@ -1970,10 +1971,11 @@ export async function buildReactiveExecutePrompt(
       { carryForwardPaths: depPaths },
     );
 
+    const modelSuffix = subagentModel ? ` with model: "${subagentModel}"` : "";
     subagentSections.push([
       `### ${tid}: ${tTitle}`,
       "",
-      "Use this as the prompt for a `subagent` call:",
+      `Use this as the prompt for a \`subagent\` call${modelSuffix}:`,
       "",
       "```",
       taskPrompt,
@@ -2049,15 +2051,17 @@ export async function buildParallelResearchSlicesPrompt(
   midTitle: string,
   slices: Array<{ id: string; title: string }>,
   basePath: string,
+  subagentModel?: string,
 ): Promise<string> {
   // Build individual research-slice prompts for each slice
   const subagentSections: string[] = [];
+  const modelSuffix = subagentModel ? ` with model: "${subagentModel}"` : "";
   for (const slice of slices) {
     const slicePrompt = await buildResearchSlicePrompt(mid, midTitle, slice.id, slice.title, basePath);
     subagentSections.push([
       `### ${slice.id}: ${slice.title}`,
       "",
-      "Use this as the prompt for a `subagent` call (agent: `gsd-executor` or the default agent):",
+      `Use this as the prompt for a \`subagent\` call${modelSuffix} (agent: \`gsd-executor\` or the default agent):`,
       "",
       "```",
       slicePrompt,
@@ -2077,6 +2081,7 @@ export async function buildParallelResearchSlicesPrompt(
 export async function buildGateEvaluatePrompt(
   mid: string, midTitle: string, sid: string, sTitle: string,
   base: string,
+  subagentModel?: string,
 ): Promise<string> {
   // Pull only the gates this turn actually owns (Q3/Q4). Filter via the
   // registry so that scope:"slice" gates owned by other turns (Q8) can't
@@ -2128,10 +2133,11 @@ export async function buildGateEvaluatePrompt(
       "- `findings`: detailed markdown findings (or empty if omitted)",
     ].join("\n");
 
+    const modelSuffix = subagentModel ? ` with model: "${subagentModel}"` : "";
     subagentSections.push([
       `### ${def.id}: ${def.question}`,
       "",
-      "Use this as the prompt for a `subagent` call:",
+      `Use this as the prompt for a \`subagent\` call${modelSuffix}:`,
       "",
       "```",
       subPrompt,
