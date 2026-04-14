@@ -246,8 +246,10 @@ export async function showProjectInit(
   }
 
   // Ensure .gitignore
-  ensureGitignore(basePath);
-  untrackRuntimeFiles(basePath);
+  const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git;
+  const manageGitignore = gitPrefs?.manage_gitignore;
+  ensureGitignore(basePath, { manageGitignore });
+  if (manageGitignore !== false) untrackRuntimeFiles(basePath);
 
   // Auto-generate codebase map for instant agent orientation
   try {
