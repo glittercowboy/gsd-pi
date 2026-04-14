@@ -465,7 +465,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "planning → plan-slice",
-    match: async ({ state, mid, midTitle, basePath }) => {
+    match: async ({ state, mid, midTitle, basePath, ctx }) => {
       if (state.phase !== "planning") return null;
       if (!state.activeSlice) return missingSliceStop(mid, state.phase);
       const sid = state.activeSlice!.id;
@@ -480,6 +480,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
           sid,
           sTitle,
           basePath,
+          ctx,
         ),
       };
     },
