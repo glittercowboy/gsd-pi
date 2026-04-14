@@ -332,7 +332,9 @@ export async function checkRuntimeHealth(
           });
 
           if (shouldFix("gitignore_missing_patterns")) {
-            ensureGitignore(basePath);
+            const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git;
+            const manageGitignore = gitPrefs?.manage_gitignore;
+            ensureGitignore(basePath, { manageGitignore });
             fixesApplied.push("added missing GSD runtime patterns to .gitignore");
           }
         }
