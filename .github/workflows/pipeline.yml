@@ -45,6 +45,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install web host dependencies
+        run: npm --prefix web ci
+
       - name: Cache Next.js build
         uses: useblacksmith/cache@v5
         with:
