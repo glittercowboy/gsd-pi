@@ -11,6 +11,7 @@ import { handleExport } from "../../export.js";
 import { handleHistory } from "../../history.js";
 import { handleUndo } from "../../undo.js";
 import { handleRemote } from "../../../remote-questions/mod.js";
+import { handleSessionReport } from "../../commands-session-report.js";
 import { projectRoot } from "../context.js";
 
 export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<boolean> {
@@ -214,6 +215,10 @@ Examples:
   if (trimmed === "codebase" || trimmed.startsWith("codebase ")) {
     const { handleCodebase } = await import("../../commands-codebase.js");
     await handleCodebase(trimmed.replace(/^codebase\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "session-report" || trimmed.startsWith("session-report ")) {
+    await handleSessionReport(trimmed.replace(/^session-report\s*/, "").trim(), ctx);
     return true;
   }
   return false;
