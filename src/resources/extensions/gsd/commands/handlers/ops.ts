@@ -216,5 +216,10 @@ Examples:
     await handleCodebase(trimmed.replace(/^codebase\s*/, "").trim(), ctx, pi);
     return true;
   }
+  if (trimmed === "add-tests" || trimmed.startsWith("add-tests ")) {
+    const { handleAddTests } = await import("../../commands-add-tests.js");
+    await handleAddTests(trimmed.replace(/^add-tests\s*/, "").trim(), ctx, pi);
+    return true;
+  }
   return false;
 }
