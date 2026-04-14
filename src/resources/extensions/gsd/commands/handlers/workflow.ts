@@ -221,6 +221,12 @@ async function handleCustomWorkflow(
 }
 
 export async function handleWorkflowCommand(trimmed: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<boolean> {
+  // ── Backlog management ──
+  if (trimmed === "backlog" || trimmed.startsWith("backlog ")) {
+    const { handleBacklog } = await import("../../commands-backlog.js");
+    await handleBacklog(trimmed.replace(/^backlog\s*/, "").trim(), ctx, pi);
+    return true;
+  }
   // ── Custom workflow commands (`/gsd workflow ...`) ──
   if (trimmed === "workflow" || trimmed.startsWith("workflow ")) {
     const sub = trimmed.slice("workflow".length).trim();

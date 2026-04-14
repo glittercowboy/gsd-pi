@@ -15,7 +15,7 @@ export interface GsdCommandDefinition {
 type CompletionMap = Record<string, readonly GsdCommandDefinition[]>;
 
 export const GSD_COMMAND_DESCRIPTION =
-  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|model|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|codebase|notifications";
+  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|model|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|codebase|notifications|backlog";
 
 export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -74,6 +74,7 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "rethink", desc: "Conversational project reorganization — reorder, park, discard, add milestones" },
   { cmd: "workflow", desc: "Custom workflow lifecycle (new, run, list, validate, pause, resume)" },
   { cmd: "codebase", desc: "Generate, refresh, and inspect the codebase map cache (.gsd/CODEBASE.md)" },
+  { cmd: "backlog", desc: "Manage backlog items (add, promote, remove, list)" },
 ];
 
 const NESTED_COMPLETIONS: CompletionMap = {
@@ -243,6 +244,11 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "update --collapse-threshold", desc: "Update with custom collapse threshold" },
     { cmd: "stats", desc: "Show file count, description coverage, and generation time" },
     { cmd: "help", desc: "Show usage and available subcommands" },
+  ],
+  backlog: [
+    { cmd: "add", desc: "Add item to backlog" },
+    { cmd: "promote", desc: "Promote backlog item to active slice" },
+    { cmd: "remove", desc: "Remove backlog item" },
   ],
 };
 
