@@ -58,7 +58,10 @@ class ResizableMockTerminal implements Terminal {
 }
 
 class StaticLinesComponent implements Component {
-  constructor(public lines: string[]) {}
+  public lines: string[];
+  constructor(lines: string[]) {
+    this.lines = lines;
+  }
   render(_width: number): string[] {
     return this.lines;
   }
