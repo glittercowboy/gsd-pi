@@ -139,3 +139,37 @@ test("/gsd do: routes 'session report' to session-report", () => {
   assert.ok(match);
   assert.equal(match.command, "session-report");
 });
+
+test("/gsd do: routes 'diagnose issue' to debug (not doctor)", () => {
+  // 'diagnose issue' is an explicit keyword on the debug route to distinguish
+  // session-level issue diagnosis from /gsd doctor health checks.
+  const match = matchRoute("diagnose issue with oauth callback");
+  assert.ok(match);
+  assert.equal(match.command, "debug");
+});
+
+test("/gsd do: routes 'investigate flaky test' to debug", () => {
+  const match = matchRoute("investigate flaky test in CI");
+  assert.ok(match);
+  assert.equal(match.command, "debug");
+});
+
+test("/gsd do: 'debug logs' keyword wins over bare 'debug' (longer keyword precedence)", () => {
+  // 'debug logs' (10 chars) > 'debug' (5 chars)
+  const logsMatch = matchRoute("debug logs for the last run");
+  assert.ok(logsMatch);
+  assert.equal(logsMatch.command, "logs");
+  assert.ok(logsMatch.score >= 10, `expected score >= 10, got ${logsMatch.score}`);
+
+  // Bare 'debug' without 'logs' should still route to debug.
+  const debugMatch = matchRoute("debug the payment timeout issue");
+  assert.ok(debugMatch);
+  assert.equal(debugMatch.command, "debug");
+});
+
+test("/gsd do: 'diagnose' alone routes to doctor (health check), not debug", () => {
+  // 'diagnose' maps to the doctor route; 'diagnose issue' maps to debug.
+  const match = matchRoute("diagnose my project");
+  assert.ok(match);
+  assert.equal(match.command, "doctor");
+});

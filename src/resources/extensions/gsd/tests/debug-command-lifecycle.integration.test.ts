@@ -5,7 +5,25 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { handleGSDCommand } from "../commands/dispatcher.ts";
+import { handleDebug } from "../commands-debug.ts";
 import { debugSessionArtifactPath, debugSessionsDir } from "../debug-session-store.ts";
+
+interface DispatchCall {
+  payload: any;
+  options: any;
+}
+
+function createMockPiWithDispatch() {
+  const calls: DispatchCall[] = [];
+  return {
+    calls,
+    pi: {
+      sendMessage(payload: any, options: any) {
+        calls.push({ payload, options });
+      },
+    },
+  };
+}
 
 interface MockCtx {
   notifications: Array<{ message: string; level: string }>;
@@ -200,6 +218,165 @@ test("/gsd debug lifecycle integration keeps session artifacts isolated from deb
     assert.match(sessionsListed.message, /payment-timeout/);
     assert.match(sessionsListed.message, /payment-timeout-2/);
     assert.match(sessionsListed.message, /mode=debug status=active phase=queued/);
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("/gsd debug --diagnose <issue> dispatches find_root_cause_only goal and records mode=diagnose session", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+    const { calls, pi } = createMockPiWithDispatch();
+
+    await handleDebug("--diagnose auth token rotation breaks sessions", ctx as any, pi as any);
+
+    const n = lastNotification(ctx);
+    assert.equal(n.level, "info");
+    assert.match(n.message, /Diagnose session started:/);
+    assert.match(n.message, /mode=diagnose/);
+    assert.match(n.message, /dispatchMode=find_root_cause_only/);
+
+    assert.equal(calls.length, 1, "should dispatch exactly one message");
+    const call = calls[0];
+    assert.equal(call.payload.customType, "gsd-debug-diagnose");
+    assert.match(call.payload.content, /find_root_cause_only/);
+    assert.match(call.payload.content, /auth token rotation breaks sessions/i);
+    assert.equal(call.options.triggerTurn, true);
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("/gsd debug continue <slug> dispatches find_and_fix goal scoped to target slug", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+    const { calls, pi } = createMockPiWithDispatch();
+
+    // Start two sessions so we can verify continue targets only the right one.
+    await handleDebug("Race condition in payment handler", ctx as any, {} as any);
+    await handleDebug("Stale cache on checkout", ctx as any, {} as any);
+
+    calls.length = 0; // reset — only created without pi dispatch above
+
+    await handleDebug("continue race-condition-in-payment-handler", ctx as any, pi as any);
+
+    const n = lastNotification(ctx);
+    assert.equal(n.level, "info");
+    assert.match(n.message, /Resumed debug session: race-condition-in-payment-handler/);
+    assert.match(n.message, /phase=continued/);
+    assert.match(n.message, /dispatchMode=find_and_fix/);
+
+    assert.equal(calls.length, 1, "should dispatch exactly one message");
+    const call = calls[0];
+    assert.equal(call.payload.customType, "gsd-debug-continue");
+    assert.match(call.payload.content, /find_and_fix/);
+    // Content must reference the target slug, not the other session.
+    assert.match(call.payload.content, /race-condition-in-payment-handler/);
+    assert.doesNotMatch(call.payload.content, /stale-cache-on-checkout/);
+    assert.equal(call.options.triggerTurn, true);
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("/gsd debug --diagnose (zero-arg) with no pi still reports malformed artifact counts without dispatch", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+    const { calls, pi } = createMockPiWithDispatch();
+
+    // Inject two broken artifacts.
+    const sessionsDir = debugSessionsDir(base);
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(join(sessionsDir, "broken-a.json"), "{bad json", "utf-8");
+    writeFileSync(join(sessionsDir, "broken-b.json"), "null", "utf-8");
+
+    // Zero-arg --diagnose via dispatcher (no pi) — dispatch should NOT fire.
+    await handleGSDCommand("debug --diagnose", ctx as any, {} as any);
+
+    const n = lastNotification(ctx);
+    assert.equal(n.level, "warning");
+    assert.match(n.message, /Debug session diagnostics:/);
+    assert.match(n.message, /malformedArtifacts=2/);
+    assert.match(n.message, /Remediation:/);
+
+    // Now confirm no dispatch occurred even with pi present (zero-arg diagnose is advisory only).
+    await handleDebug("--diagnose", ctx as any, pi as any);
+    assert.equal(calls.length, 0, "zero-arg --diagnose must not dispatch even with pi present");
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("/gsd debug negative: continue unknown slug emits warning, continue resolved session emits warning", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+    const { calls, pi } = createMockPiWithDispatch();
+
+    // Continue on non-existent slug.
+    await handleDebug("continue totally-nonexistent-slug", ctx as any, pi as any);
+    const notFound = lastNotification(ctx);
+    assert.equal(notFound.level, "warning");
+    assert.match(notFound.message, /Unknown debug session slug 'totally-nonexistent-slug'/);
+    assert.equal(calls.length, 0, "no dispatch for unknown slug");
+
+    // Start and manually check that invalid 2-token status (missing slug) emits error, not usage.
+    await handleDebug("status", ctx as any, {} as any);
+    const noSlug = lastNotification(ctx);
+    assert.equal(noSlug.level, "warning");
+    assert.match(noSlug.message, /Missing slug/);
+  } finally {
+    process.chdir(saved);
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("/gsd debug negative: multiple sessions with similar slugs — status and continue target exact match only", async () => {
+  const base = makeBase();
+  const saved = process.cwd();
+  process.chdir(base);
+
+  try {
+    const ctx = createMockCtx();
+
+    await handleGSDCommand("debug Login token expires", ctx as any, {} as any);
+    await handleGSDCommand("debug Login token expires too fast", ctx as any, {} as any);
+
+    // list to confirm two distinct slugs exist.
+    await handleGSDCommand("debug list", ctx as any, {} as any);
+    const listed = lastNotification(ctx);
+    assert.match(listed.message, /login-token-expires\b/);
+    assert.match(listed.message, /login-token-expires-too-fast\b/);
+
+    // status on base slug must not accidentally describe the suffixed one.
+    await handleGSDCommand("debug status login-token-expires", ctx as any, {} as any);
+    const baseStatus = lastNotification(ctx);
+    assert.match(baseStatus.message, /^Debug session status: login-token-expires$/m);
+    assert.doesNotMatch(baseStatus.message, /login-token-expires-too-fast/);
+
+    // status on suffixed slug must describe that one.
+    await handleGSDCommand("debug status login-token-expires-too-fast", ctx as any, {} as any);
+    const suffixedStatus = lastNotification(ctx);
+    assert.match(suffixedStatus.message, /^Debug session status: login-token-expires-too-fast$/m);
   } finally {
     process.chdir(saved);
     rmSync(base, { recursive: true, force: true });
