@@ -83,7 +83,8 @@ function collectConfiguredModelProviders(): Set<string> {
     const loaded = loadEffectiveGSDPreferences();
     const models = loaded?.preferences?.models;
     if (!models) {
-      // Default: Anthropic
+      // Cold start: no models block in preferences.md, assume Anthropic as the
+      // default target so a fresh install still warns the user to set a key.
       providers.add("anthropic");
       return providers;
     }
@@ -109,11 +110,20 @@ function collectConfiguredModelProviders(): Set<string> {
       }
     }
   } catch {
-    // Preferences not readable — assume Anthropic as default
+    // preferences.md unreadable — assume Anthropic as default so something
+    // actionable still appears in the widget rather than silent failure.
     providers.add("anthropic");
+    return providers;
   }
 
-  if (providers.size === 0) providers.add("anthropic");
+  // If we iterated model entries but recognised none of their providers, the
+  // user is using custom providers declared only in models.json (e.g. minimax,
+  // kimi-coding, zai, xiaomi-token-plan-ams) that this static analyser cannot
+  // identify without a runtime ModelRegistry reference. Return the empty set —
+  // the caller treats this as "no LLM key checks to run" rather than
+  // fabricating an Anthropic dependency the user never asked for.
+  // The cold-start default above still fires when preferences.md has no models
+  // block at all, so new-user messaging is preserved.
   return providers;
 }
 

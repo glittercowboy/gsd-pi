@@ -485,6 +485,51 @@ test("runProviderChecks uses object provider field for anthropic-vertex models",
   rmSync(tmpHome, { recursive: true, force: true });
 });
 
+test("runProviderChecks does not fabricate anthropic requirement for custom-provider-only models", () => {
+  // Regression: previously, if every model entry used a custom provider prefix
+  // the static analyser didn't recognise (e.g. "kimi-coding/k2p5",
+  // "minimax/MiniMax-M2.7"), collectConfiguredModelProviders() returned an
+  // empty set and a post-iteration fallback added "anthropic" anyway. This
+  // produced a bogus "Anthropic key missing" error in the health widget for
+  // users who had never asked for Anthropic at all.
+  const tmpHome = realpathSync(mkdtempSync(join(tmpdir(), "gsd-providers-custom-home-")));
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "gsd-providers-custom-repo-")));
+  mkdirSync(join(repo, ".gsd"), { recursive: true });
+  writeFileSync(
+    join(repo, ".gsd", "PREFERENCES.md"),
+    [
+      "---",
+      "models:",
+      "  execution: minimax/MiniMax-M2.7",
+      "  planning: kimi-coding/k2p5",
+      "  verification: zai/glm-4.7",
+      "---",
+      "",
+    ].join("\n"),
+  );
+
+  withEnv({
+    HOME: tmpHome,
+    ANTHROPIC_API_KEY: undefined,
+    ANTHROPIC_OAUTH_TOKEN: undefined,
+    COPILOT_GITHUB_TOKEN: undefined,
+    GH_TOKEN: undefined,
+    GITHUB_TOKEN: undefined,
+  }, () => {
+    withCwd(repo, () => {
+      const results = runProviderChecks();
+      const anthropic = results.find(r => r.name === "anthropic");
+      assert.ok(
+        !anthropic,
+        "anthropic must not appear when user configured only custom providers",
+      );
+    });
+  });
+
+  rmSync(repo, { recursive: true, force: true });
+  rmSync(tmpHome, { recursive: true, force: true });
+});
+
 // ─── Cross-provider routing: Codex & Gemini CLI (#2922) ────────────────────
 
 test("runProviderChecks reports ok for Google via google-gemini-cli auth.json (#2922)", () => {
