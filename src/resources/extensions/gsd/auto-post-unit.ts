@@ -1121,11 +1121,15 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           });
         }
 
-        // Notify UI
+        // Notify UI — surface actionable details (#4259)
         if (result.status === "fail") {
-          const blockingCount = result.checks.filter(c => !c.passed && c.blocking).length;
+          const blockingChecks = result.checks.filter(c => !c.passed && c.blocking);
+          const blockingCount = blockingChecks.length;
+          const details = blockingChecks.slice(0, 3).map(c => `  \u2022 ${c.message}`).join("\n");
+          const suffix = blockingChecks.length > 3 ? `\n  \u2022 ...and ${blockingChecks.length - 3} more` : "";
+          const evidenceNote = `\nSee ${sid}-PRE-EXEC-VERIFY.json for full details.`;
           ctx.ui.notify(
-            `Pre-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found`,
+            `Pre-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found\n${details}${suffix}${evidenceNote}`,
             "error",
           );
           preExecPauseNeeded = true;
