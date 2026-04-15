@@ -12,5 +12,6 @@ export { isInfrastructureError, INFRA_ERROR_CODES } from "./auto/infra-errors.js
 export { resolveAgentEnd, resolveAgentEndCancelled, isSessionSwitchInFlight, _resetPendingResolve, _setActiveSession } from "./auto/resolve.js";
 export { detectStuck } from "./auto/detect-stuck.js";
 export { runUnit } from "./auto/run-unit.js";
+export { saveStuckState, loadStuckState } from "./auto/detect-stuck.js";
 export type { LoopDeps } from "./auto/loop-deps.js";
 export type { AgentEndEvent, ErrorContext, UnitResult } from "./auto/types.js";
