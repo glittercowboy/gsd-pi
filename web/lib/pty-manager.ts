@@ -285,10 +285,11 @@ export function getOrCreateSession(sessionId: string, projectCwd?: string, comma
   const spawnSpec = resolveTerminalSpawnSpec(cwd, command, commandArgs);
   console.log("[pty] Spawning command:", spawnSpec.label, "cwd:", cwd, "node-pty:", nodePtyRoot);
 
-  // Build a clean env — remove GSD-specific vars that would confuse a shell
+  // Build a clean env — remove GSD-specific vars that would confuse a shell.
+  // We preserve them if the command is "gsd" because the CLI needs its configuration.
   const cleanEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith("GSD_WEB_")) {
+    if (value !== undefined && (command === "gsd" || !key.startsWith("GSD_WEB_"))) {
       cleanEnv[key] = value;
     }
   }
