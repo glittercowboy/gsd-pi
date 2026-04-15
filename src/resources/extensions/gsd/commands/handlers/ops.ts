@@ -241,5 +241,10 @@ Examples:
     await handleExtractLearnings(trimmed.replace(/^extract-learnings\s*/, "").trim(), ctx, pi);
     return true;
   }
+  if (trimmed === "review" || trimmed.startsWith("review ")) {
+    const { handleReview } = await import("../../commands-review.js");
+    await handleReview(trimmed.replace(/^review\s*/, "").trim(), ctx, pi);
+    return true;
+  }
   return false;
 }
