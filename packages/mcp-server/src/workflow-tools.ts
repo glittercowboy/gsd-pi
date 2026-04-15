@@ -2,7 +2,7 @@
  * Workflow MCP tools — exposes the core GSD mutation/read handlers over MCP.
  */
 
-import { realpathSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
@@ -309,18 +309,65 @@ function parseToolArgs<T>(schema: z.ZodType<T>, args: Record<string, unknown>): 
   return schema.parse(args);
 }
 
+/**
+ * Extract a milestone ID from parsed tool args, trying common field names.
+ * Returns null when no field is present or the value is not a string.
+ */
+function extractMilestoneId(parsed: Record<string, unknown>): string | null {
+  const candidates = [parsed.milestoneId, parsed.milestone_id, parsed.mid];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim() !== "") return c.trim();
+  }
+  return null;
+}
+
+/**
+ * If an auto-worktree exists for the given milestone under
+ * `<projectRoot>/.gsd/worktrees/<milestoneId>/`, return that path as the
+ * basePath the tool should write against. Returns null when no worktree
+ * exists for this milestone, leaving the caller to use the project root.
+ *
+ * This unbreaks the external-state layout where the MCP server's process.cwd()
+ * is the project root (set at Claude Code launch) but auto-mode is actually
+ * working inside a per-milestone worktree. Without this, tool writes go to
+ * the shared project `.gsd/` and auto-mode's verifyExpectedArtifact (which
+ * uses the worktree `.gsd/`) fails, triggering a guaranteed retry per unit.
+ */
+function resolveActiveWorktreeBasePath(
+  projectRoot: string,
+  milestoneId: string | null,
+): string | null {
+  if (!milestoneId) return null;
+  const wtPath = join(projectRoot, ".gsd", "worktrees", milestoneId);
+  if (!existsSync(wtPath)) return null;
+  // Sanity check: a real git worktree has a `.git` file with a gitdir pointer.
+  // Bare directories without it shouldn't hijack the write path.
+  if (!existsSync(join(wtPath, ".git"))) return null;
+  return wtPath;
+}
+
 function parseWorkflowArgs<T extends { projectDir?: string }>(
   schema: z.ZodType<T>,
   args: Record<string, unknown>,
 ): T & { projectDir: string } {
   const parsed = parseToolArgs(schema, args);
-  // Default to process.cwd() when omitted — the server is already cwd'd into
-  // the right project or worktree root by auto-mode, so we don't need the
-  // agent to guess and pass an absolute path string.
-  const candidate = parsed.projectDir ?? process.cwd();
+  // Step 1: figure out the project root. The agent shouldn't need to pass
+  // projectDir — default to process.cwd() which the MCP server inherited from
+  // Claude Code (launched at the project root).
+  const projectRootCandidate = parsed.projectDir ?? process.cwd();
+  const projectRoot = validateProjectDir(projectRootCandidate);
+
+  // Step 2: if this tool call is scoped to a milestone that has an active
+  // auto-worktree, re-route writes to the worktree's .gsd rather than the
+  // project's shared .gsd. auto-mode's verifyExpectedArtifact runs against
+  // the worktree, and a mismatch here causes every unit to retry once.
+  const milestoneId = extractMilestoneId(parsed as Record<string, unknown>);
+  const worktreeBasePath = resolveActiveWorktreeBasePath(projectRoot, milestoneId);
+  const effectiveBasePath = worktreeBasePath ?? projectRoot;
+
   return {
     ...parsed,
-    projectDir: validateProjectDir(candidate),
+    projectDir: effectiveBasePath,
   };
 }
 
