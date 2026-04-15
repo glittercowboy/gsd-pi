@@ -3,6 +3,10 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import { isToolCallEventType } from "@gsd/pi-coding-agent";
 
+import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-extension-api.js";
+import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
+import { getEcosystemReadyPromise } from "../ecosystem/loader.js";
+
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
 import { buildBeforeAgentStartResult } from "./system-context.js";
 import { handleAgentEnd } from "./agent-end-recovery.js";
@@ -35,7 +39,10 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
   ctx.ui.setStatus("gsd-fast", formatServiceTierFooterStatus(getEffectiveServiceTier(), ctx.model?.id));
 }
 
-export function registerHooks(pi: ExtensionAPI): void {
+export function registerHooks(
+  pi: ExtensionAPI,
+  ecosystemHandlers: GSDEcosystemBeforeAgentStartHandler[],
+): void {
   pi.on("session_start", async (_event, ctx) => {
     initNotificationStore(process.cwd());
     installNotifyInterceptor(ctx);
@@ -93,7 +100,50 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
-    return buildBeforeAgentStartResult(event, ctx);
+    // Wait for ecosystem loader to finish (no-op after first turn).
+    await getEcosystemReadyPromise();
+
+    // GSD's own context injection (existing behavior — unchanged).
+    const gsdResult = await buildBeforeAgentStartResult(event, ctx);
+
+    // Refresh the snapshot used by ecosystem getPhase()/getActiveUnit().
+    // deriveState has its own ~100ms cache so this is cheap on repeat calls.
+    try {
+      const state = await deriveState(process.cwd());
+      updateSnapshot(state);
+    } catch {
+      updateSnapshot(null);
+    }
+
+    // Chain ecosystem handlers using pi's runner.ts chaining protocol:
+    // each handler sees the systemPrompt mutated by prior handlers.
+    let currentSystemPrompt = gsdResult?.systemPrompt ?? event.systemPrompt;
+    // `any` because pi's BeforeAgentStartEventResult.message uses an internal
+    // CustomMessage type that's not re-exported (see ecosystem/gsd-extension-api.ts).
+    let lastMessage: any = gsdResult?.message;
+
+    for (const handler of ecosystemHandlers) {
+      try {
+        const r = await handler(
+          { ...event, systemPrompt: currentSystemPrompt },
+          ctx,
+        );
+        if (r?.systemPrompt !== undefined) currentSystemPrompt = r.systemPrompt;
+        if (r?.message) lastMessage = r.message;
+      } catch (err) {
+        safetyLogWarning(
+          "ecosystem",
+          `before_agent_start handler failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // Compose result. Return undefined if nothing changed (preserves runner contract).
+    if (currentSystemPrompt === event.systemPrompt && !lastMessage) return undefined;
+    return {
+      systemPrompt: currentSystemPrompt !== event.systemPrompt ? currentSystemPrompt : undefined,
+      message: lastMessage,
+    };
   });
 
   pi.on("agent_end", async (event, ctx: ExtensionContext) => {

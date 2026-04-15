@@ -198,7 +198,7 @@ test("session_start bootstraps the health widget alongside notifications", async
     },
   } as any;
 
-  registerHooks(pi);
+  registerHooks(pi, []);
   const sessionStart = handlers.get("session_start");
   assert.ok(sessionStart, "session_start handler is registered");
 

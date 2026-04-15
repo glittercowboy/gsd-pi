@@ -253,6 +253,19 @@ export interface GSDState {
   lastCompletedMilestone?: ActiveRef | null;
 }
 
+// ─── GSD Ecosystem Extension API Types ────────────────────────────────────
+// Pure data type — no runtime deps. The GSDExtensionAPI interface itself
+// lives in ecosystem/gsd-extension-api.ts (it imports from pi).
+
+export interface GSDActiveUnit {
+  milestoneId: string;
+  milestoneTitle: string;
+  sliceId: string;
+  sliceTitle: string;
+  taskId: string;
+  taskTitle: string;
+}
+
 // ─── Post-Unit Hook Types ─────────────────────────────────────────────────
 
 export interface PostUnitHookConfig {

@@ -41,7 +41,7 @@ test("register-hooks unlocks milestone depth verification from question id witho
     },
   } as any;
 
-  registerHooks(pi);
+  registerHooks(pi, []);
 
   const questionId = "depth_verification_M001_confirm";
   const questions = [

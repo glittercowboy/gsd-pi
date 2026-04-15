@@ -4,6 +4,8 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent
 
 import { registerExitCommand } from "../exit-command.js";
 import { registerWorktreeCommand } from "../worktree-command.js";
+import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-extension-api.js";
+import { loadEcosystemExtensions } from "../ecosystem/loader.js";
 import { registerDbTools } from "./db-tools.js";
 import { registerDynamicTools } from "./dynamic-tools.js";
 import { registerJournalTools } from "./journal-tools.js";
@@ -65,6 +67,10 @@ export function registerGsdExtension(pi: ExtensionAPI): void {
 
   installEpipeGuard();
 
+  // Ecosystem handlers captured by the GSDExtensionAPI wrapper for the
+  // GSD-owned `before_agent_start` dispatch step (#3338).
+  const ecosystemHandlers: GSDEcosystemBeforeAgentStartHandler[] = [];
+
   pi.registerCommand("kill", {
     description: "Exit GSD immediately (no cleanup)",
     handler: async (_args: string, _ctx: ExtensionCommandContext) => {
@@ -80,7 +86,15 @@ export function registerGsdExtension(pi: ExtensionAPI): void {
     ["journal-tools", () => registerJournalTools(pi)],
     ["query-tools", () => registerQueryTools(pi)],
     ["shortcuts", () => registerShortcuts(pi)],
-    ["hooks", () => registerHooks(pi)],
+    ["hooks", () => registerHooks(pi, ecosystemHandlers)],
+    ["ecosystem", () => {
+      void loadEcosystemExtensions(pi, ecosystemHandlers).catch((err) => {
+        logWarning(
+          "ecosystem",
+          `loader failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }],
   ];
 
   for (const [name, register] of nonCriticalRegistrations) {

@@ -53,7 +53,8 @@ export type LogComponent =
   | "guided"        // Guided flow (discuss, plan wizards)
   | "registry"      // Rule registry hook state
   | "renderer"      // Markdown renderer and projections
-  | "safety";       // LLM safety harness
+  | "safety"        // LLM safety harness
+  | "ecosystem";    // GSD ecosystem extension loader and dispatch
 
 export interface LogEntry {
   ts: string;
