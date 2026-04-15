@@ -24,6 +24,7 @@ import { isAutoActive, checkRemoteAutoSession } from "./auto.js";
 import { getAutoWorktreePath } from "./auto-worktree.js";
 import { projectRoot } from "./commands/context.js";
 import { loadPrompt } from "./prompt-loader.js";
+import { toSlug } from "./explore-artifacts.js";
 
 const UPDATE_REGISTRY_URL = "https://registry.npmjs.org/gsd-pi/latest";
 const UPDATE_FETCH_TIMEOUT_MS = 5000;
@@ -451,4 +452,41 @@ export async function handleUpdate(ctx: ExtensionCommandContext): Promise<void> 
       "error",
     );
   }
+}
+
+export async function handleExplore(
+  args: string,
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+): Promise<void> {
+  const topic = args.trim();
+  if (!topic) {
+    ctx.ui.notify(
+      'Usage: /gsd explore <topic>. Example: /gsd explore "distributed systems consistency"',
+      "warning",
+    );
+    return;
+  }
+
+  const slug = toSlug(topic);
+  if (!slug || slug === "untitled") {
+    ctx.ui.notify(
+      "Topic must contain at least one letter or number.",
+      "warning",
+    );
+    return;
+  }
+
+  const prompt = loadPrompt("explore", { topic, slug });
+
+  ctx.ui.notify(`Starting exploration: "${topic}"`, "info");
+
+  pi.sendMessage(
+    {
+      customType: "gsd-explore",
+      content: prompt,
+      display: false,
+    },
+    { triggerTurn: true },
+  );
 }
