@@ -238,7 +238,10 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				// content (#4144 regression). Prior sub-turn children stay in
 				// chatContainer as frozen history; new segments append after them.
 				if (contentBlocks.length < lastContentLength) {
-					orphanedSegments = [...renderedSegments];
+					// Accumulate across successive shrinks — overwriting would drop
+					// segments displaced by an earlier shrink, leaving them stranded
+					// in chatContainer once the prune pass finally runs.
+					orphanedSegments = [...orphanedSegments, ...renderedSegments];
 					renderedSegments = [];
 					lastPinnedText = "";
 					lastProcessedContentIndex = 0;
@@ -553,11 +556,11 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 			}
 			break;
 
-		case "message_end":
-			if (event.message.role === "user") break;
-			if (event.message.role === "assistant") {
-				host.streamingMessage = event.message;
-				let errorMessage: string | undefined;
+			case "message_end":
+				if (event.message.role === "user") break;
+				if (event.message.role === "assistant") {
+					host.streamingMessage = event.message;
+					let errorMessage: string | undefined;
 				if (host.streamingMessage.stopReason === "aborted") {
 					const retryAttempt = host.session.retryAttempt;
 					errorMessage = retryAttempt > 0
@@ -566,15 +569,141 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					host.streamingMessage.errorMessage = errorMessage;
 				}
 
-				const shouldRenderAssistant = hasVisibleAssistantContent(host.streamingMessage)
-					|| (
-						(host.streamingMessage.stopReason === "aborted" || host.streamingMessage.stopReason === "error")
-						&& !hasAssistantToolBlocks(host.streamingMessage)
-					);
-				if (!host.streamingComponent && shouldRenderAssistant) {
-					host.streamingComponent = new AssistantMessageComponent(
-						undefined,
-						host.hideThinkingBlock,
+					const shouldRenderAssistant = hasVisibleAssistantContent(host.streamingMessage)
+						|| (
+							(host.streamingMessage.stopReason === "aborted" || host.streamingMessage.stopReason === "error")
+							&& !hasAssistantToolBlocks(host.streamingMessage)
+						);
+
+					// The final message_end payload can contain additional text/thinking
+					// blocks that never arrived via message_update (e.g. SDK result
+					// aggregation). Rebuild this in-flight turn from final content so
+					// ranges/components don't keep stale partial indices.
+					if (renderedSegments.length > 0) {
+						const finalBlocks = host.streamingMessage.content;
+						type DesiredSegment =
+							| { kind: "text-run"; startIndex: number; endIndex: number; contentType: "text" | "thinking" }
+							| { kind: "tool"; contentIndex: number; toolId: string };
+						const desired: DesiredSegment[] = [];
+						let runStart = -1;
+						let runEnd = -1;
+						let runType: "text" | "thinking" | undefined;
+						const closeRun = () => {
+							if (runStart !== -1 && runType) {
+								desired.push({ kind: "text-run", startIndex: runStart, endIndex: runEnd, contentType: runType });
+								runStart = -1;
+								runEnd = -1;
+								runType = undefined;
+							}
+						};
+
+						for (let i = 0; i < finalBlocks.length; i++) {
+							const block = finalBlocks[i] as any;
+							const blockType = block?.type === "text" || block?.type === "thinking" ? block.type : undefined;
+							const isTextLike = blockType === "text" || blockType === "thinking";
+							const isTool = block?.type === "toolCall" || block?.type === "serverToolUse";
+
+							if (isTextLike) {
+								if (runStart === -1) {
+									runStart = i;
+									runEnd = i;
+									runType = blockType;
+								} else if (runType !== blockType) {
+									closeRun();
+									runStart = i;
+									runEnd = i;
+									runType = blockType;
+								} else {
+									runEnd = i;
+								}
+							} else {
+								closeRun();
+								if (isTool) {
+									desired.push({ kind: "tool", contentIndex: i, toolId: block.id });
+								}
+							}
+						}
+						closeRun();
+
+						const toolComponentsById = new Map<string, ToolExecutionComponent>();
+						for (const [toolId, component] of host.pendingTools.entries()) {
+							toolComponentsById.set(toolId, component);
+						}
+
+						for (const seg of renderedSegments) {
+							host.chatContainer.removeChild(seg.component);
+							if (seg.kind === "tool") {
+								const priorBlocks = host.streamingMessage.content;
+								const priorBlock = priorBlocks[seg.contentIndex] as any;
+								if (priorBlock?.id && !toolComponentsById.has(priorBlock.id)) {
+									toolComponentsById.set(priorBlock.id, seg.component);
+								}
+							}
+						}
+						renderedSegments = [];
+						host.streamingComponent = undefined;
+
+						for (const seg of desired) {
+							if (seg.kind === "tool") {
+								const finalBlock = finalBlocks[seg.contentIndex] as any;
+								let component = toolComponentsById.get(seg.toolId);
+								if (!component && finalBlock?.id) {
+									component = host.pendingTools.get(finalBlock.id);
+								}
+								if (!component && finalBlock?.type === "toolCall") {
+									component = new ToolExecutionComponent(
+										finalBlock.name,
+										finalBlock.arguments,
+										{ showImages: host.settingsManager.getShowImages() },
+										host.getRegisteredToolDefinition(finalBlock.name),
+										host.ui,
+									);
+									component.setExpanded(host.toolOutputExpanded);
+									host.pendingTools.set(finalBlock.id, component);
+									toolComponentsById.set(finalBlock.id, component);
+								} else if (!component && finalBlock?.type === "serverToolUse") {
+									component = new ToolExecutionComponent(
+										finalBlock.name,
+										finalBlock.input ?? {},
+										{ showImages: host.settingsManager.getShowImages() },
+										undefined,
+										host.ui,
+									);
+									component.setExpanded(host.toolOutputExpanded);
+									host.pendingTools.set(finalBlock.id, component);
+									toolComponentsById.set(finalBlock.id, component);
+								}
+								if (component) {
+									host.chatContainer.addChild(component);
+									renderedSegments.push({ kind: "tool", contentIndex: seg.contentIndex, component });
+								}
+								continue;
+							}
+
+							const comp = new AssistantMessageComponent(
+								undefined,
+								host.hideThinkingBlock,
+								host.getMarkdownThemeWithSettings(),
+								host.settingsManager.getTimestampFormat(),
+								{ startIndex: seg.startIndex, endIndex: seg.endIndex },
+							);
+							comp.updateContent(host.streamingMessage);
+							host.chatContainer.addChild(comp);
+							renderedSegments.push({
+								kind: "text-run",
+								startIndex: seg.startIndex,
+								endIndex: seg.endIndex,
+								contentType: seg.contentType,
+								component: comp,
+							});
+							host.streamingComponent = comp;
+						}
+					}
+
+					if (!host.streamingComponent && shouldRenderAssistant) {
+						host.streamingComponent = new AssistantMessageComponent(
+							undefined,
+							host.hideThinkingBlock,
 						host.getMarkdownThemeWithSettings(),
 						host.settingsManager.getTimestampFormat(),
 					);
