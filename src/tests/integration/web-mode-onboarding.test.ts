@@ -451,6 +451,7 @@ test("fresh gsd --web browser onboarding stays locked on failed validation and u
     browserLogPath,
     env: {
       GSD_WEB_TEST_FAKE_API_KEY_VALIDATION: "1",
+      GSD_WEB_TEST_DISABLE_EXTERNAL_CLI: "1",
       ANTHROPIC_API_KEY: "",
       OPENAI_API_KEY: "",
       GOOGLE_API_KEY: "",
