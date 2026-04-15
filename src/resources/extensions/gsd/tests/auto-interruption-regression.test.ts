@@ -65,6 +65,10 @@ test("cancelled paused units unwind cleanly instead of being treated as session 
     src.includes('reason: "paused-unwind"'),
     "auto/phases.ts should log a paused-unwind exit for explicit pause paths",
   );
+  assert.ok(
+    /if \(!s\.active && s\.paused\)[\s\S]{0,260}emitCancelledUnitEnd\(/.test(src),
+    "paused-unwind path must still emit unit-end so forensics do not lose cancelled-unit closure",
+  );
 });
 
 test("auto timer delivery modes are explicit and intentional", () => {

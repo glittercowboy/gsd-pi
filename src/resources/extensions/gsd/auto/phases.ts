@@ -1694,7 +1694,6 @@ export async function runUnitPhase(
 
   if (unitResult.status === "cancelled") {
     const errorCategory = unitResult.errorContext?.category;
-
     // Provider-error pause: agent_end recovery normally pauses before this
     // branch. Provider readiness failures happen before dispatch, so pause here
     // if nothing upstream already did.
@@ -1804,6 +1803,7 @@ export async function runUnitPhase(
       await emitCancelledUnitEnd(ic, unitType, unitId, unitStartSeq, unitResult.errorContext);
       return { action: "break", reason: "unit-hard-timeout" };
     }
+
     if (
       unitResult.errorContext?.isTransient &&
       errorCategory === "session-failed"
@@ -1818,6 +1818,7 @@ export async function runUnitPhase(
       await emitCancelledUnitEnd(ic, unitType, unitId, unitStartSeq, unitResult.errorContext);
       return { action: "break", reason: "session-timeout" };
     }
+
     // All other cancelled states (structural errors, non-transient failures): hard stop
     if (s.currentUnit) {
       await deps.closeoutUnit(
