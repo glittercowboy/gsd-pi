@@ -15,7 +15,7 @@ export interface GsdCommandDefinition {
 type CompletionMap = Record<string, readonly GsdCommandDefinition[]>;
 
 export const GSD_COMMAND_DESCRIPTION =
-  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|model|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|codebase|notifications|ship|do|session-report|backlog|pr-branch|add-tests";
+  "GSD — Get Shit Done: /gsd help|start|templates|next|auto|stop|pause|status|widget|visualize|queue|quick|discuss|capture|triage|dispatch|history|undo|undo-task|reset-slice|rate|skip|export|cleanup|model|mode|prefs|config|keys|hooks|run-hook|skill-health|doctor|logs|forensics|changelog|migrate|remote|steer|knowledge|new-milestone|parallel|cmux|park|unpark|init|setup|inspect|extensions|update|fast|mcp|rethink|codebase|notifications|ship|do|session-report|backlog|pr-branch|add-tests|scan|graph|extract-learnings|explore|eval-review|eval-fix|review";
 
 export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },
@@ -80,6 +80,13 @@ export const TOP_LEVEL_SUBCOMMANDS: readonly GsdCommandDefinition[] = [
   { cmd: "backlog", desc: "Manage backlog items (add, promote, remove, list)" },
   { cmd: "pr-branch", desc: "Create clean PR branch filtering .gsd/ commits" },
   { cmd: "add-tests", desc: "Generate tests for completed slices" },
+  { cmd: "scan", desc: "Rapid codebase assessment — lightweight alternative to full map (--focus tech|arch|quality|concerns|tech+arch)" },
+  { cmd: "graph", desc: "Knowledge graph — build, query, diff, and inspect semantic relationships across .gsd/ artifacts" },
+  { cmd: "extract-learnings", desc: "Extract and persist learnings from completed milestone artifacts into LEARNINGS.md" },
+  { cmd: "explore", desc: "Socratic ideation session — think through a topic with guided questions" },
+  { cmd: "eval-review", desc: "Review how well the implementation covers an AI-SPEC — produces a scored EVAL-REVIEW.md" },
+  { cmd: "eval-fix", desc: "Read EVAL-REVIEW.md gaps and spawn a fix agent to address MISSING/PARTIAL coverage" },
+  { cmd: "review", desc: "Cross-AI peer review of a milestone plan — invokes external AI CLIs, produces consensus REVIEWS.md" },
 ];
 
 const NESTED_COMPLETIONS: CompletionMap = {

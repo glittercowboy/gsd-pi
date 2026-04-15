@@ -79,6 +79,21 @@
 
 See [Parallel Orchestration](./parallel-orchestration.md) for full documentation.
 
+## Analysis & Review
+
+| Command | Description |
+|---------|-------------|
+| `/gsd scan` | Rapid codebase assessment — lightweight alternative to full map. Use `--focus tech\|arch\|quality\|concerns\|tech+arch` (default: `tech+arch`) |
+| `/gsd graph build` | Build or rebuild the knowledge graph from `.gsd/` artifacts |
+| `/gsd graph status` | Show graph freshness, node count, and edge count |
+| `/gsd graph query <term>` | BFS search for nodes semantically related to `<term>` |
+| `/gsd graph diff` | Show added/removed/changed nodes and edges since last build |
+| `/gsd extract-learnings` | Extract and persist learnings from completed milestone artifacts into `LEARNINGS.md` |
+| `/gsd explore <topic>` | Socratic ideation session — think through a topic with guided questions and produce a structured output |
+| `/gsd eval-review [sliceId]` | Review how well the implementation covers an AI-SPEC — produces a scored `EVAL-REVIEW.md` |
+| `/gsd eval-fix [sliceId]` | Read `EVAL-REVIEW.md` gaps and spawn a fix agent to address `MISSING`/`PARTIAL` coverage |
+| `/gsd review` | Cross-AI peer review of the active milestone plan — invokes external AI CLIs and produces a consensus `REVIEWS.md` |
+
 ## Workflow Templates (v2.42)
 
 | Command | Description |
