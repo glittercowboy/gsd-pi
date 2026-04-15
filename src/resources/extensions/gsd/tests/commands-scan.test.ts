@@ -1,10 +1,10 @@
 /**
- * Tests for /gsd scan command — pure functions only
+ * Tests for /gsd scan command — pure functions + handler integration
  */
 
 import { describe, test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -13,6 +13,7 @@ import {
   resolveScanDocuments,
   buildScanOutputPaths,
   checkExistingDocuments,
+  handleScan,
   VALID_FOCUS_AREAS,
   DEFAULT_FOCUS,
 } from "../commands-scan.js";
@@ -212,5 +213,139 @@ describe("checkExistingDocuments", () => {
   test("returns empty array for empty input", () => {
     const existing = checkExistingDocuments([]);
     assert.deepEqual(existing, []);
+  });
+});
+
+// ─── handleScan integration ───────────────────────────────────────────────────
+// Verifies the handler creates the output directory and dispatches the correct
+// prompt without running a real AI turn.
+
+function makeMockPi() {
+  const calls: Array<{ msg: unknown; opts: unknown }> = [];
+  return {
+    sendMessage: (msg: unknown, opts: unknown) => { calls.push({ msg, opts }); },
+    calls,
+  };
+}
+
+function makeMockCtx() {
+  const notifications: Array<{ text: string; level: string }> = [];
+  return {
+    ui: {
+      notify: (text: string, level: string) => { notifications.push({ text, level }); },
+    },
+    notifications,
+  };
+}
+
+describe("handleScan — handler integration", () => {
+  test("creates .planning/codebase/ directory", async (t) => {
+    const tmpDir = makeTmpDir();
+    const origCwd = process.cwd();
+    process.chdir(tmpDir);
+    t.after(() => { process.chdir(origCwd); });
+
+    const pi = makeMockPi();
+    const ctx = makeMockCtx();
+
+    await handleScan("", ctx as never, pi as never);
+
+    assert.ok(existsSync(join(tmpDir, ".planning", "codebase")));
+  });
+
+  test("calls pi.sendMessage with triggerTurn: true", async (t) => {
+    const tmpDir = makeTmpDir();
+    const origCwd = process.cwd();
+    process.chdir(tmpDir);
+    t.after(() => { process.chdir(origCwd); });
+
+    const pi = makeMockPi();
+    const ctx = makeMockCtx();
+
+    await handleScan("", ctx as never, pi as never);
+
+    assert.equal(pi.calls.length, 1);
+    const opts = pi.calls[0].opts as { triggerTurn: boolean };
+    assert.equal(opts.triggerTurn, true);
+  });
+
+  test("default focus dispatches tech+arch documents", async (t) => {
+    const tmpDir = makeTmpDir();
+    const origCwd = process.cwd();
+    process.chdir(tmpDir);
+    t.after(() => { process.chdir(origCwd); });
+
+    const pi = makeMockPi();
+    const ctx = makeMockCtx();
+
+    await handleScan("", ctx as never, pi as never);
+
+    const msg = pi.calls[0].msg as { content: string };
+    // The "Documents to produce" line lists exactly the active documents
+    assert.ok(
+      msg.content.includes("Documents to produce:** STACK, INTEGRATIONS, ARCHITECTURE, STRUCTURE"),
+      "prompt documents line should list tech+arch docs",
+    );
+  });
+
+  test("--focus quality dispatches only CONVENTIONS and TESTING", async (t) => {
+    const tmpDir = makeTmpDir();
+    const origCwd = process.cwd();
+    process.chdir(tmpDir);
+    t.after(() => { process.chdir(origCwd); });
+
+    const pi = makeMockPi();
+    const ctx = makeMockCtx();
+
+    await handleScan("--focus quality", ctx as never, pi as never);
+
+    const msg = pi.calls[0].msg as { content: string };
+    // The "Documents to produce" line must list exactly CONVENTIONS and TESTING
+    assert.ok(
+      msg.content.includes("Documents to produce:** CONVENTIONS, TESTING"),
+      "prompt documents line should list only quality docs",
+    );
+    // The focus reinforcement line must also reflect quality
+    assert.ok(
+      msg.content.includes("relevant: **CONVENTIONS, TESTING**"),
+      "focus reinforcement line should name only quality docs",
+    );
+  });
+
+  test("notifies user with the active focus before dispatch", async (t) => {
+    const tmpDir = makeTmpDir();
+    const origCwd = process.cwd();
+    process.chdir(tmpDir);
+    t.after(() => { process.chdir(origCwd); });
+
+    const pi = makeMockPi();
+    const ctx = makeMockCtx();
+
+    await handleScan("--focus concerns", ctx as never, pi as never);
+
+    const infoNote = ctx.notifications.find((n) => n.level === "info");
+    assert.ok(infoNote, "should emit an info notification");
+    assert.ok(infoNote.text.includes("concerns"), "notification should mention the active focus");
+  });
+
+  test("warns when documents already exist", async (t) => {
+    const tmpDir = makeTmpDir();
+    const origCwd = process.cwd();
+    process.chdir(tmpDir);
+    t.after(() => { process.chdir(origCwd); });
+
+    // Pre-create one of the output documents
+    const codesbaseDir = join(tmpDir, ".planning", "codebase");
+    mkdirSync(codesbaseDir, { recursive: true });
+    writeFileSync(join(codesbaseDir, "STACK.md"), "# existing");
+
+    const pi = makeMockPi();
+    const ctx = makeMockCtx();
+
+    await handleScan("--focus tech", ctx as never, pi as never);
+
+    const warning = ctx.notifications.find((n) => n.level === "warning");
+    assert.ok(warning, "should warn about existing documents");
+    assert.ok(warning.text.includes("STACK.md"), "warning should name the existing file");
   });
 });
