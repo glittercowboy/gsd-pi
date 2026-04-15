@@ -149,18 +149,6 @@ jobs:
             nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-
             nextjs-${{ runner.os }}-
 
-      - name: Cache TypeScript incremental state
-        uses: useblacksmith/cache@v5
-        with:
-          path: |
-            *.tsbuildinfo
-            packages/*/*.tsbuildinfo
-            dist
-            packages/*/dist
-          key: tsbuild-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig*.json', 'packages/*/tsconfig.json', 'src/**/*.ts', 'packages/*/src/**/*.ts') }}
-          restore-keys: |
-            tsbuild-${{ runner.os }}-
-
       - name: Build core
         run: npm run build:core
 
@@ -218,18 +206,6 @@ jobs:
             nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-
             nextjs-${{ runner.os }}-
 
-      - name: Cache TypeScript incremental state
-        uses: useblacksmith/cache@v5
-        with:
-          path: |
-            *.tsbuildinfo
-            packages/*/*.tsbuildinfo
-            dist
-            packages/*/dist
-          key: tsbuild-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig*.json', 'packages/*/tsconfig.json', 'src/**/*.ts', 'packages/*/src/**/*.ts') }}
-          restore-keys: |
-            tsbuild-${{ runner.os }}-
-
       - name: Build core
         run: npm run build:core
 
@@ -256,18 +232,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Cache TypeScript incremental state
-        uses: useblacksmith/cache@v5
-        with:
-          path: |
-            *.tsbuildinfo
-            packages/*/*.tsbuildinfo
-            dist
-            packages/*/dist
-          key: tsbuild-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig*.json', 'packages/*/tsconfig.json', 'src/**/*.ts', 'packages/*/src/**/*.ts') }}
-          restore-keys: |
-            tsbuild-${{ runner.os }}-
 
       - name: Build core
         run: npm run build:core

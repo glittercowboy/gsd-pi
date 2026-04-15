@@ -200,16 +200,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Cache TypeScript incremental state
-        uses: useblacksmith/cache@v5
-        with:
-          path: |
-            *.tsbuildinfo
-            packages/*/*.tsbuildinfo
-          key: tsbuild-${{ runner.os }}-${{ hashFiles('package-lock.json', 'tsconfig*.json', 'packages/*/tsconfig.json') }}
-          restore-keys: |
-            tsbuild-${{ runner.os }}-
-
       - name: Build
         run: npm run build
 
