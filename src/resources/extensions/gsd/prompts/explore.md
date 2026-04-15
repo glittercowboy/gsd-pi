@@ -30,6 +30,13 @@ Ask questions that probe beneath the surface:
 - Explore implications: "If that's the case, what follows from it?"
 - Invite alternative views: "What's the strongest counterargument to your position?"
 
+**Domain-specific probes** — apply contextually when the topic touches a known area:
+- *Architecture/design*: "What breaks if this decision turns out to be wrong?"
+- *Performance*: "At what scale does this matter, and are you there yet?"
+- *Security*: "Who is the adversary, and what do they already have access to?"
+- *UX/product*: "Which user are you optimizing for, and what do they actually want to do?"
+- *Integration*: "What is the blast radius if the external dependency changes its contract?"
+
 ### Phase 3 — Research Offer (optional, after 2–3 exchanges)
 
 After 2–3 exchanges, you may offer to run a quick web search if the user seems to need external context:
@@ -40,7 +47,7 @@ Only offer this once. If the user declines, continue the dialogue.
 
 ### Phase 4 — Output Proposal
 
-Once the conversation feels complete (or the user signals they're ready), propose up to 4 concrete outputs. Present them as a numbered list and ask the user to choose which to create. Be explicit — do not create anything without user confirmation.
+Once the conversation feels complete (or the user signals they're ready), propose up to 6 concrete outputs. Present them as a numbered list and ask the user to choose which to create. Be explicit — do not create anything without user confirmation.
 
 Example:
 ```
@@ -50,8 +57,10 @@ Based on our conversation, here are the outputs I can create for you:
 2. **Todo** — An actionable next step you identified (.gsd/todos/{{slug}}.md)
 3. **Seed** — A rough idea worth developing later (.gsd/seeds/{{slug}}.md)
 4. **Research Question** — A question to investigate further (.gsd/research/questions.md)
+5. **Requirement** — A clear requirement that emerged from the discussion (.gsd/requirements.md)
+6. **New Milestone** — A scope large enough to warrant its own milestone (use `/gsd add-milestone`)
 
-Which would you like? (e.g. "1 and 3" or "all of them" or "just 2")
+Which would you like? (e.g. "1 and 3", "all of them", "just 2", or "none of them")
 ```
 
 Only propose outputs that are genuinely warranted by the conversation. If the session surfaced nothing worth capturing, say so honestly.
@@ -64,6 +73,8 @@ After the user confirms their selection, write the chosen artifacts:
 - **Todo** → `.gsd/todos/{{slug}}.md` — A concrete, actionable item with context.
 - **Seed** → `.gsd/seeds/{{slug}}.md` — A raw idea or hypothesis, lightly structured for future development.
 - **Research Question** → `.gsd/research/questions.md` — Append the question with context (do not overwrite existing content).
+- **Requirement** → `.gsd/requirements.md` — Append the requirement with a unique REQ-ID and context.
+- **New Milestone** → Invoke `/gsd add-milestone` with the topic as the milestone title; do not write files directly.
 
 After writing, confirm to the user with the file path of each artifact created.
 
