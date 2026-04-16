@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from "@gsd/pi-agent-core";
-import type { AssistantMessage, Model, Usage } from "@gsd/pi-ai";
+import type { Api, AssistantMessage, Model, Usage } from "@gsd/pi-ai";
 import { completeSimple } from "@gsd/pi-ai";
 // COMPACTION_KEEP_RECENT_TOKENS and COMPACTION_RESERVE_TOKENS were removed from
 // the @gsd/pi-coding-agent 0.67.2 public API. Phase 09 moves these to @gsd/agent-types.
@@ -296,6 +296,8 @@ function findValidCutPoints(entries: SessionEntry[], startIndex: number, endInde
 			case "custom":
 			case "custom_message":
 			case "label":
+			case "session_info":
+				break;
 		}
 		// branch_summary and custom_message are user-role messages, valid cut points
 		if (entry.type === "branch_summary" || entry.type === "custom_message") {
@@ -539,7 +541,7 @@ type CompleteFn = typeof completeSimple;
  */
 export async function generateSummary(
 	currentMessages: AgentMessage[],
-	model: Model<any>,
+	model: Model<Api>,
 	reserveTokens: number,
 	apiKey: string | undefined,
 	signal?: AbortSignal,
@@ -557,7 +559,6 @@ export async function generateSummary(
 
 	// Overhead for the prompt framing, system prompt, and response budget
 	const promptOverhead = 4_000;
-	const maxTokens = Math.floor(0.8 * reserveTokens);
 	const maxInputTokens = (model.contextWindow || 200_000) - reserveTokens - promptOverhead;
 
 	// If messages fit in the context window, use single-pass summarization
@@ -594,7 +595,7 @@ export async function generateSummary(
  */
 async function singlePassSummary(
 	currentMessages: AgentMessage[],
-	model: Model<any>,
+	model: Model<Api>,
 	reserveTokens: number,
 	apiKey: string | undefined,
 	signal?: AbortSignal,
@@ -759,7 +760,7 @@ Be concise. Focus on what's needed to understand the kept suffix.`;
  */
 export async function compact(
 	preparation: CompactionPreparation,
-	model: Model<any>,
+	model: Model<Api>,
 	apiKey: string | undefined,
 	customInstructions?: string,
 	signal?: AbortSignal,
@@ -830,7 +831,7 @@ export async function compact(
  */
 async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
-	model: Model<any>,
+	model: Model<Api>,
 	reserveTokens: number,
 	apiKey: string | undefined,
 	signal?: AbortSignal,

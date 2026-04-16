@@ -12,7 +12,7 @@
  */
 
 import type { Agent } from "@gsd/pi-agent-core";
-import type { AssistantMessage, Model } from "@gsd/pi-ai";
+import type { Api, AssistantMessage, Model } from "@gsd/pi-ai";
 import { isContextOverflow } from "@gsd/pi-ai";
 import type { FallbackResolver } from "./fallback-resolver.js";
 import type { ModelRegistry } from "@gsd/agent-types";
@@ -48,7 +48,7 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 
 /** Minimal ModelRegistry surface needed by RetryHandler. */
 interface ModelRegistryWithAuth extends ModelRegistry {
-	find(provider: string, modelId: string): Model<any> | undefined;
+	find(provider: string, modelId: string): Model<Api> | undefined;
 }
 
 /** Dependencies injected from AgentSession into RetryHandler */
@@ -57,11 +57,11 @@ export interface RetryHandlerDeps {
 	readonly settingsManager: SettingsManager;
 	readonly modelRegistry: ModelRegistryWithAuth;
 	readonly fallbackResolver: FallbackResolver;
-	getModel: () => Model<any> | undefined;
+	getModel: () => Model<Api> | undefined;
 	getSessionId: () => string;
 	emit: (event: AgentSessionEvent) => void;
 	/** Called when the retry handler switches to a fallback model */
-	onModelChange: (model: Model<any>) => void;
+	onModelChange: (model: Model<Api>) => void;
 	/** Optional: check if the claude-code CLI provider is ready (installed + authed).
 	 * Injected from the app layer to preserve package boundary. */
 	isClaudeCodeReady?: () => boolean;

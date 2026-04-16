@@ -10,7 +10,7 @@
  */
 
 import type { Agent } from "@gsd/pi-agent-core";
-import type { AssistantMessage, Model } from "@gsd/pi-ai";
+import type { Api, AssistantMessage, Model } from "@gsd/pi-ai";
 import { isContextOverflow } from "@gsd/pi-ai";
 import {
 	type CompactionResult,
@@ -55,7 +55,7 @@ export interface CompactionOrchestratorDeps {
 	readonly sessionManager: SessionManager;
 	readonly settingsManager: SettingsManager;
 	readonly modelRegistry: ModelRegistryWithReadiness;
-	getModel: () => Model<any> | undefined;
+	getModel: () => Model<Api> | undefined;
 	getSessionId: () => string;
 	getExtensionRunner: () => ExtensionRunner | undefined;
 	emit: (event: AgentSessionEvent) => void;

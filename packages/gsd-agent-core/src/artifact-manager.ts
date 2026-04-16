@@ -4,7 +4,7 @@
  * Artifacts are stored in a directory alongside the session file,
  * accessible via artifact:// URLs.
  */
-import { mkdirSync, readdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 /**

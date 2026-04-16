@@ -23,12 +23,11 @@ import type {
 	AgentTool,
 	ThinkingLevel,
 } from "@gsd/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@gsd/pi-ai";
+import type { Api, AssistantMessage, ImageContent, Message, Model, TextContent } from "@gsd/pi-ai";
 import { modelsAreEqual, resetApiProviders, supportsXhigh } from "@gsd/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { getDocsPath, getAgentDir } from "@gsd/pi-coding-agent";
 import { getThemeByName, stripFrontmatter } from "@gsd/pi-coding-agent";
-import type { Theme } from "@gsd/agent-types";
 
 /** Extract a human-readable error message from an unknown thrown value. */
 function getErrorMessage(e: unknown): string {
@@ -44,19 +43,14 @@ import {
 } from "./compaction/index.js";
 import { CompactionOrchestrator } from "./compaction-orchestrator.js";
 import { DEFAULT_THINKING_LEVEL } from "@gsd/pi-coding-agent";
-import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
+import { exportSessionToHtml } from "./export-html/index.js";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
 import {
-	type AgentEndEvent,
-	type AgentStartEvent,
 	type ContextUsage,
 	type ExtensionCommandContextActions,
 	ExtensionRunner,
 	type ExtensionUIContext,
 	type InputSource,
-	type SessionBeforeForkEvent,
-	type SessionBeforeSwitchEvent,
-	type SessionBeforeTreeEvent,
 	type ToolDefinition,
 	type ToolInfo,
 	type TurnEndEvent,
@@ -74,6 +68,7 @@ import type { ModelRegistry } from "@gsd/agent-types";
 import { expandPromptTemplate } from "@gsd/pi-coding-agent";
 import type { PromptTemplate } from "@gsd/agent-types";
 import type { ResourceExtensionPaths, ResourceLoader } from "@gsd/agent-types";
+import type { Skill } from "@gsd/agent-types";
 import { RetryHandler } from "./retry-handler.js";
 import { isImageDimensionError, downsizeConversationImages } from "./image-overflow-recovery.js";
 import type { BranchSummaryEntry, SessionManager } from "@gsd/agent-types";
@@ -267,7 +262,7 @@ export interface AgentSessionConfig {
 	settingsManager: SettingsManager;
 	cwd: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
-	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	scopedModels?: Array<{ model: Model<Api>; thinkingLevel?: ThinkingLevel }>;
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -306,7 +301,7 @@ export interface PromptOptions {
 
 /** Result from cycleModel() */
 export interface ModelCycleResult {
-	model: Model<any>;
+	model: Model<Api>;
 	thinkingLevel: ThinkingLevel;
 	/** Whether cycling through scoped models (--models flag) or all available */
 	isScoped: boolean;
@@ -350,7 +345,7 @@ export class AgentSession {
 	readonly sessionManager: SessionManager;
 	readonly settingsManager: SettingsManager;
 
-	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private _scopedModels: Array<{ model: Model<Api>; thinkingLevel?: ThinkingLevel }>;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -982,6 +977,7 @@ export class AgentSession {
 		// vendor-seam: dual-module-path — AgentSessionRuntime does not expose a public
 		// createRuntime setter. Required for one-shot init to factory transition.
 		// Bounded to this single call site.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- vendor-seam: dual-module-path, no public setter available
 		(this._runtime as any /* vendor-seam: dual-module-path */)["createRuntime"] = factory;
 
 		return this._runtime;
@@ -1046,7 +1042,7 @@ export class AgentSession {
 	}
 
 	/** Current model (may be undefined if not yet selected) */
-	get model(): Model<any> | undefined {
+	get model(): Model<Api> | undefined {
 		return this.agent.state.model;
 	}
 
@@ -1187,12 +1183,12 @@ export class AgentSession {
 	}
 
 	/** Scoped models for cycling (from --models flag) */
-	get scopedModels(): ReadonlyArray<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> {
+	get scopedModels(): ReadonlyArray<{ model: Model<Api>; thinkingLevel?: ThinkingLevel }> {
 		return this._scopedModels;
 	}
 
 	/** Update scoped models for cycling */
-	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>): void {
+	setScopedModels(scopedModels: Array<{ model: Model<Api>; thinkingLevel?: ThinkingLevel }>): void {
 		this._scopedModels = scopedModels;
 	}
 
@@ -1225,7 +1221,7 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
-	private _findSkillByName(skillName: string) {
+	private _findSkillByName(skillName: string): Skill | undefined {
 		return this.resourceLoader.getSkills().skills.find((skill) => skill.name === skillName);
 	}
 
@@ -1831,7 +1827,7 @@ export class AgentSession {
 		// Snapshot state before transition so listeners and message queues survive (D-14).
 		const snapshot = this._snapshotState();
 
-		const previousSessionFile = this.sessionFile;
+		const _previousSessionFile = this.sessionFile;
 
 		// Emit session_before_switch event with reason "new" (can be cancelled)
 		if (this._extensionRunner?.hasHandlers("session_before_switch")) {
@@ -1883,8 +1879,8 @@ export class AgentSession {
 	// =========================================================================
 
 	private async _emitModelSelect(
-		nextModel: Model<any>,
-		previousModel: Model<any> | undefined,
+		nextModel: Model<Api>,
+		previousModel: Model<Api> | undefined,
 		source: "set" | "cycle" | "restore",
 	): Promise<void> {
 		if (!this._extensionRunner) return;
@@ -1902,7 +1898,7 @@ export class AgentSession {
 	 * re-clamp thinking level, and emit the model_select event.
 	 */
 	private async _applyModelChange(
-		model: Model<any>,
+		model: Model<Api>,
 		thinkingLevel: ThinkingLevel,
 		source: "set" | "cycle" | "restore",
 		options?: { persist?: boolean },
@@ -1927,7 +1923,7 @@ export class AgentSession {
 	 * Validates provider readiness, saves to session and settings.
 	 * @throws Error if provider is not ready (missing credentials for apiKey/oauth providers)
 	 */
-	async setModel(model: Model<any>, options?: { persist?: boolean }): Promise<void> {
+	async setModel(model: Model<Api>, options?: { persist?: boolean }): Promise<void> {
 		if (!this._modelRegistry.isProviderRequestReady(model.provider)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
@@ -1949,7 +1945,7 @@ export class AgentSession {
 		return this._cycleAvailableModel(direction, options);
 	}
 
-	private _getReadyScopedModels(): Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> {
+	private _getReadyScopedModels(): Array<{ model: Model<Api>; thinkingLevel?: ThinkingLevel }> {
 		return this._scopedModels.filter((scoped) =>
 			this._modelRegistry.isProviderRequestReady(scoped.model.provider),
 		);
@@ -2630,7 +2626,7 @@ export class AgentSession {
 		// Snapshot state before transition so listeners and message queues survive (D-14).
 		const snapshot = this._snapshotState();
 
-		const previousSessionFile = this.sessionManager.getSessionFile();
+		const _previousSessionFile = this.sessionManager.getSessionFile();
 
 		// Emit session_before_switch event (can be cancelled)
 		if (this._extensionRunner?.hasHandlers("session_before_switch")) {
@@ -2720,7 +2716,7 @@ export class AgentSession {
 		// Snapshot state before transition so listeners and message queues survive (D-14).
 		const snapshot = this._snapshotState();
 
-		const previousSessionFile = this.sessionFile;
+		const _previousSessionFile = this.sessionFile;
 		const selectedEntry = this.sessionManager.getEntry(entryId);
 
 		if (!selectedEntry || selectedEntry.type !== "message" || selectedEntry.message.role !== "user") {
@@ -3117,16 +3113,17 @@ export class AgentSession {
 
 		// Resolve the current theme instance; fall back to "dark" if the named theme is unavailable.
 		// getThemeByName("dark") always resolves since "dark" is a builtin theme.
-		// eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 		const currentTheme = ((themeName ? getThemeByName(themeName) : undefined) ?? getThemeByName("dark"))!;
 
 		// Create tool renderer for extension and built-in tool HTML rendering
 		// vendor-seam: dual-module-path — Theme resolves to @gsd/pi-coding-agent/dist in
 		// createToolHtmlRenderer but @gsd/pi-coding-agent/src here. Structural mismatch;
 		// no fix without pi-mono changes.
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any -- vendor-seam: dual-module-path Theme mismatch
+		const themedArg = currentTheme as any; /* vendor-seam: dual-module-path */
 		const toolRenderer = createToolHtmlRenderer({
 			getToolDefinition: (name) => this.getRenderableToolDefinition(name),
-			theme: currentTheme as any /* vendor-seam: dual-module-path */,
+			theme: themedArg,
 		});
 
 		return await exportSessionToHtml(this.sessionManager, this.state, {

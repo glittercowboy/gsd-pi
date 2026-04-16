@@ -46,8 +46,8 @@ function color256ToHex(index: number): string {
 		const r = Math.floor(cubeIndex / 36);
 		const g = Math.floor((cubeIndex % 36) / 6);
 		const b = cubeIndex % 6;
-		const toComponent = (n: number) => (n === 0 ? 0 : 55 + n * 40);
-		const toHex = (n: number) => toComponent(n).toString(16).padStart(2, "0");
+		const toComponent = (n: number): number => (n === 0 ? 0 : 55 + n * 40);
+		const toHex = (n: number): string => toComponent(n).toString(16).padStart(2, "0");
 		return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 	}
 
@@ -190,6 +190,7 @@ function applySgrCode(params: number[], style: TextStyle): void {
 }
 
 // Match ANSI escape sequences: ESC[ followed by params and ending with 'm'
+// eslint-disable-next-line no-control-regex -- intentional: matching ANSI escape sequences
 const ANSI_REGEX = /\x1b\[([\d;]*)m/g;
 
 /**

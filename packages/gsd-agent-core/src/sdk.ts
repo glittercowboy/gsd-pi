@@ -20,7 +20,7 @@ export class CredentialCooldownError extends Error {
 	}
 }
 import { Agent, type AgentMessage, type ThinkingLevel } from "@gsd/pi-agent-core";
-import type { Message, Model } from "@gsd/pi-ai";
+import type { Api, Message, Model } from "@gsd/pi-ai";
 import { getAgentDir, getDocsPath } from "@gsd/pi-coding-agent";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "@gsd/pi-coding-agent";
@@ -70,11 +70,11 @@ export interface CreateAgentSessionOptions {
 	modelRegistry?: ModelRegistry;
 
 	/** Model to use. Default: from settings, else first available */
-	model?: Model<any>;
+	model?: Model<Api>;
 	/** Thinking level. Default: from settings, else 'medium' (clamped to model capabilities) */
 	thinkingLevel?: ThinkingLevel;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
-	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	scopedModels?: Array<{ model: Model<Api>; thinkingLevel?: ThinkingLevel }>;
 
 	/** Built-in tools to use. Default: codingTools [read, bash, edit, write] */
 	tools?: Tool[];
@@ -290,8 +290,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		? options.tools.map((t) => t.name).filter((n): n is ToolName => n in allTools)
 		: defaultActiveToolNames;
 
-	let agent: Agent;
-
 	// Create convertToLlm wrapper that filters images if blockImages is enabled (defense-in-depth)
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] => {
 		const converted = convertToLlm(messages);
@@ -331,7 +329,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
-	agent = new Agent({
+	const agent = new Agent({
 		initialState: {
 			systemPrompt: "",
 			model,
@@ -339,7 +337,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
-		onPayload: async (payload, currentModel) => {
+		onPayload: async (payload, _currentModel) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("before_provider_request")) {
 				return payload;

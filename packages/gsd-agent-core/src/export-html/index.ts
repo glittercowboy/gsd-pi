@@ -60,7 +60,7 @@ function parseColor(color: string): { r: number; g: number; b: number } | undefi
 
 /** Calculate relative luminance of a color (0-1, higher = lighter). */
 function getLuminance(r: number, g: number, b: number): number {
-	const toLinear = (c: number) => {
+	const toLinear = (c: number): number => {
 		const s = c / 255;
 		return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
 	};
@@ -71,7 +71,7 @@ function getLuminance(r: number, g: number, b: number): number {
 function adjustBrightness(color: string, factor: number): string {
 	const parsed = parseColor(color);
 	if (!parsed) return color;
-	const adjust = (c: number) => Math.min(255, Math.max(0, Math.round(c * factor)));
+	const adjust = (c: number): number => Math.min(255, Math.max(0, Math.round(c * factor)));
 	return `rgb(${adjust(parsed.r)}, ${adjust(parsed.g)}, ${adjust(parsed.b)})`;
 }
 

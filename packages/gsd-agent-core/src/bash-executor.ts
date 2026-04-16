@@ -37,6 +37,7 @@ import { getShellConfig, getShellEnv, killProcessTree, DEFAULT_MAX_BYTES, trunca
 // Phase 09: move to @gsd/agent-types or inline permanently.
 function sanitizeCommand(cmd: string): string {
 	// Remove null bytes and ASCII control characters (except newline/tab which are valid in scripts)
+	// eslint-disable-next-line no-control-regex -- intentional: sanitizing shell command input
 	return cmd.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
 }
 import type { BashOperations } from "@gsd/agent-types";
@@ -120,7 +121,7 @@ export function executeBash(command: string, options?: BashExecutorOptions & { l
 		let totalBytes = 0;
 
 		// Handle abort signal
-		const abortHandler = () => {
+		const abortHandler = (): void => {
 			if (child.pid) {
 				killProcessTree(child.pid);
 			}
@@ -132,7 +133,7 @@ export function executeBash(command: string, options?: BashExecutorOptions & { l
 
 		let streamState: StreamState | undefined;
 
-		const handleData = (data: Buffer) => {
+		const handleData = (data: Buffer): void => {
 			totalBytes += data.length;
 
 			// Single-pass native processing: UTF-8 decode + ANSI strip + binary sanitize + CR removal
@@ -235,7 +236,7 @@ export async function executeBashWithOperations(
 
 	let streamState2: StreamState | undefined;
 
-	const onData = (data: Buffer) => {
+	const onData = (data: Buffer): void => {
 		totalBytes += data.length;
 
 		// Single-pass native processing: UTF-8 decode + ANSI strip + binary sanitize + CR removal

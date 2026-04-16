@@ -123,6 +123,7 @@ export function getMessageFromEntry(entry: SessionEntry, skipToolResults = false
 		case "model_change":
 		case "custom":
 		case "label":
+		case "session_info":
 			return undefined;
 	}
 }

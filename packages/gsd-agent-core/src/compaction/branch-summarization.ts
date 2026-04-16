@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from "@gsd/pi-agent-core";
-import type { Model } from "@gsd/pi-ai";
+import type { Api, Model } from "@gsd/pi-ai";
 import { completeSimple } from "@gsd/pi-ai";
 import { convertToLlm } from "@gsd/pi-coding-agent";
 import type { SessionEntry } from "@gsd/agent-types";
@@ -73,7 +73,7 @@ export interface CollectEntriesResult {
 
 export interface GenerateBranchSummaryOptions {
 	/** Model to use for summarization */
-	model: Model<any>;
+	model: Model<Api>;
 	/** API key for the model. Undefined for externalCli/none providers. */
 	apiKey: string | undefined;
 	/** Abort signal for cancellation */
