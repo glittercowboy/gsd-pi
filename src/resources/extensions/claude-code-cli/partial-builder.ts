@@ -16,8 +16,30 @@ import type {
 	Usage,
 	WebSearchResultContent,
 } from "@gsd/pi-ai";
-import { hasXmlParameterTags, repairToolJson } from "@gsd/pi-ai";
 import type { BetaContentBlock, BetaRawMessageStreamEvent, NonNullableUsage } from "./sdk-types.js";
+
+// ---------------------------------------------------------------------------
+// XML parameter tag utilities (inline replacements for removed pi-ai symbols)
+// ---------------------------------------------------------------------------
+
+/**
+ * Detects XML-wrapped parameter tags in streaming tool call JSON.
+ * Replaces removed pi-ai utility (removed in pi 0.67.2).
+ * T-10-05: regex only detects tag presence; does not evaluate content.
+ */
+function hasXmlParameterTags(s: string): boolean {
+	return /<parameters[\s>]/i.test(s);
+}
+
+/**
+ * Extracts JSON content from XML parameter wrapper.
+ * Replaces removed pi-ai utility (removed in pi 0.67.2).
+ * T-10-05: extracts text content only, no evaluation.
+ */
+function repairToolJson(s: string): string {
+	const m = /<parameters[^>]*>([\s\S]*?)<\/parameters>/i.exec(s);
+	return m ? m[1].trim() : s;
+}
 
 // ---------------------------------------------------------------------------
 // MCP tool name parsing
