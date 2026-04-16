@@ -11,7 +11,7 @@ Five sequential phases upgrade vendored pi-mono packages from 0.57.1 to 0.67.2, 
 - [x] **Phase 07: Vendor Swap** - Replace all four pi-mono 0.57.1 source trees with 0.67.2 and achieve a compiling workspace (completed 2026-04-16)
 - [x] **Phase 08: Breaking API Migrations** - Migrate session API, ModelRegistry, and edit tool callers to 0.67.2 contracts (completed 2026-04-16)
 - [ ] **Phase 09: @gsd/agent-types Package** - Create shared type package to break the pi-coding-agent ↔ gsd-agent-core/gsd-agent-modes circular dep
-- [x] **Phase 10: TypeScript Strict + Zero Any** - Enforce strict: true, eliminate all `any`, add exhaustive union checks, fix all test failures (completed 2026-04-16)
+- [ ] **Phase 10: TypeScript Strict + Zero Any** - Enforce strict: true, eliminate all `any`, add exhaustive union checks, fix all test failures (gap closure in progress)
 - [ ] **Phase 11: Integration and Release** - Clean build exits 0, all tests pass, version bumped to 2.8.0, PR #4282 updated
 
 ## Phase Details
@@ -75,7 +75,7 @@ Plans:
   2. `grep -r ": any\b\|as any\b\| any;" packages/gsd-agent-core/src/ packages/gsd-agent-modes/src/ packages/gsd-agent-types/src/` returns zero matches
   3. `npm run test:unit && npm run test:packages` exits 0 with zero failing tests (both pre-existing failures and new ones resolved)
   4. Every switch/if-else chain over a union type in GSD packages contains a `never` exhaustive check (verifiable via grep for union type names lacking a default branch)
-**Plans:** 7/7 plans complete
+**Plans:** 10 plans (7 complete + 3 gap closure)
 
 Plans:
 - [x] 10-01-PLAN.md — Vendor patches (isToolResultEventType, getEditorKeybindings) + assertNever + @gsd/agent-types type additions
@@ -85,6 +85,9 @@ Plans:
 - [x] 10-05-PLAN.md — GSD any elimination: agent-session.ts casts + dual-module-path TS2345 fix + tsc gate
 - [x] 10-06-PLAN.md — Test suite refactoring: security-overrides.test.ts + tui-running-and-success-box.test.ts
 - [x] 10-07-PLAN.md — ESLint install + config + CI pi-* protection + final Phase 10 gates
+- [ ] 10-08-PLAN.md — Gap closure: vendor patches (editorKey, ProcessTerminal.isTTY, repairToolJson) to fix 244 test failures
+- [ ] 10-09-PLAN.md — Gap closure: any elimination in gsd-agent-modes components/controllers (49 occurrences)
+- [ ] 10-10-PLAN.md — Gap closure: ESLint green pass (unused-vars, return-types, switch-exhaustiveness, remaining any)
 
 ### Phase 11: Integration and Release
 **Goal**: A clean-state build from scratch exits 0, the installed binary reports version 2.8.0, and PR #4282 is updated with a description of all v1.1 changes.
@@ -129,5 +132,5 @@ Plans:
 | 7. Vendor Swap | 6/6 | Complete | 2026-04-16 |
 | 8. Breaking API Migrations | 7/7 | Complete | 2026-04-16 |
 | 9. @gsd/agent-types Package | 0/3 | Planning complete | - |
-| 10. TypeScript Strict + Zero Any | 7/7 | Complete   | 2026-04-16 |
+| 10. TypeScript Strict + Zero Any | 7/10 | Gap closure | - |
 | 11. Integration and Release | 0/? | Not started | - |
