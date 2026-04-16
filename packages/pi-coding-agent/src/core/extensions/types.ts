@@ -855,6 +855,38 @@ export function isToolCallEventType(toolName: string, event: ToolCallEvent): boo
 	return event.toolName === toolName;
 }
 
+/**
+ * Type guard for narrowing ToolResultEvent by tool name.
+ *
+ * Built-in tools narrow automatically (no type params needed):
+ * ```ts
+ * if (isToolResultEventType("bash", event)) {
+ *   event.details?.exitCode;  // typed
+ * }
+ * ```
+ *
+ * Custom tools require explicit type parameters:
+ * ```ts
+ * if (isToolResultEventType<"my_tool", MyToolOutput>("my_tool", event)) {
+ *   // narrowed to CustomToolResultEvent
+ * }
+ * ```
+ */
+export function isToolResultEventType(toolName: "bash", event: ToolResultEvent): event is BashToolResultEvent;
+export function isToolResultEventType(toolName: "read", event: ToolResultEvent): event is ReadToolResultEvent;
+export function isToolResultEventType(toolName: "edit", event: ToolResultEvent): event is EditToolResultEvent;
+export function isToolResultEventType(toolName: "write", event: ToolResultEvent): event is WriteToolResultEvent;
+export function isToolResultEventType(toolName: "grep", event: ToolResultEvent): event is GrepToolResultEvent;
+export function isToolResultEventType(toolName: "find", event: ToolResultEvent): event is FindToolResultEvent;
+export function isToolResultEventType(toolName: "ls", event: ToolResultEvent): event is LsToolResultEvent;
+export function isToolResultEventType<TName extends string, TOutput>(
+	toolName: TName,
+	event: ToolResultEvent,
+): event is CustomToolResultEvent;
+export function isToolResultEventType(toolName: string, event: ToolResultEvent): boolean {
+	return event.toolName === toolName;
+}
+
 /** Union of all event types */
 export type ExtensionEvent =
 	| ResourcesDiscoverEvent

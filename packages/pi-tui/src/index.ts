@@ -44,6 +44,7 @@ export {
 	setKeybindings,
 	TUI_KEYBINDINGS,
 } from "./keybindings.js";
+export { getKeybindings as getEditorKeybindings } from "./keybindings.js";
 // Keyboard input handling
 export {
 	decodeKittyPrintable,
