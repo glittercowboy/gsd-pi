@@ -26,5 +26,6 @@
   },
   "optionalDependencies": {
     "koffi": "^2.9.0"
-  }
+  },
+  "piVersion": "0.67.2"
 }

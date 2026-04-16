@@ -2,16 +2,13 @@ import type { TUI } from "../tui.js";
 import { Text } from "./text.js";
 
 /**
- * Loader component that updates every 80ms with spinning animation.
- * Frame rotation is isolated from message text to avoid invalidating
- * Text's render cache (wrapTextWithAnsi, visibleWidth) on every tick.
+ * Loader component that updates every 80ms with spinning animation
  */
 export class Loader extends Text {
 	private frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 	private currentFrame = 0;
 	private intervalId: NodeJS.Timeout | null = null;
 	private ui: TUI | null = null;
-	private _lastMessage: string = "";
 
 	constructor(
 		ui: TUI,
@@ -25,38 +22,15 @@ export class Loader extends Text {
 	}
 
 	render(width: number): string[] {
-		// Only update Text content when message actually changes —
-		// frame rotation is prepended below without touching the cache
-		if (this.message !== this._lastMessage) {
-			this.setText(this.messageColorFn(this.message));
-			this._lastMessage = this.message;
-		}
-		const messageLines = super.render(width);
-		// Shallow copy so we don't mutate cachedLines from Text
-		const result = ["", ...messageLines];
-		// Prepend spinner frame to first content line
-		if (result.length > 1) {
-			const frame = this.frames[this.currentFrame];
-			result[1] = this.spinnerColorFn(frame) + " " + result[1];
-		}
-		return result;
+		return ["", ...super.render(width)];
 	}
 
 	start() {
-		if (this.intervalId) {
-			clearInterval(this.intervalId);
-		}
-		this.currentFrame = 0;
+		this.updateDisplay();
 		this.intervalId = setInterval(() => {
 			this.currentFrame = (this.currentFrame + 1) % this.frames.length;
-			if (this.ui) {
-				this.ui.requestRender();
-			}
+			this.updateDisplay();
 		}, 80);
-		// Trigger initial render
-		if (this.ui) {
-			this.ui.requestRender();
-		}
 	}
 
 	stop() {
@@ -66,13 +40,14 @@ export class Loader extends Text {
 		}
 	}
 
-	dispose() {
-		this.stop();
-		this.ui = null;
-	}
-
 	setMessage(message: string) {
 		this.message = message;
+		this.updateDisplay();
+	}
+
+	private updateDisplay() {
+		const frame = this.frames[this.currentFrame];
+		this.setText(`${this.spinnerColorFn(frame)} ${this.messageColorFn(this.message)}`);
 		if (this.ui) {
 			this.ui.requestRender();
 		}
