@@ -1247,8 +1247,8 @@ describe('git-service', async () => {
 
   test('nativeAddAllWithExclusions: symlinked .gsd fallback', () => {
     // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
-    // "fatal: pathspec '...' is beyond a symbolic link". The fix falls
-    // back to `git add -u` (tracked files only), NOT `git add -A`.
+    // "fatal: pathspec '...' is beyond a symbolic link". When `.gsd` is
+    // already gitignored, the fallback should still stage untracked real files.
     const repo = initTempRepo();
 
     // Create the real .gsd directory outside the repo, then symlink it
@@ -1269,9 +1269,9 @@ describe('git-service', async () => {
     run('git commit -m "add app"', repo);
     writeFileSync(join(repo, "src/app.ts"), "export const x = 2;");
 
-    // Create an untracked file simulating large data (NOT in .gitignore)
-    // This is the key scenario: large untracked dirs that git add -A would traverse
-    createFile(repo, "data/large-model.bin", "pretend this is 10GB");
+    // Create an untracked file that should still be staged by the fallback
+    // because `.gsd` itself is already protected by .gitignore.
+    createFile(repo, "src/new-feature.ts", "export const fresh = true;");
 
     // nativeAddAllWithExclusions should NOT throw despite .gsd being a symlink
     let threw = false;
@@ -1287,12 +1287,43 @@ describe('git-service', async () => {
     const staged = run("git diff --cached --name-only", repo);
     assert.ok(staged.includes("src/app.ts"), "modified tracked file staged despite symlinked .gsd");
 
-    // CRITICAL: untracked files must NOT be staged — the symlink fallback
-    // should use `git add -u` (tracked only), not `git add -A` (all files).
-    // Using `git add -A` on a repo with large untracked data dirs hangs. (#1977)
-    assert.ok(!staged.includes("data/large-model.bin"),
-      "symlink fallback must not stage untracked files (would hang on large repos)");
+    assert.ok(staged.includes("src/new-feature.ts"),
+      "symlink fallback should still stage new real files when .gsd is gitignored");
     assert.ok(!staged.includes(".gsd"), ".gsd content not staged");
+
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(externalGsd, { recursive: true, force: true });
+  });
+
+  test('nativeAddAllWithExclusions: symlinked .gsd stays tracked-only when .gsd is not gitignored', () => {
+    const repo = initTempRepo();
+
+    const externalGsd = mkdtempSync(join(tmpdir(), "gsd-external-unignored-"));
+    mkdirSync(join(externalGsd, "activity"), { recursive: true });
+    writeFileSync(join(externalGsd, "activity", "log.jsonl"), "log data");
+    writeFileSync(join(externalGsd, "STATE.md"), "# State");
+
+    symlinkSync(externalGsd, join(repo, ".gsd"));
+
+    createFile(repo, "src/app.ts", "export const x = 1;");
+    run("git add -A", repo);
+    run('git commit -m "add app"', repo);
+    writeFileSync(join(repo, "src/app.ts"), "export const x = 2;");
+    createFile(repo, "src/new-feature.ts", "export const fresh = true;");
+
+    let threw = false;
+    try {
+      nativeAddAllWithExclusions(repo, RUNTIME_EXCLUSION_PATHS);
+    } catch (e) {
+      threw = true;
+      console.error("  unexpected error:", e);
+    }
+    assert.ok(!threw, "nativeAddAllWithExclusions does not throw with symlinked .gsd when .gsd is not gitignored");
+
+    const staged = run("git diff --cached --name-only", repo);
+    assert.ok(staged.includes("src/app.ts"), "tracked modifications still stage in the defensive fallback");
+    assert.ok(!staged.includes("src/new-feature.ts"),
+      "untracked files stay unstaged when the symlink target itself is not protected by .gitignore");
 
     rmSync(repo, { recursive: true, force: true });
     rmSync(externalGsd, { recursive: true, force: true });

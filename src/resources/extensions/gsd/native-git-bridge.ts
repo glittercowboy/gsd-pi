@@ -690,6 +690,22 @@ export function nativeAddTracked(basePath: string): void {
   gitFileExec(basePath, ["add", "-u"]);
 }
 
+function isDotGsdIgnored(basePath: string): boolean {
+  for (const path of [".gsd", ".gsd/"]) {
+    try {
+      execFileSync("git", ["check-ignore", "-q", path], {
+        cwd: basePath,
+        stdio: "pipe",
+        env: GIT_NO_PROMPT_ENV,
+      });
+      return true;
+    } catch {
+      // exit 1 means this form is not ignored; try the next variant
+    }
+  }
+  return false;
+}
+
 /**
  * Stage all files with pathspec exclusions (git add -A -- ':!pattern' ...).
  * Excluded paths are never hashed by git, preventing hangs on large
@@ -724,12 +740,12 @@ export function nativeAddAllWithExclusions(basePath: string, exclusions: readonl
       return;
     }
     // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
-    // "beyond a symbolic link". Fall back to `git add -u` which only
-    // stages changes to already-tracked files — O(tracked) not O(filesystem).
-    // Using `git add -A` here would traverse the entire working tree,
-    // hanging indefinitely on repos with large untracked data dirs. (#1977)
+    // "beyond a symbolic link". If `.gsd` is already covered by .gitignore
+    // (the default external-state layout), a plain `git add -A` safely stages
+    // new files while still leaving `.gsd` excluded. Otherwise keep the
+    // tracked-only fallback to avoid staging unexpected external-state files.
     if (stderr.includes("beyond a symbolic link")) {
-      gitFileExec(basePath, ["add", "-u"]);
+      gitFileExec(basePath, isDotGsdIgnored(basePath) ? ["add", "-A"] : ["add", "-u"]);
       return;
     }
     throw new GSDError(GSD_GIT_ERROR, `git add -A with exclusions failed in ${basePath}: ${getErrorMessage(err)}`);
