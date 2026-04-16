@@ -15,6 +15,12 @@ interface RunAutoLoopWithUokArgs {
   pi: ExtensionAPI;
   s: AutoSession;
   deps: LoopDeps;
+  runKernelLoop: (
+    ctx: ExtensionContext,
+    pi: ExtensionAPI,
+    s: AutoSession,
+    deps: LoopDeps,
+  ) => Promise<void>;
   runLegacyLoop: (
     ctx: ExtensionContext,
     pi: ExtensionAPI,
@@ -36,13 +42,15 @@ function writeParityEvent(basePath: string, event: Record<string, unknown>): voi
   }
 }
 
-function resolveKernelPathLabel(flags: ReturnType<typeof resolveUokFlags>): "uok-wrapper" | "legacy-wrapper" | "legacy-fallback" {
+function resolveKernelPathLabel(
+  flags: ReturnType<typeof resolveUokFlags>,
+): "uok-kernel" | "legacy-wrapper" | "legacy-fallback" {
   if (flags.legacyFallback) return "legacy-fallback";
-  return flags.enabled ? "uok-wrapper" : "legacy-wrapper";
+  return flags.enabled ? "uok-kernel" : "legacy-wrapper";
 }
 
 export async function runAutoLoopWithUok(args: RunAutoLoopWithUokArgs): Promise<void> {
-  const { ctx, pi, s, deps, runLegacyLoop } = args;
+  const { ctx, pi, s, deps, runKernelLoop, runLegacyLoop } = args;
   const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
   const flags = resolveUokFlags(prefs);
   setUnifiedAuditEnabled(flags.auditUnified);
@@ -83,7 +91,11 @@ export async function runAutoLoopWithUok(args: RunAutoLoopWithUokArgs): Promise<
     : deps;
 
   try {
-    await runLegacyLoop(ctx, pi, s, decoratedDeps);
+    if (flags.enabled) {
+      await runKernelLoop(ctx, pi, s, decoratedDeps);
+    } else {
+      await runLegacyLoop(ctx, pi, s, deps);
+    }
     writeParityEvent(s.basePath, {
       ts: new Date().toISOString(),
       path: resolveKernelPathLabel(flags),

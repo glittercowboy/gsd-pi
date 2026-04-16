@@ -287,7 +287,7 @@ export interface GSDPreferences {
   post_unit_hooks?: PostUnitHookConfig[];
   pre_dispatch_hooks?: PreDispatchHookConfig[];
   dynamic_routing?: DynamicRoutingConfig;
-  /** Unified Orchestration Kernel controls (all flags default off). */
+  /** Unified Orchestration Kernel controls (default-on, with opt-out and emergency legacy fallback). */
   uok?: UokPreferences;
   /** Per-model capability overrides. Deep-merged with built-in profiles for capability-aware routing (ADR-004). */
   modelOverrides?: Record<string, { capabilities?: Partial<ModelCapabilities> }>;

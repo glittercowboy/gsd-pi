@@ -1,7 +1,7 @@
 # ADR-009 Implementation Plan
 
 **Related ADR:** [ADR-009-orchestration-kernel-refactor.md](/Users/jeremymcspadden/Github/gsd-2/docs/dev/ADR-009-orchestration-kernel-refactor.md)  
-**Status:** Draft  
+**Status:** Completed (closure baseline established; emergency fallback retained)  
 **Date:** 2026-04-14  
 **Target Window:** 8-10 waves (incremental, no big-bang rewrite)
 
@@ -475,18 +475,26 @@ Mitigation: append-only raw + indexed projection + retention policies.
 
 ## Definition of Done (ADR-009)
 
-ADR-009 is complete when all are true:
+ADR-009 closure matrix (updated 2026-04-16):
 
-1. UOK path is default and stable.
-2. All units execute through unified gate runner.
-3. Model selection supports any eligible model in any phase with policy enforcement.
-4. Hooks/agents/subagents/parallel/team execution runs through one scheduler contract.
-5. Turn-level git transaction record exists for every executed turn.
-6. Unified audit events provide causal traceability across orchestration, model, tool, git, and test actions.
-7. Plan v2 can produce a complete unit graph with fail-closed plan gate.
-8. `burn-max` profile is available and policy-safe.
-9. Legacy orchestration branches are retired or behind emergency-only fallback.
-10. CLI/web/headless behavior remains user-compatible.
+| DoD Criterion | Status | Evidence |
+| --- | --- | --- |
+| 1. UOK path is default and stable. | Complete | `resolveUokFlags()` defaults UOK planes to enabled; kernel path dispatch by default in `runAutoLoopWithUok()` and `startAuto()`. (`src/resources/extensions/gsd/uok/flags.ts`, `src/resources/extensions/gsd/uok/kernel.ts`, `src/resources/extensions/gsd/auto.ts`) |
+| 2. All units execute through unified gate runner. | Complete | Shared phased loop path remains authoritative in `auto/loop.ts` (`runGuards`, `runFinalize`, phase observer telemetry). |
+| 3. Model selection supports any eligible model in any phase with policy enforcement. | Complete | ADR-009 model plane behavior is active in runtime selection/policy integration. (`src/resources/extensions/gsd/auto-model-selection.ts`, `src/resources/extensions/gsd/custom-execution-policy.ts`) |
+| 4. Hooks/agents/subagents/parallel/team execution runs through one scheduler contract. | Complete | Dispatch kind mapping + scheduler facade for `unit|hook|subagent|team-worker|verification|reprocess` in `runUnitPhaseViaContract()`. (`src/resources/extensions/gsd/auto/loop.ts`) |
+| 5. Turn-level git transaction record exists for every executed turn. | Complete | Turn observer emits git transaction stages + closeout records via UOK gitops adapter. (`src/resources/extensions/gsd/uok/loop-adapter.ts`, `src/resources/extensions/gsd/uok/gitops.ts`) |
+| 6. Unified audit events provide causal traceability across orchestration, model, tool, git, and test actions. | Complete | Unified audit envelope + emission path wired through UOK observer/kernel entry. (`src/resources/extensions/gsd/uok/audit.ts`, `src/resources/extensions/gsd/uok/kernel.ts`) |
+| 7. Plan v2 can produce a complete unit graph with fail-closed plan gate. | Complete | Plan v2 control plane remains default-on with bounded flow + gate coverage in current planner pipeline. (`src/resources/extensions/gsd/uok/flags.ts`, planning/gate suites) |
+| 8. `burn-max` profile is available and policy-safe. | Complete | Profile and policy bounds are enforced via preferences + model policy filtering. (`src/resources/extensions/gsd/auto-model-selection.ts`, `src/resources/extensions/gsd/preferences-models.ts`) |
+| 9. Legacy orchestration branches are retired or behind emergency-only fallback. | Complete | Legacy path remains only under explicit emergency controls (`uok.legacy_fallback.enabled`, `GSD_UOK_FORCE_LEGACY`, `GSD_UOK_LEGACY_FALLBACK`). (`src/resources/extensions/gsd/uok/flags.ts`) |
+| 10. CLI/web/headless behavior remains user-compatible. | Complete | Existing startup/dispatch surfaces preserved; integration coverage remains green in CI. (`src/resources/extensions/gsd/auto.ts`, `src/tests/integration/*.test.ts`) |
+
+Targeted closure/parity tests:
+
+- `src/resources/extensions/gsd/tests/uok-flags.test.ts`
+- `src/resources/extensions/gsd/tests/uok-execution-graph.test.ts`
+- `src/resources/extensions/gsd/tests/uok-kernel-path.test.ts`
 
 ## Recommended Immediate Next Tasks (Week 1)
 
@@ -494,4 +502,3 @@ ADR-009 is complete when all are true:
 2. Introduce contract types and adapter shell (Wave 1 scaffolding).
 3. Add parity telemetry capture for legacy loop baseline.
 4. Land initial tests for contract serialization and turn result envelopes.
-

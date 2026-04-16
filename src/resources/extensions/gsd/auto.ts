@@ -201,7 +201,7 @@ import {
 } from "./auto-post-unit.js";
 import { bootstrapAutoSession, openProjectDbIfPresent, type BootstrapDeps } from "./auto-start.js";
 import { initHealthWidget } from "./health-widget.js";
-import { autoLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
+import { runLegacyAutoLoop, runUokKernelLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
 import { runAutoLoopWithUok } from "./uok/kernel.js";
 import { resolveUokFlags } from "./uok/flags.js";
 // Slice-level parallelism (#2340)
@@ -1538,7 +1538,8 @@ export async function startAuto(
       pi,
       s,
       deps: buildLoopDeps(),
-      runLegacyLoop: autoLoop,
+      runKernelLoop: runUokKernelLoop,
+      runLegacyLoop: runLegacyAutoLoop,
     });
     cleanupAfterLoopExit(ctx);
     return;
@@ -1579,7 +1580,8 @@ export async function startAuto(
     pi,
     s,
     deps: buildLoopDeps(),
-    runLegacyLoop: autoLoop,
+    runKernelLoop: runUokKernelLoop,
+    runLegacyLoop: runLegacyAutoLoop,
   });
   cleanupAfterLoopExit(ctx);
 }

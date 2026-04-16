@@ -1267,7 +1267,7 @@ test("auto-loop.ts barrel re-exports autoLoop, runUnit, and resolveAgentEnd", ()
   );
 });
 
-test("auto.ts startAuto dispatches through the UOK kernel wrapper (legacy loop adapter)", () => {
+test("auto.ts startAuto dispatches through the UOK kernel wrapper with explicit kernel and legacy paths", () => {
   const src = readFileSync(
     resolve(import.meta.dirname, "..", "auto.ts"),
     "utf-8",
@@ -1283,8 +1283,12 @@ test("auto.ts startAuto dispatches through the UOK kernel wrapper (legacy loop a
     "startAuto must dispatch through runAutoLoopWithUok()",
   );
   assert.ok(
-    fnBlock.includes("runLegacyLoop: autoLoop"),
-    "startAuto must preserve the legacy autoLoop adapter in kernel dispatch",
+    fnBlock.includes("runKernelLoop: runUokKernelLoop"),
+    "startAuto must wire the explicit UOK kernel loop path",
+  );
+  assert.ok(
+    fnBlock.includes("runLegacyLoop: runLegacyAutoLoop"),
+    "startAuto must preserve explicit legacy fallback dispatch",
   );
 });
 

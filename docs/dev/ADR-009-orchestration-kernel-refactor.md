@@ -1,6 +1,6 @@
 # ADR-009: Unified Orchestration Kernel Refactor
 
-**Status:** Proposed
+**Status:** Accepted (implemented; emergency legacy fallback retained)
 **Date:** 2026-04-14
 **Deciders:** Jeremy McSpadden, GSD Core Team
 **Related:** ADR-001 (worktree architecture), ADR-003 (pipeline simplification), ADR-004 (capability-aware routing), ADR-005 (multi-provider strategy), ADR-008 (tools over MCP)
@@ -338,6 +338,18 @@ The refactor is accepted when all conditions are true:
 9. Token usage is tracked at turn granularity with burn-max profile support.
 10. Policy engine blocks TOS-violating routes and records evidence.
 
+## Closure Update (2026-04-16)
+
+ADR-009 closure is complete, with emergency fallback retained as a release safety valve.
+
+- Kernel-native dispatch is the default UOK runtime path.
+- Unit/hook/subagent/team-worker/verification/reprocess dispatch now routes through the scheduler contract facade.
+- Legacy execution remains available only through explicit emergency fallback controls.
+- CI parity coverage includes explicit kernel-vs-legacy path assertions.
+
+Evidence is tracked in the implementation plan matrix:
+- [ADR-009-IMPLEMENTATION-PLAN.md](/Users/jeremymcspadden/Github/gsd-2/docs/dev/ADR-009-IMPLEMENTATION-PLAN.md)
+
 ## Consequences
 
 ### Positive
@@ -398,4 +410,3 @@ This ADR intentionally aligns with current architecture principles:
 - strong test contracts
 - pragmatic incremental rollout
 - provider-agnostic execution with explicit policy constraints
-

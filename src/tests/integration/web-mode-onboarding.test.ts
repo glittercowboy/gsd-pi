@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { chromium } from "playwright";
 
@@ -130,6 +131,21 @@ function fakeAutoDashboardData() {
     totalCost: 0,
     totalTokens: 0,
   };
+}
+
+async function removeTreeWithRetry(path: string): Promise<void> {
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const retryable = code === "ENOTEMPTY" || code === "EBUSY";
+      if (!retryable || attempt === maxAttempts) throw err;
+      await delay(100 * attempt);
+    }
+  }
 }
 
 function fakeWorkspaceIndex() {
@@ -442,7 +458,7 @@ test("fresh gsd --web browser onboarding stays locked on failed validation and u
     if (port !== null) {
     await killProcessOnPort(port)
     }
-    rmSync(tempRoot, { recursive: true, force: true })
+    await removeTreeWithRetry(tempRoot)
   });
 
   const launch = await launchPackagedWebHost({

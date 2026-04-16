@@ -14,6 +14,7 @@ import type { AutoSession, SidecarItem } from "./session.js";
 import type { LoopDeps } from "./loop-deps.js";
 import {
   MAX_LOOP_ITERATIONS,
+  type PhaseResult,
   type LoopState,
   type IterationContext,
   type IterationData,
@@ -33,6 +34,8 @@ import { logWarning } from "../workflow-logger.js";
 import { gsdRoot } from "../paths.js";
 import { resolveUokFlags } from "../uok/flags.js";
 import { scheduleSidecarQueue } from "../uok/execution-graph.js";
+import { ExecutionGraphScheduler } from "../uok/execution-graph.js";
+import type { UokGraphNode } from "../uok/contracts.js";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
@@ -78,6 +81,12 @@ function saveStuckState(basePath: string, state: LoopState): void {
 const MEMORY_CHECK_INTERVAL = 5; // check every 5 iterations
 const MEMORY_PRESSURE_THRESHOLD = 0.85; // 85% of heap limit
 
+type DispatchContract = "legacy-direct" | "uok-scheduler";
+
+interface AutoLoopOptions {
+  dispatchContract?: DispatchContract;
+}
+
 function checkMemoryPressure(): { pressured: boolean; heapMB: number; limitMB: number; pct: number } {
   const mem = process.memoryUsage();
   // v8.getHeapStatistics() gives heap_size_limit but requires import
@@ -95,6 +104,72 @@ function checkMemoryPressure(): { pressured: boolean; heapMB: number; limitMB: n
   return { pressured: pct > MEMORY_PRESSURE_THRESHOLD, heapMB, limitMB, pct };
 }
 
+function resolveDispatchNodeKind(
+  unitType: string,
+  sidecarItem?: SidecarItem,
+): UokGraphNode["kind"] {
+  if (sidecarItem?.kind === "hook") return "hook";
+  if (sidecarItem?.kind === "triage") return "verification";
+  if (sidecarItem?.kind === "quick-task") return "team-worker";
+
+  if (unitType.startsWith("hook/")) return "hook";
+  if (unitType === "reactive-execute") return "subagent";
+  if (
+    unitType === "gate-evaluate"
+    || unitType === "validate-milestone"
+    || unitType === "run-uat"
+    || unitType === "complete-slice"
+  ) {
+    return "verification";
+  }
+  if (unitType === "replan-slice" || unitType === "reassess-roadmap") {
+    return "reprocess";
+  }
+  return "unit";
+}
+
+async function runUnitPhaseViaContract(
+  dispatchContract: DispatchContract,
+  ic: IterationContext,
+  iterData: IterationData,
+  loopState: LoopState,
+  sidecarItem?: SidecarItem,
+): Promise<PhaseResult<{ unitStartedAt: number }>> {
+  if (dispatchContract === "legacy-direct") {
+    return runUnitPhase(ic, iterData, loopState, sidecarItem);
+  }
+
+  const scheduler = new ExecutionGraphScheduler();
+  let outcome: PhaseResult<{ unitStartedAt: number }> | null = null;
+  const executeNode = async (): Promise<void> => {
+    outcome = await runUnitPhase(ic, iterData, loopState, sidecarItem);
+  };
+  const kinds: UokGraphNode["kind"][] = [
+    "unit",
+    "hook",
+    "subagent",
+    "team-worker",
+    "verification",
+    "reprocess",
+  ];
+  for (const kind of kinds) scheduler.registerHandler(kind, executeNode);
+
+  const nodeId = `dispatch:${ic.iteration}:${iterData.unitType}:${iterData.unitId}`;
+  await scheduler.run([
+    {
+      id: nodeId,
+      kind: resolveDispatchNodeKind(iterData.unitType, sidecarItem),
+      dependsOn: [],
+      metadata: {
+        unitType: iterData.unitType,
+        unitId: iterData.unitId,
+      },
+    },
+  ], { parallel: false, maxWorkers: 1 });
+
+  return outcome ?? { action: "break", reason: "scheduler-dispatch-missing-result" };
+}
+
 /**
  * Main auto-mode execution loop. Iterates: derive → dispatch → guards →
  * runUnit → finalize → repeat. Exits when s.active becomes false or a
@@ -108,9 +183,11 @@ export async function autoLoop(
   pi: ExtensionAPI,
   s: AutoSession,
   deps: LoopDeps,
+  options?: AutoLoopOptions,
 ): Promise<void> {
   debugLog("autoLoop", { phase: "enter" });
   let iteration = 0;
+  const dispatchContract = options?.dispatchContract ?? "legacy-direct";
   // Load persisted stuck state so counters survive session restarts (#3704)
   const persisted = loadStuckState(s.basePath);
   const loopState: LoopState = {
@@ -324,7 +401,12 @@ export async function autoLoop(
         }
 
         // ── Unit execution (shared with dev path) ──
-        const unitPhaseResult = await runUnitPhase(ic, iterData, loopState);
+        const unitPhaseResult = await runUnitPhaseViaContract(
+          dispatchContract,
+          ic,
+          iterData,
+          loopState,
+        );
         deps.uokObserver?.onPhaseResult("unit", unitPhaseResult.action, {
           unitType: iterData.unitType,
           unitId: iterData.unitId,
@@ -469,7 +551,13 @@ export async function autoLoop(
         });
       }
 
-      const unitPhaseResult = await runUnitPhase(ic, iterData, loopState, sidecarItem);
+      const unitPhaseResult = await runUnitPhaseViaContract(
+        dispatchContract,
+        ic,
+        iterData,
+        loopState,
+        sidecarItem,
+      );
       deps.uokObserver?.onPhaseResult("unit", unitPhaseResult.action, {
         unitType: iterData.unitType,
         unitId: iterData.unitId,
@@ -621,4 +709,22 @@ export async function autoLoop(
 
   _clearCurrentResolve();
   debugLog("autoLoop", { phase: "exit", totalIterations: iteration });
+}
+
+export async function runUokKernelLoop(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+  s: AutoSession,
+  deps: LoopDeps,
+): Promise<void> {
+  return autoLoop(ctx, pi, s, deps, { dispatchContract: "uok-scheduler" });
+}
+
+export async function runLegacyAutoLoop(
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+  s: AutoSession,
+  deps: LoopDeps,
+): Promise<void> {
+  return autoLoop(ctx, pi, s, deps, { dispatchContract: "legacy-direct" });
 }
