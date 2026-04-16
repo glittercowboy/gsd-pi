@@ -152,24 +152,19 @@ export interface KeyStatus {
  */
 export function getAllKeyStatuses(auth: AuthStorage): KeyStatus[] {
   return PROVIDER_REGISTRY.map((provider) => {
-    const rawCreds = auth.getCredentialsForProvider(provider.id);
+    const rawCred = auth.get(provider.id);
     // Filter out empty-key entries (left by legacy removeProviderToken or skipped onboarding)
-    const creds = rawCreds.filter((c) => !(c.type === "api_key" && !(c as ApiKeyCredential).key));
+    const cred = rawCred && !(rawCred.type === "api_key" && !(rawCred as ApiKeyCredential).key) ? rawCred : undefined;
     const envKey = provider.envVar ? process.env[provider.envVar] : undefined;
 
-    if (creds.length > 0) {
-      const firstCred = creds[0];
-      const desc =
-        creds.length > 1
-          ? `${creds.length} keys (round-robin)`
-          : describeCredential(firstCred);
+    if (cred) {
       return {
         provider,
         configured: true,
         source: "auth.json" as const,
-        credentialCount: creds.length,
-        description: desc,
-        backedOff: auth.areAllCredentialsBackedOff(provider.id),
+        credentialCount: 1,
+        description: describeCredential(cred),
+        backedOff: false,
       };
     }
 
@@ -268,8 +263,8 @@ export async function handleAddKey(
   } else {
     // Interactive provider picker
     const options = PROVIDER_REGISTRY.map((p) => {
-      const creds = auth.getCredentialsForProvider(p.id).filter((c) => !(c.type === "api_key" && !(c as ApiKeyCredential).key));
-      const existing = creds.length > 0 ? " (configured)" : "";
+      const c = auth.get(p.id);
+      const existing = c && !(c.type === "api_key" && !(c as ApiKeyCredential).key) ? " (configured)" : "";
       return `[${p.category}] ${p.label}${existing}`;
     });
     const choice = await ctx.ui.select("Add key for which provider?", options);
@@ -353,8 +348,8 @@ export async function handleRemoveKey(
   } else {
     // Show only configured providers
     const configured = PROVIDER_REGISTRY.filter((p) => {
-      const creds = auth.getCredentialsForProvider(p.id).filter((c) => !(c.type === "api_key" && !(c as ApiKeyCredential).key));
-      return creds.length > 0;
+      const c = auth.get(p.id);
+      return c && !(c.type === "api_key" && !(c as ApiKeyCredential).key);
     });
 
     if (configured.length === 0) {
@@ -370,43 +365,18 @@ export async function handleRemoveKey(
     if (!provider) return false;
   }
 
-  const creds = auth.getCredentialsForProvider(provider.id);
-  if (creds.length === 0) {
+  const cred = auth.get(provider.id);
+  if (!cred) {
     ctx.ui.notify(`No keys found for ${provider.label}.`, "info");
     return false;
   }
 
-  // Multi-key handling
-  if (creds.length > 1) {
-    const options = creds.map((c, i) => `[${i + 1}] ${describeCredential(c)}`);
-    options.push("Remove all");
-
-    const choice = await ctx.ui.select(
-      `${provider.label} has ${creds.length} keys. Remove which?`,
-      options,
-    );
-    if (!choice || typeof choice !== "string") return false;
-
-    if (choice === "Remove all") {
-      auth.remove(provider.id);
-    } else {
-      // Remove specific index — need to rebuild the array without that entry
-      const idx = options.indexOf(choice);
-      if (idx === -1 || idx >= creds.length) return false;
-      const remaining = creds.filter((_, i) => i !== idx);
-      auth.remove(provider.id);
-      for (const c of remaining) {
-        auth.set(provider.id, c);
-      }
-    }
-  } else {
-    const confirmed = await ctx.ui.confirm(
-      "Remove key?",
-      `Remove ${describeCredential(creds[0])} for ${provider.label}?`,
-    );
-    if (!confirmed) return false;
-    auth.remove(provider.id);
-  }
+  const confirmed = await ctx.ui.confirm(
+    "Remove key?",
+    `Remove ${describeCredential(cred)} for ${provider.label}?`,
+  );
+  if (!confirmed) return false;
+  auth.remove(provider.id);
 
   // Clear env var
   if (provider.envVar && process.env[provider.envVar]) {
@@ -611,8 +581,8 @@ export async function handleRotateKey(
   } else {
     // Show only configured API key providers
     const configured = PROVIDER_REGISTRY.filter((p) => {
-      const creds = auth.getCredentialsForProvider(p.id);
-      return creds.some((c) => c.type === "api_key" && (c as ApiKeyCredential).key);
+      const c = auth.get(p.id);
+      return c?.type === "api_key" && !!(c as ApiKeyCredential).key;
     });
 
     if (configured.length === 0) {
@@ -628,17 +598,16 @@ export async function handleRotateKey(
     if (!provider) return false;
   }
 
-  const creds = auth.getCredentialsForProvider(provider.id);
-  const apiKeyCreds = creds.filter((c) => c.type === "api_key") as ApiKeyCredential[];
+  const existingCred = auth.get(provider.id);
+  const apiKeyCred = existingCred?.type === "api_key" ? existingCred as ApiKeyCredential : undefined;
 
-  if (apiKeyCreds.length === 0) {
+  if (!apiKeyCred) {
     ctx.ui.notify(`No API keys for ${provider.label} (may use OAuth instead).`, "info");
     return false;
   }
 
-  // Show current key(s)
-  const currentDesc = apiKeyCreds.map((c) => maskKey(c.key)).join(", ");
-  ctx.ui.notify(`Current key${apiKeyCreds.length > 1 ? "s" : ""}: ${currentDesc}`, "info");
+  // Show current key
+  ctx.ui.notify(`Current key: ${maskKey(apiKeyCred.key)}`, "info");
 
   // Prompt for new key
   const input = await ctx.ui.input(
@@ -687,13 +656,8 @@ export async function handleRotateKey(
     }
   }
 
-  // Remove old keys and add new one
-  // Preserve any OAuth credentials
-  const oauthCreds = creds.filter((c) => c.type === "oauth");
+  // Replace the key
   auth.remove(provider.id);
-  for (const c of oauthCreds) {
-    auth.set(provider.id, c);
-  }
   auth.set(provider.id, { type: "api_key", key: newKey });
 
   if (provider.envVar) {
@@ -738,38 +702,34 @@ export function runKeyDoctor(auth: AuthStorage): DoctorFinding[] {
 
   // 2. Check for empty keys
   for (const provider of PROVIDER_REGISTRY) {
-    const creds = auth.getCredentialsForProvider(provider.id);
-    for (const cred of creds) {
-      if (cred.type === "api_key" && !(cred as ApiKeyCredential).key) {
-        findings.push({
-          severity: "warning",
-          provider: provider.id,
-          message: `${provider.label}: empty key stored (from skipped setup) — run /gsd keys add ${provider.id}`,
-        });
-      }
+    const cred = auth.get(provider.id);
+    if (cred?.type === "api_key" && !(cred as ApiKeyCredential).key) {
+      findings.push({
+        severity: "warning",
+        provider: provider.id,
+        message: `${provider.label}: empty key stored (from skipped setup) — run /gsd keys add ${provider.id}`,
+      });
     }
   }
 
   // 3. Check expired OAuth
   for (const provider of PROVIDER_REGISTRY) {
-    const creds = auth.getCredentialsForProvider(provider.id);
-    for (const cred of creds) {
-      if (cred.type === "oauth") {
-        const oauthCred = cred as OAuthCredential;
-        const remaining = oauthCred.expires - Date.now();
-        if (remaining <= 0) {
-          findings.push({
-            severity: "warning",
-            provider: provider.id,
-            message: `${provider.label}: OAuth token expired — will auto-refresh on next use`,
-          });
-        } else if (remaining < 5 * 60 * 1000) {
-          findings.push({
-            severity: "info",
-            provider: provider.id,
-            message: `${provider.label}: OAuth token expires in ${formatDuration(remaining)} — will auto-refresh`,
-          });
-        }
+    const cred = auth.get(provider.id);
+    if (cred?.type === "oauth") {
+      const oauthCred = cred as OAuthCredential;
+      const remaining = oauthCred.expires - Date.now();
+      if (remaining <= 0) {
+        findings.push({
+          severity: "warning",
+          provider: provider.id,
+          message: `${provider.label}: OAuth token expired — will auto-refresh on next use`,
+        });
+      } else if (remaining < 5 * 60 * 1000) {
+        findings.push({
+          severity: "info",
+          provider: provider.id,
+          message: `${provider.label}: OAuth token expires in ${formatDuration(remaining)} — will auto-refresh`,
+        });
       }
     }
   }
@@ -780,8 +740,8 @@ export function runKeyDoctor(auth: AuthStorage): DoctorFinding[] {
     const envValue = process.env[provider.envVar];
     if (!envValue) continue;
 
-    const creds = auth.getCredentialsForProvider(provider.id);
-    const apiKey = creds.find((c) => c.type === "api_key" && (c as ApiKeyCredential).key) as ApiKeyCredential | undefined;
+    const cred = auth.get(provider.id);
+    const apiKey = cred?.type === "api_key" ? cred as ApiKeyCredential : undefined;
     if (apiKey?.key && apiKey.key !== envValue) {
       findings.push({
         severity: "warning",
@@ -791,23 +751,11 @@ export function runKeyDoctor(auth: AuthStorage): DoctorFinding[] {
     }
   }
 
-  // 5. Check for backed-off keys
-  for (const provider of PROVIDER_REGISTRY) {
-    if (auth.areAllCredentialsBackedOff(provider.id)) {
-      const remaining = auth.getProviderBackoffRemaining(provider.id);
-      findings.push({
-        severity: "warning",
-        provider: provider.id,
-        message: `${provider.label}: all keys in backoff${remaining > 0 ? ` (${formatDuration(remaining)} remaining)` : ""}`,
-      });
-    }
-  }
-
-  // 6. Check for missing LLM provider
+  // 5. Check for missing LLM provider
   const llmProviders = PROVIDER_REGISTRY.filter((p) => p.category === "llm");
   const hasAnyLlm = llmProviders.some((p) => {
-    const creds = auth.getCredentialsForProvider(p.id);
-    const hasValidKey = creds.some((c) => c.type === "api_key" ? !!(c as ApiKeyCredential).key : true);
+    const cred = auth.get(p.id);
+    const hasValidKey = cred ? (cred.type === "api_key" ? !!(cred as ApiKeyCredential).key : true) : false;
     const hasEnv = p.envVar ? !!process.env[p.envVar] : false;
     return hasValidKey || hasEnv;
   });
@@ -818,17 +766,15 @@ export function runKeyDoctor(auth: AuthStorage): DoctorFinding[] {
     });
   }
 
-  // 7. Check for duplicate keys across providers
+  // 6. Check for duplicate keys across providers
   const keyToProviders = new Map<string, string[]>();
   for (const provider of PROVIDER_REGISTRY) {
-    const creds = auth.getCredentialsForProvider(provider.id);
-    for (const cred of creds) {
-      if (cred.type === "api_key" && (cred as ApiKeyCredential).key) {
-        const key = (cred as ApiKeyCredential).key;
-        const existing = keyToProviders.get(key) ?? [];
-        existing.push(provider.id);
-        keyToProviders.set(key, existing);
-      }
+    const cred = auth.get(provider.id);
+    if (cred?.type === "api_key" && (cred as ApiKeyCredential).key) {
+      const key = (cred as ApiKeyCredential).key;
+      const existing = keyToProviders.get(key) ?? [];
+      existing.push(provider.id);
+      keyToProviders.set(key, existing);
     }
   }
   for (const [, providers] of keyToProviders) {
