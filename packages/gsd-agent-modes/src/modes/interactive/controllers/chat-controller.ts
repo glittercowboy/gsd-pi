@@ -1,4 +1,5 @@
-import { Loader, Markdown, Spacer, Text } from "@gsd/pi-tui";
+import { Loader, Markdown, type MarkdownTheme, Spacer, Text } from "@gsd/pi-tui";
+import type { ToolDefinition } from "@gsd/agent-types";
 
 import type { InteractiveModeEvent, InteractiveModeStateHost } from "../interactive-mode-state.js";
 import { theme } from "../../../theme.js";
@@ -6,6 +7,12 @@ import { AssistantMessageComponent } from "../components/assistant-message.js";
 import { ToolExecutionComponent } from "../components/tool-execution.js";
 import { DynamicBorder } from "../components/dynamic-border.js";
 import { appKey } from "../components/keybinding-hints.js";
+
+// vendor-seam: dual-module-path -- Markdown from pi-tui exposes maxLines at runtime
+// but the pi-tui type declarations don't include it.
+interface GSDMarkdownExtension {
+	maxLines?: number;
+}
 
 // Tracks the last processed content index to avoid re-scanning all blocks on every message_update
 let lastProcessedContentIndex = 0;
@@ -31,15 +38,20 @@ let renderedSegments: RenderedSegment[] = [];
 // claude-code MCP pruning can remove stale provisional text later.
 let orphanedSegments: RenderedSegment[] = [];
 
-function hasVisibleAssistantContent(message: { content: Array<any> }): boolean {
+// Content block shape used for runtime narrowing. AssistantMessage["content"] is typed as
+// (TextContent | ThinkingContent | ToolCall)[] but pi-coding-agent appends serverToolUse/webSearchResult
+// blocks at runtime. Using a structural supertype avoids dual-module-path as-any casts.
+type RuntimeContentBlock = { type: string; [key: string]: unknown };
+
+function hasVisibleAssistantContent(message: { content: RuntimeContentBlock[] }): boolean {
 	return message.content.some(
 		(c) =>
-			(c.type === "text" && typeof c.text === "string" && c.text.trim().length > 0)
-			|| (c.type === "thinking" && typeof c.thinking === "string" && c.thinking.trim().length > 0),
+			(c.type === "text" && typeof c["text"] === "string" && (c["text"] as string).trim().length > 0)
+			|| (c.type === "thinking" && typeof c["thinking"] === "string" && (c["thinking"] as string).trim().length > 0),
 	);
 }
 
-function hasAssistantToolBlocks(message: { content: Array<any> }): boolean {
+function hasAssistantToolBlocks(message: { content: RuntimeContentBlock[] }): boolean {
 	return message.content.some((c) => c.type === "toolCall" || c.type === "serverToolUse");
 }
 
@@ -47,7 +59,7 @@ function hasAssistantToolBlocks(message: { content: Array<any> }): boolean {
 // recent tool call. Text blocks that come after the last tool call are still
 // streaming live into the chat container, so mirroring them into the pinned
 // "Latest Output" zone would render the same tokens twice.
-export function findLatestPinnableText(contentBlocks: Array<any>): string {
+export function findLatestPinnableText(contentBlocks: RuntimeContentBlock[]): string {
 	let lastToolIdx = -1;
 	for (let i = contentBlocks.length - 1; i >= 0; i--) {
 		const c = contentBlocks[i];
@@ -58,8 +70,8 @@ export function findLatestPinnableText(contentBlocks: Array<any>): string {
 	}
 	for (let i = lastToolIdx - 1; i >= 0; i--) {
 		const c = contentBlocks[i];
-		if (c?.type === "text" && typeof c.text === "string" && c.text.trim()) {
-			return c.text.trim();
+		if (c?.type === "text" && typeof c["text"] === "string" && (c["text"] as string).trim()) {
+			return (c["text"] as string).trim();
 		}
 	}
 	return "";
@@ -76,10 +88,10 @@ let pinnedTextComponent: Markdown | undefined;
 
 export async function handleAgentEvent(host: InteractiveModeStateHost & {
 	init: () => Promise<void>;
-	getMarkdownThemeWithSettings: () => any;
-	addMessageToChat: (message: any, options?: any) => void;
+	getMarkdownThemeWithSettings: () => MarkdownTheme;
+	addMessageToChat: (message: Record<string, unknown>, options?: { populateHistory?: boolean }) => void;
 	formatWebSearchResult: (content: unknown) => string;
-	getRegisteredToolDefinition: (toolName: string) => any;
+	getRegisteredToolDefinition: (toolName: string) => ToolDefinition | undefined;
 	checkShutdownRequested: () => Promise<void>;
 	rebuildChatFromMessages: () => void;
 	flushCompactionQueue: (options?: { willRetry?: boolean }) => Promise<void>;
@@ -205,26 +217,27 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					| { toolCallId: string; content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; details: Record<string, unknown>; isError: boolean }
 					| undefined;
 				if (innerEvent.type === "toolcall_end" && innerEvent.toolCall) {
-					const tc = innerEvent.toolCall as any;
-					const ext = tc.externalResult;
+					const tc = innerEvent.toolCall as unknown as Record<string, unknown>;
+					const ext = tc["externalResult"] as Record<string, unknown> | undefined;
 					if (ext) {
 						externalToolResult = {
-							toolCallId: tc.id,
-							content: ext.content ?? [{ type: "text", text: "" }],
-							details: ext.details ?? {},
-							isError: ext.isError ?? false,
+							toolCallId: tc["id"] as string,
+							content: (ext["content"] as Array<{ type: string; text?: string; data?: string; mimeType?: string }>) ?? [{ type: "text", text: "" }],
+							details: (ext["details"] as Record<string, unknown>) ?? {},
+							isError: (ext["isError"] as boolean) ?? false,
 						};
 					}
-				} else if ((innerEvent as any).type === "server_tool_use") {
-					const idx = typeof (innerEvent as any).contentIndex === "number" ? (innerEvent as any).contentIndex : -1;
-					const block = idx >= 0 ? (host.streamingMessage.content[idx] as any) : undefined;
-					const ext = block?.externalResult;
-					if (block?.id && ext) {
+				} else if ("type" in innerEvent && (innerEvent as { type: string }).type === "server_tool_use") {
+					const innerExt = innerEvent as unknown as Record<string, unknown>;
+					const idx = typeof innerExt["contentIndex"] === "number" ? (innerExt["contentIndex"] as number) : -1;
+					const block = idx >= 0 ? (host.streamingMessage.content[idx] as unknown as Record<string, unknown>) : undefined;
+					const ext = block?.["externalResult"] as Record<string, unknown> | undefined;
+					if (block?.["id"] && ext) {
 						externalToolResult = {
-							toolCallId: block.id,
-							content: ext.content ?? [{ type: "text", text: "" }],
-							details: ext.details ?? {},
-							isError: ext.isError ?? false,
+							toolCallId: block["id"] as string,
+							content: (ext["content"] as Array<{ type: string; text?: string; data?: string; mimeType?: string }>) ?? [{ type: "text", text: "" }],
+							details: (ext["details"] as Record<string, unknown>) ?? {},
+							isError: (ext["isError"] as boolean) ?? false,
 						};
 					}
 				}
@@ -290,7 +303,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 								});
 							} else {
 								const searchContent = content.content;
-								const isError = searchContent && typeof searchContent === "object" && "type" in (searchContent as any) && (searchContent as any).type === "web_search_tool_result_error";
+								const isError = searchContent && typeof searchContent === "object" && "type" in searchContent && (searchContent as { type: unknown }).type === "web_search_tool_result_error";
 								component.updateResult({
 									content: [{ type: "text", text: host.formatWebSearchResult(searchContent) }],
 									isError: !!isError,
@@ -318,25 +331,27 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				// Segment walker: render content blocks in stream order, append-only.
 				// Build desired segment plan from content[].
 				{
-					const blocks = host.streamingMessage.content;
+					// vendor-seam: dual-module-path -- AssistantMessage.content is typed as (TextContent | ThinkingContent | ToolCall)[]
+					// but pi-coding-agent adapter appends serverToolUse/webSearchResult blocks at runtime.
+					const blocks = host.streamingMessage.content as unknown as Array<Record<string, unknown>>;
 					const isClaudeCodeProvider = host.streamingMessage.provider === "claude-code";
-					const hasMcpToolBlock = blocks.some((b: any) => {
-						if (b?.type === "toolCall") {
-							return typeof b?.mcpServer === "string" || String(b?.name ?? "").startsWith("mcp__");
+					const hasMcpToolBlock = blocks.some((b) => {
+						if (b?.["type"] === "toolCall") {
+							return typeof b?.["mcpServer"] === "string" || String(b?.["name"] ?? "").startsWith("mcp__");
 						}
-						if (b?.type === "serverToolUse") {
-							return typeof b?.mcpServer === "string" || String(b?.name ?? "").startsWith("mcp__");
+						if (b?.["type"] === "serverToolUse") {
+							return typeof b?.["mcpServer"] === "string" || String(b?.["name"] ?? "").startsWith("mcp__");
 						}
 						return false;
 					});
-					const firstToolIdx = blocks.findIndex((b: any) => b.type === "toolCall" || b.type === "serverToolUse");
+					const firstToolIdx = blocks.findIndex((b) => b["type"] === "toolCall" || b["type"] === "serverToolUse");
 					const hasPostToolText = firstToolIdx >= 0
 						&& blocks.some(
-							(b: any, idx: number) => (
+							(b, idx) => (
 								idx > firstToolIdx
-								&& b?.type === "text"
-								&& typeof b?.text === "string"
-								&& b.text.trim().length > 0
+								&& b?.["type"] === "text"
+								&& typeof b?.["text"] === "string"
+								&& (b["text"] as string).trim().length > 0
 							),
 						);
 					// Only prune provisional pre-tool prose after post-tool prose exists,
@@ -359,11 +374,12 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					};
 				for (let i = 0; i < blocks.length; i++) {
 					const b = blocks[i];
-					const blockType = b.type === "text" || b.type === "thinking" ? b.type : undefined;
+					const bType = b["type"];
+					const blockType = bType === "text" || bType === "thinking" ? bType : undefined;
 					const isTextLike = blockType === "text" || blockType === "thinking";
-					const isTool = b.type === "toolCall" || b.type === "serverToolUse";
+					const isTool = bType === "toolCall" || bType === "serverToolUse";
 					// For Claude Code MCP turns, prune only pre-tool prose, never thinking.
-					const textValue = blockType === "text" && typeof b?.text === "string" ? b.text : "";
+					const textValue = blockType === "text" && typeof b?.["text"] === "string" ? (b["text"] as string) : "";
 					const isLikelyQuestion = blockType === "text" && typeof textValue === "string" && /\?\s*$/.test(textValue.trim());
 					const shouldSkipProse = shouldDropPreToolProse
 						&& firstToolIdx >= 0
@@ -390,7 +406,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						} else {
 							closeRun();
 							if (isTool) {
-								desired.push({ kind: "tool", contentIndex: i, toolId: b.id });
+								desired.push({ kind: "tool", contentIndex: i, toolId: b["id"] as string });
 							}
 						}
 					}
@@ -517,8 +533,8 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 
 				// Pinned message: mirror the latest assistant text above the editor
 				// when tool executions push it out of the viewport.
-				const hasTools = contentBlocks.some(
-					(c: any) => c.type === "toolCall" || c.type === "serverToolUse",
+				const hasTools = (contentBlocks as unknown as Array<Record<string, unknown>>).some(
+					(c) => c["type"] === "toolCall" || c["type"] === "serverToolUse",
 				);
 				if (hasTools) hasToolsInTurn = true;
 
@@ -540,7 +556,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							pinnedTextComponent = new Markdown(latestText, 1, 0, host.getMarkdownThemeWithSettings());
 							// Cap pinned content to ~40% of terminal height so tall output
 							// doesn't exceed the viewport and cause render flashing.
-							(pinnedTextComponent as any).maxLines = Math.max(3, Math.floor(host.ui.terminal.rows * 0.4));
+							(pinnedTextComponent as unknown as GSDMarkdownExtension).maxLines = Math.max(3, Math.floor(host.ui.terminal.rows * 0.4));
 							host.pinnedMessageContainer.addChild(pinnedTextComponent);
 							// Hide the separate status loader — the pinned zone replaces it
 							if (host.loadingAnimation) {
@@ -553,7 +569,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							pinnedTextComponent?.setText(latestText);
 							// Refresh maxLines in case terminal was resized
 							if (pinnedTextComponent) {
-								(pinnedTextComponent as any).maxLines = Math.max(3, Math.floor(host.ui.terminal.rows * 0.4));
+								(pinnedTextComponent as unknown as GSDMarkdownExtension).maxLines = Math.max(3, Math.floor(host.ui.terminal.rows * 0.4));
 							}
 						}
 					}
@@ -587,7 +603,9 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 					// aggregation). Rebuild this in-flight turn from final content so
 					// ranges/components don't keep stale partial indices.
 					if (renderedSegments.length > 0) {
-						const finalBlocks = host.streamingMessage.content;
+						// vendor-seam: dual-module-path -- finalBlocks is AssistantMessage["content"] typed as
+						// (TextContent | ThinkingContent | ToolCall)[] but runtime includes serverToolUse blocks.
+						const finalBlocks = host.streamingMessage.content as unknown as Array<Record<string, unknown>>;
 						type DesiredSegment =
 							| { kind: "text-run"; startIndex: number; endIndex: number; contentType: "text" | "thinking" }
 							| { kind: "tool"; contentIndex: number; toolId: string };
@@ -605,10 +623,11 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						};
 
 						for (let i = 0; i < finalBlocks.length; i++) {
-							const block = finalBlocks[i] as any;
-							const blockType = block?.type === "text" || block?.type === "thinking" ? block.type : undefined;
+							const block = finalBlocks[i];
+							const bType = block?.["type"];
+							const blockType = bType === "text" || bType === "thinking" ? bType : undefined;
 							const isTextLike = blockType === "text" || blockType === "thinking";
-							const isTool = block?.type === "toolCall" || block?.type === "serverToolUse";
+							const isTool = bType === "toolCall" || bType === "serverToolUse";
 
 							if (isTextLike) {
 								if (runStart === -1) {
@@ -626,7 +645,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 							} else {
 								closeRun();
 								if (isTool) {
-									desired.push({ kind: "tool", contentIndex: i, toolId: block.id });
+									desired.push({ kind: "tool", contentIndex: i, toolId: block["id"] as string });
 								}
 							}
 						}
@@ -640,10 +659,9 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						for (const seg of renderedSegments) {
 							host.chatContainer.removeChild(seg.component);
 							if (seg.kind === "tool") {
-								const priorBlocks = host.streamingMessage.content;
-								const priorBlock = priorBlocks[seg.contentIndex] as any;
-								if (priorBlock?.id && !toolComponentsById.has(priorBlock.id)) {
-									toolComponentsById.set(priorBlock.id, seg.component);
+								const priorBlock = finalBlocks[seg.contentIndex];
+								if (priorBlock?.["id"] && !toolComponentsById.has(priorBlock["id"] as string)) {
+									toolComponentsById.set(priorBlock["id"] as string, seg.component);
 								}
 							}
 						}
@@ -652,33 +670,33 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 
 						for (const seg of desired) {
 							if (seg.kind === "tool") {
-								const finalBlock = finalBlocks[seg.contentIndex] as any;
+								const finalBlock = finalBlocks[seg.contentIndex];
 								let component = toolComponentsById.get(seg.toolId);
-								if (!component && finalBlock?.id) {
-									component = host.pendingTools.get(finalBlock.id);
+								if (!component && finalBlock?.["id"]) {
+									component = host.pendingTools.get(finalBlock["id"] as string);
 								}
-								if (!component && finalBlock?.type === "toolCall") {
+								if (!component && finalBlock?.["type"] === "toolCall") {
 									component = new ToolExecutionComponent(
-										finalBlock.name,
-										finalBlock.arguments,
+										finalBlock["name"] as string,
+										(finalBlock["arguments"] as Record<string, unknown>) ?? {},
 										{ showImages: host.settingsManager.getShowImages() },
-										host.getRegisteredToolDefinition(finalBlock.name),
+										host.getRegisteredToolDefinition(finalBlock["name"] as string),
 										host.ui,
 									);
 									component.setExpanded(host.toolOutputExpanded);
-									host.pendingTools.set(finalBlock.id, component);
-									toolComponentsById.set(finalBlock.id, component);
-								} else if (!component && finalBlock?.type === "serverToolUse") {
+									host.pendingTools.set(finalBlock["id"] as string, component);
+									toolComponentsById.set(finalBlock["id"] as string, component);
+								} else if (!component && finalBlock?.["type"] === "serverToolUse") {
 									component = new ToolExecutionComponent(
-										finalBlock.name,
-										finalBlock.input ?? {},
+										finalBlock["name"] as string,
+										(finalBlock["input"] as Record<string, unknown>) ?? {},
 										{ showImages: host.settingsManager.getShowImages() },
 										undefined,
 										host.ui,
 									);
 									component.setExpanded(host.toolOutputExpanded);
-									host.pendingTools.set(finalBlock.id, component);
-									toolComponentsById.set(finalBlock.id, component);
+									host.pendingTools.set(finalBlock["id"] as string, component);
+									toolComponentsById.set(finalBlock["id"] as string, component);
 								}
 								if (component) {
 									host.chatContainer.addChild(component);

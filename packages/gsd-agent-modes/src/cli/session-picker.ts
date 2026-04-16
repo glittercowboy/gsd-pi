@@ -6,6 +6,7 @@ import { ProcessTerminal, TUI } from "@gsd/pi-tui";
 import { KeybindingsManager } from "@gsd/agent-core";
 import {
 	SessionSelectorComponent,
+	type KeybindingsManager as PiKeybindingsManager,
 } from "@gsd/pi-coding-agent";
 import type { SessionInfo } from "@gsd/agent-types";
 
@@ -46,7 +47,9 @@ export async function selectSession(
 				process.exit(0);
 			},
 			() => ui.requestRender(),
-			{ showRenameHint: false, keybindings: keybindings as any },
+			// vendor-seam: dual-module-path -- KeybindingsManager resolves to different nominal types
+			// between @gsd/agent-core and @gsd/pi-coding-agent; structurally identical at runtime.
+			{ showRenameHint: false, keybindings: keybindings as unknown as PiKeybindingsManager },
 		);
 
 		ui.addChild(selector);
