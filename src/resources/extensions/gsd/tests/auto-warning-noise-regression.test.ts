@@ -28,35 +28,30 @@ import { join } from "node:path";
 
 import { buildFlatRateContext } from "../auto-model-selection.ts";
 
-// ─── Bug 2: this-binding regression ─────────────────────────────────────
+// ─── Bug 2: externalCli detection via getAll() + local:// baseUrl ────────
+// pi 0.67.2 removed getProviderAuthMode from ModelRegistry.
+// buildFlatRateContext now detects externalCli via getAll() + local:// baseUrl.
 
-test("buildFlatRateContext invokes getProviderAuthMode with correct `this`", () => {
-  // Mimics ModelRegistry: getProviderAuthMode reads from an instance field.
-  // Detaching the method to a local variable would break this — the old code
-  // did `const fn = ctx.modelRegistry.getProviderAuthMode; fn(provider)`,
-  // which called the method with `this === undefined` and threw.
-  const providerData = new Map<string, string>([
-    ["claude-code", "externalCli"],
-    ["anthropic", "apiKey"],
-  ]);
+test("buildFlatRateContext detects externalCli from local:// baseUrl via getAll()", () => {
+  // Mimics ModelRegistry.getAll() returning models with baseUrl.
+  // externalCli providers (e.g. claude-code) have a local:// baseUrl.
+  const models = [
+    { provider: "claude-code", baseUrl: "local://claude-code" },
+    { provider: "anthropic", baseUrl: "https://api.anthropic.com" },
+  ];
   const registry = {
-    _providers: providerData,
-    getProviderAuthMode(provider: string): string {
-      // Access via `this` — fails loudly if the method was called unbound.
-      const map = this._providers;
-      return map.get(provider) ?? "apiKey";
-    },
+    getAll() { return models; },
   };
 
   const ctx = buildFlatRateContext("claude-code", { modelRegistry: registry });
   assert.equal(
     ctx.authMode,
     "externalCli",
-    "authMode should be extracted when getProviderAuthMode is called as a method",
+    "authMode should be externalCli when provider baseUrl starts with local://",
   );
 
   const ctx2 = buildFlatRateContext("anthropic", { modelRegistry: registry });
-  assert.equal(ctx2.authMode, "apiKey");
+  assert.equal(ctx2.authMode, undefined, "non-local baseUrl should not produce externalCli");
 });
 
 // ─── Bug 1: isSamePath source check ─────────────────────────────────────

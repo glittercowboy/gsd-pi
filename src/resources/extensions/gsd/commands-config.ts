@@ -23,8 +23,8 @@ export const TOOL_KEYS = [
 ] as const;
 
 function getStoredToolKey(auth: AuthStorage, providerId: string): string | undefined {
-  const creds = auth.getCredentialsForProvider(providerId);
-  const cred = creds.find((c) => c.type === "api_key" && c.key);
+  // pi 0.67.2: getCredentialsForProvider removed; use get() which returns a single credential
+  const cred = auth.get(providerId);
   return cred?.type === "api_key" ? cred.key : undefined;
 }
 

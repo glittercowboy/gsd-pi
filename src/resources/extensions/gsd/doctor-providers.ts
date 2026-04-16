@@ -189,17 +189,18 @@ function resolveKey(providerId: string): KeyLookup {
   if (existsSync(authPath)) {
     try {
       const auth = AuthStorage.create(authPath);
-      const creds = auth.getCredentialsForProvider(providerId);
-      if (creds.length > 0) {
+      // pi 0.67.2: getCredentialsForProvider removed; use get() + has()
+      // areAllCredentialsBackedOff removed; the concept no longer exists — return false
+      const cred = auth.get(providerId);
+      if (cred) {
         // Filter out empty placeholder keys (from skipped onboarding)
-        const hasRealKey = creds.some(c =>
-          c.type === "oauth" || (c.type === "api_key" && (c as { key?: string }).key)
-        );
+        const hasRealKey =
+          cred.type === "oauth" || (cred.type === "api_key" && cred.key);
         if (hasRealKey) {
           return {
             found: true,
             source: "auth.json",
-            backedOff: auth.areAllCredentialsBackedOff(providerId),
+            backedOff: false,
           };
         }
       }
