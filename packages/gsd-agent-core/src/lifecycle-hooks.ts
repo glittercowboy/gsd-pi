@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseGitUrl } from "@gsd/pi-coding-agent";
-import type { PackageManager } from "@gsd/pi-coding-agent";
+import type { PackageManager } from "@gsd/agent-types";
 import type {
 	LifecycleHookContext,
 	LifecycleHookMap,

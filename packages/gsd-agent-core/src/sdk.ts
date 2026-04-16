@@ -25,11 +25,11 @@ import { getAgentDir, getDocsPath } from "@gsd/pi-coding-agent";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "@gsd/pi-coding-agent";
 import { DEFAULT_THINKING_LEVEL } from "@gsd/pi-coding-agent";
-import type { ExtensionRunner, LoadExtensionsResult, ToolDefinition } from "@gsd/pi-coding-agent";
+import type { ExtensionRunner, LoadExtensionsResult, ToolDefinition } from "@gsd/agent-types";
 import { convertToLlm } from "@gsd/pi-coding-agent";
 import { ModelRegistry } from "@gsd/pi-coding-agent";
 import { findInitialModel } from "@gsd/pi-coding-agent";
-import type { ResourceLoader } from "@gsd/pi-coding-agent";
+import type { ResourceLoader } from "@gsd/agent-types";
 import { DefaultResourceLoader } from "@gsd/pi-coding-agent";
 import { SessionManager } from "@gsd/pi-coding-agent";
 import { SettingsManager } from "@gsd/pi-coding-agent";
@@ -115,10 +115,10 @@ export type {
 	SlashCommandInfo,
 	SlashCommandSource,
 	ToolDefinition,
-} from "@gsd/pi-coding-agent";
-export type { PromptTemplate } from "@gsd/pi-coding-agent";
-export type { Skill } from "@gsd/pi-coding-agent";
-export type { Tool } from "@gsd/pi-coding-agent";
+} from "@gsd/agent-types";
+export type { PromptTemplate } from "@gsd/agent-types";
+export type { Skill } from "@gsd/agent-types";
+export type { Tool } from "@gsd/agent-types";
 
 export {
 	// Pre-built tools (use process.cwd())

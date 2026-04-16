@@ -27,7 +27,8 @@ import type { AssistantMessage, ImageContent, Message, Model, TextContent } from
 import { modelsAreEqual, resetApiProviders, supportsXhigh } from "@gsd/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { getDocsPath, getAgentDir } from "@gsd/pi-coding-agent";
-import { Theme, getThemeByName, stripFrontmatter } from "@gsd/pi-coding-agent";
+import { getThemeByName, stripFrontmatter } from "@gsd/pi-coding-agent";
+import type { Theme } from "@gsd/agent-types";
 
 /** Extract a human-readable error message from an unknown thrown value. */
 function getErrorMessage(e: unknown): string {
@@ -62,19 +63,21 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "@gsd/pi-coding-agent";
-import type { BashExecutionMessage, CustomMessage } from "@gsd/pi-coding-agent";
+import type { BashExecutionMessage, CustomMessage } from "@gsd/agent-types";
 import { FallbackResolver } from "./fallback-resolver.js";
-import type { ModelRegistry } from "@gsd/pi-coding-agent";
-import { expandPromptTemplate, type PromptTemplate } from "@gsd/pi-coding-agent";
-import type { ResourceExtensionPaths, ResourceLoader } from "@gsd/pi-coding-agent";
+import type { ModelRegistry } from "@gsd/agent-types";
+import { expandPromptTemplate } from "@gsd/pi-coding-agent";
+import type { PromptTemplate } from "@gsd/agent-types";
+import type { ResourceExtensionPaths, ResourceLoader } from "@gsd/agent-types";
 import { RetryHandler } from "./retry-handler.js";
 import { isImageDimensionError, downsizeConversationImages } from "./image-overflow-recovery.js";
-import type { BranchSummaryEntry, SessionManager } from "@gsd/pi-coding-agent";
+import type { BranchSummaryEntry, SessionManager } from "@gsd/agent-types";
 import { getLatestCompactionEntry } from "@gsd/pi-coding-agent";
-import type { SettingsManager } from "@gsd/pi-coding-agent";
-import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo } from "@gsd/pi-coding-agent";
+import type { SettingsManager } from "@gsd/agent-types";
+import { BUILTIN_SLASH_COMMANDS } from "@gsd/pi-coding-agent";
+import type { SlashCommandInfo } from "@gsd/agent-types";
 import { buildSystemPrompt } from "./system-prompt.js";
-import type { BashOperations } from "@gsd/pi-coding-agent";
+import type { BashOperations } from "@gsd/agent-types";
 import { createAllTools } from "@gsd/pi-coding-agent";
 import {
 	AgentSessionRuntime,
