@@ -14,6 +14,7 @@ import {
   getManagedRtkDir,
   getPathValue,
   getRtkBinaryName,
+  isTruthy,
   isRtkEnabled,
   resolveSystemRtkPath,
 } from "./rtk-shared.js";
