@@ -116,6 +116,24 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/require-tests.sh
 
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint TypeScript (ESLint)
+        run: npx eslint packages/gsd-agent-core/src packages/gsd-agent-modes/src packages/gsd-agent-types/src src
+
+      - name: Reject pi-* modifications
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          CHANGED=$(git diff --name-only "$PR_BASE_SHA"...HEAD | grep '^packages/pi-' || true)
+          if [ -n "$CHANGED" ]; then
+            echo "::error::PR modifies read-only pi-* packages. Submit changes upstream."
+            echo "$CHANGED"
+            exit 1
+          fi
+
   build:
     timeout-minutes: 15
     needs: detect-changes
