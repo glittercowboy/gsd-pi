@@ -3,14 +3,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev, test, 'hotfix/**']
     paths-ignore:
       - '.github/workflows/ai-triage.yml'
       - '.github/workflows/build-native.yml'
       - '.github/workflows/cleanup-dev-versions.yml'
       - 'LICENSE'
   pull_request:
-    branches: [main]
+    branches: [main, dev, test]
     paths-ignore:
       - '.github/workflows/ai-triage.yml'
       - '.github/workflows/build-native.yml'
