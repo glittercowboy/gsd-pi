@@ -3,6 +3,13 @@
  */
 
 import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@gsd/pi-tui";
+
+// vendor-seam: dual-module-path -- Input from pi-tui exposes secure/placeholder at runtime
+// but the pi-tui type declarations don't include them. Extension interface bridges the gap.
+interface GSDInputExtension {
+	secure?: boolean;
+	placeholder?: string;
+}
 import { theme } from "../../../theme.js";
 import { CountdownTimer } from "./countdown-timer.js";
 import { DynamicBorder } from "./dynamic-border.js";
@@ -62,9 +69,10 @@ export class ExtensionInputComponent extends Container implements Focusable {
 		}
 
 		this.input = new Input();
-		(this.input as any).secure = opts?.secure === true;
+		const extInput = this.input as unknown as GSDInputExtension;
+		extInput.secure = opts?.secure === true;
 		if (placeholder) {
-			(this.input as any).placeholder = placeholder;
+			extInput.placeholder = placeholder;
 		}
 		this.addChild(this.input);
 		this.addChild(new Spacer(1));

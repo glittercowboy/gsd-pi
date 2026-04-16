@@ -1,6 +1,8 @@
-import type { Model } from "@gsd/pi-ai";
+import type { Api, Model } from "@gsd/pi-ai";
+import type { ScopedModel } from "@gsd/pi-coding-agent";
+import type { InteractiveModeStateHost } from "../interactive-mode-state.js";
 
-export async function handleModelCommand(host: any, searchTerm?: string): Promise<void> {
+export async function handleModelCommand(host: InteractiveModeStateHost, searchTerm?: string): Promise<void> {
 	if (!searchTerm) {
 		host.showModelSelector();
 		return;
@@ -23,7 +25,7 @@ export async function handleModelCommand(host: any, searchTerm?: string): Promis
 	host.showModelSelector(searchTerm);
 }
 
-export async function findExactModelMatch(host: any, searchTerm: string): Promise<Model<any> | undefined> {
+export async function findExactModelMatch(host: InteractiveModeStateHost, searchTerm: string): Promise<Model<Api> | undefined> {
 	const term = searchTerm.trim();
 	if (!term) return undefined;
 
@@ -50,14 +52,14 @@ export async function findExactModelMatch(host: any, searchTerm: string): Promis
 	return exactMatches.length === 1 ? exactMatches[0] : undefined;
 }
 
-export async function getModelCandidates(host: any): Promise<Model<any>[]> {
+export async function getModelCandidates(host: InteractiveModeStateHost): Promise<Model<Api>[]> {
 	if (host.session.scopedModels.length > 0) {
 		// Filter scoped models by provider auth readiness so callers like
 		// findExactModelMatch can't resolve a scoped-but-unconfigured model.
 		const registry = host.session.modelRegistry;
 		return host.session.scopedModels
-			.filter((scoped: any) => registry.isProviderRequestReady(scoped.model.provider))
-			.map((scoped: any) => scoped.model);
+			.filter((scoped: ScopedModel) => registry.isProviderRequestReady(scoped.model.provider))
+			.map((scoped: ScopedModel) => scoped.model);
 	}
 
 	host.session.modelRegistry.refresh();
@@ -68,7 +70,7 @@ export async function getModelCandidates(host: any): Promise<Model<any>[]> {
 	}
 }
 
-export async function updateAvailableProviderCount(host: any): Promise<void> {
+export async function updateAvailableProviderCount(host: InteractiveModeStateHost): Promise<void> {
 	const models = await getModelCandidates(host);
 	const uniqueProviders = new Set(models.map((m) => m.provider));
 	host.footerDataProvider.setAvailableProviderCount(uniqueProviders.size);

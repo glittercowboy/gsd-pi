@@ -3,8 +3,9 @@ import type { ExtensionUIContext } from "@gsd/agent-types";
 import { Theme, getAvailableThemesWithPaths, getThemeByName, setTheme, setThemeInstance } from "@gsd/pi-coding-agent";
 import { theme } from "../../../theme.js";
 import { appKey } from "../components/keybinding-hints.js";
+import type { InteractiveModeStateHost } from "../interactive-mode-state.js";
 
-export function createExtensionUIContext(host: any): ExtensionUIContext {
+export function createExtensionUIContext(host: InteractiveModeStateHost): ExtensionUIContext {
 	return {
 		select: (title, options, opts) => host.showExtensionSelector(title, options, opts),
 		confirm: (title, message, opts) => host.showExtensionConfirm(title, message, opts),
@@ -36,11 +37,13 @@ export function createExtensionUIContext(host: any): ExtensionUIContext {
 		get theme() {
 			return theme;
 		},
-		getAllThemes: () => getAvailableThemesWithPaths() as any,
-		getTheme: (name) => getThemeByName(name) as any,
+		// vendor-seam: dual-module-path -- theme API returns pi-internal types that don't match ExtensionUIContext shape
+		getAllThemes: () => getAvailableThemesWithPaths() as unknown as ReturnType<ExtensionUIContext["getAllThemes"]>,
+		getTheme: (name) => getThemeByName(name) as unknown as ReturnType<ExtensionUIContext["getTheme"]>,
 		setTheme: (themeOrName) => {
 			if (themeOrName instanceof Theme) {
-				setThemeInstance(themeOrName as any);
+				// vendor-seam: dual-module-path -- setThemeInstance expects pi-internal Theme nominal type
+				setThemeInstance(themeOrName as unknown as Parameters<typeof setThemeInstance>[0]);
 				host.ui.requestRender();
 				return { success: true };
 			}

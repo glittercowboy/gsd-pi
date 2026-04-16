@@ -128,7 +128,7 @@ export class ToolExecutionComponent extends Container {
 	private imageComponents: Image[] = [];
 	private imageSpacers: Spacer[] = [];
 	private toolName: string;
-	private args: any;
+	private args: Record<string, unknown>;
 	private expanded = false;
 	private showImages: boolean;
 	private isPartial = true;
@@ -138,7 +138,7 @@ export class ToolExecutionComponent extends Container {
 	private result?: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
-		details?: any;
+		details?: Record<string, unknown>;
 	};
 	// Cached edit diff preview (computed when args arrive, before tool executes)
 	private editDiffPreview?: EditDiffResult | EditDiffError;
@@ -159,7 +159,7 @@ export class ToolExecutionComponent extends Container {
 
 	constructor(
 		toolName: string,
-		args: any,
+		args: Record<string, unknown>,
 		options: ToolExecutionOptions = {},
 		toolDefinition: ToolDefinition | undefined,
 		ui: TUI,
@@ -211,7 +211,7 @@ export class ToolExecutionComponent extends Container {
 		this.result = undefined;
 	}
 
-	updateArgs(args: any): void {
+	updateArgs(args: Record<string, unknown>): void {
 		this.args = args;
 		if (this.normalizedToolName === "write" && this.isPartial) {
 			this.updateWriteHighlightCacheIncremental();
@@ -385,7 +385,7 @@ export class ToolExecutionComponent extends Container {
 	updateResult(
 		result: {
 			content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-			details?: any;
+			details?: Record<string, unknown>;
 			isError: boolean;
 		},
 		isPartial = false,
@@ -446,7 +446,7 @@ export class ToolExecutionComponent extends Container {
 		if (caps.images !== "kitty") return;
 		if (!this.result) return;
 
-		const imageBlocks = this.result.content?.filter((c: any) => c.type === "image") || [];
+		const imageBlocks = this.result.content?.filter((c) => c.type === "image") || [];
 
 		for (let i = 0; i < imageBlocks.length; i++) {
 			const img = imageBlocks[i];
@@ -535,7 +535,8 @@ export class ToolExecutionComponent extends Container {
 						showImages: this.showImages,
 						isError: this.result?.isError ?? false,
 					};
-					const callComponent = (this.toolDefinition.renderCall as any)(this.args, theme, renderContext);
+					// vendor-seam: dual-module-path -- ToolDefinition.renderCall signature diverges between pi dist and GSD usage
+				const callComponent = (this.toolDefinition.renderCall as unknown as (...a: unknown[]) => Container | undefined)(this.args, theme, renderContext);
 					if (callComponent !== undefined) {
 						this.contentBox.addChild(callComponent);
 						customRendererHasContent = true;
@@ -568,8 +569,9 @@ export class ToolExecutionComponent extends Container {
 						showImages: this.showImages,
 						isError: this.result.isError,
 					};
-					const resultComponent = (this.toolDefinition.renderResult as any)(
-						{ content: this.result.content as any, details: this.result.details },
+					// vendor-seam: dual-module-path -- ToolDefinition.renderResult signature diverges between pi dist and GSD usage
+					const resultComponent = (this.toolDefinition.renderResult as unknown as (...a: unknown[]) => Container | undefined)(
+						{ content: this.result.content, details: this.result.details },
 						{ expanded: this.expanded, isPartial: this.isPartial },
 						theme,
 						renderContext,
@@ -611,7 +613,7 @@ export class ToolExecutionComponent extends Container {
 		this.imageSpacers = [];
 
 		if (this.result) {
-			const imageBlocks = this.result.content?.filter((c: any) => c.type === "image") || [];
+			const imageBlocks = this.result.content?.filter((c) => c.type === "image") || [];
 			const caps = getCapabilities();
 
 			for (let i = 0; i < imageBlocks.length; i++) {
@@ -738,11 +740,11 @@ export class ToolExecutionComponent extends Container {
 	private getTextOutput(): string {
 		if (!this.result) return "";
 
-		const textBlocks = this.result.content?.filter((c: any) => c.type === "text") || [];
-		const imageBlocks = this.result.content?.filter((c: any) => c.type === "image") || [];
+		const textBlocks = this.result.content?.filter((c) => c.type === "text") || [];
+		const imageBlocks = this.result.content?.filter((c) => c.type === "image") || [];
 
 		let output = textBlocks
-			.map((c: any) => {
+			.map((c) => {
 				// Use sanitizeBinaryOutput to handle binary data that crashes string-width
 				return sanitizeBinaryOutput(stripAnsi(c.text || "")).replace(/\r/g, "");
 			})
@@ -751,7 +753,7 @@ export class ToolExecutionComponent extends Container {
 		const caps = getCapabilities();
 		if (imageBlocks.length > 0 && (!caps.images || !this.showImages)) {
 			const imageIndicators = imageBlocks
-				.map((img: any) => {
+				.map((img) => {
 					return imageFallback(img.mimeType);
 				})
 				.join("\n");
