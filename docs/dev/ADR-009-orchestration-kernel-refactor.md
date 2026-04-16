@@ -1,6 +1,6 @@
 # ADR-009: Unified Orchestration Kernel Refactor
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-04-14
 **Deciders:** Jeremy McSpadden, GSD Core Team
 **Related:** ADR-001 (worktree architecture), ADR-003 (pipeline simplification), ADR-004 (capability-aware routing), ADR-005 (multi-provider strategy), ADR-008 (tools over MCP)

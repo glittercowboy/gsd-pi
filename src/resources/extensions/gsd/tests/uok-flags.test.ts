@@ -7,6 +7,34 @@ test("uok flags default to enabled when preference is unset", () => {
   const flags = resolveUokFlags(undefined);
   assert.equal(flags.enabled, true);
   assert.equal(flags.legacyFallback, false);
+  assert.equal(flags.gates, true);
+  assert.equal(flags.modelPolicy, true);
+  assert.equal(flags.executionGraph, true);
+  assert.equal(flags.gitops, true);
+  assert.equal(flags.gitopsTurnAction, "commit");
+  assert.equal(flags.gitopsTurnPush, false);
+  assert.equal(flags.auditUnified, true);
+  assert.equal(flags.planV2, true);
+});
+
+test("uok plane flags can be explicitly disabled", () => {
+  const flags = resolveUokFlags({
+    uok: {
+      gates: { enabled: false },
+      model_policy: { enabled: false },
+      execution_graph: { enabled: false },
+      gitops: { enabled: false },
+      audit_unified: { enabled: false },
+      plan_v2: { enabled: false },
+    },
+  });
+  assert.equal(flags.enabled, true);
+  assert.equal(flags.gates, false);
+  assert.equal(flags.modelPolicy, false);
+  assert.equal(flags.executionGraph, false);
+  assert.equal(flags.gitops, false);
+  assert.equal(flags.auditUnified, false);
+  assert.equal(flags.planV2, false);
 });
 
 test("uok legacy fallback preference forces legacy path", () => {

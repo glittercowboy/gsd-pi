@@ -1,7 +1,7 @@
 # ADR-009 Implementation Plan
 
 **Related ADR:** [ADR-009-orchestration-kernel-refactor.md](/Users/jeremymcspadden/Github/gsd-2/docs/dev/ADR-009-orchestration-kernel-refactor.md)  
-**Status:** Draft  
+**Status:** Active (Wave 8 — default flip)  
 **Date:** 2026-04-14  
 **Target Window:** 8-10 waves (incremental, no big-bang rewrite)
 

@@ -28,14 +28,14 @@ export function resolveUokFlags(prefs: GSDPreferences | undefined): UokFlags {
   return {
     enabled: enabledByPreference && !legacyFallback,
     legacyFallback,
-    gates: uok?.gates?.enabled === true,
-    modelPolicy: uok?.model_policy?.enabled === true,
-    executionGraph: uok?.execution_graph?.enabled === true,
-    gitops: uok?.gitops?.enabled === true,
-    gitopsTurnAction: uok?.gitops?.turn_action ?? "status-only",
+    gates: uok?.gates?.enabled !== false,
+    modelPolicy: uok?.model_policy?.enabled !== false,
+    executionGraph: uok?.execution_graph?.enabled !== false,
+    gitops: uok?.gitops?.enabled !== false,
+    gitopsTurnAction: uok?.gitops?.turn_action ?? "commit",
     gitopsTurnPush: uok?.gitops?.turn_push === true,
-    auditUnified: uok?.audit_unified?.enabled === true,
-    planV2: uok?.plan_v2?.enabled === true,
+    auditUnified: uok?.audit_unified?.enabled !== false,
+    planV2: uok?.plan_v2?.enabled !== false,
   };
 }
 

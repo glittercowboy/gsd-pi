@@ -193,18 +193,18 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
   - `hooks`: boolean — enable routing hooks. Default: `true`.
   - `capability_routing`: boolean — enable capability-profile scoring for model selection within a tier. Requires `enabled: true`. Default: `false`.
 
-- `uok`: Unified Orchestration Kernel controls. Keys:
+- `uok`: Unified Orchestration Kernel controls (ADR-009). All planes are **enabled by default** as of Wave 8. Set any plane's `enabled` to `false` to disable it. Keys:
   - `enabled`: boolean — enable kernel wrappers and contract observers. Default: `true`.
-  - `legacy_fallback.enabled`: boolean — emergency release fallback that forces legacy orchestration behavior even when `uok.enabled` is `true`. Default: `false`.
+  - `legacy_fallback.enabled`: boolean — emergency fallback that forces legacy orchestration behavior even when `uok.enabled` is `true`. Default: `false`.
     - Runtime override: set `GSD_UOK_FORCE_LEGACY=1` (or `GSD_UOK_LEGACY_FALLBACK=1`) to force legacy behavior for the current process.
-  - `gates.enabled`: boolean — route checks through the unified gate runner and persist `gate_runs`.
-  - `model_policy.enabled`: boolean — enforce policy filtering before model capability scoring.
-  - `execution_graph.enabled`: boolean — enable DAG scheduler facade/adapters for execution.
-  - `gitops.enabled`: boolean — persist turn-level git transaction records.
-  - `gitops.turn_action`: `"commit"` | `"snapshot"` | `"status-only"` — turn transaction mode.
-  - `gitops.turn_push`: boolean — whether turn transactions should include push intent metadata.
-  - `audit_unified.enabled`: boolean — dual-write unified audit envelope events.
-  - `plan_v2.enabled`: boolean — enable bounded clarify/research/draft/compile planning flow.
+  - `gates.enabled`: boolean — route checks through the unified gate runner and persist `gate_runs`. Default: `true`.
+  - `model_policy.enabled`: boolean — enforce policy filtering before model capability scoring. Default: `true`.
+  - `execution_graph.enabled`: boolean — enable DAG scheduler facade/adapters for execution. Default: `true`.
+  - `gitops.enabled`: boolean — persist turn-level git transaction records. Default: `true`.
+  - `gitops.turn_action`: `"commit"` | `"snapshot"` | `"status-only"` — turn transaction mode. Default: `"commit"`.
+  - `gitops.turn_push`: boolean — whether turn transactions should include push intent metadata. Default: `false`.
+  - `audit_unified.enabled`: boolean — unified audit envelope events with causal traceability. Default: `true`.
+  - `plan_v2.enabled`: boolean — bounded clarify/research/draft/compile planning flow with fail-closed plan gate. Default: `true`.
 
 - `context_management`: configures context hygiene for auto-mode sessions. Keys:
   - `observation_masking`: boolean — mask old tool results to reduce context bloat. Default: `true`.
