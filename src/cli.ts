@@ -2,7 +2,6 @@ import {
   AuthStorage,
   DefaultResourceLoader,
   ModelRegistry,
-  runPackageCommand,
   SettingsManager,
   SessionManager,
 } from '@gsd/pi-coding-agent'
@@ -261,18 +260,8 @@ if (!process.stdin.isTTY && !isPrintMode && !hasSubcommand && !cliFlags.listMode
   printNonTtyErrorAndExit(undefined, false)
 }
 
-const packageCommand = await runPackageCommand({
-  appName: 'gsd',
-  args: process.argv.slice(2),
-  cwd: process.cwd(),
-  agentDir,
-  stdout: process.stdout,
-  stderr: process.stderr,
-  allowedCommands: new Set(['install', 'remove', 'list']),
-})
-if (packageCommand.handled) {
-  process.exit(packageCommand.exitCode)
-}
+// Package management subcommands (install, remove, list) were handled here
+// via pi-coding-agent prior to 0.67.2. That API was removed upstream.
 
 // `gsd config` — replay the setup wizard and exit
 if (cliFlags.messages[0] === 'config') {
@@ -421,7 +410,7 @@ migratePiCredentials(authStorage)
 const { resolveModelsJsonPath } = await import('./models-resolver.js')
 const modelsJsonPath = resolveModelsJsonPath()
 
-const modelRegistry = new ModelRegistry(authStorage, modelsJsonPath)
+const modelRegistry = ModelRegistry.create(authStorage, modelsJsonPath)
 markStartup('ModelRegistry')
 const settingsManager = SettingsManager.create(process.cwd(), agentDir)
 applySecurityOverrides(settingsManager)
@@ -549,7 +538,7 @@ if (isPrintMode) {
   const resourceLoader = new DefaultResourceLoader({
     agentDir,
     additionalExtensionPaths: cliFlags.extensions.length > 0 ? cliFlags.extensions : undefined,
-    appendSystemPrompt,
+    appendSystemPrompt: appendSystemPrompt ? [appendSystemPrompt] : undefined,
   })
   await resourceLoader.reload()
   markStartup('resourceLoader.reload')
@@ -560,7 +549,7 @@ if (isPrintMode) {
     settingsManager,
     sessionManager,
     resourceLoader,
-    isClaudeCodeReady: () => modelRegistry.isProviderRequestReady('claude-code'),
+    isClaudeCodeReady: () => authStorage.hasAuth('claude-code'),
   })
   markStartup('createAgentSession')
 
@@ -715,7 +704,7 @@ const { session, extensionsResult, modelFallbackMessage: interactiveFallbackMsg 
   settingsManager,
   sessionManager,
   resourceLoader,
-  isClaudeCodeReady: () => modelRegistry.isProviderRequestReady('claude-code'),
+  isClaudeCodeReady: () => authStorage.hasAuth('claude-code'),
 })
 markStartup('createAgentSession')
 
