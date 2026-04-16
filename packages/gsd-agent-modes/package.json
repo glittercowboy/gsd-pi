@@ -15,6 +15,7 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@gsd/agent-types": "*",
     "@gsd/agent-core": "*",
     "@gsd/pi-coding-agent": "*",
     "@gsd/pi-tui": "*"

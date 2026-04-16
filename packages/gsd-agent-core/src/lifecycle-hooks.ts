@@ -11,7 +11,7 @@ import type {
 	LifecycleHookHandler,
 	LifecycleHookPhase,
 	LifecycleHookScope,
-} from "./lifecycle-hook-types.js";
+} from "@gsd/agent-types";
 
 interface ExtensionManifest {
 	dependencies?: {

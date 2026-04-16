@@ -16,6 +16,7 @@
     "copy-assets": "node scripts/copy-assets.cjs"
   },
   "dependencies": {
+    "@gsd/agent-types": "*",
     "@gsd/pi-coding-agent": "*",
     "@gsd/pi-agent-core": "*",
     "@gsd/pi-ai": "*",
