@@ -1,6 +1,4 @@
-// Lazy-loaded: Mistral SDK (~369ms) is imported on first use, not at startup.
-// This avoids penalizing users who don't use Mistral models.
-import type { Mistral } from "@mistralai/mistralai";
+import { Mistral } from "@mistralai/mistralai";
 import type { RequestOptions } from "@mistralai/mistralai/lib/sdks.js";
 import type {
 	ChatCompletionStreamRequest,
@@ -9,15 +7,6 @@ import type {
 	ContentChunk,
 	FunctionTool,
 } from "@mistralai/mistralai/models/components/index.js";
-
-let _MistralClass: typeof Mistral | undefined;
-async function getMistralClass(): Promise<typeof Mistral> {
-	if (!_MistralClass) {
-		const mod = await import("@mistralai/mistralai");
-		_MistralClass = mod.Mistral;
-	}
-	return _MistralClass;
-}
 import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost } from "../models.js";
 import type {
@@ -39,7 +28,7 @@ import { shortHash } from "../utils/hash.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
-import { transformMessagesWithReport } from "./transform-messages.js";
+import { transformMessages } from "./transform-messages.js";
 
 const MISTRAL_TOOL_CALL_ID_LENGTH = 9;
 const MAX_MISTRAL_ERROR_BODY_CHARS = 4000;
@@ -72,14 +61,13 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			}
 
 			// Intentionally per-request: avoids shared SDK mutable state across concurrent consumers.
-			const MistralSDK = await getMistralClass();
-			const mistral = new MistralSDK({
+			const mistral = new Mistral({
 				apiKey,
 				serverURL: model.baseUrl,
 			});
 
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();
-			const transformedMessages = transformMessagesWithReport(context.messages, model, (id) => normalizeMistralToolCallId(id), "mistral-conversations");
+			const transformedMessages = transformMessages(context.messages, model, (id) => normalizeMistralToolCallId(id));
 
 			let payload = buildChatPayload(model, context, transformedMessages, options);
 			const nextPayload = await options?.onPayload?.(payload, model);
@@ -101,6 +89,10 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			for (const block of output.content) {
+				// partialArgs is only a streaming scratch buffer; never persist it.
+				delete (block as { partialArgs?: string }).partialArgs;
+			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatMistralError(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
@@ -297,6 +289,9 @@ async function consumeChatStream(
 
 	for await (const event of mistralStream) {
 		const chunk = event.data;
+		// Mistral's streamed CompletionChunk carries an id field. Keep the first non-empty one,
+		// mirroring how OpenAI-style streaming exposes a stable response identifier per stream.
+		output.responseId ||= chunk.id;
 
 		if (chunk.usage) {
 			output.usage.input = chunk.usage.promptTokens || 0;
@@ -433,6 +428,8 @@ async function consumeChatStream(
 		if (block.type !== "toolCall") continue;
 		const toolBlock = block as ToolCall & { partialArgs?: string };
 		toolBlock.arguments = parseStreamingJson<Record<string, unknown>>(toolBlock.partialArgs);
+		// Finalize in-place and strip the scratch buffer so replay only
+		// carries parsed arguments.
 		delete toolBlock.partialArgs;
 		stream.push({
 			type: "toolcall_end",
@@ -499,9 +496,6 @@ function toChatMessages(messages: Message[], supportsImages: boolean): ChatCompl
 							thinking: [{ type: "text", text: sanitizeSurrogates(block.thinking) }],
 						});
 					}
-					continue;
-				}
-				if (block.type !== "toolCall") {
 					continue;
 				}
 				toolCalls.push({

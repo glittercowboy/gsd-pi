@@ -1,5 +1,10 @@
 import type * as NodeOs from "node:os";
-import type { Tool as OpenAITool, ResponseInput, ResponseStreamEvent } from "openai/resources/responses/responses.js";
+import type {
+	Tool as OpenAITool,
+	ResponseCreateParamsStreaming,
+	ResponseInput,
+	ResponseStreamEvent,
+} from "openai/resources/responses/responses.js";
 
 // NEVER convert to top-level runtime imports - breaks browser/Vite builds (web-ui)
 let _os: typeof NodeOs | null = null;
@@ -25,6 +30,7 @@ import type {
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
+	Usage,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
@@ -56,6 +62,7 @@ const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 export interface OpenAICodexResponsesOptions extends StreamOptions {
 	reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 	reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
+	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
 	textVerbosity?: "low" | "medium" | "high";
 }
 
@@ -72,6 +79,7 @@ interface RequestBody {
 	parallel_tool_calls?: boolean;
 	temperature?: number;
 	reasoning?: { effort?: string; summary?: string };
+	service_tier?: ResponseCreateParamsStreaming["service_tier"];
 	text?: { verbosity?: string };
 	include?: string[];
 	prompt_cache_key?: string;
@@ -145,7 +153,15 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			if (nextBody !== undefined) {
 				body = nextBody as RequestBody;
 			}
-			const headers = buildHeaders(model.headers, options?.headers, accountId, apiKey, options?.sessionId);
+			const websocketRequestId = options?.sessionId || createCodexRequestId();
+			const sseHeaders = buildSSEHeaders(model.headers, options?.headers, accountId, apiKey, options?.sessionId);
+			const websocketHeaders = buildWebSocketHeaders(
+				model.headers,
+				options?.headers,
+				accountId,
+				apiKey,
+				websocketRequestId,
+			);
 			const bodyJson = JSON.stringify(body);
 			const transport = options?.transport || "sse";
 
@@ -155,7 +171,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 					await processWebSocketStream(
 						resolveCodexWebSocketUrl(model.baseUrl),
 						body,
-						headers,
+						websocketHeaders,
 						output,
 						stream,
 						model,
@@ -194,7 +210,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 				try {
 					response = await fetch(resolveCodexUrl(model.baseUrl), {
 						method: "POST",
-						headers,
+						headers: sseHeaders,
 						body: bodyJson,
 						signal: options?.signal,
 					});
@@ -243,7 +259,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			}
 
 			stream.push({ type: "start", partial: output });
-			await processStream(response, output, stream, model);
+			await processStream(response, output, stream, model, options);
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -252,6 +268,10 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
 			stream.end();
 		} catch (error) {
+			for (const block of output.content) {
+				// partialJson is only a streaming scratch buffer; never persist it.
+				delete (block as { partialJson?: string }).partialJson;
+			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : String(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
@@ -311,6 +331,10 @@ function buildRequestBody(
 		body.temperature = options.temperature;
 	}
 
+	if (options?.serviceTier !== undefined) {
+		body.service_tier = options.serviceTier;
+	}
+
 	if (context.tools) {
 		body.tools = convertResponsesTools(context.tools, { strict: null });
 	}
@@ -332,6 +356,28 @@ function clampReasoningEffort(modelId: string, effort: string): string {
 	if (id === "gpt-5.1" && effort === "xhigh") return "high";
 	if (id === "gpt-5.1-codex-mini") return effort === "high" || effort === "xhigh" ? "high" : "medium";
 	return effort;
+}
+
+function getServiceTierCostMultiplier(serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined): number {
+	switch (serviceTier) {
+		case "flex":
+			return 0.5;
+		case "priority":
+			return 2;
+		default:
+			return 1;
+	}
+}
+
+function applyServiceTierPricing(usage: Usage, serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined) {
+	const multiplier = getServiceTierCostMultiplier(serviceTier);
+	if (multiplier === 1) return;
+
+	usage.cost.input *= multiplier;
+	usage.cost.output *= multiplier;
+	usage.cost.cacheRead *= multiplier;
+	usage.cost.cacheWrite *= multiplier;
+	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
 }
 
 function resolveCodexUrl(baseUrl?: string): string {
@@ -358,8 +404,12 @@ async function processStream(
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 	model: Model<"openai-codex-responses">,
+	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
-	await processResponsesStream(mapCodexEvents(parseSSE(response)), output, stream, model);
+	await processResponsesStream(mapCodexEvents(parseSSE(response)), output, stream, model, {
+		serviceTier: options?.serviceTier,
+		applyServiceTierPricing,
+	});
 }
 
 async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): AsyncGenerator<ResponseStreamEvent> {
@@ -368,14 +418,9 @@ async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): 
 		if (!type) continue;
 
 		if (type === "error") {
-			// Codex error events nest details under event.error (e.g.
-			// { type: "error", error: { type: "server_error", code: "server_error", message: "..." } })
-			const errorObj = (event as { error?: { code?: string; type?: string; message?: string } }).error;
-			const code = errorObj?.code || (event as { code?: string }).code || "";
-			const errorType = errorObj?.type || "";
-			const message = errorObj?.message || (event as { message?: string }).message || "";
-			const prefix = errorType ? `Codex ${errorType}` : "Codex error";
-			throw new Error(`${prefix}: ${message || code || JSON.stringify(event)}`);
+			const code = (event as { code?: string }).code || "";
+			const message = (event as { message?: string }).message || "";
+			throw new Error(`Codex error: ${message || code || JSON.stringify(event)}`);
 		}
 
 		if (type === "response.failed") {
@@ -383,13 +428,13 @@ async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): 
 			throw new Error(msg || "Codex response failed");
 		}
 
-		if (type === "response.done" || type === "response.completed") {
+		if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {
 			const response = (event as { response?: { status?: unknown } }).response;
 			const normalizedResponse = response
 				? { ...response, status: normalizeCodexStatus(response.status) }
 				: response;
 			yield { ...event, type: "response.completed", response: normalizedResponse } as ResponseStreamEvent;
-			continue;
+			return;
 		}
 
 		yield event as unknown as ResponseStreamEvent;
@@ -412,36 +457,39 @@ async function* parseSSE(response: Response): AsyncGenerator<Record<string, unkn
 	const decoder = new TextDecoder();
 	let buffer = "";
 
-	while (true) {
-		const { done, value } = await reader.read();
-		if (done) break;
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
 
-		const decoded = decoder.decode(value, { stream: true });
-		// Avoid appending to an empty buffer — assign directly to skip the
-		// string concatenation and its intermediate allocation.
-		buffer = buffer ? buffer + decoded : decoded;
+			let idx = buffer.indexOf("\n\n");
+			while (idx !== -1) {
+				const chunk = buffer.slice(0, idx);
+				buffer = buffer.slice(idx + 2);
 
-		// Consume all complete SSE messages (delimited by \n\n) so the
-		// buffer only ever holds one partial message between reads.
-		let idx = buffer.indexOf("\n\n");
-		while (idx !== -1) {
-			const chunk = buffer.slice(0, idx);
-			buffer = buffer.slice(idx + 2);
-
-			const dataLines = chunk
-				.split("\n")
-				.filter((l) => l.startsWith("data:"))
-				.map((l) => l.slice(5).trim());
-			if (dataLines.length > 0) {
-				const data = dataLines.join("\n").trim();
-				if (data && data !== "[DONE]") {
-					try {
-						yield JSON.parse(data);
-					} catch {}
+				const dataLines = chunk
+					.split("\n")
+					.filter((l) => l.startsWith("data:"))
+					.map((l) => l.slice(5).trim());
+				if (dataLines.length > 0) {
+					const data = dataLines.join("\n").trim();
+					if (data && data !== "[DONE]") {
+						try {
+							yield JSON.parse(data);
+						} catch {}
+					}
 				}
+				idx = buffer.indexOf("\n\n");
 			}
-			idx = buffer.indexOf("\n\n");
 		}
+	} finally {
+		try {
+			await reader.cancel();
+		} catch {}
+		try {
+			reader.releaseLock();
+		} catch {}
 	}
 }
 
@@ -451,7 +499,6 @@ async function* parseSSE(response: Response): AsyncGenerator<Record<string, unkn
 
 const OPENAI_BETA_RESPONSES_WEBSOCKETS = "responses_websockets=2026-02-06";
 const SESSION_WEBSOCKET_CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_WEBSOCKET_CACHE_SIZE = 10;
 
 type WebSocketEventType = "open" | "message" | "error" | "close";
 type WebSocketListener = (event: unknown) => void;
@@ -525,7 +572,7 @@ async function connectWebSocket(url: string, headers: Headers, signal?: AbortSig
 	}
 
 	const wsHeaders = headersToRecord(headers);
-	wsHeaders["OpenAI-Beta"] = OPENAI_BETA_RESPONSES_WEBSOCKETS;
+	delete wsHeaders["OpenAI-Beta"];
 
 	return new Promise<WebSocketLike>((resolve, reject) => {
 		let settled = false;
@@ -545,16 +592,18 @@ async function connectWebSocket(url: string, headers: Headers, signal?: AbortSig
 			resolve(socket);
 		};
 		const onError: WebSocketListener = (event) => {
+			const error = extractWebSocketError(event);
 			if (settled) return;
 			settled = true;
 			cleanup();
-			reject(extractWebSocketError(event));
+			reject(error);
 		};
 		const onClose: WebSocketListener = (event) => {
+			const error = extractWebSocketCloseError(event);
 			if (settled) return;
 			settled = true;
 			cleanup();
-			reject(extractWebSocketCloseError(event));
+			reject(error);
 		};
 		const onAbort = () => {
 			if (settled) return;
@@ -636,20 +685,6 @@ async function acquireWebSocket(
 
 	const socket = await connectWebSocket(url, headers, signal);
 	const entry: CachedWebSocketConnection = { socket, busy: true };
-
-	// Evict the oldest entry if the cache is at capacity (LRU eviction).
-	if (websocketSessionCache.size >= MAX_WEBSOCKET_CACHE_SIZE) {
-		const oldestKey = websocketSessionCache.keys().next().value;
-		if (oldestKey) {
-			const oldEntry = websocketSessionCache.get(oldestKey);
-			websocketSessionCache.delete(oldestKey);
-			if (oldEntry) {
-				if (oldEntry.idleTimer) clearTimeout(oldEntry.idleTimer);
-				closeWebSocketSilently(oldEntry.socket);
-			}
-		}
-	}
-
 	websocketSessionCache.set(sessionId, entry);
 	return {
 		socket,
@@ -720,40 +755,21 @@ async function* parseWebSocket(socket: WebSocketLike, signal?: AbortSignal): Asy
 		resolve();
 	};
 
-	const cleanup = () => {
-		socket.removeEventListener("message", onMessage);
-		socket.removeEventListener("error", onError);
-		socket.removeEventListener("close", onClose);
-		signal?.removeEventListener("abort", onAbort);
-	};
-
 	const onMessage: WebSocketListener = (event) => {
 		void (async () => {
+			if (!event || typeof event !== "object" || !("data" in event)) return;
+			const text = await decodeWebSocketData((event as { data?: unknown }).data);
+			if (!text) return;
 			try {
-				if (!event || typeof event !== "object" || !("data" in event)) return;
-				const text = await decodeWebSocketData((event as { data?: unknown }).data);
-				if (!text) return;
 				const parsed = JSON.parse(text) as Record<string, unknown>;
 				const type = typeof parsed.type === "string" ? parsed.type : "";
-				if (type === "response.completed" || type === "response.done") {
+				if (type === "response.completed" || type === "response.done" || type === "response.incomplete") {
 					sawCompletion = true;
 					done = true;
 				}
 				queue.push(parsed);
 				wake();
-			} catch (err) {
-				// Ensure listeners are cleaned up if the async handler errors.
-				// Without this, the fire-and-forget promise would swallow the
-				// error while leaving listeners attached to the socket.
-				if (err instanceof SyntaxError) {
-					// JSON parse failure — skip the malformed message.
-					return;
-				}
-				failed = err instanceof Error ? err : new Error(String(err));
-				done = true;
-				cleanup();
-				wake();
-			}
+			} catch {}
 		})();
 	};
 
@@ -809,7 +825,10 @@ async function* parseWebSocket(socket: WebSocketLike, signal?: AbortSignal): Asy
 			throw new Error("WebSocket stream closed before response.completed");
 		}
 	} finally {
-		cleanup();
+		socket.removeEventListener("message", onMessage);
+		socket.removeEventListener("error", onError);
+		socket.removeEventListener("close", onClose);
+		signal?.removeEventListener("abort", onAbort);
 	}
 }
 
@@ -829,7 +848,10 @@ async function processWebSocketStream(
 		socket.send(JSON.stringify({ type: "response.create", ...body }));
 		onStart();
 		stream.push({ type: "start", partial: output });
-		await processResponsesStream(mapCodexEvents(parseWebSocket(socket, options?.signal)), output, stream, model);
+		await processResponsesStream(mapCodexEvents(parseWebSocket(socket, options?.signal)), output, stream, model, {
+			serviceTier: options?.serviceTier,
+			applyServiceTierPricing,
+		});
 		if (options?.signal?.aborted) {
 			keepConnection = false;
 		}
@@ -889,29 +911,65 @@ function extractAccountId(token: string): string {
 	}
 }
 
-function buildHeaders(
+function createCodexRequestId(): string {
+	if (typeof globalThis.crypto?.randomUUID === "function") {
+		return globalThis.crypto.randomUUID();
+	}
+	return `codex_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function buildBaseCodexHeaders(
+	initHeaders: Record<string, string> | undefined,
+	additionalHeaders: Record<string, string> | undefined,
+	accountId: string,
+	token: string,
+): Headers {
+	const headers = new Headers(initHeaders);
+	for (const [key, value] of Object.entries(additionalHeaders || {})) {
+		headers.set(key, value);
+	}
+	headers.set("Authorization", `Bearer ${token}`);
+	headers.set("chatgpt-account-id", accountId);
+	headers.set("originator", "pi");
+	const userAgent = _os ? `pi (${_os.platform()} ${_os.release()}; ${_os.arch()})` : "pi (browser)";
+	headers.set("User-Agent", userAgent);
+	return headers;
+}
+
+function buildSSEHeaders(
 	initHeaders: Record<string, string> | undefined,
 	additionalHeaders: Record<string, string> | undefined,
 	accountId: string,
 	token: string,
 	sessionId?: string,
 ): Headers {
-	const headers = new Headers(initHeaders);
-	headers.set("Authorization", `Bearer ${token}`);
-	headers.set("chatgpt-account-id", accountId);
+	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
 	headers.set("OpenAI-Beta", "responses=experimental");
-	headers.set("originator", "pi");
-	const userAgent = _os ? `pi (${_os.platform()} ${_os.release()}; ${_os.arch()})` : "pi (browser)";
-	headers.set("User-Agent", userAgent);
 	headers.set("accept", "text/event-stream");
 	headers.set("content-type", "application/json");
-	for (const [key, value] of Object.entries(additionalHeaders || {})) {
-		headers.set(key, value);
-	}
 
 	if (sessionId) {
 		headers.set("session_id", sessionId);
+		headers.set("x-client-request-id", sessionId);
 	}
 
+	return headers;
+}
+
+function buildWebSocketHeaders(
+	initHeaders: Record<string, string> | undefined,
+	additionalHeaders: Record<string, string> | undefined,
+	accountId: string,
+	token: string,
+	requestId: string,
+): Headers {
+	const headers = buildBaseCodexHeaders(initHeaders, additionalHeaders, accountId, token);
+	headers.delete("accept");
+	headers.delete("content-type");
+	headers.delete("OpenAI-Beta");
+	headers.delete("openai-beta");
+	headers.set("OpenAI-Beta", OPENAI_BETA_RESPONSES_WEBSOCKETS);
+	headers.set("x-client-request-id", requestId);
+	headers.set("session_id", requestId);
 	return headers;
 }

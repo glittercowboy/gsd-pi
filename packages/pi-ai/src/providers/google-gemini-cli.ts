@@ -77,7 +77,7 @@ const GEMINI_CLI_HEADERS = {
 };
 
 // Headers for Antigravity (sandbox endpoint) - requires specific User-Agent
-const DEFAULT_ANTIGRAVITY_VERSION = "1.18.4";
+const DEFAULT_ANTIGRAVITY_VERSION = "1.21.9";
 
 function getAntigravityHeaders() {
 	const version = process.env.PI_AI_ANTIGRAVITY_VERSION || DEFAULT_ANTIGRAVITY_VERSION;
@@ -112,7 +112,7 @@ const CLAUDE_THINKING_BETA_HEADER = "interleaved-thinking-2025-05-14";
  * - "Please retry in Xs" or "Please retry in Xms"
  * - "retryDelay": "34.074824224s" (JSON field)
  */
-function extractRetryDelay(errorText: string, response?: Response | Headers): number | undefined {
+export function extractRetryDelay(errorText: string, response?: Response | Headers): number | undefined {
 	const normalizeDelay = (ms: number): number | undefined => (ms > 0 ? Math.ceil(ms + 1000) : undefined);
 
 	const headers = response instanceof Headers ? response : response?.headers;
@@ -446,14 +446,6 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 					}
 
 					// Not retryable or max retries exceeded
-					if (response.status === 404) {
-						throw new Error(
-							`Cloud Code Assist API error (404): Model "${model.id}" was not found. ` +
-							`This model may not be available via Cloud Code Assist. ` +
-							`Try using the "google" provider with a GOOGLE_API_KEY instead, ` +
-							`or switch to a supported model (e.g., gemini-2.5-pro).`,
-						);
-					}
 					throw new Error(`Cloud Code Assist API error (${response.status}): ${extractErrorMessage(errorText)}`);
 				} catch (error) {
 					// Check for abort - fetch throws AbortError, our code throws "Request was aborted"
@@ -556,6 +548,9 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 							// Unwrap the response
 							const responseData = chunk.response;
 							if (!responseData) continue;
+							// Cloud Code Assist mirrors Gemini's responseId field. Keep the first non-empty one.
+							// A single streamed response should retain the same ID across chunks.
+							output.responseId ||= responseData.responseId;
 
 							const candidate = responseData.candidates?.[0];
 							if (candidate?.content?.parts) {
@@ -865,7 +860,7 @@ export const streamSimpleGoogleGeminiCli: StreamFunction<"google-gemini-cli", Si
 	} satisfies GoogleGeminiCliOptions);
 };
 
-function buildRequest(
+export function buildRequest(
 	model: Model<"google-gemini-cli">,
 	context: Context,
 	projectId: string,
@@ -894,6 +889,8 @@ function buildRequest(
 		} else if (options.thinking.budgetTokens !== undefined) {
 			generationConfig.thinkingConfig.thinkingBudget = options.thinking.budgetTokens;
 		}
+	} else if (model.reasoning && options.thinking && !options.thinking.enabled) {
+		generationConfig.thinkingConfig = getDisabledThinkingConfig(model.id);
 	}
 
 	const request: CloudCodeAssistRequest["request"] = {
@@ -950,6 +947,21 @@ function buildRequest(
 }
 
 type ClampedThinkingLevel = Exclude<ThinkingLevel, "xhigh">;
+
+function getDisabledThinkingConfig(modelId: string): ThinkingConfig {
+	// Google docs: Gemini 3.1 Pro cannot disable thinking, and Gemini 3 Flash / Flash-Lite
+	// do not support full thinking-off either. For Gemini 3 models, use the lowest supported
+	// thinkingLevel without includeThoughts so hidden thinking remains invisible to pi.
+	if (isGemini3ProModel(modelId)) {
+		return { thinkingLevel: "LOW" as any };
+	}
+	if (isGemini3FlashModel(modelId)) {
+		return { thinkingLevel: "MINIMAL" as any };
+	}
+
+	// Gemini 2.x supports disabling via thinkingBudget = 0.
+	return { thinkingBudget: 0 };
+}
 
 function getGeminiCliThinkingLevel(effort: ClampedThinkingLevel, modelId: string): GoogleThinkingLevel {
 	if (isGemini3ProModel(modelId)) {

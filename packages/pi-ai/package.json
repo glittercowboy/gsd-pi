@@ -39,5 +39,6 @@
   },
   "devDependencies": {
     "@smithy/node-http-handler": "^4.5.0"
-  }
+  },
+  "piVersion": "0.67.2"
 }

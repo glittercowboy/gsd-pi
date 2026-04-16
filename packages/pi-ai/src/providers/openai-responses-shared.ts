@@ -2,6 +2,7 @@ import type OpenAI from "openai";
 import type {
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
+	ResponseFunctionCallOutputItemList,
 	ResponseFunctionToolCall,
 	ResponseInput,
 	ResponseInputContent,
@@ -30,7 +31,7 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { shortHash } from "../utils/hash.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { transformMessagesWithReport } from "./transform-messages.js";
+import { transformMessages } from "./transform-messages.js";
 
 // =============================================================================
 // Utilities
@@ -90,25 +91,32 @@ export function convertResponsesMessages<TApi extends Api>(
 ): ResponseInput {
 	const messages: ResponseInput = [];
 
-	const normalizeToolCallId = (id: string): string => {
-		if (!allowedToolCallProviders.has(model.provider)) return id;
-		if (!id.includes("|")) return id;
+	const normalizeIdPart = (part: string): string => {
+		const sanitized = part.replace(/[^a-zA-Z0-9_-]/g, "_");
+		const normalized = sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
+		return normalized.replace(/_+$/, "");
+	};
+
+	const buildForeignResponsesItemId = (itemId: string): string => {
+		const normalized = `fc_${shortHash(itemId)}`;
+		return normalized.length > 64 ? normalized.slice(0, 64) : normalized;
+	};
+
+	const normalizeToolCallId = (id: string, _targetModel: Model<TApi>, source: AssistantMessage): string => {
+		if (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);
+		if (!id.includes("|")) return normalizeIdPart(id);
 		const [callId, itemId] = id.split("|");
-		const sanitizedCallId = callId.replace(/[^a-zA-Z0-9_-]/g, "_");
-		let sanitizedItemId = itemId.replace(/[^a-zA-Z0-9_-]/g, "_");
+		const normalizedCallId = normalizeIdPart(callId);
+		const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
+		let normalizedItemId = isForeignToolCall ? buildForeignResponsesItemId(itemId) : normalizeIdPart(itemId);
 		// OpenAI Responses API requires item id to start with "fc"
-		if (!sanitizedItemId.startsWith("fc")) {
-			sanitizedItemId = `fc_${sanitizedItemId}`;
+		if (!normalizedItemId.startsWith("fc_")) {
+			normalizedItemId = normalizeIdPart(`fc_${normalizedItemId}`);
 		}
-		// Truncate to 64 chars and strip trailing underscores (OpenAI Codex rejects them)
-		let normalizedCallId = sanitizedCallId.length > 64 ? sanitizedCallId.slice(0, 64) : sanitizedCallId;
-		let normalizedItemId = sanitizedItemId.length > 64 ? sanitizedItemId.slice(0, 64) : sanitizedItemId;
-		normalizedCallId = normalizedCallId.replace(/_+$/, "");
-		normalizedItemId = normalizedItemId.replace(/_+$/, "");
 		return `${normalizedCallId}|${normalizedItemId}`;
 	};
 
-	const transformedMessages = transformMessagesWithReport(context.messages, model, normalizeToolCallId, "openai-responses");
+	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
 	if (includeSystemPrompt && context.systemPrompt) {
@@ -206,48 +214,45 @@ export function convertResponsesMessages<TApi extends Api>(
 			if (output.length === 0) continue;
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
-			// Extract text and image content
 			const textResult = msg.content
 				.filter((c): c is TextContent => c.type === "text")
 				.map((c) => c.text)
 				.join("\n");
 			const hasImages = msg.content.some((c): c is ImageContent => c.type === "image");
-
-			// Always send function_call_output with text (or placeholder if only images)
 			const hasText = textResult.length > 0;
 			const [callId] = msg.toolCallId.split("|");
-			messages.push({
-				type: "function_call_output",
-				call_id: callId,
-				output: sanitizeSurrogates(hasText ? textResult : "(see attached image)"),
-			});
 
-			// If there are images and model supports them, send a follow-up user message with images
+			let output: string | ResponseFunctionCallOutputItemList;
 			if (hasImages && model.input.includes("image")) {
-				const contentParts: ResponseInputContent[] = [];
+				const contentParts: ResponseFunctionCallOutputItemList = [];
 
-				// Add text prefix
-				contentParts.push({
-					type: "input_text",
-					text: "Attached image(s) from tool result:",
-				} satisfies ResponseInputText);
+				if (hasText) {
+					contentParts.push({
+						type: "input_text",
+						text: sanitizeSurrogates(textResult),
+					});
+				}
 
-				// Add images
 				for (const block of msg.content) {
 					if (block.type === "image") {
 						contentParts.push({
 							type: "input_image",
 							detail: "auto",
 							image_url: `data:${block.mimeType};base64,${block.data}`,
-						} satisfies ResponseInputImage);
+						});
 					}
 				}
 
-				messages.push({
-					role: "user",
-					content: contentParts,
-				});
+				output = contentParts;
+			} else {
+				output = sanitizeSurrogates(hasText ? textResult : "(see attached image)");
 			}
+
+			messages.push({
+				type: "function_call_output",
+				call_id: callId,
+				output,
+			});
 		}
 		msgIndex++;
 	}
@@ -287,7 +292,9 @@ export async function processResponsesStream<TApi extends Api>(
 	const blockIndex = () => blocks.length - 1;
 
 	for await (const event of openaiStream) {
-		if (event.type === "response.output_item.added") {
+		if (event.type === "response.created") {
+			output.responseId = event.response.id;
+		} else if (event.type === "response.output_item.added") {
 			const item = event.item;
 			if (item.type === "reasoning") {
 				currentItem = item;
@@ -401,8 +408,21 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (event.type === "response.function_call_arguments.done") {
 			if (currentItem?.type === "function_call" && currentBlock?.type === "toolCall") {
+				const previousPartialJson = currentBlock.partialJson;
 				currentBlock.partialJson = event.arguments;
 				currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
+
+				if (event.arguments.startsWith(previousPartialJson)) {
+					const delta = event.arguments.slice(previousPartialJson.length);
+					if (delta.length > 0) {
+						stream.push({
+							type: "toolcall_delta",
+							contentIndex: blockIndex(),
+							delta,
+							partial: output,
+						});
+					}
+				}
 			}
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
@@ -432,18 +452,31 @@ export async function processResponsesStream<TApi extends Api>(
 					currentBlock?.type === "toolCall" && currentBlock.partialJson
 						? parseStreamingJson(currentBlock.partialJson)
 						: parseStreamingJson(item.arguments || "{}");
-				const toolCall: ToolCall = {
-					type: "toolCall",
-					id: `${item.call_id}|${item.id}`,
-					name: item.name,
-					arguments: args,
-				};
+
+				let toolCall: ToolCall;
+				if (currentBlock?.type === "toolCall") {
+					// Finalize in-place and strip the scratch buffer so replay only
+					// carries parsed arguments.
+					currentBlock.arguments = args;
+					delete (currentBlock as { partialJson?: string }).partialJson;
+					toolCall = currentBlock;
+				} else {
+					toolCall = {
+						type: "toolCall",
+						id: `${item.call_id}|${item.id}`,
+						name: item.name,
+						arguments: args,
+					};
+				}
 
 				currentBlock = null;
 				stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 			}
 		} else if (event.type === "response.completed") {
 			const response = event.response;
+			if (response?.id) {
+				output.responseId = response.id;
+			}
 			if (response?.usage) {
 				const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
 				output.usage = {
@@ -469,7 +502,14 @@ export async function processResponsesStream<TApi extends Api>(
 		} else if (event.type === "error") {
 			throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
 		} else if (event.type === "response.failed") {
-			throw new Error("Unknown error");
+			const error = event.response?.error;
+			const details = event.response?.incomplete_details;
+			const msg = error
+				? `${error.code || "unknown"}: ${error.message || "no message"}`
+				: details?.reason
+					? `incomplete: ${details.reason}`
+					: "Unknown error (no error details in response)";
+			throw new Error(msg);
 		}
 	}
 }

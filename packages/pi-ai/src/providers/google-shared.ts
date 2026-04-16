@@ -5,7 +5,7 @@
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
 import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { transformMessagesWithReport } from "./transform-messages.js";
+import { transformMessages } from "./transform-messages.js";
 
 type GoogleApiType = "google-generative-ai" | "google-gemini-cli" | "google-vertex";
 
@@ -66,8 +66,22 @@ function resolveThoughtSignature(isSameProviderAndModel: boolean, signature: str
 /**
  * Models via Google APIs that require explicit tool call IDs in function calls/responses.
  */
-function requiresToolCallId(modelId: string): boolean {
+export function requiresToolCallId(modelId: string): boolean {
 	return modelId.startsWith("claude-") || modelId.startsWith("gpt-oss-");
+}
+
+function getGeminiMajorVersion(modelId: string): number | undefined {
+	const match = modelId.toLowerCase().match(/^gemini(?:-live)?-(\d+)/);
+	if (!match) return undefined;
+	return Number.parseInt(match[1], 10);
+}
+
+function supportsMultimodalFunctionResponse(modelId: string): boolean {
+	const geminiMajorVersion = getGeminiMajorVersion(modelId);
+	if (geminiMajorVersion !== undefined) {
+		return geminiMajorVersion >= 3;
+	}
+	return true;
 }
 
 /**
@@ -80,7 +94,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 		return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 	};
 
-	const transformedMessages = transformMessagesWithReport(context.messages, model, normalizeToolCallId, "google-generative-ai");
+	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 
 	for (const msg of transformedMessages) {
 		if (msg.role === "user") {
@@ -175,10 +189,10 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			const hasText = textResult.length > 0;
 			const hasImages = imageContent.length > 0;
 
-			// Gemini 3 supports multimodal function responses with images nested inside functionResponse.parts
-			// See: https://ai.google.dev/gemini-api/docs/function-calling#multimodal
-			// Older models don't support this, so we put images in a separate user message.
-			const supportsMultimodalFunctionResponse = model.id.includes("gemini-3");
+			// Gemini 3+ models support multimodal function responses with images nested inside
+			// functionResponse.parts. Claude and other non-Gemini models behind Cloud Code Assist /
+			// Antigravity also accept this shape. Gemini < 3 still needs a separate user image turn.
+			const modelSupportsMultimodalFunctionResponse = supportsMultimodalFunctionResponse(model.id);
 
 			// Use "output" key for success, "error" key for errors as per SDK documentation
 			const responseValue = hasText ? sanitizeSurrogates(textResult) : hasImages ? "(see attached image)" : "";
@@ -195,8 +209,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				functionResponse: {
 					name: msg.toolName,
 					response: msg.isError ? { error: responseValue } : { output: responseValue },
-					// Nest images inside functionResponse.parts for Gemini 3
-					...(hasImages && supportsMultimodalFunctionResponse && { parts: imageParts }),
+					...(hasImages && modelSupportsMultimodalFunctionResponse && { parts: imageParts }),
 					...(includeId ? { id: msg.toolCallId } : {}),
 				},
 			};
@@ -213,8 +226,8 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				});
 			}
 
-			// For older models, add images in a separate user message
-			if (hasImages && !supportsMultimodalFunctionResponse) {
+			// For Gemini < 3, add images in a separate user message
+			if (hasImages && !modelSupportsMultimodalFunctionResponse) {
 				contents.push({
 					role: "user",
 					parts: [{ text: "Tool result image:" }, ...imageParts],
@@ -227,61 +240,12 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 }
 
 /**
- * Sanitize a JSON Schema for Google's function declarations API.
- * Google's API rejects `patternProperties` and `const` fields which are valid in JSON Schema.
- *
- * This function recursively:
- * - Removes all `patternProperties` fields
- * - Converts `const: "value"` to `enum: ["value"]` in anyOf/oneOf blocks
- *
- * This is needed for providers like `google-antigravity` when proxying Claude models,
- * since Google Cloud Code Assist uses a restricted subset of JSON Schema.
- */
-export function sanitizeSchemaForGoogle(schema: unknown): unknown {
-	if (!schema || typeof schema !== "object") {
-		return schema;
-	}
-
-	if (Array.isArray(schema)) {
-		return schema.map((item) => sanitizeSchemaForGoogle(item));
-	}
-
-	const obj = schema as Record<string, unknown>;
-	const sanitized: Record<string, unknown> = {};
-
-	for (const [key, value] of Object.entries(obj)) {
-		// Skip patternProperties entirely — not supported by Google's API
-		if (key === "patternProperties") {
-			continue;
-		}
-
-		// Convert const to enum — Google's API rejects the const keyword
-		if (key === "const" && typeof value === "string") {
-			sanitized.enum = [value];
-			continue;
-		}
-
-		// Recursively sanitize all nested objects and arrays
-		if (typeof value === "object") {
-			sanitized[key] = sanitizeSchemaForGoogle(value);
-		} else {
-			sanitized[key] = value;
-		}
-	}
-
-	return sanitized;
-}
-
-/**
  * Convert tools to Gemini function declarations format.
  *
  * By default uses `parametersJsonSchema` which supports full JSON Schema (including
  * anyOf, oneOf, const, etc.). Set `useParameters` to true to use the legacy `parameters`
  * field instead (OpenAPI 3.03 Schema). This is needed for Cloud Code Assist with Claude
  * models, where the API translates `parameters` into Anthropic's `input_schema`.
- *
- * The schema is automatically sanitized to remove fields not supported by Google's
- * function declarations API (patternProperties, const converted to enum, etc.).
  */
 export function convertTools(
 	tools: Tool[],
@@ -293,9 +257,7 @@ export function convertTools(
 			functionDeclarations: tools.map((tool) => ({
 				name: tool.name,
 				description: tool.description,
-				...(useParameters
-					? { parameters: sanitizeSchemaForGoogle(tool.parameters) }
-					: { parametersJsonSchema: sanitizeSchemaForGoogle(tool.parameters) }),
+				...(useParameters ? { parameters: tool.parameters } : { parametersJsonSchema: tool.parameters }),
 			})),
 		},
 	];

@@ -3,14 +3,14 @@
  *
  * This module handles login, token refresh, and credential storage
  * for OAuth-based providers:
+ * - Anthropic (Claude Pro/Max)
  * - GitHub Copilot
  * - Google Cloud Code Assist (Gemini CLI)
  * - Antigravity (Gemini 3, Claude, GPT-OSS via Google Cloud)
- *
- * Note: Anthropic OAuth was removed per TOS compliance (see docs/user-docs/claude-code-auth-compliance.md).
- * Use API keys or the local Claude Code CLI for Anthropic access.
  */
 
+// Anthropic
+export { anthropicOAuthProvider, loginAnthropic, refreshAnthropicToken } from "./anthropic.js";
 // GitHub Copilot
 export {
 	getGitHubCopilotBaseUrl,
@@ -32,13 +32,15 @@ export * from "./types.js";
 // Provider Registry
 // ============================================================================
 
+import { anthropicOAuthProvider } from "./anthropic.js";
 import { githubCopilotOAuthProvider } from "./github-copilot.js";
 import { antigravityOAuthProvider } from "./google-antigravity.js";
 import { geminiCliOAuthProvider } from "./google-gemini-cli.js";
 import { openaiCodexOAuthProvider } from "./openai-codex.js";
-import type { OAuthCredentials, OAuthProviderId, OAuthProviderInterface } from "./types.js";
+import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.js";
 
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
+	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
 	geminiCliOAuthProvider,
 	antigravityOAuthProvider,
@@ -95,9 +97,35 @@ export function getOAuthProviders(): OAuthProviderInterface[] {
 	return Array.from(oauthProviderRegistry.values());
 }
 
+/**
+ * @deprecated Use getOAuthProviders() which returns OAuthProviderInterface[]
+ */
+export function getOAuthProviderInfoList(): OAuthProviderInfo[] {
+	return getOAuthProviders().map((p) => ({
+		id: p.id,
+		name: p.name,
+		available: true,
+	}));
+}
+
 // ============================================================================
 // High-level API (uses provider registry)
 // ============================================================================
+
+/**
+ * Refresh token for any OAuth provider.
+ * @deprecated Use getOAuthProvider(id).refreshToken() instead
+ */
+export async function refreshOAuthToken(
+	providerId: OAuthProviderId,
+	credentials: OAuthCredentials,
+): Promise<OAuthCredentials> {
+	const provider = getOAuthProvider(providerId);
+	if (!provider) {
+		throw new Error(`Unknown OAuth provider: ${providerId}`);
+	}
+	return provider.refreshToken(credentials);
+}
 
 /**
  * Get API key for a provider from OAuth credentials.
@@ -124,8 +152,8 @@ export async function getOAuthApiKey(
 	if (Date.now() >= creds.expires) {
 		try {
 			creds = await provider.refreshToken(creds);
-		} catch (error) {
-			throw new Error(`Failed to refresh OAuth token for ${providerId}`, { cause: error });
+		} catch (_error) {
+			throw new Error(`Failed to refresh OAuth token for ${providerId}`);
 		}
 	}
 

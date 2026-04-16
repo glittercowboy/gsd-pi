@@ -8,8 +8,6 @@ import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } fr
 
 type CopilotCredentials = OAuthCredentials & {
 	enterpriseUrl?: string;
-	/** Model limits from the /models API, keyed by model ID */
-	modelLimits?: Record<string, { contextWindow: number; maxTokens: number }>;
 };
 
 const decode = (s: string) => atob(s);
@@ -21,6 +19,9 @@ const COPILOT_HEADERS = {
 	"Editor-Plugin-Version": "copilot-chat/0.35.0",
 	"Copilot-Integration-Id": "vscode-chat",
 } as const;
+
+const INITIAL_POLL_INTERVAL_MULTIPLIER = 1.2;
+const SLOW_DOWN_POLL_INTERVAL_MULTIPLIER = 1.4;
 
 type DeviceCodeResponse = {
 	device_code: string;
@@ -91,10 +92,7 @@ export function getGitHubCopilotBaseUrl(token?: string, enterpriseDomain?: strin
 }
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
-	const response = await fetch(url, {
-		...init,
-		signal: init.signal ?? AbortSignal.timeout(30_000),
-	});
+	const response = await fetch(url, init);
 	if (!response.ok) {
 		const text = await response.text();
 		throw new Error(`${response.status} ${response.statusText}: ${text}`);
@@ -108,10 +106,10 @@ async function startDeviceFlow(domain: string): Promise<DeviceCodeResponse> {
 		method: "POST",
 		headers: {
 			Accept: "application/json",
-			"Content-Type": "application/json",
+			"Content-Type": "application/x-www-form-urlencoded",
 			"User-Agent": "GitHubCopilotChat/0.35.0",
 		},
-		body: JSON.stringify({
+		body: new URLSearchParams({
 			client_id: CLIENT_ID,
 			scope: "read:user",
 		}),
@@ -179,20 +177,26 @@ async function pollForGitHubAccessToken(
 	const urls = getUrls(domain);
 	const deadline = Date.now() + expiresIn * 1000;
 	let intervalMs = Math.max(1000, Math.floor(intervalSeconds * 1000));
+	let intervalMultiplier = INITIAL_POLL_INTERVAL_MULTIPLIER;
+	let slowDownResponses = 0;
 
 	while (Date.now() < deadline) {
 		if (signal?.aborted) {
 			throw new Error("Login cancelled");
 		}
 
+		const remainingMs = deadline - Date.now();
+		const waitMs = Math.min(Math.ceil(intervalMs * intervalMultiplier), remainingMs);
+		await abortableSleep(waitMs, signal);
+
 		const raw = await fetchJson(urls.accessTokenUrl, {
 			method: "POST",
 			headers: {
 				Accept: "application/json",
-				"Content-Type": "application/json",
+				"Content-Type": "application/x-www-form-urlencoded",
 				"User-Agent": "GitHubCopilotChat/0.35.0",
 			},
-			body: JSON.stringify({
+			body: new URLSearchParams({
 				client_id: CLIENT_ID,
 				device_code: deviceCode,
 				grant_type: "urn:ietf:params:oauth:grant-type:device_code",
@@ -204,22 +208,28 @@ async function pollForGitHubAccessToken(
 		}
 
 		if (raw && typeof raw === "object" && typeof (raw as DeviceTokenErrorResponse).error === "string") {
-			const err = (raw as DeviceTokenErrorResponse).error;
-			if (err === "authorization_pending") {
-				await abortableSleep(intervalMs, signal);
+			const { error, error_description: description, interval } = raw as DeviceTokenErrorResponse;
+			if (error === "authorization_pending") {
 				continue;
 			}
 
-			if (err === "slow_down") {
-				intervalMs += 5000;
-				await abortableSleep(intervalMs, signal);
+			if (error === "slow_down") {
+				slowDownResponses += 1;
+				intervalMs =
+					typeof interval === "number" && interval > 0 ? interval * 1000 : Math.max(1000, intervalMs + 5000);
+				intervalMultiplier = SLOW_DOWN_POLL_INTERVAL_MULTIPLIER;
 				continue;
 			}
 
-			throw new Error(`Device flow failed: ${err}`);
+			const descriptionSuffix = description ? `: ${description}` : "";
+			throw new Error(`Device flow failed: ${error}${descriptionSuffix}`);
 		}
+	}
 
-		await abortableSleep(intervalMs, signal);
+	if (slowDownResponses > 0) {
+		throw new Error(
+			"Device flow timed out after one or more slow_down responses. This is often caused by clock drift in WSL or VM environments. Please sync or restart the VM clock and try again.",
+		);
 	}
 
 	throw new Error("Device flow timed out");
@@ -281,7 +291,6 @@ async function enableGitHubCopilotModel(token: string, modelId: string, enterpri
 				"x-interaction-type": "chat-policy",
 			},
 			body: JSON.stringify({ state: "enabled" }),
-			signal: AbortSignal.timeout(30_000),
 		});
 		return response.ok;
 	} catch {
@@ -305,47 +314,6 @@ async function enableAllGitHubCopilotModels(
 			onProgress?.(model.id, success);
 		}),
 	);
-}
-
-async function fetchCopilotModelLimits(
-	token: string,
-	enterpriseDomain?: string,
-): Promise<Record<string, { contextWindow: number; maxTokens: number }>> {
-	const baseUrl = getGitHubCopilotBaseUrl(token, enterpriseDomain);
-	try {
-		const response = await fetch(`${baseUrl}/models`, {
-			headers: {
-				Accept: "application/json",
-				Authorization: `Bearer ${token}`,
-				"X-GitHub-Api-Version": "2025-05-01",
-				...COPILOT_HEADERS,
-			},
-			signal: AbortSignal.timeout(30_000),
-		});
-		if (!response.ok) return {};
-		const data = (await response.json()) as {
-			data?: Array<{
-				id: string;
-				capabilities?: {
-					limits?: {
-						max_context_window_tokens?: number;
-						max_output_tokens?: number;
-					};
-				};
-			}>;
-		};
-		const limits: Record<string, { contextWindow: number; maxTokens: number }> = {};
-		for (const m of data.data || []) {
-			const ctx = m.capabilities?.limits?.max_context_window_tokens;
-			const out = m.capabilities?.limits?.max_output_tokens;
-			if (typeof ctx === "number" && typeof out === "number" && ctx > 0 && out > 0 && Number.isFinite(ctx) && Number.isFinite(out)) {
-				limits[m.id] = { contextWindow: ctx, maxTokens: out };
-			}
-		}
-		return limits;
-	} catch {
-		return {};
-	}
 }
 
 /**
@@ -394,14 +362,6 @@ export async function loginGitHubCopilot(options: {
 	// Enable all models after successful login
 	options.onProgress?.("Enabling models...");
 	await enableAllGitHubCopilotModels(credentials.access, enterpriseDomain ?? undefined);
-
-	// Fetch real model limits from the Copilot API
-	options.onProgress?.("Fetching model limits...");
-	const modelLimits = await fetchCopilotModelLimits(credentials.access, enterpriseDomain ?? undefined);
-	if (Object.keys(modelLimits).length > 0) {
-		(credentials as CopilotCredentials).modelLimits = modelLimits;
-	}
-
 	return credentials;
 }
 
@@ -420,16 +380,7 @@ export const githubCopilotOAuthProvider: OAuthProviderInterface = {
 
 	async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
 		const creds = credentials as CopilotCredentials;
-		const refreshed = await refreshGitHubCopilotToken(creds.refresh, creds.enterpriseUrl);
-		try {
-			const modelLimits = await fetchCopilotModelLimits(refreshed.access, creds.enterpriseUrl);
-			if (Object.keys(modelLimits).length > 0) {
-				(refreshed as CopilotCredentials).modelLimits = modelLimits;
-			}
-		} catch {
-			// Model limits fetch is best-effort; don't block token refresh
-		}
-		return refreshed;
+		return refreshGitHubCopilotToken(creds.refresh, creds.enterpriseUrl);
 	},
 
 	getApiKey(credentials: OAuthCredentials): string {
@@ -440,21 +391,6 @@ export const githubCopilotOAuthProvider: OAuthProviderInterface = {
 		const creds = credentials as CopilotCredentials;
 		const domain = creds.enterpriseUrl ? (normalizeDomain(creds.enterpriseUrl) ?? undefined) : undefined;
 		const baseUrl = getGitHubCopilotBaseUrl(creds.access, domain);
-		const limits = creds.modelLimits;
-		const availableModelIds = limits ? new Set(Object.keys(limits)) : null;
-		const shouldFilterByAvailability = !!availableModelIds && availableModelIds.size > 0;
-		return models.flatMap((m) => {
-			if (m.provider !== "github-copilot") return m;
-			if (shouldFilterByAvailability && !availableModelIds.has(m.id)) return [];
-			const modelLimits = limits?.[m.id];
-			return {
-				...m,
-				baseUrl,
-				...(modelLimits && {
-					contextWindow: modelLimits.contextWindow,
-					maxTokens: modelLimits.maxTokens,
-				}),
-			};
-		});
+		return models.map((m) => (m.provider === "github-copilot" ? { ...m, baseUrl } : m));
 	},
 };
