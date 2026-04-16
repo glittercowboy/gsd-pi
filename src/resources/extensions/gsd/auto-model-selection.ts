@@ -216,34 +216,8 @@ export async function selectAndApplyModel(
         // Load user capability overrides from preferences (D-17: deep-merged with built-in profiles)
         const capabilityOverrides = loadCapabilityOverrides(prefs ?? {});
 
-        // Fire before_model_select hook (ADR-004, D-03)
-        // Hook can override model selection entirely by returning { modelId }
+        // before_model_select hook removed in pi 0.67.2 (emitBeforeModelSelect removed)
         let hookOverride: string | undefined;
-        if (routingConfig.hooks !== false) {
-          const eligible = getEligibleModels(
-            classification.tier,
-            availableModelIds,
-            routingConfig,
-          );
-          const hookResult = await pi.emitBeforeModelSelect({
-            unitType,
-            unitId,
-            classification: {
-              tier: classification.tier,
-              reason: classification.reason,
-              downgraded: classification.downgraded,
-            },
-            taskMetadata: classification.taskMetadata as Record<string, unknown> | undefined,
-            eligibleModels: eligible,
-            phaseConfig: modelConfig ? {
-              primary: modelConfig.primary,
-              fallbacks: modelConfig.fallbacks ?? [],
-            } : undefined,
-          });
-          if (hookResult?.modelId) {
-            hookOverride = hookResult.modelId;
-          }
-        }
 
         let routingResult: ReturnType<typeof resolveModelForComplexity>;
         if (hookOverride) {
@@ -345,19 +319,7 @@ export async function selectAndApplyModel(
         const { toolNames: compatibleTools, removedTools } = adjustToolSet(activeToolNames, model.api);
         let finalToolNames = compatibleTools;
 
-        // Fire adjust_tool_set hook — extensions can override the filtered tool set
-        if (routingConfig.hooks !== false) {
-          const hookResult = await pi.emitAdjustToolSet({
-            selectedModelApi: model.api,
-            selectedModelProvider: model.provider,
-            selectedModelId: model.id,
-            activeToolNames,
-            filteredTools: removedTools,
-          });
-          if (hookResult?.toolNames) {
-            finalToolNames = hookResult.toolNames;
-          }
-        }
+        // adjust_tool_set hook removed in pi 0.67.2 (emitAdjustToolSet removed)
 
         // Apply the filtered tool set if any tools were removed
         if (removedTools.length > 0 || finalToolNames.length !== activeToolNames.length) {

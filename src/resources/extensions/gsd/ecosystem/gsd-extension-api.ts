@@ -155,24 +155,10 @@ export function createGSDExtensionAPI(
       (pi.on as (e: any, h: any) => void)(event, handler);
     },
 
-    // ── Event emission ─────────────────────────────────────────────────
-    emitBeforeModelSelect: (...args: Parameters<ExtensionAPI["emitBeforeModelSelect"]>) =>
-      pi.emitBeforeModelSelect(...args),
-    emitAdjustToolSet: (...args: Parameters<ExtensionAPI["emitAdjustToolSet"]>) =>
-      pi.emitAdjustToolSet(...args),
-
     // ── Tool / command / shortcut / flag registration ──────────────────
     registerTool: ((tool: any) => pi.registerTool(tool)) as ExtensionAPI["registerTool"],
     registerCommand: (...args: Parameters<ExtensionAPI["registerCommand"]>) =>
       pi.registerCommand(...args),
-    registerBeforeInstall: (...args: Parameters<ExtensionAPI["registerBeforeInstall"]>) =>
-      pi.registerBeforeInstall(...args),
-    registerAfterInstall: (...args: Parameters<ExtensionAPI["registerAfterInstall"]>) =>
-      pi.registerAfterInstall(...args),
-    registerBeforeRemove: (...args: Parameters<ExtensionAPI["registerBeforeRemove"]>) =>
-      pi.registerBeforeRemove(...args),
-    registerAfterRemove: (...args: Parameters<ExtensionAPI["registerAfterRemove"]>) =>
-      pi.registerAfterRemove(...args),
     registerShortcut: (...args: Parameters<ExtensionAPI["registerShortcut"]>) =>
       pi.registerShortcut(...args),
     registerFlag: (...args: Parameters<ExtensionAPI["registerFlag"]>) =>
@@ -188,7 +174,6 @@ export function createGSDExtensionAPI(
       pi.sendMessage(message, options)) as ExtensionAPI["sendMessage"],
     sendUserMessage: (...args: Parameters<ExtensionAPI["sendUserMessage"]>) =>
       pi.sendUserMessage(...args),
-    retryLastTurn: () => pi.retryLastTurn(),
     appendEntry: ((customType: string, data?: any) =>
       pi.appendEntry(customType, data)) as ExtensionAPI["appendEntry"],
 

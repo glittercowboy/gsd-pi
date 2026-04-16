@@ -90,7 +90,7 @@ export function registerHooks(
     loadToolApiKeys();
   });
 
-  pi.on("session_switch", async (_event, ctx) => {
+  pi.on("session_before_switch", async (_event, ctx) => {
     initNotificationStore(process.cwd());
     installNotifyInterceptor(ctx);
     resetWriteGateState();
@@ -498,7 +498,10 @@ export function registerHooks(
     }
 
     // ── Service Tier ────────────────────────────────────────────────────
-    const modelId = event.model?.id;
+    // event.model was removed in pi 0.67.2; extract from the payload body instead.
+    const modelId = typeof (payload as Record<string, unknown>).model === "string"
+      ? (payload as Record<string, unknown>).model as string
+      : undefined;
     if (!modelId) return payload;
     const { getEffectiveServiceTier, supportsServiceTier } = await import("../service-tier.js");
     const tier = getEffectiveServiceTier();
@@ -507,19 +510,4 @@ export function registerHooks(
     return payload;
   });
 
-  // Capability-aware model routing hook (ADR-004)
-  // Extensions can override model selection by returning { modelId: "..." }
-  // Return undefined to let the built-in capability scoring proceed.
-  pi.on("before_model_select", async (_event) => {
-    // Default: no override — let capability scoring handle selection
-    return undefined;
-  });
-
-  // Tool set adaptation hook (ADR-005 Phase 4)
-  // Extensions can override tool set after model selection by returning { toolNames: [...] }
-  // Return undefined to let the built-in provider compatibility filtering proceed.
-  pi.on("adjust_tool_set", async (_event) => {
-    // Default: no override — let provider capability filtering handle tool set
-    return undefined;
-  });
 }

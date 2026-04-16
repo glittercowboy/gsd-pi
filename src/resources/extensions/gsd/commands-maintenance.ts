@@ -235,8 +235,7 @@ export async function handleCleanupWorktrees(ctx: ExtensionCommandContext, baseP
     lines.push("All worktrees are active — nothing to clean up.");
   }
 
-  ctx.ui.notify(lines.join("
-"), "info");
+  ctx.ui.notify(lines.join("\n"), "info");
 }
 
 export async function handleSkip(unitArg: string, ctx: ExtensionCommandContext, basePath: string): Promise<void> {
@@ -445,8 +444,7 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
   if (orphaned.length === 0) {
     lines.push("No orphaned project state — all tracked repos are still present on disk.");
     if (!fix) {
-      ctx.ui.notify(lines.join("
-"), "info");
+      ctx.ui.notify(lines.join("\n"), "info");
       return;
     }
   }
@@ -473,8 +471,7 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
     if (failed.length > 0) {
       lines.push(`Failed to remove: ${failed.join(", ")}`);
     }
-    ctx.ui.notify(lines.join("
-"), removed > 0 ? "info" : "warning");
+    ctx.ui.notify(lines.join("\n"), removed > 0 ? "info" : "warning");
     return;
   }
 
@@ -538,8 +535,7 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
     process.stderr.write(
       `gsd-recover: recovered ${counts.milestones}M/${counts.slices}S/${counts.tasks}T hierarchy\n`,
     );
-    ctx.ui.notify(lines.join("
-"), "info");
+    ctx.ui.notify(lines.join("\n"), "info");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     logWarning("command", `recover failed: ${msg}`);
