@@ -155,7 +155,7 @@ Every escalation is recorded in the audit ledger:
 
 ### Risk 4: Escalation timeout with `continueWithDefault: true` creates divergence
 
-**Mitigation:** If the user chooses differently after the executor has continued, the correction is injected into the next task's carry-forward. For critical decisions where divergence is unacceptable, the executor sets `continueWithDefault: false` and the scheduler pauses.
+**Mitigation:** If the user chooses differently after the executor has continued: the correction is injected into the current task's carry-forward if still in progress, otherwise into the next pending task in the same slice, or the next scheduled task in the execution plane if no tasks remain. For critical decisions where divergence is unacceptable, the executor sets `continueWithDefault: false` and the scheduler pauses.
 
 ### Risk 5: Interaction with ADR-003 (pipeline simplification)
 
