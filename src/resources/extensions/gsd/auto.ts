@@ -488,6 +488,15 @@ export function getAutoModeStartModel(): {
   return s.autoModeStartModel;
 }
 
+/**
+ * Update the dashboard-facing dispatched model label.
+ * Used when runtime recovery switches models mid-unit (e.g. provider fallback)
+ * so the AUTO box reflects the active model immediately.
+ */
+export function setCurrentDispatchedModelId(model: { provider: string; id: string } | null): void {
+  s.currentDispatchedModelId = model ? `${model.provider}/${model.id}` : null;
+}
+
 // Tool tracking — delegates to auto-tool-tracking.ts
 export function markToolStart(toolCallId: string, toolName?: string): void {
   _markToolStart(toolCallId, s.active, toolName);

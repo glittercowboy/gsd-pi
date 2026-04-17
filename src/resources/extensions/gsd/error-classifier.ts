@@ -43,7 +43,10 @@ export function resetRetryState(state: RetryState): void {
 // ── Classification ──────────────────────────────────────────────────────────
 
 const PERMANENT_RE = /auth|unauthorized|forbidden|invalid.*key|invalid.*api|billing|quota exceeded|account/i;
-const RATE_LIMIT_RE = /rate.?limit|too many requests|429/i;
+// Include provider-specific quota-window phrasing like:
+// - "You've hit your limit"
+// - "usage limit" / "quota reached"
+const RATE_LIMIT_RE = /rate.?limit|too many requests|429|hit your limit|usage limit|quota (?:reached|hit)|limit.*resets?/i;
 // OpenRouter affordability-style quota errors should be treated as transient
 // so core retry logic can lower maxTokens and continue in-session.
 const AFFORDABILITY_RE = /requires more credits|can only afford|insufficient credits|not enough credits|fewer max_tokens/i;
@@ -61,7 +64,7 @@ const RESET_DELAY_RE = /reset in (\d+)s/i;
  *
  * Classification order:
  *  1. Permanent (auth/billing/quota) — unless also rate-limited
- *  2. Rate limit (429, rate.?limit, too many requests)
+ *  2. Rate limit (429, rate.?limit, too many requests, hit-your-limit/quota-window phrasing)
  *  3. Network (ECONNRESET, ETIMEDOUT, socket hang up, fetch failed, dns)
  *  4. Stream truncation (malformed JSON from mid-stream cut)
  *  5. Server (500/502/503, overloaded, server_error)

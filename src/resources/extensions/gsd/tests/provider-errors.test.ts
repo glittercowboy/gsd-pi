@@ -32,6 +32,19 @@ test("classifyError detects rate limit from message", () => {
   assert.equal(result.kind, "rate-limit");
 });
 
+test("classifyError treats Anthropic quota-window phrasing as transient rate-limit (#4373)", () => {
+  const result = classifyError("You've hit your limit · resets soon");
+  assert.ok(isTransient(result));
+  assert.equal(result.kind, "rate-limit");
+  assert.ok("retryAfterMs" in result && result.retryAfterMs === 60_000);
+});
+
+test("classifyError treats usage-limit phrasing as transient rate-limit (#4373)", () => {
+  const result = classifyError("usage limit reached for this workspace");
+  assert.ok(isTransient(result));
+  assert.equal(result.kind, "rate-limit");
+});
+
 test("classifyError treats OpenRouter affordability errors as transient rate-limit class", () => {
   const result = classifyError(
     "402 This request requires more credits, or fewer max_tokens. You requested up to 32000 tokens, but can only afford 329.",
@@ -456,6 +469,22 @@ test("agent-end-recovery.ts resumes transient provider pauses through startAuto 
   assert.ok(
     !src.includes('Continue execution — provider error recovery delay elapsed.'),
     "transient provider resume must not rely on a hidden continue prompt (#2813)",
+  );
+});
+
+test("agent-end-recovery.ts does not defer rate-limit errors to core retry handler before fallback (#4373)", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
+  assert.ok(
+    src.includes('if (isTransient(cls) && cls.kind !== "rate-limit")'),
+    "rate-limit errors must bypass transient core-retry deferral so fallback can execute (#4373)",
+  );
+});
+
+test("agent-end-recovery.ts updates dashboard dispatched model after fallback switch", () => {
+  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
+  assert.ok(
+    src.includes("setCurrentDispatchedModelId"),
+    "agent-end-recovery.ts should update currentDispatchedModelId when recovery switches model",
   );
 });
 
