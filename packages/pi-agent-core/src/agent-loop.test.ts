@@ -543,6 +543,13 @@ describe("agent-loop — case-insensitive tool lookup (#4342)", () => {
 			(e): e is Extract<AgentEvent, { type: "tool_execution_end" }> => e.type === "tool_execution_end",
 		);
 		assert.ok(toolEnd, "expected tool_execution_end event");
-		assert.equal(toolEnd.toolName, "Skill", "toolName in event should be the canonical registered name");
+		assert.equal(toolEnd.toolName, "Skill", "toolName in end event should be the canonical registered name");
+
+		// tool_execution_start must also carry the canonical name
+		const toolStart = events.find(
+			(e): e is Extract<AgentEvent, { type: "tool_execution_start" }> => e.type === "tool_execution_start",
+		);
+		assert.ok(toolStart, "expected tool_execution_start event");
+		assert.equal(toolStart.toolName, "Skill", "toolName in start event should be the canonical registered name");
 	});
 });
