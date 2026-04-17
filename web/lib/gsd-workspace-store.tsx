@@ -427,6 +427,19 @@ export interface TurnEndEvent {
   [key: string]: unknown
 }
 
+export interface SessionStatePayload {
+  type: "session_state"
+  bridgePhase: BridgePhase
+  isStreaming: boolean
+  isCompacting: boolean
+  retryInProgress: boolean
+  sessionId: string | null
+  autoActive: boolean
+  autoPaused: boolean
+  currentUnit: { type: string; id: string; startedAt: number } | null
+  updatedAt: string
+}
+
 export type WorkspaceEvent =
   | BridgeStatusEvent
   | LiveStateInvalidationEvent
@@ -438,7 +451,8 @@ export type WorkspaceEvent =
   | ToolExecutionEndEvent
   | AgentEndEvent
   | TurnEndEvent
-  | ({ type: Exclude<string, "bridge_status" | "live_state_invalidation" | "extension_ui_request" | "extension_error" | "message_update" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "agent_end" | "turn_end">; [key: string]: unknown } & Record<string, unknown>)
+  | SessionStatePayload
+  | ({ type: Exclude<string, "bridge_status" | "live_state_invalidation" | "extension_ui_request" | "extension_error" | "message_update" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "agent_end" | "turn_end" | "session_state">; [key: string]: unknown } & Record<string, unknown>)
 
 export function isWorkspaceEvent(value: unknown): value is WorkspaceEvent {
   return value !== null && typeof value === "object" && typeof (value as Record<string, unknown>).type === "string"
@@ -4432,6 +4446,26 @@ export class GSDWorkspaceStore {
     }
   }
 
+  private handleSessionStateEvent(event: SessionStatePayload): void {
+    const existingAuto = this.state.live.auto ?? this.state.boot?.auto
+    if (!existingAuto) return
+    this.patchState({
+      live: {
+        ...this.state.live,
+        auto: {
+          ...existingAuto,
+          active: event.autoActive,
+          paused: event.autoPaused,
+          currentUnit: event.currentUnit,
+        },
+        freshness: {
+          ...this.state.live.freshness,
+          auto: withFreshnessSucceeded(this.state.live.freshness.auto),
+        },
+      },
+    })
+  }
+
   private handleLiveStateInvalidation(event: LiveStateInvalidationEvent): void {
     this.patchState({
       live: this.invalidateLiveFreshness(event.domains, event.reason, event.source),
@@ -4926,6 +4960,11 @@ export class GSDWorkspaceStore {
       return
     }
 
+    if (event.type === "session_state") {
+      this.handleSessionStateEvent(event as SessionStatePayload)
+      return
+    }
+
     if (event.type === "live_state_invalidation") {
       this.handleLiveStateInvalidation(event as LiveStateInvalidationEvent)
     }
@@ -4961,6 +5000,9 @@ export class GSDWorkspaceStore {
         break
       case "tool_execution_end":
         this.handleToolExecutionEnd(event as ToolExecutionEndEvent)
+        break
+      case "session_state":
+        // Handled upstream in handleEvent with early return — never reaches here
         break
       case "bridge_status":
         // Handled upstream in handleEvent with early return — never reaches here

@@ -85,6 +85,13 @@ interface ProjectMetadata {
   progress?: ProjectProgressInfo | null
 }
 
+interface ProjectSessionState {
+  bridgePhase: "idle" | "starting" | "ready" | "failed"
+  autoActive: boolean
+  autoPaused: boolean
+  currentUnit: { type: string; id: string; startedAt: number } | null
+}
+
 // ─── Kind style config ─────────────────────────────────────────────────
 
 const KIND_STYLE: Record<ProjectDetectionKind, { label: string; color: string; bgClass: string; icon: typeof Layers }> = {
@@ -153,6 +160,33 @@ function relativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(undefined, { month: "short", day: "numeric" })
 }
 
+// ─── Session badge sub-component ──────────────────────────────────────
+
+function SessionBadge({ session }: { session: ProjectSessionState }) {
+  const isRunning = session.autoActive && !session.autoPaused
+  const isPaused = session.autoPaused
+  const hasSession = session.bridgePhase === "ready" || session.autoActive || session.autoPaused
+
+  if (!hasSession) return null
+
+  const dotClass = isRunning
+    ? "h-2 w-2 shrink-0 rounded-full bg-success animate-pulse"
+    : isPaused
+    ? "h-2 w-2 shrink-0 rounded-full bg-amber-500"
+    : "h-2 w-2 shrink-0 rounded-full bg-muted-foreground/50"
+
+  const mode = session.autoActive ? "Auto" : "Interactive"
+  const unitLabel = session.currentUnit?.id ?? null
+  const subtitle = unitLabel ? `${mode} - ${unitLabel}` : mode
+
+  return (
+    <div className="mt-0.5 flex items-center gap-1.5">
+      <span className={dotClass} />
+      <span className="text-[10px] text-muted-foreground">{subtitle}</span>
+    </div>
+  )
+}
+
 // ─── Shared project card component ─────────────────────────────────────
 
 function ProjectCard({
@@ -160,11 +194,13 @@ function ProjectCard({
   isActive = false,
   onClick,
   disabled = false,
+  sessionState = null,
 }: {
   project: ProjectMetadata
   isActive?: boolean
   onClick: () => void
   disabled?: boolean
+  sessionState?: ProjectSessionState | null
 }) {
   const style = KIND_STYLE[project.kind]
   const KindIcon = style.icon
@@ -212,6 +248,9 @@ function ProjectCard({
             {isActive ? "Current" : style.label}
           </span>
         </div>
+
+        {/* Session badge */}
+        {sessionState && <SessionBadge session={sessionState} />}
 
         {/* Row 2: tech stack tags */}
         {stack.length > 0 && (
@@ -272,6 +311,7 @@ export function ProjectsPanel({
   const [devRoot, setDevRoot] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [activeSessionState, setActiveSessionState] = useState<ProjectSessionState | null>(null)
 
   const loadProjects = useCallback(async (root: string) => {
     const projRes = await authFetch(`/api/projects?root=${encodeURIComponent(root)}&detail=true`)
@@ -302,6 +342,21 @@ export function ProjectsPanel({
         setDevRoot(prefs.devRoot)
         const discovered = await loadProjects(prefs.devRoot)
         if (!cancelled) setProjects(discovered)
+
+        // Fetch session state for the active project (one-shot; only the active project has a bridge)
+        try {
+          const sessionRes = await authFetch("/api/session/state")
+          if (sessionRes.ok) {
+            const sessionData = await sessionRes.json()
+            if (!cancelled) setActiveSessionState(sessionData as ProjectSessionState)
+          } else {
+            // 503 = no bridge; treat as no active session
+            if (!cancelled) setActiveSessionState(null)
+          }
+        } catch {
+          // Network error — no session badge
+          if (!cancelled) setActiveSessionState(null)
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Unknown error")
@@ -314,6 +369,7 @@ export function ProjectsPanel({
     load()
     return () => {
       cancelled = true
+      setActiveSessionState(null)
     }
   }, [open, loadProjects])
 
@@ -435,6 +491,7 @@ export function ProjectsPanel({
             project={project}
             isActive={activeProjectCwd === project.path}
             onClick={() => handleSelectProject(project)}
+            sessionState={activeProjectCwd === project.path ? activeSessionState : null}
           />
         ))}
 

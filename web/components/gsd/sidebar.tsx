@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useSyncExternalStore } from "react"
+import { useMemo, useState, useRef, useEffect, useSyncExternalStore } from "react"
 import {
   ChevronRight,
   ChevronDown,
@@ -354,10 +354,30 @@ export function MilestoneExplorer({ isConnecting = false, width, onCollapse }: {
     })
   }
 
+  const isAutoActive = auto?.active ?? false
+  const autoPaused = auto?.paused ?? false
+
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const handlePrimaryAction = () => {
     if (!workflowAction.primary) return
+    setPendingAction(workflowAction.primary.command)
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current)
+    pendingTimerRef.current = setTimeout(() => {
+      setPendingAction(null)
+    }, 3000)
     handleCommand(workflowAction.primary.command)
   }
+
+  useEffect(() => {
+    if (pendingAction === null) return
+    setPendingAction(null)
+    if (pendingTimerRef.current) {
+      clearTimeout(pendingTimerRef.current)
+      pendingTimerRef.current = null
+    }
+  }, [isAutoActive, autoPaused]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenRecovery = () => {
     openCommandSurface("settings", { source: "sidebar" })
@@ -581,17 +601,17 @@ export function MilestoneExplorer({ isConnecting = false, width, onCollapse }: {
           <div className="flex items-center gap-2">
             <button
               onClick={handlePrimaryAction}
-              disabled={workflowAction.disabled}
+              disabled={workflowAction.disabled || pendingAction !== null}
               className={cn(
                 "inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors",
                 workflowAction.primary.variant === "destructive"
                   ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   : "bg-primary text-primary-foreground hover:bg-primary/90",
-                workflowAction.disabled && "cursor-not-allowed opacity-50",
+                (workflowAction.disabled || pendingAction !== null) && "cursor-not-allowed opacity-50",
               )}
               title={workflowAction.disabledReason}
             >
-              {workspace.commandInFlight ? (
+              {pendingAction !== null ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : workflowAction.isNewMilestone ? (
                 <Milestone className="h-3.5 w-3.5" />
@@ -649,10 +669,30 @@ export function CollapsedMilestoneSidebar({ onExpand }: { onExpand: () => void }
     })
   }
 
+  const isAutoActive = auto?.active ?? false
+  const autoPaused = auto?.paused ?? false
+
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const handlePrimaryAction = () => {
     if (!workflowAction.primary) return
+    setPendingAction(workflowAction.primary.command)
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current)
+    pendingTimerRef.current = setTimeout(() => {
+      setPendingAction(null)
+    }, 3000)
     handleCommand(workflowAction.primary.command)
   }
+
+  useEffect(() => {
+    if (pendingAction === null) return
+    setPendingAction(null)
+    if (pendingTimerRef.current) {
+      clearTimeout(pendingTimerRef.current)
+      pendingTimerRef.current = null
+    }
+  }, [isAutoActive, autoPaused]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="flex h-full w-10 flex-col items-center border-l border-border bg-sidebar py-3">
@@ -668,17 +708,17 @@ export function CollapsedMilestoneSidebar({ onExpand }: { onExpand: () => void }
         <div className="mt-auto pb-0.5">
           <button
             onClick={handlePrimaryAction}
-            disabled={workflowAction.disabled}
+            disabled={workflowAction.disabled || pendingAction !== null}
             className={cn(
               "flex h-8 w-8 items-center justify-center rounded-md transition-colors",
               workflowAction.primary.variant === "destructive"
                 ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 : "bg-primary text-primary-foreground hover:bg-primary/90",
-              workflowAction.disabled && "cursor-not-allowed opacity-50",
+              (workflowAction.disabled || pendingAction !== null) && "cursor-not-allowed opacity-50",
             )}
             title={workflowAction.disabledReason ?? workflowAction.primary.label}
           >
-            {workspace.commandInFlight ? (
+            {pendingAction !== null ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : workflowAction.isNewMilestone ? (
               <Milestone className="h-4 w-4" />

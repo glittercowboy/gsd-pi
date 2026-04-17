@@ -1,5 +1,6 @@
 import {
   collectCurrentProjectOnboardingState,
+  collectSelectiveLiveStatePayload,
   getProjectBridgeServiceForCwd,
   requireProjectCwd,
 } from "../../../../../src/web/bridge-service.ts";
@@ -12,6 +13,23 @@ const encoder = new TextEncoder();
 
 function encodeSseData(payload: unknown): Uint8Array {
   return encoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
+async function buildSessionStateEvent(projectCwd: string) {
+  const payload = await collectSelectiveLiveStatePayload(["auto"], projectCwd);
+  const sessionState = payload.bridge.sessionState;
+  return {
+    type: "session_state" as const,
+    bridgePhase: payload.bridge.phase,
+    isStreaming: sessionState?.isStreaming ?? false,
+    isCompacting: sessionState?.isCompacting ?? false,
+    retryInProgress: sessionState?.retryInProgress ?? false,
+    sessionId: sessionState?.sessionId ?? null,
+    autoActive: payload.auto?.active ?? false,
+    autoPaused: payload.auto?.paused ?? false,
+    currentUnit: payload.auto?.currentUnit ?? null,
+    updatedAt: payload.bridge.updatedAt,
+  };
 }
 
 export async function GET(request: Request): Promise<Response> {
@@ -53,6 +71,15 @@ export async function GET(request: Request): Promise<Response> {
       unsubscribe = bridge.subscribe((event) => {
         if (closed) return;
         controller.enqueue(encodeSseData(event));
+
+        if (event.type === "bridge_status" || event.type === "live_state_invalidation") {
+          buildSessionStateEvent(projectCwd).then((stateEvent) => {
+            if (closed) return;
+            controller.enqueue(encodeSseData(stateEvent));
+          }).catch(() => {
+            // Non-fatal: collectSelectiveLiveStatePayload failure; next event will retry
+          });
+        }
       });
 
       request.signal.addEventListener("abort", () => closeWith(controller), { once: true });

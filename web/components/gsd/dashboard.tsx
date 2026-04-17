@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, useRef } from "react"
 import {
   Activity,
   Clock,
@@ -11,6 +11,7 @@ import {
   Play,
   GitBranch,
   TrendingDown,
+  Loader2,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
@@ -32,6 +33,7 @@ import {
 import { getTaskStatus, type ItemStatus } from "@/lib/workspace-status"
 import { deriveWorkflowAction } from "@/lib/workflow-actions"
 import { executeWorkflowActionInPowerMode } from "@/lib/workflow-action-execution"
+import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   CurrentSliceCardSkeleton,
@@ -163,6 +165,7 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
   const scopeLabel = getCurrentScopeLabel(workspace)
   const branch = getCurrentBranch(workspace)
   const isAutoActive = auto?.active ?? false
+  const autoPaused = auto?.paused ?? false
   const currentUnitLabel = auto?.currentUnit?.id ?? scopeLabel
   const currentUnitFreshness = freshness.auto.stale ? "stale" : freshness.auto.status
 
@@ -183,10 +186,27 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
     })
   }
 
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const pendingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const handlePrimaryAction = () => {
     if (!workflowAction.primary) return
+    setPendingAction(workflowAction.primary.command)
+    if (pendingTimerRef.current) clearTimeout(pendingTimerRef.current)
+    pendingTimerRef.current = setTimeout(() => {
+      setPendingAction(null)
+    }, 3000)
     handleWorkflowAction(workflowAction.primary.command)
   }
+
+  useEffect(() => {
+    if (pendingAction === null) return
+    setPendingAction(null)
+    if (pendingTimerRef.current) {
+      clearTimeout(pendingTimerRef.current)
+      pendingTimerRef.current = null
+    }
+  }, [isAutoActive, autoPaused]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const recentLines: WorkspaceTerminalLine[] = (state.terminalLines ?? []).slice(-6)
   const isConnecting = state.bootStatus === "idle" || state.bootStatus === "loading"
@@ -251,6 +271,21 @@ export function Dashboard({ onSwitchView, onExpandTerminal }: DashboardProps = {
                 {isAutoActive ? "Auto Mode Active" : "Auto Mode Inactive"}
               </span>
             </div>
+          )}
+          {!isConnecting && workflowAction.primary && (
+            <Button
+              size="sm"
+              variant={workflowAction.primary.variant}
+              disabled={workflowAction.disabled || pendingAction !== null}
+              onClick={handlePrimaryAction}
+              data-testid="dashboard-primary-action"
+            >
+              {pendingAction !== null ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                workflowAction.primary.label
+              )}
+            </Button>
           )}
           {!isConnecting && branch && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
