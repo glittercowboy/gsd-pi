@@ -717,7 +717,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     }
 
     // Quick commands: resolve on first agent_end
-    if (eventObj.type === 'agent_end' && isQuickCommand(options.command) && !completed) {
+    if (eventObj.type === 'agent_end' && isQuickCommand(options.command, options.commandArgs) && !completed) {
       completed = true
       resolveCompletion()
       return

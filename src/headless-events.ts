@@ -111,6 +111,9 @@ export const QUICK_COMMANDS = new Set([
   'triage', 'visualize',
 ])
 
-export function isQuickCommand(command: string): boolean {
-  return QUICK_COMMANDS.has(command)
+const QUICK_WORKFLOW_SUBCOMMANDS = new Set(['list', 'validate'])
+
+export function isQuickCommand(command: string, commandArgs: readonly string[] = []): boolean {
+  if (QUICK_COMMANDS.has(command)) return true
+  return command === 'workflow' && QUICK_WORKFLOW_SUBCOMMANDS.has(commandArgs[0] ?? '')
 }
