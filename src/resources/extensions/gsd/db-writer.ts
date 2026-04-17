@@ -377,12 +377,8 @@ export interface SaveDecisionFields {
 
 /**
  * Save a new decision to DB and regenerate DECISIONS.md.
- * Auto-assigns the next ID via nextDecisionId().
- *
- * The ID computation (SELECT MAX) and insert are wrapped in a single
- * transaction to prevent parallel tool calls from computing the same ID
- * and silently overwriting each other (#3326, #3339, #3459).
- *
+ * Uses a single atomic INSERT...SELECT MAX to compute and claim the next ID,
+ * eliminating the TOCTOU race between nextDecisionId() and the INSERT (#3185).
  * Returns the assigned ID.
  */
 export async function saveDecisionToDb(
@@ -392,37 +388,36 @@ export async function saveDecisionToDb(
   try {
     const db = await import('./gsd-db.js');
 
-    // Atomic ID assignment + insert inside a transaction to prevent
-    // parallel calls from racing on the same MAX(id) value.
-    const id = db.transaction(() => {
-      const adapter = db._getAdapter();
-      if (!adapter) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+    // Atomic: compute next ID and INSERT in a single statement.
+    // Prevents parallel callers from both seeing MAX=0 and both returning D001.
+    const adapter = db._getAdapter();
+    if (!adapter) {
+      logError('manifest', 'saveDecisionToDb: no adapter available', { fn: 'saveDecisionToDb' });
+      return { id: 'D001' };
+    }
 
-      const row = adapter
-        .prepare('SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) as max_num FROM decisions')
-        .get();
-      const maxNum = row ? (row['max_num'] as number | null) : null;
-      const nextId = (maxNum == null || isNaN(maxNum))
-        ? 'D001'
-        : `D${String(maxNum + 1).padStart(3, '0')}`;
+    const insertRow = adapter
+      .prepare(`
+        INSERT INTO decisions (id, when_context, scope, decision, choice, rationale, revisable, made_by, superseded_by)
+        SELECT
+          'D' || printf('%03d', COALESCE(MAX(CAST(SUBSTR(id, 2) AS INTEGER)), 0) + 1),
+          ?, ?, ?, ?, ?, ?, ?, NULL
+        FROM decisions
+        RETURNING id
+      `)
+      .get(
+        fields.when_context ?? '',
+        fields.scope,
+        fields.decision,
+        fields.choice,
+        fields.rationale,
+        fields.revisable ?? 'Yes',
+        fields.made_by ?? 'agent',
+      );
 
-      db.upsertDecision({
-        id: nextId,
-        when_context: fields.when_context ?? '',
-        scope: fields.scope,
-        decision: fields.decision,
-        choice: fields.choice,
-        rationale: fields.rationale,
-        revisable: fields.revisable ?? 'Yes',
-        made_by: fields.made_by ?? 'agent',
-        superseded_by: null,
-      });
-
-      return nextId;
-    });
+    const id = insertRow ? (insertRow['id'] as string) : 'D001';
 
     // Fetch all decisions (including superseded for the full register)
-    const adapter = db._getAdapter();
     let allDecisions: Decision[] = [];
     if (adapter) {
       const rows = adapter.prepare('SELECT * FROM decisions ORDER BY seq').all();
