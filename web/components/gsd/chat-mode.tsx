@@ -13,6 +13,7 @@ import {
   useGSDWorkspaceState,
   useGSDWorkspaceActions,
   buildPromptCommand,
+  getLiveAutoDashboard,
   type CompletedToolExecution,
   type ActiveToolExecution,
   type PendingUiRequest,
@@ -169,7 +170,7 @@ function ChatModeHeader({ onPrimaryAction, onSecondaryAction }: ChatModeHeaderPr
 
   const boot = state.boot
   const workspace = boot?.workspace ?? null
-  const auto = boot?.auto ?? null
+  const auto = getLiveAutoDashboard(state)
 
   const workflowAction = deriveWorkflowAction({
     phase: workspace?.active.phase ?? "pre-planning",
@@ -1168,7 +1169,7 @@ function ChatInputBar({
   connected: boolean
   onOpenAction?: (action: GSDActionDef) => void
 }) {
-  const autoActive = useGSDWorkspaceState().boot?.auto?.active ?? false
+  const autoActive = getLiveAutoDashboard(useGSDWorkspaceState())?.active ?? false
   const [value, setValue] = useState("")
   const [overflowOpen, setOverflowOpen] = useState(false)
   const [pendingImages, setPendingImages] = useState<PendingImage[]>([])
@@ -2031,8 +2032,8 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
   // ── Derive smart CTA for the placeholder state ──
   const workflowAction = deriveWorkflowAction({
     phase: state.boot?.workspace?.active.phase ?? "pre-planning",
-    autoActive: state.boot?.auto?.active ?? false,
-    autoPaused: state.boot?.auto?.paused ?? false,
+    autoActive: getLiveAutoDashboard(state)?.active ?? false,
+    autoPaused: getLiveAutoDashboard(state)?.paused ?? false,
     onboardingLocked: state.boot?.onboarding.locked ?? false,
     commandInFlight: state.commandInFlight,
     bootStatus: state.bootStatus,
@@ -2043,8 +2044,9 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
   const placeholderCTA = useMemo((): { label: string; icon: LucideIcon } | null => {
     if (!workflowAction.primary || workflowAction.disabled) return null
     const phase = state.boot?.workspace?.active.phase ?? "pre-planning"
-    const autoActive = state.boot?.auto?.active ?? false
-    const autoPaused = state.boot?.auto?.paused ?? false
+    const liveAuto = getLiveAutoDashboard(state)
+    const autoActive = liveAuto?.active ?? false
+    const autoPaused = liveAuto?.paused ?? false
 
     if (autoActive && !autoPaused) {
       return { label: "Stop Auto", icon: Square }
@@ -2065,7 +2067,7 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
       return { label: "Initialize Project", icon: Play }
     }
     return { label: "Continue", icon: Play }
-  }, [workflowAction, state.boot?.workspace?.active.phase, state.boot?.auto?.active, state.boot?.auto?.paused])
+  }, [workflowAction, state.boot?.workspace?.active.phase, state.live.auto, state.boot?.auto])
 
   const handlePlaceholderCTA = useCallback(() => {
     if (!workflowAction.primary) return
