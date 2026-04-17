@@ -1,5 +1,6 @@
 /** browser-tools — pi extension: full browser interaction via Playwright. */
-import { importExtensionModule, type ExtensionAPI } from "@gsd/pi-coding-agent";
+import { type ExtensionAPI } from "@gsd/pi-coding-agent";
+import { importExtensionModule } from "@gsd/agent-core";
 
 let registrationPromise: Promise<void> | null = null;
 

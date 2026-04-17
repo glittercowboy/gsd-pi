@@ -1584,29 +1584,6 @@ export async function startAuto(
   cleanupAfterLoopExit(ctx);
 }
 
-// ─── Agent End Handler ────────────────────────────────────────────────────────
-
-/**
- * Deprecated thin wrapper — kept as export for backward compatibility.
- * The actual agent_end processing now happens via resolveAgentEnd() in auto-loop.ts,
- * which is called directly from index.ts. The autoLoop() while loop handles all
- * post-unit processing (verification, hooks, dispatch) that this function used to do.
- *
- * If called by straggler code, it simply resolves the pending promise so the loop
- * can continue.
- */
-export async function handleAgentEnd(
-  ctx: ExtensionContext,
-  pi: ExtensionAPI,
-): Promise<void> {
-  if (!s.active || !s.cmdCtx) {
-    // Even when inactive, resolve any pending promise so the loop is unblocked.
-    resolveAgentEndCancelled();
-    return;
-  }
-  clearUnitTimeout();
-  resolveAgentEnd({ messages: [] });
-}
 // describeNextUnit is imported from auto-dashboard.ts and re-exported
 export { describeNextUnit } from "./auto-dashboard.js";
 

@@ -221,7 +221,7 @@ export async function handlePrBranch(
     const skippedMsg = skipped > 0 ? ` (${skipped} skipped — contained only planning artifacts)` : "";
     ctx.ui.notify(
       `Created ${prBranch} with ${picked} commits${skippedMsg} (no .gsd/ artifacts).\nSwitch back: git checkout ${currentBranch}`,
-      "success",
+      "info",
     );
   } catch (err) {
     // Restore original branch on failure

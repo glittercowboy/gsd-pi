@@ -118,13 +118,14 @@ describe("register-hooks: skip prepareWorkflowMcpForProject inside auto-worktree
     );
   });
 
-  it("session_switch hook is gated on isInAutoWorktree", () => {
-    const idx = src.indexOf('pi.on("session_switch"');
-    assert.ok(idx !== -1, "session_switch handler must exist");
+  it("session_before_switch hook is gated on isInAutoWorktree", () => {
+    // pi 0.67.2: session_switch renamed to session_before_switch
+    const idx = src.indexOf('pi.on("session_before_switch"');
+    assert.ok(idx !== -1, "session_before_switch handler must exist");
     const block = src.slice(idx, idx + 2500);
     assert.ok(
       block.includes("isInAutoWorktree"),
-      "session_switch must consult isInAutoWorktree before preparing MCP",
+      "session_before_switch must consult isInAutoWorktree before preparing MCP",
     );
   });
 

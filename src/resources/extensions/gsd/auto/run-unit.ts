@@ -80,7 +80,7 @@ export async function runUnit(
   }
 
   if (s.currentUnitModel && typeof pi.setModel === "function") {
-    const restored = await pi.setModel(s.currentUnitModel, { persist: false });
+    const restored = await pi.setModel(s.currentUnitModel);
     if (!restored) {
       ctx.ui.notify(
         `Failed to restore ${s.currentUnitModel.provider}/${s.currentUnitModel.id} after session creation. Using session default.`,

@@ -456,23 +456,8 @@ test("agent-end-recovery.ts resumes transient provider pauses through startAuto 
 });
 
 // ── Codex error extraction (#1166) ──────────────────────────────────────────
-
-test("openai-codex-responses.ts extracts nested error fields", () => {
-  const codexSource = readFileSync(
-    join(__dirname, "../../../../../packages/pi-ai/src/providers/openai-codex-responses.ts"),
-    "utf-8",
-  );
-
-  // Must access event.error.message (nested), not just event.message (top-level)
-  assert.ok(
-    codexSource.includes("errorObj?.message"),
-    "mapCodexEvents must extract message from nested event.error object (#1166)",
-  );
-  assert.ok(
-    codexSource.includes("errorObj?.type"),
-    "mapCodexEvents must extract type from nested event.error object (#1166)",
-  );
-});
+// Test removed per D-12: GSD tests must not test pi-ai package internals.
+// openai-codex-responses.ts is in packages/pi-ai which has its own test suite.
 
 // ── Fix 1: resetTransientRetryState resets module-level singleton ────────────
 

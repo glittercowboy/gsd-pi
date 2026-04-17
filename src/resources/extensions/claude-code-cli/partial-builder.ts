@@ -8,16 +8,115 @@
 import type {
 	AssistantMessage,
 	AssistantMessageEvent,
-	ServerToolUseContent,
 	StopReason,
 	TextContent,
 	ThinkingContent,
 	ToolCall,
 	Usage,
-	WebSearchResultContent,
 } from "@gsd/pi-ai";
-import { hasXmlParameterTags, repairToolJson } from "@gsd/pi-ai";
 import type { BetaContentBlock, BetaRawMessageStreamEvent, NonNullableUsage } from "./sdk-types.js";
+
+// ---------------------------------------------------------------------------
+// XML parameter tag utilities (inline replacements for removed pi-ai symbols)
+// ---------------------------------------------------------------------------
+
+/**
+ * Detects XML parameter tags (inline <parameter name="...">...</parameter> form)
+ * or XML wrapper (<parameters>...</parameters>) in streaming tool call JSON.
+ * Replaces removed pi-ai utility (removed in pi 0.67.2).
+ * T-10-05: regex only detects tag presence; does not evaluate content.
+ */
+function hasXmlParameterTags(s: string): boolean {
+	return /<parameter[s\s>]/i.test(s);
+}
+
+/**
+ * Repairs malformed LLM-generated tool JSON using three strategies:
+ *
+ * 1. XML parameter extraction: When inline <parameter name="key">value</parameter>
+ *    tags appear inside a JSON string value, extract each as a top-level key and
+ *    clean the containing string value by truncating at the closing tag boundary.
+ *
+ * 2. YAML bullet repair: When bare "- item" patterns appear as JSON values (not
+ *    quoted), convert each bullet sequence into a JSON array.
+ *
+ * 3. XML wrapper extraction: Extract content from <parameters>...</parameters> wrapper.
+ *
+ * Replaces removed pi-ai utility (removed in pi 0.67.2).
+ * T-10-05: extracts text content only, no evaluation.
+ */
+function repairToolJson(s: string): string {
+	// Strategy 1: XML parameter tags inside JSON string values (#3751)
+	// The raw JSON string may have escaped quotes: <parameter name=\"key\">val</parameter>
+	// or unescaped: <parameter name="key">val</parameter>
+	// We match both forms.
+	if (/<parameter\s+name=/i.test(s)) {
+		try {
+			// Match <parameter name="key"> or <parameter name=\"key\"> in raw JSON text
+			const paramPattern = /<parameter\s+name=(?:\\"|")([^"\\]+)(?:\\"|")>([\s\S]*?)<\/parameter>/gi;
+			const extracted: Record<string, unknown> = {};
+			let match: RegExpExecArray | null;
+			while ((match = paramPattern.exec(s)) !== null) {
+				const key = match[1];
+				// rawVal may contain JSON-escaped characters; unescape for parsing
+				const rawVal = match[2].trim().replace(/\\"/g, '"').replace(/\\n/g, "\n");
+				// Attempt to parse value as JSON; fall back to string
+				try {
+					extracted[key] = JSON.parse(rawVal);
+				} catch {
+					extracted[key] = rawVal;
+				}
+			}
+
+			if (Object.keys(extracted).length > 0) {
+				// Remove the XML parameter block and preceding closing tag from the raw string.
+				// The block looks like: </tagName>\n<parameter ...>...</parameter>...\n (with escaped chars)
+				// We remove from the first </...> closing tag through the last </parameter> tag.
+				const cleaned = s
+					.replace(/<\/[^>]+>(?:\\n|\n)*(?:<parameter[\s\S]*?<\/parameter>(?:\\n|\n)*)+/gi, "")
+					.trim();
+
+				// Parse cleaned base JSON and merge extracted params
+				const base = JSON.parse(cleaned) as Record<string, unknown>;
+				return JSON.stringify({ ...base, ...extracted });
+			}
+		} catch {
+			// Fall through to next strategy
+		}
+	}
+
+	// Strategy 2: YAML bullet lists as unquoted JSON values (#2660)
+	// Pattern: "key": - item1, "key2": - item2
+	if (/:\s*-\s+/.test(s)) {
+		try {
+			// Replace bare YAML bullet sequences with JSON arrays.
+			// Match: "key": - val1, - val2, "nextKey" or end
+			// We need to handle: "key": - item, "nextKey" where - item is the unquoted value
+			const repaired = s.replace(
+				// Match a quoted key followed by colon, then one or more "- item" bullets
+				// terminated by either a comma+quote (next key) or closing brace
+				/"([^"]+)":\s*((?:-\s+[^,\n\-"{}[\]]+(?:,\s*(?![-"\s*{]))?)+)/g,
+				(fullMatch: string, key: string, bulletBlock: string) => {
+					// Extract individual bullet items
+					const items = bulletBlock
+						.split(/,?\s*-\s+/)
+						.map((item: string) => item.trim().replace(/,\s*$/, "").trim())
+						.filter((item: string) => item.length > 0);
+					if (items.length === 0) return fullMatch;
+					return `"${key}": ${JSON.stringify(items)}`;
+				},
+			);
+			const parsed = JSON.parse(repaired);
+			return JSON.stringify(parsed);
+		} catch {
+			// Fall through to next strategy
+		}
+	}
+
+	// Strategy 3: XML wrapper extraction (<parameters>...</parameters>)
+	const m = /<parameters[^>]*>([\s\S]*?)<\/parameters>/i.exec(s);
+	return m ? m[1].trim() : s;
+}
 
 // ---------------------------------------------------------------------------
 // MCP tool name parsing
@@ -71,7 +170,7 @@ function toolCallFromBlock(
  */
 export function mapContentBlock(
 	block: BetaContentBlock,
-): TextContent | ThinkingContent | ToolCall | ServerToolUseContent | WebSearchResultContent {
+): TextContent | ThinkingContent | ToolCall {
 	switch (block.type) {
 		case "text":
 			return { type: "text", text: block.text } satisfies TextContent;
@@ -87,19 +186,18 @@ export function mapContentBlock(
 			return toolCallFromBlock(block.id, block.name, block.input);
 
 		case "server_tool_use":
+			// ServerToolUseContent removed from pi-ai in pi 0.67.2 — represent as text
 			return {
-				type: "serverToolUse",
-				id: block.id,
-				name: block.name,
-				input: block.input,
-			} satisfies ServerToolUseContent;
+				type: "text",
+				text: `[server tool use: ${(block as Record<string, unknown>).name ?? "unknown"}]`,
+			} satisfies TextContent;
 
 		case "web_search_tool_result":
+			// WebSearchResultContent removed from pi-ai in pi 0.67.2 — represent as text
 			return {
-				type: "webSearchResult",
-				toolUseId: block.tool_use_id,
-				content: block.content,
-			} satisfies WebSearchResultContent;
+				type: "text",
+				text: `[web search result]`,
+			} satisfies TextContent;
 
 		default: {
 			const unknown = block as Record<string, unknown>;
@@ -224,15 +322,7 @@ export class PartialMessageBuilder {
 					this.partial.content.push(toolCallFromBlock(block.id, block.name, {}));
 					return { type: "toolcall_start", contentIndex, partial: this.partial };
 				}
-				if (block.type === "server_tool_use") {
-					this.partial.content.push({
-						type: "serverToolUse",
-						id: block.id,
-						name: block.name,
-						input: block.input,
-					});
-					return { type: "server_tool_use", contentIndex, partial: this.partial };
-				}
+				// server_tool_use removed from pi-ai content types in pi 0.67.2 — skip
 				return null;
 			}
 
@@ -289,7 +379,9 @@ export class PartialMessageBuilder {
 							// malformation explicitly so downstream consumers can
 							// distinguish this from a healthy tool completion (#2574).
 							block.arguments = { _raw: jsonStr };
-							return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial, malformedArguments: true };
+							// malformedArguments removed from the toolcall_end type in pi 0.67.2;
+							// cast to any to preserve the runtime signal for downstream consumers (#2574)
+							return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial, malformedArguments: true } as any;
 						}
 					}
 					return { type: "toolcall_end", contentIndex, toolCall: block, partial: this.partial };

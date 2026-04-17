@@ -27,6 +27,18 @@ interface ToolKeyConfig {
   hint: string
 }
 
+type ApiKeyCredential = { type?: string; key?: string }
+type LoginProviderId = Parameters<AuthStorage["login"]>[0]
+type LoginCallbacks = Parameters<AuthStorage["login"]>[1]
+type SlackAuthTestResponse = { ok?: boolean; user?: string }
+type TelegramGetMeResponse = {
+  ok?: boolean
+  result?: { id?: string | number; first_name?: string; username?: string }
+  description?: string
+}
+type DiscordUserResponse = { id?: string; username?: string }
+type DiscordChannel = { id: string; name: string; type: number }
+
 type ClackModule = typeof import('@clack/prompts')
 type PicoModule = {
   cyan: (s: string) => string
@@ -130,7 +142,7 @@ async function loadPico(): Promise<PicoModule> {
     }
   } catch {
     // Fallback: return identity functions
-    const identity = (s: string) => s
+    const identity = (s: string): string => s
     return { cyan: identity, green: identity, yellow: identity, dim: identity, bold: identity, red: identity, reset: identity }
   }
 }
@@ -409,7 +421,7 @@ async function runOAuthFlow(
   s.start(`Authenticating with ${providerName}...`)
 
   try {
-    await authStorage.login(providerId as any, {
+    const loginCallbacks: LoginCallbacks = {
       onAuth: (info: { url: string; instructions?: string }) => {
         s.stop(`Opening browser for ${providerName}`)
         openBrowser(info.url)
@@ -439,7 +451,9 @@ async function runOAuthFlow(
             return result as string
           }
         : undefined,
-    } as any)
+    }
+
+    await authStorage.login(providerId as LoginProviderId, loginCallbacks)
 
     p.log.success(`Authenticated with ${pc.green(providerName)}`)
     return true
@@ -598,7 +612,7 @@ async function runCustomOpenAIFlow(
 
   // Write or merge into models.json
   const modelsJsonPath = join(agentDir, 'models.json')
-  let config: { providers: Record<string, any> } = { providers: {} }
+  let config: { providers: Record<string, unknown> } = { providers: {} }
 
   if (existsSync(modelsJsonPath)) {
     try {
@@ -776,9 +790,11 @@ async function runRemoteQuestionsStep(
   pc: PicoModule,
   authStorage: AuthStorage,
 ): Promise<string | null> {
-  // Check existing config — use getCredentialsForProvider to skip empty-key entries
-  const hasValidKey = (provider: string) =>
-    authStorage.getCredentialsForProvider(provider).some((c: any) => c.type === 'api_key' && c.key)
+  // Check existing config — use authStorage.get() and validate the key
+  const hasValidKey = (provider: string): boolean => {
+    const c = authStorage.get(provider) as ApiKeyCredential | undefined
+    return c?.type === 'api_key' && typeof c.key === 'string' && c.key.length > 0
+  }
   const hasDiscord = hasValidKey('discord_bot')
   const hasSlack = hasValidKey('slack_bot')
   const hasTelegram = hasValidKey('telegram_bot')
@@ -841,7 +857,7 @@ async function runRemoteQuestionsStep(
         headers: { Authorization: `Bearer ${trimmed}` },
         signal: AbortSignal.timeout(15_000),
       })
-      const data = await res.json() as any
+      const data = await res.json() as SlackAuthTestResponse
       if (!data?.ok) {
         s.stop('Slack token validation failed')
         return null
@@ -888,7 +904,7 @@ async function runRemoteQuestionsStep(
       const res = await fetch(`https://api.telegram.org/bot${trimmed}/getMe`, {
         signal: AbortSignal.timeout(15_000),
       })
-      const data = await res.json() as any
+      const data = await res.json() as TelegramGetMeResponse
       if (!data?.ok || !data?.result?.id) {
         s.stop('Telegram token validation failed')
         return null
@@ -921,7 +937,7 @@ async function runRemoteQuestionsStep(
         body: JSON.stringify({ chat_id: trimmedChatId, text: 'GSD remote questions connected.' }),
         signal: AbortSignal.timeout(15_000),
       })
-      const data = await res.json() as any
+      const data = await res.json() as TelegramGetMeResponse
       if (!data?.ok) {
         ts.stop(`Could not send to chat: ${data?.description ?? 'unknown error'}`)
         return null
@@ -947,7 +963,7 @@ async function runDiscordChannelStep(p: ClackModule, pc: PicoModule, token: stri
   // Validate token
   const s = p.spinner()
   s.start('Validating Discord bot token...')
-  let auth: any
+  let auth: DiscordUserResponse
   try {
     const res = await fetch('https://discord.com/api/v10/users/@me', { headers, signal: AbortSignal.timeout(15_000) })
     auth = await res.json()
@@ -991,15 +1007,22 @@ async function runDiscordChannelStep(p: ClackModule, pc: PicoModule, token: stri
     })
     if (p.isCancel(choice)) return null
     guildId = choice as string
-    guildName = guilds.find(g => g.id === guildId)?.name ?? guildId
   }
 
   // Fetch channels
-  let channels: Array<{ id: string; name: string; type: number }>
+  let channels: DiscordChannel[]
   try {
     const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, { headers, signal: AbortSignal.timeout(15_000) })
     const data = await res.json()
-    channels = Array.isArray(data) ? data.filter((ch: any) => ch.type === 0 || ch.type === 5) : []
+    channels = Array.isArray(data)
+      ? data.filter((ch): ch is DiscordChannel =>
+          typeof ch === 'object' &&
+          ch !== null &&
+          typeof (ch as { id?: unknown }).id === 'string' &&
+          typeof (ch as { name?: unknown }).name === 'string' &&
+          ((ch as { type?: unknown }).type === 0 || (ch as { type?: unknown }).type === 5),
+        )
+      : []
   } catch {
     p.log.warn('Could not fetch channels — configure later with /gsd remote discord')
     return null
@@ -1043,4 +1066,3 @@ async function runDiscordChannelStep(p: ClackModule, pc: PicoModule, token: stri
   p.log.success(`Discord channel: ${pc.green(channelName ? `#${channelName}` : channelId)}`)
   return channelName ?? null
 }
-

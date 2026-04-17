@@ -1,9 +1,10 @@
-// Lazy-loaded: OpenAI SDK is imported on first use, not at startup.
-// This avoids penalizing users who don't use OpenAI models.
+import OpenAI from "openai";
 import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { getEnvApiKey } from "../env-api-keys.js";
 import { supportsXhigh } from "../models.js";
 import type {
+	Api,
+	AssistantMessage,
 	CacheRetention,
 	Context,
 	Model,
@@ -13,15 +14,8 @@ import type {
 	Usage,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
-import {
-	assertStreamSuccess,
-	buildInitialOutput,
-	clampReasoningForModel,
-	createOpenAIClient,
-	finalizeStream,
-	handleStreamError,
-} from "./openai-shared.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
@@ -73,14 +67,30 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
 
 	// Start async processing
 	(async () => {
-		const output = buildInitialOutput(model);
+		const output: AssistantMessage = {
+			role: "assistant",
+			content: [],
+			api: model.api as Api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
 
 		try {
 			// Create OpenAI client
 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
-			const client = await createOpenAIClient(model, context, apiKey, {
-				optionsHeaders: options?.headers,
-			});
+			const cacheRetention = resolveCacheRetention(options?.cacheRetention);
+			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
+			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -97,10 +107,26 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
 				applyServiceTierPricing,
 			});
 
-			assertStreamSuccess(output, options?.signal);
-			finalizeStream(stream, output);
+			if (options?.signal?.aborted) {
+				throw new Error("Request was aborted");
+			}
+
+			if (output.stopReason === "aborted" || output.stopReason === "error") {
+				throw new Error("An unknown error occurred");
+			}
+
+			stream.push({ type: "done", reason: output.stopReason, message: output });
+			stream.end();
 		} catch (error) {
-			handleStreamError(stream, output, error, options?.signal);
+			for (const block of output.content) {
+				delete (block as { index?: number }).index;
+				// partialJson is only a streaming scratch buffer; never persist it.
+				delete (block as { partialJson?: string }).partialJson;
+			}
+			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			stream.push({ type: "error", reason: output.stopReason, error: output });
+			stream.end();
 		}
 	})();
 
@@ -125,6 +151,50 @@ export const streamSimpleOpenAIResponses: StreamFunction<"openai-responses", Sim
 		reasoningEffort,
 	} satisfies OpenAIResponsesOptions);
 };
+
+function createClient(
+	model: Model<"openai-responses">,
+	context: Context,
+	apiKey?: string,
+	optionsHeaders?: Record<string, string>,
+	sessionId?: string,
+) {
+	if (!apiKey) {
+		if (!process.env.OPENAI_API_KEY) {
+			throw new Error(
+				"OpenAI API key is required. Set OPENAI_API_KEY environment variable or pass it as an argument.",
+			);
+		}
+		apiKey = process.env.OPENAI_API_KEY;
+	}
+
+	const headers = { ...model.headers };
+	if (model.provider === "github-copilot") {
+		const hasImages = hasCopilotVisionInput(context.messages);
+		const copilotHeaders = buildCopilotDynamicHeaders({
+			messages: context.messages,
+			hasImages,
+		});
+		Object.assign(headers, copilotHeaders);
+	}
+
+	if (sessionId && model.provider === "openai" && model.baseUrl.includes("api.openai.com")) {
+		headers.session_id = sessionId;
+		headers["x-client-request-id"] = sessionId;
+	}
+
+	// Merge options headers last so they can override defaults
+	if (optionsHeaders) {
+		Object.assign(headers, optionsHeaders);
+	}
+
+	return new OpenAI({
+		apiKey,
+		baseURL: model.baseUrl,
+		dangerouslyAllowBrowser: true,
+		defaultHeaders: headers,
+	});
+}
 
 function buildParams(model: Model<"openai-responses">, context: Context, options?: OpenAIResponsesOptions) {
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS);
@@ -156,26 +226,14 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	}
 
 	if (model.reasoning) {
-		params.include = ["reasoning.encrypted_content"];
 		if (options?.reasoningEffort || options?.reasoningSummary) {
-			const effort = clampReasoningForModel(model.name, options?.reasoningEffort || "medium") as typeof options.reasoningEffort;
 			params.reasoning = {
-				effort: effort || "medium",
+				effort: options?.reasoningEffort || "medium",
 				summary: options?.reasoningSummary || "auto",
 			};
-		} else {
-			if (model.name.startsWith("gpt-5")) {
-				// Jesus Christ, see https://community.openai.com/t/need-reasoning-false-option-for-gpt-5/1351588/7
-				messages.push({
-					role: "developer",
-					content: [
-						{
-							type: "input_text",
-							text: "# Juice: 0 !important",
-						},
-					],
-				});
-			}
+			params.include = ["reasoning.encrypted_content"];
+		} else if (model.provider !== "github-copilot") {
+			params.reasoning = { effort: "none" };
 		}
 	}
 

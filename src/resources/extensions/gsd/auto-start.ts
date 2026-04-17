@@ -312,8 +312,10 @@ export async function bootstrapAutoSession(
       );
     }
   }
+  // isProviderRequestReady removed in pi 0.67.2; use hasConfiguredAuth on the
+  // current model object instead (equivalent: checks auth is configured).
   const sessionModelReady =
-    ctx.model && ctx.modelRegistry.isProviderRequestReady(ctx.model.provider);
+    ctx.model && ctx.modelRegistry.hasConfiguredAuth(ctx.model);
   const startModelSnapshot = manualSessionOverride
     ?? validatedPreferredModel
     ?? (sessionModelReady && ctx.model
@@ -790,7 +792,7 @@ export async function bootstrapAutoSession(
       const { resolveModelId } = await import("./auto-model-selection.js");
       const overrideModel = resolveModelId(workerModelOverride, availableModels, ctx.model?.provider);
       if (overrideModel) {
-        const ok = await pi.setModel(overrideModel, { persist: false });
+        const ok = await pi.setModel(overrideModel);
         if (ok) {
           // Update start model so all subsequent units use this as the baseline
           s.autoModeStartModel = { provider: overrideModel.provider, id: overrideModel.id };

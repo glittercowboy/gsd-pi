@@ -6,19 +6,22 @@
  * It is only intended for CLI use, not browser environments.
  */
 
-import {
-	type CallbackServerInfo,
-	getGoogleUserEmail,
-	parseRedirectUrl,
-	refreshGoogleOAuthToken,
-	startCallbackServer,
-} from "./google-oauth-utils.js";
+import type { Server } from "node:http";
+import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.js";
 import { generatePKCE } from "./pkce.js";
 import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.js";
 
 type GeminiCredentials = OAuthCredentials & {
 	projectId: string;
 };
+
+let _createServer: typeof import("node:http").createServer | null = null;
+let _httpImportPromise: Promise<void> | null = null;
+if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
+	_httpImportPromise = import("node:http").then((m) => {
+		_createServer = m.createServer;
+	});
+}
 
 const decode = (s: string) => atob(s);
 const CLIENT_ID = decode(
@@ -35,9 +38,100 @@ const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const CODE_ASSIST_ENDPOINT = "https://cloudcode-pa.googleapis.com";
 
-// Callback server configuration
-const CALLBACK_PORT = 8085;
-const CALLBACK_PATH = "/oauth2callback";
+type CallbackServerInfo = {
+	server: Server;
+	cancelWait: () => void;
+	waitForCode: () => Promise<{ code: string; state: string } | null>;
+};
+
+/**
+ * Start a local HTTP server to receive the OAuth callback
+ */
+async function getNodeCreateServer(): Promise<typeof import("node:http").createServer> {
+	if (_createServer) return _createServer;
+	if (_httpImportPromise) {
+		await _httpImportPromise;
+	}
+	if (_createServer) return _createServer;
+	throw new Error("Gemini CLI OAuth is only available in Node.js environments");
+}
+
+async function startCallbackServer(): Promise<CallbackServerInfo> {
+	const createServer = await getNodeCreateServer();
+
+	return new Promise((resolve, reject) => {
+		let settleWait: ((value: { code: string; state: string } | null) => void) | undefined;
+		const waitForCodePromise = new Promise<{ code: string; state: string } | null>((resolveWait) => {
+			let settled = false;
+			settleWait = (value) => {
+				if (settled) return;
+				settled = true;
+				resolveWait(value);
+			};
+		});
+
+		const server = createServer((req, res) => {
+			const url = new URL(req.url || "", `http://localhost:8085`);
+
+			if (url.pathname === "/oauth2callback") {
+				const code = url.searchParams.get("code");
+				const state = url.searchParams.get("state");
+				const error = url.searchParams.get("error");
+
+				if (error) {
+					res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+					res.end(oauthErrorHtml("Google authentication did not complete.", `Error: ${error}`));
+					return;
+				}
+
+				if (code && state) {
+					res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+					res.end(oauthSuccessHtml("Google authentication completed. You can close this window."));
+					settleWait?.({ code, state });
+				} else {
+					res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
+					res.end(oauthErrorHtml("Missing code or state parameter."));
+				}
+			} else {
+				res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
+				res.end(oauthErrorHtml("Callback route not found."));
+			}
+		});
+
+		server.on("error", (err) => {
+			reject(err);
+		});
+
+		server.listen(8085, "127.0.0.1", () => {
+			resolve({
+				server,
+				cancelWait: () => {
+					settleWait?.(null);
+				},
+				waitForCode: () => waitForCodePromise,
+			});
+		});
+	});
+}
+
+/**
+ * Parse redirect URL to extract code and state
+ */
+function parseRedirectUrl(input: string): { code?: string; state?: string } {
+	const value = input.trim();
+	if (!value) return {};
+
+	try {
+		const url = new URL(value);
+		return {
+			code: url.searchParams.get("code") ?? undefined,
+			state: url.searchParams.get("state") ?? undefined,
+		};
+	} catch {
+		// Not a URL, return empty
+		return {};
+	}
+}
 
 interface LoadCodeAssistPayload {
 	cloudaicompanionProject?: string;
@@ -109,7 +203,6 @@ async function pollOperation(
 		const response = await fetch(`${CODE_ASSIST_ENDPOINT}/v1internal/${operationName}`, {
 			method: "GET",
 			headers,
-			signal: AbortSignal.timeout(30_000),
 		});
 
 		if (!response.ok) {
@@ -153,7 +246,6 @@ async function discoverProject(accessToken: string, onProgress?: (message: strin
 				duetProject: envProjectId,
 			},
 		}),
-		signal: AbortSignal.timeout(30_000),
 	});
 
 	let data: LoadCodeAssistPayload;
@@ -225,7 +317,6 @@ async function discoverProject(accessToken: string, onProgress?: (message: strin
 		method: "POST",
 		headers,
 		body: JSON.stringify(onboardBody),
-		signal: AbortSignal.timeout(30_000),
 	});
 
 	if (!onboardResponse.ok) {
@@ -259,10 +350,58 @@ async function discoverProject(accessToken: string, onProgress?: (message: strin
 }
 
 /**
+ * Get user email from the access token
+ */
+async function getUserEmail(accessToken: string): Promise<string | undefined> {
+	try {
+		const response = await fetch("https://www.googleapis.com/oauth2/v1/userinfo?alt=json", {
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+			},
+		});
+
+		if (response.ok) {
+			const data = (await response.json()) as { email?: string };
+			return data.email;
+		}
+	} catch {
+		// Ignore errors, email is optional
+	}
+	return undefined;
+}
+
+/**
  * Refresh Google Cloud Code Assist token
  */
 export async function refreshGoogleCloudToken(refreshToken: string, projectId: string): Promise<OAuthCredentials> {
-	return refreshGoogleOAuthToken(refreshToken, CLIENT_ID, CLIENT_SECRET, "Google Cloud", { projectId });
+	const response = await fetch(TOKEN_URL, {
+		method: "POST",
+		headers: { "Content-Type": "application/x-www-form-urlencoded" },
+		body: new URLSearchParams({
+			client_id: CLIENT_ID,
+			client_secret: CLIENT_SECRET,
+			refresh_token: refreshToken,
+			grant_type: "refresh_token",
+		}),
+	});
+
+	if (!response.ok) {
+		const error = await response.text();
+		throw new Error(`Google Cloud token refresh failed: ${error}`);
+	}
+
+	const data = (await response.json()) as {
+		access_token: string;
+		expires_in: number;
+		refresh_token?: string;
+	};
+
+	return {
+		refresh: data.refresh_token || refreshToken,
+		access: data.access_token,
+		expires: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
+		projectId,
+	};
 }
 
 /**
@@ -282,7 +421,7 @@ export async function loginGeminiCli(
 
 	// Start local server for callback
 	onProgress?.("Starting local server for OAuth callback...");
-	const server: CallbackServerInfo = await startCallbackServer(CALLBACK_PORT, CALLBACK_PATH, "Gemini CLI");
+	const server = await startCallbackServer();
 
 	let code: string | undefined;
 
@@ -391,7 +530,6 @@ export async function loginGeminiCli(
 				redirect_uri: REDIRECT_URI,
 				code_verifier: verifier,
 			}),
-			signal: AbortSignal.timeout(30_000),
 		});
 
 		if (!tokenResponse.ok) {
@@ -411,7 +549,7 @@ export async function loginGeminiCli(
 
 		// Get user email
 		onProgress?.("Getting user info...");
-		const email = await getGoogleUserEmail(tokenData.access_token);
+		const email = await getUserEmail(tokenData.access_token);
 
 		// Discover project
 		const projectId = await discoverProject(tokenData.access_token, onProgress);

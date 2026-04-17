@@ -9,19 +9,16 @@ export type KnownApi =
 	| "azure-openai-responses"
 	| "openai-codex-responses"
 	| "anthropic-messages"
-	| "anthropic-vertex"
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
 	| "google-gemini-cli"
-	| "google-vertex"
-	| "ollama-chat";
+	| "google-vertex";
 
 export type Api = KnownApi | (string & {});
 
 export type KnownProvider =
 	| "amazon-bedrock"
 	| "anthropic"
-	| "anthropic-vertex"
 	| "google"
 	| "google-gemini-cli"
 	| "google-antigravity"
@@ -42,11 +39,7 @@ export type KnownProvider =
 	| "huggingface"
 	| "opencode"
 	| "opencode-go"
-	| "kimi-coding"
-	| "alibaba-coding-plan"
-	| "alibaba-dashscope"
-	| "ollama"
-	| "ollama-cloud";
+	| "kimi-coding";
 export type Provider = KnownProvider | string;
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -121,7 +114,14 @@ export interface SimpleStreamOptions extends StreamOptions {
 	thinkingBudgets?: ThinkingBudgets;
 }
 
-// Generic StreamFunction with typed options
+// Generic StreamFunction with typed options.
+//
+// Contract:
+// - Must return an AssistantMessageEventStream.
+// - Once invoked, request/model/runtime failures should be encoded in the
+//   returned stream, not thrown.
+// - Error termination must produce an AssistantMessage with stopReason
+//   "error" or "aborted" and errorMessage, emitted via the stream protocol.
 export type StreamFunction<TApi extends Api = Api, TOptions extends StreamOptions = StreamOptions> = (
 	model: Model<TApi>,
 	context: Context,
@@ -164,22 +164,6 @@ export interface ToolCall {
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 
-/** Server-side tool use (e.g., Anthropic native web search). Executed by the API, not the client. */
-export interface ServerToolUseContent {
-	type: "serverToolUse";
-	id: string;
-	name: string; // e.g., "web_search"
-	input: unknown;
-}
-
-/** Result of a server-side tool execution, paired with a ServerToolUseContent by toolUseId. */
-export interface WebSearchResultContent {
-	type: "webSearchResult";
-	toolUseId: string;
-	/** Search results or error from the server. Opaque — stored for API replay. */
-	content: unknown;
-}
-
 export interface Usage {
 	input: number;
 	output: number;
@@ -195,7 +179,7 @@ export interface Usage {
 	};
 }
 
-export type StopReason = "stop" | "length" | "toolUse" | "pauseTurn" | "error" | "aborted";
+export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 
 export interface UserMessage {
 	role: "user";
@@ -205,30 +189,15 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall | ServerToolUseContent | WebSearchResultContent)[];
+	content: (TextContent | ThinkingContent | ToolCall)[];
 	api: Api;
 	provider: Provider;
 	model: string;
+	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
 	usage: Usage;
 	stopReason: StopReason;
 	errorMessage?: string;
-	/** Server-requested retry delay in milliseconds (from Retry-After or rate limit headers). */
-	retryAfterMs?: number;
-	/** Provider inference performance metrics (e.g. tokens/sec from local models). */
-	inferenceMetrics?: InferenceMetrics;
 	timestamp: number; // Unix timestamp in milliseconds
-}
-
-/** Inference performance metrics reported by providers that support it (e.g. Ollama). */
-export interface InferenceMetrics {
-	/** Tokens generated per second during eval phase. */
-	tokensPerSecond: number;
-	/** Wall-clock duration of the full request in milliseconds. */
-	totalDurationMs: number;
-	/** Duration of the eval (generation) phase in milliseconds. */
-	evalDurationMs: number;
-	/** Duration of the prompt eval phase in milliseconds. */
-	promptEvalDurationMs: number;
 }
 
 export interface ToolResultMessage<TDetails = any> {
@@ -257,6 +226,14 @@ export interface Context {
 	tools?: Tool[];
 }
 
+/**
+ * Event protocol for AssistantMessageEventStream.
+ *
+ * Streams should emit `start` before partial updates, then terminate with either:
+ * - `done` carrying the final successful AssistantMessage, or
+ * - `error` carrying the final AssistantMessage with stopReason "error" or "aborted"
+ *   and errorMessage.
+ */
 export type AssistantMessageEvent =
 	| { type: "start"; partial: AssistantMessage }
 	| { type: "text_start"; contentIndex: number; partial: AssistantMessage }
@@ -267,10 +244,8 @@ export type AssistantMessageEvent =
 	| { type: "thinking_end"; contentIndex: number; content: string; partial: AssistantMessage }
 	| { type: "toolcall_start"; contentIndex: number; partial: AssistantMessage }
 	| { type: "toolcall_delta"; contentIndex: number; delta: string; partial: AssistantMessage }
-	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage; malformedArguments?: boolean }
-	| { type: "server_tool_use"; contentIndex: number; partial: AssistantMessage }
-	| { type: "web_search_result"; contentIndex: number; partial: AssistantMessage }
-	| { type: "done"; reason: Extract<StopReason, "stop" | "length" | "toolUse" | "pauseTurn">; message: AssistantMessage }
+	| { type: "toolcall_end"; contentIndex: number; toolCall: ToolCall; partial: AssistantMessage }
+	| { type: "done"; reason: Extract<StopReason, "stop" | "length" | "toolUse">; message: AssistantMessage }
 	| { type: "error"; reason: Extract<StopReason, "aborted" | "error">; error: AssistantMessage };
 
 /**
@@ -296,12 +271,14 @@ export interface OpenAICompletionsCompat {
 	requiresAssistantAfterToolResult?: boolean;
 	/** Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL. */
 	requiresThinkingAsText?: boolean;
-	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "zai" uses thinking: { type: "enabled" }, "qwen" uses enable_thinking: boolean. Default: "openai". */
-	thinkingFormat?: "openai" | "zai" | "qwen";
+	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "zai" uses top-level enable_thinking: boolean, "qwen" uses top-level enable_thinking: boolean, and "qwen-chat-template" uses chat_template_kwargs.enable_thinking. Default: "openai". */
+	thinkingFormat?: "openai" | "openrouter" | "zai" | "qwen" | "qwen-chat-template";
 	/** OpenRouter-specific routing preferences. Only used when baseUrl points to OpenRouter. */
 	openRouterRouting?: OpenRouterRouting;
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */
 	vercelGatewayRouting?: VercelGatewayRouting;
+	/** Whether z.ai supports top-level `tool_stream: true` for streaming tool call deltas. Default: false. */
+	zaiToolStream?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
 }
@@ -314,13 +291,76 @@ export interface OpenAIResponsesCompat {
 /**
  * OpenRouter provider routing preferences.
  * Controls which upstream providers OpenRouter routes requests to.
- * @see https://openrouter.ai/docs/provider-routing
+ * Sent as the `provider` field in the OpenRouter API request body.
+ * @see https://openrouter.ai/docs/guides/routing/provider-selection
  */
 export interface OpenRouterRouting {
-	/** List of provider slugs to exclusively use for this request (e.g., ["amazon-bedrock", "anthropic"]). */
-	only?: string[];
-	/** List of provider slugs to try in order (e.g., ["anthropic", "openai"]). */
+	/** Whether to allow backup providers to serve requests. Default: true. */
+	allow_fallbacks?: boolean;
+	/** Whether to filter providers to only those that support all parameters in the request. Default: false. */
+	require_parameters?: boolean;
+	/** Data collection setting. "allow" (default): allow providers that may store/train on data. "deny": only use providers that don't collect user data. */
+	data_collection?: "deny" | "allow";
+	/** Whether to restrict routing to only ZDR (Zero Data Retention) endpoints. */
+	zdr?: boolean;
+	/** Whether to restrict routing to only models that allow text distillation. */
+	enforce_distillable_text?: boolean;
+	/** An ordered list of provider names/slugs to try in sequence, falling back to the next if unavailable. */
 	order?: string[];
+	/** List of provider names/slugs to exclusively allow for this request. */
+	only?: string[];
+	/** List of provider names/slugs to skip for this request. */
+	ignore?: string[];
+	/** A list of quantization levels to filter providers by (e.g., ["fp16", "bf16", "fp8", "fp6", "int8", "int4", "fp4", "fp32"]). */
+	quantizations?: string[];
+	/** Sorting strategy. Can be a string (e.g., "price", "throughput", "latency") or an object with `by` and `partition`. */
+	sort?:
+		| string
+		| {
+				/** The sorting metric: "price", "throughput", "latency". */
+				by?: string;
+				/** Partitioning strategy: "model" (default) or "none". */
+				partition?: string | null;
+		  };
+	/** Maximum price per million tokens (USD). */
+	max_price?: {
+		/** Price per million prompt tokens. */
+		prompt?: number | string;
+		/** Price per million completion tokens. */
+		completion?: number | string;
+		/** Price per image. */
+		image?: number | string;
+		/** Price per audio unit. */
+		audio?: number | string;
+		/** Price per request. */
+		request?: number | string;
+	};
+	/** Preferred minimum throughput (tokens/second). Can be a number (applies to p50) or an object with percentile-specific cutoffs. */
+	preferred_min_throughput?:
+		| number
+		| {
+				/** Minimum tokens/second at the 50th percentile. */
+				p50?: number;
+				/** Minimum tokens/second at the 75th percentile. */
+				p75?: number;
+				/** Minimum tokens/second at the 90th percentile. */
+				p90?: number;
+				/** Minimum tokens/second at the 99th percentile. */
+				p99?: number;
+		  };
+	/** Preferred maximum latency (seconds). Can be a number (applies to p50) or an object with percentile-specific cutoffs. */
+	preferred_max_latency?:
+		| number
+		| {
+				/** Maximum latency in seconds at the 50th percentile. */
+				p50?: number;
+				/** Maximum latency in seconds at the 75th percentile. */
+				p75?: number;
+				/** Maximum latency in seconds at the 90th percentile. */
+				p90?: number;
+				/** Maximum latency in seconds at the 99th percentile. */
+				p99?: number;
+		  };
 }
 
 /**
@@ -333,32 +373,6 @@ export interface VercelGatewayRouting {
 	only?: string[];
 	/** List of provider slugs to try in order (e.g., ["anthropic", "openai"]). */
 	order?: string[];
-}
-
-/**
- * Provider-agnostic capability declarations for a model.
- *
- * These fields allow models to self-declare supported features so that call
- * sites can read from metadata rather than pattern-matching on model IDs or
- * provider names. Add fields here as new cross-provider capabilities emerge.
- */
-export interface ModelCapabilities {
-	/** Whether the model supports xhigh thinking level. */
-	supportsXhigh?: boolean;
-	/**
-	 * Whether tool call IDs must be included and normalised in tool results for
-	 * this model. Relevant for models deployed cross-provider (e.g. Claude or
-	 * GPT variants via Google APIs) where the host API imposes stricter ID rules.
-	 */
-	requiresToolCallId?: boolean;
-	/** Whether OpenAI-style service tiers (priority/flex) apply to this model. */
-	supportsServiceTier?: boolean;
-	/**
-	 * Approximate characters per token for this model.
-	 * Used as a fallback when an accurate tokenizer is unavailable.
-	 * If omitted, the provider-level default is used.
-	 */
-	charsPerToken?: number;
 }
 
 // Model interface for the unified model system
@@ -385,11 +399,4 @@ export interface Model<TApi extends Api> {
 		: TApi extends "openai-responses"
 			? OpenAIResponsesCompat
 			: never;
-	/**
-	 * Provider-agnostic capability declarations for this model.
-	 * Read these fields instead of pattern-matching on model IDs or provider names.
-	 */
-	capabilities?: ModelCapabilities;
-	/** Opaque provider-specific options. Cast to the appropriate type in the provider's stream handler. */
-	providerOptions?: Record<string, unknown>;
 }

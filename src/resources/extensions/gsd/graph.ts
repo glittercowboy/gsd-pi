@@ -307,6 +307,3 @@ export function initializeGraph(def: WorkflowDefinition): WorkflowGraph {
     },
   };
 }
-
-/** @deprecated Use initializeGraph instead. Kept for backward compatibility. */
-export { initializeGraph as graphFromDefinition };

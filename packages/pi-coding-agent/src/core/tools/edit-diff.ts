@@ -1,15 +1,12 @@
 /**
  * Shared diff computation utilities for the edit tool.
  * Used by both edit.ts (for execution) and tool-execution.ts (for preview rendering).
- *
- * These helpers intentionally stay in JavaScript. Issue #453 showed that
- * post-tool preview paths must not depend on the native addon because a native
- * hang there can wedge the entire interactive session after a successful tool run.
  */
 
+import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
-import { resolveToCwd, UNICODE_SPACES } from "./path-utils.js";
+import { resolveToCwd } from "./path-utils.js";
 
 export function detectLineEnding(content: string): "\r\n" | "\n" {
 	const crlfIdx = content.indexOf("\r\n");
@@ -28,23 +25,33 @@ export function restoreLineEndings(text: string, ending: "\r\n" | "\n"): string 
 }
 
 /**
- * Normalize text for fuzzy matching.
+ * Normalize text for fuzzy matching. Applies progressive transformations:
  * - Strip trailing whitespace from each line
  * - Normalize smart quotes to ASCII equivalents
  * - Normalize Unicode dashes/hyphens to ASCII hyphen
  * - Normalize special Unicode spaces to regular space
  */
 export function normalizeForFuzzyMatch(text: string): string {
-	return text
-		.replace(/\r\n/g, "\n")
-		.replace(/\r/g, "\n")
-		.replace(/[“”]/g, '"')
-		.replace(/[‘’]/g, "'")
-		.replace(/[‐‑‒–—−]/g, "-")
-		.replace(UNICODE_SPACES, " ")
-		.split("\n")
-		.map((line) => line.replace(/[ \t]+$/g, ""))
-		.join("\n");
+	return (
+		text
+			.normalize("NFKC")
+			// Strip trailing whitespace per line
+			.split("\n")
+			.map((line) => line.trimEnd())
+			.join("\n")
+			// Smart single quotes → '
+			.replace(/[\u2018\u2019\u201A\u201B]/g, "'")
+			// Smart double quotes → "
+			.replace(/[\u201C\u201D\u201E\u201F]/g, '"')
+			// Various dashes/hyphens → -
+			// U+2010 hyphen, U+2011 non-breaking hyphen, U+2012 figure dash,
+			// U+2013 en-dash, U+2014 em-dash, U+2015 horizontal bar, U+2212 minus
+			.replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-")
+			// Special spaces → regular space
+			// U+00A0 NBSP, U+2002-U+200A various spaces, U+202F narrow NBSP,
+			// U+205F medium math space, U+3000 ideographic space
+			.replace(/[\u00A0\u2002-\u200A\u202F\u205F\u3000]/g, " ")
+	);
 }
 
 export interface FuzzyMatchResult {
@@ -63,13 +70,31 @@ export interface FuzzyMatchResult {
 	contentForReplacement: string;
 }
 
+export interface Edit {
+	oldText: string;
+	newText: string;
+}
+
+interface MatchedEdit {
+	editIndex: number;
+	matchIndex: number;
+	matchLength: number;
+	newText: string;
+}
+
+export interface AppliedEditsResult {
+	baseContent: string;
+	newContent: string;
+}
+
 /**
  * Find oldText in content, trying exact match first, then fuzzy match.
- *
  * When fuzzy matching is used, the returned contentForReplacement is the
- * fuzzy-normalized version of the content.
+ * fuzzy-normalized version of the content (trailing whitespace stripped,
+ * Unicode quotes/dashes normalized to ASCII).
  */
 export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResult {
+	// Try exact match first
 	const exactIndex = content.indexOf(oldText);
 	if (exactIndex !== -1) {
 		return {
@@ -81,9 +106,10 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
 		};
 	}
 
-	const normalizedContent = normalizeForFuzzyMatch(content);
-	const normalizedOldText = normalizeForFuzzyMatch(oldText);
-	const fuzzyIndex = normalizedContent.indexOf(normalizedOldText);
+	// Try fuzzy match - work entirely in normalized space
+	const fuzzyContent = normalizeForFuzzyMatch(content);
+	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
+	const fuzzyIndex = fuzzyContent.indexOf(fuzzyOldText);
 
 	if (fuzzyIndex === -1) {
 		return {
@@ -95,12 +121,15 @@ export function fuzzyFindText(content: string, oldText: string): FuzzyMatchResul
 		};
 	}
 
+	// When fuzzy matching, we work in the normalized space for replacement.
+	// This means the output will have normalized whitespace/quotes/dashes,
+	// which is acceptable since we're fixing minor formatting differences anyway.
 	return {
 		found: true,
 		index: fuzzyIndex,
-		matchLength: normalizedOldText.length,
+		matchLength: fuzzyOldText.length,
 		usedFuzzyMatch: true,
-		contentForReplacement: normalizedContent,
+		contentForReplacement: fuzzyContent,
 	};
 }
 
@@ -109,83 +138,254 @@ export function stripBom(content: string): { bom: string; text: string } {
 	return content.startsWith("\uFEFF") ? { bom: "\uFEFF", text: content.slice(1) } : { bom: "", text: content };
 }
 
+function countOccurrences(content: string, oldText: string): number {
+	const fuzzyContent = normalizeForFuzzyMatch(content);
+	const fuzzyOldText = normalizeForFuzzyMatch(oldText);
+	return fuzzyContent.split(fuzzyOldText).length - 1;
+}
+
+function getNotFoundError(path: string, editIndex: number, totalEdits: number): Error {
+	if (totalEdits === 1) {
+		return new Error(
+			`Could not find the exact text in ${path}. The old text must match exactly including all whitespace and newlines.`,
+		);
+	}
+	return new Error(
+		`Could not find edits[${editIndex}] in ${path}. The oldText must match exactly including all whitespace and newlines.`,
+	);
+}
+
+function getDuplicateError(path: string, editIndex: number, totalEdits: number, occurrences: number): Error {
+	if (totalEdits === 1) {
+		return new Error(
+			`Found ${occurrences} occurrences of the text in ${path}. The text must be unique. Please provide more context to make it unique.`,
+		);
+	}
+	return new Error(
+		`Found ${occurrences} occurrences of edits[${editIndex}] in ${path}. Each oldText must be unique. Please provide more context to make it unique.`,
+	);
+}
+
+function getEmptyOldTextError(path: string, editIndex: number, totalEdits: number): Error {
+	if (totalEdits === 1) {
+		return new Error(`oldText must not be empty in ${path}.`);
+	}
+	return new Error(`edits[${editIndex}].oldText must not be empty in ${path}.`);
+}
+
+function getNoChangeError(path: string, totalEdits: number): Error {
+	if (totalEdits === 1) {
+		return new Error(
+			`No changes made to ${path}. The replacement produced identical content. This might indicate an issue with special characters or the text not existing as expected.`,
+		);
+	}
+	return new Error(`No changes made to ${path}. The replacements produced identical content.`);
+}
+
+/**
+ * Apply one or more exact-text replacements to LF-normalized content.
+ *
+ * All edits are matched against the same original content. Replacements are
+ * then applied in reverse order so offsets remain stable. If any edit needs
+ * fuzzy matching, the operation runs in fuzzy-normalized content space to
+ * preserve current single-edit behavior.
+ */
+export function applyEditsToNormalizedContent(
+	normalizedContent: string,
+	edits: Edit[],
+	path: string,
+): AppliedEditsResult {
+	const normalizedEdits = edits.map((edit) => ({
+		oldText: normalizeToLF(edit.oldText),
+		newText: normalizeToLF(edit.newText),
+	}));
+
+	for (let i = 0; i < normalizedEdits.length; i++) {
+		if (normalizedEdits[i].oldText.length === 0) {
+			throw getEmptyOldTextError(path, i, normalizedEdits.length);
+		}
+	}
+
+	const initialMatches = normalizedEdits.map((edit) => fuzzyFindText(normalizedContent, edit.oldText));
+	const baseContent = initialMatches.some((match) => match.usedFuzzyMatch)
+		? normalizeForFuzzyMatch(normalizedContent)
+		: normalizedContent;
+
+	const matchedEdits: MatchedEdit[] = [];
+	for (let i = 0; i < normalizedEdits.length; i++) {
+		const edit = normalizedEdits[i];
+		const matchResult = fuzzyFindText(baseContent, edit.oldText);
+		if (!matchResult.found) {
+			throw getNotFoundError(path, i, normalizedEdits.length);
+		}
+
+		const occurrences = countOccurrences(baseContent, edit.oldText);
+		if (occurrences > 1) {
+			throw getDuplicateError(path, i, normalizedEdits.length, occurrences);
+		}
+
+		matchedEdits.push({
+			editIndex: i,
+			matchIndex: matchResult.index,
+			matchLength: matchResult.matchLength,
+			newText: edit.newText,
+		});
+	}
+
+	matchedEdits.sort((a, b) => a.matchIndex - b.matchIndex);
+	for (let i = 1; i < matchedEdits.length; i++) {
+		const previous = matchedEdits[i - 1];
+		const current = matchedEdits[i];
+		if (previous.matchIndex + previous.matchLength > current.matchIndex) {
+			throw new Error(
+				`edits[${previous.editIndex}] and edits[${current.editIndex}] overlap in ${path}. Merge them into one edit or target disjoint regions.`,
+			);
+		}
+	}
+
+	let newContent = baseContent;
+	for (let i = matchedEdits.length - 1; i >= 0; i--) {
+		const edit = matchedEdits[i];
+		newContent =
+			newContent.substring(0, edit.matchIndex) +
+			edit.newText +
+			newContent.substring(edit.matchIndex + edit.matchLength);
+	}
+
+	if (baseContent === newContent) {
+		throw getNoChangeError(path, normalizedEdits.length);
+	}
+
+	return { baseContent, newContent };
+}
+
 /**
  * Generate a unified diff string with line numbers and context.
- *
  * Returns both the diff string and the first changed line number (in the new file).
- * Only lines within `contextLines` of a change are included (like unified diff).
  */
 export function generateDiffString(
 	oldContent: string,
 	newContent: string,
 	contextLines = 4,
 ): { diff: string; firstChangedLine: number | undefined } {
-	const ops = buildLineDiff(oldContent, newContent);
+	const parts = Diff.diffLines(oldContent, newContent);
+	const output: string[] = [];
+
+	const oldLines = oldContent.split("\n");
+	const newLines = newContent.split("\n");
+	const maxLineNum = Math.max(oldLines.length, newLines.length);
+	const lineNumWidth = String(maxLineNum).length;
+
+	let oldLineNum = 1;
+	let newLineNum = 1;
+	let lastWasChange = false;
 	let firstChangedLine: number | undefined;
 
-	// First pass: assign line numbers and find changed indices
-	const annotated: { op: LineDiffOp; oldLine: number; newLine: number }[] = [];
-	let oldLine = 1;
-	let newLine = 1;
-	const changedIndices: number[] = [];
+	for (let i = 0; i < parts.length; i++) {
+		const part = parts[i];
+		const raw = part.value.split("\n");
+		if (raw[raw.length - 1] === "") {
+			raw.pop();
+		}
 
-	for (let idx = 0; idx < ops.length; idx++) {
-		const op = ops[idx];
-		annotated.push({ op, oldLine, newLine });
-
-		if (op.type !== "context") {
-			changedIndices.push(idx);
+		if (part.added || part.removed) {
+			// Capture the first changed line (in the new file)
 			if (firstChangedLine === undefined) {
-				firstChangedLine = newLine;
+				firstChangedLine = newLineNum;
 			}
-		}
 
-		if (op.type === "remove") {
-			oldLine += 1;
-		} else if (op.type === "add") {
-			newLine += 1;
+			// Show the change
+			for (const line of raw) {
+				if (part.added) {
+					const lineNum = String(newLineNum).padStart(lineNumWidth, " ");
+					output.push(`+${lineNum} ${line}`);
+					newLineNum++;
+				} else {
+					// removed
+					const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
+					output.push(`-${lineNum} ${line}`);
+					oldLineNum++;
+				}
+			}
+			lastWasChange = true;
 		} else {
-			oldLine += 1;
-			newLine += 1;
+			// Context lines - only show a few before/after changes
+			const nextPartIsChange = i < parts.length - 1 && (parts[i + 1].added || parts[i + 1].removed);
+			const hasLeadingChange = lastWasChange;
+			const hasTrailingChange = nextPartIsChange;
+
+			if (hasLeadingChange && hasTrailingChange) {
+				if (raw.length <= contextLines * 2) {
+					for (const line of raw) {
+						const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
+						output.push(` ${lineNum} ${line}`);
+						oldLineNum++;
+						newLineNum++;
+					}
+				} else {
+					const leadingLines = raw.slice(0, contextLines);
+					const trailingLines = raw.slice(raw.length - contextLines);
+					const skippedLines = raw.length - leadingLines.length - trailingLines.length;
+
+					for (const line of leadingLines) {
+						const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
+						output.push(` ${lineNum} ${line}`);
+						oldLineNum++;
+						newLineNum++;
+					}
+
+					output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
+					oldLineNum += skippedLines;
+					newLineNum += skippedLines;
+
+					for (const line of trailingLines) {
+						const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
+						output.push(` ${lineNum} ${line}`);
+						oldLineNum++;
+						newLineNum++;
+					}
+				}
+			} else if (hasLeadingChange) {
+				const shownLines = raw.slice(0, contextLines);
+				const skippedLines = raw.length - shownLines.length;
+
+				for (const line of shownLines) {
+					const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
+					output.push(` ${lineNum} ${line}`);
+					oldLineNum++;
+					newLineNum++;
+				}
+
+				if (skippedLines > 0) {
+					output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
+					oldLineNum += skippedLines;
+					newLineNum += skippedLines;
+				}
+			} else if (hasTrailingChange) {
+				const skippedLines = Math.max(0, raw.length - contextLines);
+				if (skippedLines > 0) {
+					output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
+					oldLineNum += skippedLines;
+					newLineNum += skippedLines;
+				}
+
+				for (const line of raw.slice(skippedLines)) {
+					const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
+					output.push(` ${lineNum} ${line}`);
+					oldLineNum++;
+					newLineNum++;
+				}
+			} else {
+				// Skip these context lines entirely
+				oldLineNum += raw.length;
+				newLineNum += raw.length;
+			}
+
+			lastWasChange = false;
 		}
 	}
 
-	// Build set of indices to include (changes + surrounding context)
-	const includeSet = new Set<number>();
-	for (const ci of changedIndices) {
-		for (let k = Math.max(0, ci - contextLines); k <= Math.min(ops.length - 1, ci + contextLines); k++) {
-			includeSet.add(k);
-		}
-	}
-
-	const maxLine = Math.max(oldLine - 1, newLine - 1, 1);
-	const lineNumberWidth = String(maxLine).length;
-	const rendered: string[] = [];
-	let lastIncluded = -1;
-
-	for (let idx = 0; idx < annotated.length; idx++) {
-		if (!includeSet.has(idx)) continue;
-
-		// Insert separator when there's a gap between included regions
-		if (lastIncluded !== -1 && idx > lastIncluded + 1) {
-			rendered.push("...");
-		}
-		lastIncluded = idx;
-
-		const { op, oldLine: ol, newLine: nl } = annotated[idx];
-		if (op.type === "context") {
-			rendered.push(` ${String(nl).padStart(lineNumberWidth, " ")} ${op.line}`);
-		} else if (op.type === "remove") {
-			rendered.push(`-${String(ol).padStart(lineNumberWidth, " ")} ${op.line}`);
-		} else {
-			rendered.push(`+${String(nl).padStart(lineNumberWidth, " ")} ${op.line}`);
-		}
-	}
-
-	return {
-		diff: rendered.join("\n"),
-		firstChangedLine,
-	};
+	return { diff: output.join("\n"), firstChangedLine };
 }
 
 export interface EditDiffResult {
@@ -197,146 +397,13 @@ export interface EditDiffError {
 	error: string;
 }
 
-type LineDiffOp =
-	| { type: "context"; line: string }
-	| { type: "remove"; line: string }
-	| { type: "add"; line: string };
-
-function splitLines(text: string): string[] {
-	const lines = text.split("\n");
-	if (lines.length > 0 && lines.at(-1) === "") {
-		lines.pop();
-	}
-	return lines;
-}
-
 /**
- * Maximum number of cells (oldLines * newLines) before we switch from the
- * full LCS DP algorithm to a simpler linear-scan diff. This prevents OOM
- * on large files (e.g. 10k lines would need a 100M-cell matrix).
- */
-const MAX_DP_CELLS = 4_000_000; // ~32 MB for 64-bit numbers
-
-function buildLineDiff(oldContent: string, newContent: string): LineDiffOp[] {
-	const oldLines = splitLines(oldContent);
-	const newLines = splitLines(newContent);
-
-	const cells = (oldLines.length + 1) * (newLines.length + 1);
-	if (cells > MAX_DP_CELLS) {
-		return buildLineDiffLinear(oldLines, newLines);
-	}
-
-	return buildLineDiffLCS(oldLines, newLines);
-}
-
-/**
- * Full LCS-based diff using O(n*m) DP table. Produces optimal diffs but
- * is only safe for files where n*m <= MAX_DP_CELLS.
- */
-function buildLineDiffLCS(oldLines: string[], newLines: string[]): LineDiffOp[] {
-	const dp: number[][] = Array.from({ length: oldLines.length + 1 }, () =>
-		Array<number>(newLines.length + 1).fill(0),
-	);
-
-	for (let i = oldLines.length - 1; i >= 0; i--) {
-		for (let j = newLines.length - 1; j >= 0; j--) {
-			if (oldLines[i] === newLines[j]) {
-				dp[i][j] = dp[i + 1][j + 1] + 1;
-			} else {
-				dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
-			}
-		}
-	}
-
-	const ops: LineDiffOp[] = [];
-	let i = 0;
-	let j = 0;
-
-	while (i < oldLines.length && j < newLines.length) {
-		if (oldLines[i] === newLines[j]) {
-			ops.push({ type: "context", line: oldLines[i] });
-			i += 1;
-			j += 1;
-			continue;
-		}
-
-		if (dp[i + 1][j] >= dp[i][j + 1]) {
-			ops.push({ type: "remove", line: oldLines[i] });
-			i += 1;
-		} else {
-			ops.push({ type: "add", line: newLines[j] });
-			j += 1;
-		}
-	}
-
-	while (i < oldLines.length) {
-		ops.push({ type: "remove", line: oldLines[i] });
-		i += 1;
-	}
-
-	while (j < newLines.length) {
-		ops.push({ type: "add", line: newLines[j] });
-		j += 1;
-	}
-
-	return ops;
-}
-
-/**
- * Linear-time fallback diff for large files. Matches common prefix/suffix,
- * then treats the remaining middle as a bulk remove+add. Not optimal but
- * O(n+m) in both time and space.
- */
-function buildLineDiffLinear(oldLines: string[], newLines: string[]): LineDiffOp[] {
-	const ops: LineDiffOp[] = [];
-
-	// Match common prefix
-	let prefixLen = 0;
-	const minLen = Math.min(oldLines.length, newLines.length);
-	while (prefixLen < minLen && oldLines[prefixLen] === newLines[prefixLen]) {
-		prefixLen++;
-	}
-
-	// Match common suffix (not overlapping with prefix)
-	let suffixLen = 0;
-	while (
-		suffixLen < minLen - prefixLen &&
-		oldLines[oldLines.length - 1 - suffixLen] === newLines[newLines.length - 1 - suffixLen]
-	) {
-		suffixLen++;
-	}
-
-	// Emit prefix context
-	for (let i = 0; i < prefixLen; i++) {
-		ops.push({ type: "context", line: oldLines[i] });
-	}
-
-	// Emit removed lines from the middle
-	for (let i = prefixLen; i < oldLines.length - suffixLen; i++) {
-		ops.push({ type: "remove", line: oldLines[i] });
-	}
-
-	// Emit added lines from the middle
-	for (let j = prefixLen; j < newLines.length - suffixLen; j++) {
-		ops.push({ type: "add", line: newLines[j] });
-	}
-
-	// Emit suffix context
-	for (let i = oldLines.length - suffixLen; i < oldLines.length; i++) {
-		ops.push({ type: "context", line: oldLines[i] });
-	}
-
-	return ops;
-}
-
-/**
- * Compute the diff for an edit operation without applying it.
+ * Compute the diff for one or more edit operations without applying them.
  * Used for preview rendering in the TUI before the tool executes.
  */
-export async function computeEditDiff(
+export async function computeEditsDiff(
 	path: string,
-	oldText: string,
-	newText: string,
+	edits: Edit[],
 	cwd: string,
 ): Promise<EditDiffResult | EditDiffError> {
 	const absolutePath = resolveToCwd(path, cwd);
@@ -354,49 +421,25 @@ export async function computeEditDiff(
 
 		// Strip BOM before matching (LLM won't include invisible BOM in oldText)
 		const { text: content } = stripBom(rawContent);
-
 		const normalizedContent = normalizeToLF(content);
-		const normalizedOldText = normalizeToLF(oldText);
-		const normalizedNewText = normalizeToLF(newText);
-
-		// Find the old text using fuzzy matching (tries exact match first, then fuzzy)
-		const matchResult = fuzzyFindText(normalizedContent, normalizedOldText);
-
-		if (!matchResult.found) {
-			return {
-				error: `Could not find the exact text in ${path}. The old text must match exactly including all whitespace and newlines.`,
-			};
-		}
-
-		// Count occurrences using fuzzy-normalized content for consistency
-		const fuzzyContent = normalizeForFuzzyMatch(normalizedContent);
-		const fuzzyOldText = normalizeForFuzzyMatch(normalizedOldText);
-		const occurrences = fuzzyContent.split(fuzzyOldText).length - 1;
-
-		if (occurrences > 1) {
-			return {
-				error: `Found ${occurrences} occurrences of the text in ${path}. The text must be unique. Please provide more context to make it unique.`,
-			};
-		}
-
-		// Compute the new content using the matched position
-		// When fuzzy matching was used, contentForReplacement is the normalized version
-		const baseContent = matchResult.contentForReplacement;
-		const newContent =
-			baseContent.substring(0, matchResult.index) +
-			normalizedNewText +
-			baseContent.substring(matchResult.index + matchResult.matchLength);
-
-		// Check if it would actually change anything
-		if (baseContent === newContent) {
-			return {
-				error: `No changes would be made to ${path}. The replacement produces identical content.`,
-			};
-		}
+		const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
 
 		// Generate the diff
 		return generateDiffString(baseContent, newContent);
 	} catch (err) {
 		return { error: err instanceof Error ? err.message : String(err) };
 	}
+}
+
+/**
+ * Compute the diff for a single edit operation without applying it.
+ * Kept as a convenience wrapper for single-edit callers.
+ */
+export async function computeEditDiff(
+	path: string,
+	oldText: string,
+	newText: string,
+	cwd: string,
+): Promise<EditDiffResult | EditDiffError> {
+	return computeEditsDiff(path, [{ oldText, newText }], cwd);
 }

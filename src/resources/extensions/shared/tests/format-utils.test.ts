@@ -11,6 +11,7 @@ import {
   centerLine,
   fitColumns,
 } from "../layout-utils.js";
+import { visibleWidth } from "@gsd/pi-tui";
 
 describe("formatDuration", () => {
   it("formats seconds", () => {
@@ -59,8 +60,8 @@ describe("joinColumns", () => {
 
   it("truncates when content overflows", () => {
     const result = joinColumns("a".repeat(20), "b".repeat(20), 30);
-    // Should be truncated to 30 chars
-    assert.ok(result.length <= 30);
+    // Should be truncated to 30 visible columns (ANSI reset codes may make string length > 30)
+    assert.ok(visibleWidth(result) <= 30);
   });
 });
 
@@ -72,7 +73,8 @@ describe("centerLine", () => {
 
   it("truncates when content exceeds width", () => {
     const result = centerLine("abcdefgh", 4);
-    assert.ok(result.length <= 4);
+    // Should be truncated to 4 visible columns (ANSI reset codes may make string length > 4)
+    assert.ok(visibleWidth(result) <= 4);
   });
 });
 

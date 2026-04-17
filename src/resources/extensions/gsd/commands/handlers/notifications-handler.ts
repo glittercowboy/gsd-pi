@@ -45,7 +45,7 @@ export async function handleNotificationsCommand(
     // Suppress persistence so the confirmation toast doesn't re-populate the store
     suppressPersistence();
     try {
-      ctx.ui.notify("All notifications cleared.", "success");
+      ctx.ui.notify("All notifications cleared.", "info");
     } finally {
       unsuppressPersistence();
     }

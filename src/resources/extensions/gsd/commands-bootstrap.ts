@@ -1,4 +1,5 @@
-import { importExtensionModule, type ExtensionAPI, type ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import { importExtensionModule } from "@gsd/agent-core";
 
 const TOP_LEVEL_SUBCOMMANDS = [
   { cmd: "help", desc: "Categorized command reference with descriptions" },

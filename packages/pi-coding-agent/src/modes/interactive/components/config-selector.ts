@@ -7,13 +7,13 @@ import {
 	type Component,
 	Container,
 	type Focusable,
-	getEditorKeybindings,
+	getKeybindings,
 	Input,
 	matchesKey,
 	Spacer,
 	truncateToWidth,
 	visibleWidth,
-} from "@gsd/pi-tui";
+} from "@mariozechner/pi-tui";
 import { CONFIG_DIR_NAME } from "../../../config.js";
 import type { PathMetadata, ResolvedPaths, ResolvedResource } from "../../../core/package-manager.js";
 import type { PackageSource, SettingsManager } from "../../../core/settings-manager.js";
@@ -346,31 +346,26 @@ class ResourceList implements Component, Focusable {
 			}
 		}
 
-		// Scroll indicator — count only selectable items (exclude group/subgroup headers)
+		// Scroll indicator
 		if (startIndex > 0 || endIndex < this.filteredItems.length) {
-			const selectableItems = this.filteredItems.filter((e) => e.type === "item");
-			const selectableTotal = selectableItems.length;
-			const selectablePosition = selectableItems.findIndex(
-				(e) => this.filteredItems.indexOf(e) === this.selectedIndex,
-			);
-			lines.push(theme.fg("dim", `  (${selectablePosition + 1}/${selectableTotal})`));
+			lines.push(theme.fg("dim", `  (${this.selectedIndex + 1}/${this.filteredItems.length})`));
 		}
 
 		return lines;
 	}
 
 	handleInput(data: string): void {
-		const kb = getEditorKeybindings();
+		const kb = getKeybindings();
 
-		if (kb.matches(data, "selectUp")) {
+		if (kb.matches(data, "tui.select.up")) {
 			this.selectedIndex = this.findNextItem(this.selectedIndex, -1);
 			return;
 		}
-		if (kb.matches(data, "selectDown")) {
+		if (kb.matches(data, "tui.select.down")) {
 			this.selectedIndex = this.findNextItem(this.selectedIndex, 1);
 			return;
 		}
-		if (kb.matches(data, "selectPageUp")) {
+		if (kb.matches(data, "tui.select.pageUp")) {
 			// Jump up by maxVisible, then find nearest item
 			let target = Math.max(0, this.selectedIndex - this.maxVisible);
 			while (target < this.filteredItems.length && this.filteredItems[target].type !== "item") {
@@ -381,7 +376,7 @@ class ResourceList implements Component, Focusable {
 			}
 			return;
 		}
-		if (kb.matches(data, "selectPageDown")) {
+		if (kb.matches(data, "tui.select.pageDown")) {
 			// Jump down by maxVisible, then find nearest item
 			let target = Math.min(this.filteredItems.length - 1, this.selectedIndex + this.maxVisible);
 			while (target >= 0 && this.filteredItems[target].type !== "item") {
@@ -392,7 +387,7 @@ class ResourceList implements Component, Focusable {
 			}
 			return;
 		}
-		if (kb.matches(data, "selectCancel")) {
+		if (kb.matches(data, "tui.select.cancel")) {
 			this.onCancel?.();
 			return;
 		}
@@ -400,7 +395,7 @@ class ResourceList implements Component, Focusable {
 			this.onExit?.();
 			return;
 		}
-		if (data === " " || kb.matches(data, "selectConfirm")) {
+		if (data === " " || kb.matches(data, "tui.select.confirm")) {
 			const entry = this.filteredItems[this.selectedIndex];
 			if (entry?.type === "item") {
 				const newEnabled = !entry.item.enabled;

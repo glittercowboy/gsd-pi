@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { join, sep } from "node:path";
 
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
+import type { BashSpawnContext } from "@gsd/pi-coding-agent";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@gsd/pi-coding-agent";
 
 import { DEFAULT_BASH_TIMEOUT_SECS } from "../constants.js";
@@ -126,7 +127,7 @@ export async function ensureDbOpen(basePath: string = process.cwd()): Promise<bo
 
 export function registerDynamicTools(pi: ExtensionAPI): void {
   const baseBash = createBashTool(process.cwd(), {
-    spawnHook: (ctx) => ({ ...ctx, cwd: process.cwd() }),
+    spawnHook: (ctx: BashSpawnContext) => ({ ...ctx, cwd: process.cwd() }),
   });
   const dynamicBash = {
     ...baseBash,

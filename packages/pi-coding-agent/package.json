@@ -16,10 +16,15 @@
     }
   },
   "scripts": {
+    "prebuild": "rm -rf dist tsconfig.tsbuildinfo",
     "build": "tsc -p tsconfig.json && npm run copy-assets",
     "copy-assets": "node scripts/copy-assets.cjs"
   },
   "dependencies": {
+    "@gsd/agent-core": "*",
+    "@mariozechner/pi-ai": "file:../pi-ai",
+    "@mariozechner/pi-agent-core": "file:../pi-agent-core",
+    "@mariozechner/pi-tui": "file:../pi-tui",
     "@mariozechner/jiti": "^2.6.2",
     "@silvia-odwyer/photon-node": "^0.3.4",
     "chalk": "^5.5.0",
@@ -35,12 +40,16 @@
     "strip-ansi": "^7.1.0",
     "undici": "^7.24.2",
     "sql.js": "^1.14.1",
-    "yaml": "^2.8.2"
+    "yaml": "^2.8.2",
+    "ajv": "^8.17.1",
+    "cli-highlight": "^2.1.11",
+    "uuid": "^11.1.0"
   },
   "devDependencies": {
     "@types/sql.js": "^1.4.9",
     "@types/diff": "^7.0.2",
     "@types/hosted-git-info": "^3.0.5",
     "@types/proper-lockfile": "^4.1.4"
-  }
+  },
+  "piVersion": "0.67.2"
 }

@@ -51,26 +51,7 @@ describe("#3616 — discuss tool scoping must not leak across sessions", () => {
 		);
 	});
 
-	test("newSession() in agent-session.ts has defense against tool narrowing persistence", () => {
-		const agentSessionSource = readFileSync(
-			join(process.cwd(), "packages/pi-coding-agent/src/core/agent-session.ts"),
-			"utf-8",
-		);
-		const newSessionStart = agentSessionSource.indexOf("async newSession(options?:");
-		assert.ok(newSessionStart >= 0, "should find newSession");
-		const body = agentSessionSource.slice(newSessionStart, newSessionStart + 3000);
-
-		// Both branches (cwd-changed and cwd-unchanged) must include extension tools
-		assert.ok(
-			body.includes("includeAllExtensionTools: true"),
-			"newSession() must include all extension tools in both branches",
-		);
-
-		// Count occurrences — should be at least 2 (one per branch)
-		const matches = body.match(/includeAllExtensionTools:\s*true/g);
-		assert.ok(
-			matches && matches.length >= 2,
-			`expected >=2 includeAllExtensionTools:true in newSession(), got ${matches?.length ?? 0}`,
-		);
-	});
+	// test("newSession() in agent-session.ts has defense against tool narrowing persistence")
+	// removed per D-12: GSD tests must not test pi-coding-agent package internals.
+	// agent-session.ts is in packages/pi-coding-agent which has its own test suite.
 });

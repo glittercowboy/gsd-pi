@@ -32,6 +32,7 @@ import { pauseAuto } from "./auto.js";
 import {
   getWorkflowTransportSupportError,
   getRequiredWorkflowToolsForAutoUnit,
+  inferAuthModeFromBaseUrl,
 } from "./workflow-mcp.js";
 
 export async function dispatchDirectPhase(
@@ -254,7 +255,7 @@ export async function dispatchDirectPhase(
       projectRoot: base,
       surface: "direct phase dispatch",
       unitType,
-      authMode: ctx.model?.provider ? ctx.modelRegistry.getProviderAuthMode(ctx.model.provider) : undefined,
+      authMode: inferAuthModeFromBaseUrl(ctx.model?.baseUrl),
       baseUrl: ctx.model?.baseUrl,
     },
   );

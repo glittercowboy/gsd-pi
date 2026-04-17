@@ -20,7 +20,7 @@ import { resolveSkillDiscoveryMode, resolveInlineLevel, loadEffectiveGSDPreferen
 import { parseRoadmap } from "./parsers-legacy.js";
 import type { GSDState, InlineLevel } from "./types.js";
 import type { GSDPreferences } from "./preferences.js";
-import { getLoadedSkills, type Skill } from "@gsd/pi-coding-agent";
+import { type Skill, loadSkills } from "@gsd/pi-coding-agent";
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
 import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary } from "./context-budget.js";
@@ -615,7 +615,8 @@ export function buildSkillActivationBlock(params: {
     params.taskTitle,
   );
 
-  const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
+  // pi 0.67.2: getLoadedSkills removed. Load skills directly for this base path.
+  const visibleSkills: Skill[] = loadSkills({ cwd: params.base }).skills;
   const installedNames = new Set(visibleSkills.map(skill => normalizeSkillReference(skill.name)));
   const avoided = new Set(resolvePreferenceSkillNames(prefs?.avoid_skills ?? [], params.base));
   const matched = new Set<string>();

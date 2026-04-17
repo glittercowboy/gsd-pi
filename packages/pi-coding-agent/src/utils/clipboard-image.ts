@@ -1,7 +1,11 @@
 import { spawnSync } from "child_process";
+import { randomUUID } from "crypto";
+import { readFileSync, unlinkSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 
-import { readImageFromClipboard as nativeReadImage } from "@gsd/native/clipboard";
-import { ImageFormat, parseImage } from "@gsd/native/image";
+import { clipboard } from "./clipboard-native.js";
+import { loadPhoton } from "./photon.js";
 
 export type ClipboardImage = {
 	bytes: Uint8Array;
@@ -12,9 +16,10 @@ const SUPPORTED_IMAGE_MIME_TYPES = ["image/png", "image/jpeg", "image/webp", "im
 
 const DEFAULT_LIST_TIMEOUT_MS = 1000;
 const DEFAULT_READ_TIMEOUT_MS = 3000;
+const DEFAULT_POWERSHELL_TIMEOUT_MS = 5000;
 const DEFAULT_MAX_BUFFER_BYTES = 50 * 1024 * 1024;
 
-function isWaylandSession(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isWaylandSession(env: NodeJS.ProcessEnv = process.env): boolean {
 	return Boolean(env.WAYLAND_DISPLAY) || env.XDG_SESSION_TYPE === "wayland";
 }
 
@@ -60,14 +65,22 @@ function isSupportedImageMimeType(mimeType: string): boolean {
 }
 
 /**
- * Convert unsupported image formats to PNG using the native Rust image module.
- * Returns null if conversion fails.
+ * Convert unsupported image formats to PNG using Photon.
+ * Returns null if conversion is unavailable or fails.
  */
 async function convertToPng(bytes: Uint8Array): Promise<Uint8Array | null> {
+	const photon = await loadPhoton();
+	if (!photon) {
+		return null;
+	}
+
 	try {
-		const image = await parseImage(bytes);
-		const pngBytes = await image.encode(ImageFormat.PNG, 100);
-		return new Uint8Array(pngBytes);
+		const image = photon.PhotonImage.new_from_byteslice(bytes);
+		try {
+			return image.get_bytes();
+		} finally {
+			image.free();
+		}
 	} catch {
 		return null;
 	}
@@ -76,7 +89,7 @@ async function convertToPng(bytes: Uint8Array): Promise<Uint8Array | null> {
 function runCommand(
 	command: string,
 	args: string[],
-	options?: { timeoutMs?: number; maxBufferBytes?: number },
+	options?: { timeoutMs?: number; maxBufferBytes?: number; env?: NodeJS.ProcessEnv },
 ): { stdout: Buffer; ok: boolean } {
 	const timeoutMs = options?.timeoutMs ?? DEFAULT_READ_TIMEOUT_MS;
 	const maxBufferBytes = options?.maxBufferBytes ?? DEFAULT_MAX_BUFFER_BYTES;
@@ -84,6 +97,7 @@ function runCommand(
 	const result = spawnSync(command, args, {
 		timeout: timeoutMs,
 		maxBuffer: maxBufferBytes,
+		env: options?.env,
 	});
 
 	if (result.error) {
@@ -114,43 +128,86 @@ function readClipboardImageViaWlPaste(): ClipboardImage | null {
 		.filter(Boolean);
 
 	const selectedType = selectPreferredImageMimeType(types);
-	if (selectedType) {
-		const data = runCommand("wl-paste", ["--type", selectedType, "--no-newline"]);
-		if (data.ok && data.stdout.length > 0) {
-			return { bytes: data.stdout, mimeType: baseMimeType(selectedType) };
-		}
+	if (!selectedType) {
+		return null;
 	}
 
-	// Fallback for WSLg/BMP: when only image/bmp is available, ask wl-paste
-	// to convert to PNG on the fly. wl-paste supports format conversion for
-	// some compositor types. If that fails, try reading BMP and converting
-	// via ImageMagick (#813).
-	const hasBmp = types.some((t) => baseMimeType(t) === "image/bmp");
-	if (!selectedType && hasBmp) {
-		// Try requesting PNG directly — wl-paste may convert
-		const pngData = runCommand("wl-paste", ["--type", "image/png", "--no-newline"]);
-		if (pngData.ok && pngData.stdout.length > 0) {
-			return { bytes: pngData.stdout, mimeType: "image/png" };
-		}
-
-		// Try reading BMP and converting via ImageMagick convert
-		const bmpData = runCommand("wl-paste", ["--type", "image/bmp", "--no-newline"]);
-		if (bmpData.ok && bmpData.stdout.length > 0) {
-			const converted = spawnSync("convert", ["bmp:-", "png:-"], {
-				input: bmpData.stdout,
-				timeout: 5000,
-				maxBuffer: DEFAULT_MAX_BUFFER_BYTES,
-			});
-			if (!converted.error && converted.status === 0 && converted.stdout.length > 0) {
-				const stdout = Buffer.isBuffer(converted.stdout)
-					? converted.stdout
-					: Buffer.from(converted.stdout);
-				return { bytes: stdout, mimeType: "image/png" };
-			}
-		}
+	const data = runCommand("wl-paste", ["--type", selectedType, "--no-newline"]);
+	if (!data.ok || data.stdout.length === 0) {
+		return null;
 	}
 
-	return null;
+	return { bytes: data.stdout, mimeType: baseMimeType(selectedType) };
+}
+
+function isWSL(env: NodeJS.ProcessEnv = process.env): boolean {
+	if (env.WSL_DISTRO_NAME || env.WSLENV) {
+		return true;
+	}
+
+	try {
+		const release = readFileSync("/proc/version", "utf-8");
+		return /microsoft|wsl/i.test(release);
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * On WSL, the Linux clipboard (Wayland/X11) does not receive image data from
+ * Windows screenshots (Win+Shift+S). PowerShell can access the Windows clipboard
+ * directly, so we use it as a fallback.
+ */
+function readClipboardImageViaPowerShell(): ClipboardImage | null {
+	const tmpFile = join(tmpdir(), `pi-wsl-clip-${randomUUID()}.png`);
+
+	try {
+		const winPathResult = runCommand("wslpath", ["-w", tmpFile], { timeoutMs: DEFAULT_LIST_TIMEOUT_MS });
+		if (!winPathResult.ok) {
+			return null;
+		}
+
+		const winPath = winPathResult.stdout.toString("utf-8").trim();
+		if (!winPath) {
+			return null;
+		}
+
+		const psScript = [
+			"Add-Type -AssemblyName System.Windows.Forms",
+			"Add-Type -AssemblyName System.Drawing",
+			"$path = $env:PI_WSL_CLIPBOARD_IMAGE_PATH",
+			"$img = [System.Windows.Forms.Clipboard]::GetImage()",
+			"if ($img) { $img.Save($path, [System.Drawing.Imaging.ImageFormat]::Png); Write-Output 'ok' } else { Write-Output 'empty' }",
+		].join("; ");
+
+		const result = runCommand("powershell.exe", ["-NoProfile", "-Command", psScript], {
+			timeoutMs: DEFAULT_POWERSHELL_TIMEOUT_MS,
+			env: { ...process.env, PI_WSL_CLIPBOARD_IMAGE_PATH: winPath },
+		});
+		if (!result.ok) {
+			return null;
+		}
+
+		const output = result.stdout.toString("utf-8").trim();
+		if (output !== "ok") {
+			return null;
+		}
+
+		const bytes = readFileSync(tmpFile);
+		if (bytes.length === 0) {
+			return null;
+		}
+
+		return { bytes: new Uint8Array(bytes), mimeType: "image/png" };
+	} catch {
+		return null;
+	} finally {
+		try {
+			unlinkSync(tmpFile);
+		} catch {
+			// Ignore cleanup errors.
+		}
+	}
 }
 
 function readClipboardImageViaXclip(): ClipboardImage | null {
@@ -180,6 +237,20 @@ function readClipboardImageViaXclip(): ClipboardImage | null {
 	return null;
 }
 
+async function readClipboardImageViaNativeClipboard(): Promise<ClipboardImage | null> {
+	if (!clipboard || !clipboard.hasImage()) {
+		return null;
+	}
+
+	const imageData = await clipboard.getImageBinary();
+	if (!imageData || imageData.length === 0) {
+		return null;
+	}
+
+	const bytes = imageData instanceof Uint8Array ? imageData : Uint8Array.from(imageData);
+	return { bytes, mimeType: "image/png" };
+}
+
 export async function readClipboardImage(options?: {
 	env?: NodeJS.ProcessEnv;
 	platform?: NodeJS.Platform;
@@ -193,21 +264,23 @@ export async function readClipboardImage(options?: {
 
 	let image: ClipboardImage | null = null;
 
-	if (platform === "linux" && isWaylandSession(env)) {
-		// Wayland: use CLI tools (wl-paste/xclip) since native arboard
-		// may not have access to the Wayland compositor from a terminal.
-		image = readClipboardImageViaWlPaste() ?? readClipboardImageViaXclip();
-	} else {
-		// macOS, Windows, Linux X11: use native Rust clipboard (arboard)
-		try {
-			const nativeImage = await nativeReadImage();
-			if (!nativeImage || nativeImage.data.length === 0) {
-				return null;
-			}
-			image = { bytes: nativeImage.data, mimeType: nativeImage.mimeType };
-		} catch {
-			return null;
+	if (platform === "linux") {
+		const wsl = isWSL(env);
+		const wayland = isWaylandSession(env);
+
+		if (wayland || wsl) {
+			image = readClipboardImageViaWlPaste() ?? readClipboardImageViaXclip();
 		}
+
+		if (!image && wsl) {
+			image = readClipboardImageViaPowerShell();
+		}
+
+		if (!image && !wayland) {
+			image = await readClipboardImageViaNativeClipboard();
+		}
+	} else {
+		image = await readClipboardImageViaNativeClipboard();
 	}
 
 	if (!image) {

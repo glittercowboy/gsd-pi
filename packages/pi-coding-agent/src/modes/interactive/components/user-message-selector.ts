@@ -1,4 +1,4 @@
-import { type Component, Container, getEditorKeybindings, Spacer, Text, truncateToWidth } from "@gsd/pi-tui";
+import { type Component, Container, getKeybindings, Spacer, Text, truncateToWidth } from "@mariozechner/pi-tui";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 
@@ -78,24 +78,24 @@ class UserMessageList implements Component {
 	}
 
 	handleInput(keyData: string): void {
-		const kb = getEditorKeybindings();
+		const kb = getKeybindings();
 		// Up arrow - go to previous (older) message, wrap to bottom when at top
-		if (kb.matches(keyData, "selectUp")) {
+		if (kb.matches(keyData, "tui.select.up")) {
 			this.selectedIndex = this.selectedIndex === 0 ? this.messages.length - 1 : this.selectedIndex - 1;
 		}
 		// Down arrow - go to next (newer) message, wrap to top when at bottom
-		else if (kb.matches(keyData, "selectDown")) {
+		else if (kb.matches(keyData, "tui.select.down")) {
 			this.selectedIndex = this.selectedIndex === this.messages.length - 1 ? 0 : this.selectedIndex + 1;
 		}
 		// Enter - select message and branch
-		else if (kb.matches(keyData, "selectConfirm")) {
+		else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selected = this.messages[this.selectedIndex];
 			if (selected && this.onSelect) {
 				this.onSelect(selected.id);
 			}
 		}
 		// Escape - cancel
-		else if (kb.matches(keyData, "selectCancel")) {
+		else if (kb.matches(keyData, "tui.select.cancel")) {
 			if (this.onCancel) {
 				this.onCancel();
 			}
@@ -131,10 +131,9 @@ export class UserMessageSelectorComponent extends Container {
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 
-		// Auto-cancel if no messages — invoke synchronously via microtask
-		// to avoid the 100ms visual flicker from setTimeout
+		// Auto-cancel if no messages
 		if (messages.length === 0) {
-			Promise.resolve().then(() => onCancel());
+			setTimeout(() => onCancel(), 100);
 		}
 	}
 

@@ -40,6 +40,7 @@ const ROUTES: Route[] = [
   { keywords: ["park", "shelve", "set aside"], command: "park" },
   { keywords: ["widget", "toggle widget"], command: "widget" },
   { keywords: ["logs", "debug logs", "log files"], command: "logs" },
+  { keywords: ["debug", "debug session", "investigate", "troubleshoot", "diagnose issue"], command: "debug" },
 ];
 
 interface MatchResult {

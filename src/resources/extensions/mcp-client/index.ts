@@ -514,7 +514,7 @@ export default function (pi: ExtensionAPI) {
 		await closeAll();
 	});
 
-	pi.on("session_switch", async () => {
+	pi.on("session_before_switch", async () => {
 		await closeAll();
 		configCache = null;
 	});

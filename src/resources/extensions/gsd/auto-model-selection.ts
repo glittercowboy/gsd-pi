@@ -5,7 +5,7 @@
  */
 
 import type { Api, Model } from "@gsd/pi-ai";
-import { getProviderCapabilities } from "@gsd/pi-ai";
+import { getProviderCapabilities } from "./model-router.js";
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import type { GSDPreferences } from "./preferences.js";
 import { resolveModelWithFallbacksForUnit, resolveDynamicRoutingConfig } from "./preferences.js";
@@ -216,34 +216,8 @@ export async function selectAndApplyModel(
         // Load user capability overrides from preferences (D-17: deep-merged with built-in profiles)
         const capabilityOverrides = loadCapabilityOverrides(prefs ?? {});
 
-        // Fire before_model_select hook (ADR-004, D-03)
-        // Hook can override model selection entirely by returning { modelId }
+        // before_model_select hook removed in pi 0.67.2 (emitBeforeModelSelect removed)
         let hookOverride: string | undefined;
-        if (routingConfig.hooks !== false) {
-          const eligible = getEligibleModels(
-            classification.tier,
-            availableModelIds,
-            routingConfig,
-          );
-          const hookResult = await pi.emitBeforeModelSelect({
-            unitType,
-            unitId,
-            classification: {
-              tier: classification.tier,
-              reason: classification.reason,
-              downgraded: classification.downgraded,
-            },
-            taskMetadata: classification.taskMetadata as Record<string, unknown> | undefined,
-            eligibleModels: eligible,
-            phaseConfig: modelConfig ? {
-              primary: modelConfig.primary,
-              fallbacks: modelConfig.fallbacks ?? [],
-            } : undefined,
-          });
-          if (hookResult?.modelId) {
-            hookOverride = hookResult.modelId;
-          }
-        }
 
         let routingResult: ReturnType<typeof resolveModelForComplexity>;
         if (hookOverride) {
@@ -335,7 +309,7 @@ export async function selectAndApplyModel(
         }
       }
 
-      const ok = await pi.setModel(model, { persist: false });
+      const ok = await pi.setModel(model);
       if (ok) {
         appliedModel = model;
 
@@ -345,19 +319,7 @@ export async function selectAndApplyModel(
         const { toolNames: compatibleTools, removedTools } = adjustToolSet(activeToolNames, model.api);
         let finalToolNames = compatibleTools;
 
-        // Fire adjust_tool_set hook — extensions can override the filtered tool set
-        if (routingConfig.hooks !== false) {
-          const hookResult = await pi.emitAdjustToolSet({
-            selectedModelApi: model.api,
-            selectedModelProvider: model.provider,
-            selectedModelId: model.id,
-            activeToolNames,
-            filteredTools: removedTools,
-          });
-          if (hookResult?.toolNames) {
-            finalToolNames = hookResult.toolNames;
-          }
-        }
+        // adjust_tool_set hook removed in pi 0.67.2 (emitAdjustToolSet removed)
 
         // Apply the filtered tool set if any tools were removed
         if (removedTools.length > 0 || finalToolNames.length !== activeToolNames.length) {
@@ -400,11 +362,11 @@ export async function selectAndApplyModel(
       m => m.provider === autoModeStartModel.provider && m.id === autoModeStartModel.id,
     );
     if (startModel) {
-      const ok = await pi.setModel(startModel, { persist: false });
+      const ok = await pi.setModel(startModel);
       if (!ok) {
         const byId = availableModels.find(m => m.id === autoModeStartModel.id);
         if (byId) {
-          const fallbackOk = await pi.setModel(byId, { persist: false });
+          const fallbackOk = await pi.setModel(byId);
           if (fallbackOk) appliedModel = byId;
         }
       } else {
@@ -528,28 +490,30 @@ export function isFlatRateProvider(provider: string, opts?: FlatRateContext): bo
  * Build a FlatRateContext for a given provider from live runtime state.
  * Safe to call when ctx or prefs are undefined — missing pieces are
  * treated as "no signal".
+ *
+ * pi 0.67.2 removed ModelRegistry.getProviderAuthMode. authMode is now
+ * inferred from the model's baseUrl: a local:// URL means externalCli.
+ * We look up any model for the given provider to read its baseUrl.
  */
 export function buildFlatRateContext(
   provider: string,
-  ctx?: { modelRegistry?: { getProviderAuthMode?: (p: string) => string } },
+  ctx?: { modelRegistry?: { getAll?: () => Array<{ provider: string; baseUrl?: string }> } },
   prefs?: { flat_rate_providers?: readonly string[] },
 ): FlatRateContext {
   let authMode: FlatRateContext["authMode"];
-  const registry = ctx?.modelRegistry;
-  if (registry && typeof registry.getProviderAuthMode === "function") {
-    try {
-      const mode = registry.getProviderAuthMode(provider);
-      if (mode === "apiKey" || mode === "oauth" || mode === "externalCli" || mode === "none") {
-        authMode = mode;
-      }
-    } catch (err) {
-      // Registry lookup failure must never break flat-rate detection —
-      // fall through with authMode undefined and surface the cause.
-      logWarning(
-        "dispatch",
-        `flat-rate auth-mode lookup failed for ${provider}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+  try {
+    const models = ctx?.modelRegistry?.getAll?.() ?? [];
+    const providerModel = models.find(m => m.provider.toLowerCase() === provider.toLowerCase());
+    if (providerModel?.baseUrl?.startsWith("local://")) {
+      authMode = "externalCli";
     }
+  } catch (err) {
+    // Registry lookup failure must never break flat-rate detection —
+    // fall through with authMode undefined.
+    logWarning(
+      "dispatch",
+      `flat-rate auth-mode lookup failed for ${provider}: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
   return {
     authMode,

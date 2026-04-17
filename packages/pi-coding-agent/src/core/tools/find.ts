@@ -1,11 +1,21 @@
-import type { AgentTool } from "@gsd/pi-agent-core";
-import { glob as nativeGlob } from "@gsd/native/glob";
+import type { AgentTool } from "@mariozechner/pi-agent-core";
+import { Text } from "@mariozechner/pi-tui";
 import { type Static, Type } from "@sinclair/typebox";
+import { spawnSync } from "child_process";
 import { existsSync } from "fs";
+import { globSync } from "glob";
 import path from "path";
-import { FIND_DEFAULT_LIMIT } from "../constants.js";
+import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
+import { ensureTool } from "../../utils/tools-manager.js";
+import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
 import { resolveToCwd } from "./path-utils.js";
+import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.js";
+import { wrapToolDefinition } from "./tool-definition-wrapper.js";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.js";
+
+function toPosixPath(value: string): string {
+	return value.split(path.sep).join("/");
+}
 
 const findSchema = Type.Object({
 	pattern: Type.String({
@@ -17,7 +27,7 @@ const findSchema = Type.Object({
 
 export type FindToolInput = Static<typeof findSchema>;
 
-const DEFAULT_LIMIT = FIND_DEFAULT_LIMIT;
+const DEFAULT_LIMIT = 1000;
 
 export interface FindToolDetails {
 	truncation?: TruncationResult;
@@ -26,41 +36,97 @@ export interface FindToolDetails {
 
 /**
  * Pluggable operations for the find tool.
- * Override these to delegate file search to remote systems (e.g., SSH).
+ * Override these to delegate file search to remote systems (for example SSH).
  */
 export interface FindOperations {
 	/** Check if path exists */
 	exists: (absolutePath: string) => Promise<boolean> | boolean;
-	/** Find files matching glob pattern. Returns relative paths. */
+	/** Find files matching glob pattern. Returns relative or absolute paths. */
 	glob: (pattern: string, cwd: string, options: { ignore: string[]; limit: number }) => Promise<string[]> | string[];
 }
 
 const defaultFindOperations: FindOperations = {
 	exists: existsSync,
-	glob: (_pattern, _searchCwd, _options) => {
-		// Placeholder — actual native glob execution happens in execute
-		return [];
-	},
+	// This is a placeholder. Actual fd execution happens in execute() when no custom glob is provided.
+	glob: () => [],
 };
 
 export interface FindToolOptions {
-	/** Custom operations for find. Default: local filesystem + native glob */
+	/** Custom operations for find. Default: local filesystem plus fd */
 	operations?: FindOperations;
 }
 
-export function createFindTool(cwd: string, options?: FindToolOptions): AgentTool<typeof findSchema> {
-	const customOps = options?.operations;
+function formatFindCall(
+	args: { pattern: string; path?: string; limit?: number } | undefined,
+	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+): string {
+	const pattern = str(args?.pattern);
+	const rawPath = str(args?.path);
+	const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
+	const limit = args?.limit;
+	const invalidArg = invalidArgText(theme);
+	let text =
+		theme.fg("toolTitle", theme.bold("find")) +
+		" " +
+		(pattern === null ? invalidArg : theme.fg("accent", pattern || "")) +
+		theme.fg("toolOutput", ` in ${path === null ? invalidArg : path}`);
+	if (limit !== undefined) {
+		text += theme.fg("toolOutput", ` (limit ${limit})`);
+	}
+	return text;
+}
 
+function formatFindResult(
+	result: {
+		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+		details?: FindToolDetails;
+	},
+	options: ToolRenderResultOptions,
+	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+	showImages: boolean,
+): string {
+	const output = getTextOutput(result, showImages).trim();
+	let text = "";
+	if (output) {
+		const lines = output.split("\n");
+		const maxLines = options.expanded ? lines.length : 20;
+		const displayLines = lines.slice(0, maxLines);
+		const remaining = lines.length - maxLines;
+		text += `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}`;
+		if (remaining > 0) {
+			text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")})`;
+		}
+	}
+
+	const resultLimit = result.details?.resultLimitReached;
+	const truncation = result.details?.truncation;
+	if (resultLimit || truncation?.truncated) {
+		const warnings: string[] = [];
+		if (resultLimit) warnings.push(`${resultLimit} results limit`);
+		if (truncation?.truncated) warnings.push(`${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
+		text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
+	}
+	return text;
+}
+
+export function createFindToolDefinition(
+	cwd: string,
+	options?: FindToolOptions,
+): ToolDefinition<typeof findSchema, FindToolDetails | undefined> {
+	const customOps = options?.operations;
 	return {
 		name: "find",
 		label: "find",
 		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
+		promptSnippet: "Find files by glob pattern (respects .gitignore)",
 		parameters: findSchema,
-		execute: async (
-			_toolCallId: string,
+		async execute(
+			_toolCallId,
 			{ pattern, path: searchDir, limit }: { pattern: string; path?: string; limit?: number },
 			signal?: AbortSignal,
-		) => {
+			_onUpdate?,
+			_ctx?,
+		) {
 			return new Promise((resolve, reject) => {
 				if (signal?.aborted) {
 					reject(new Error("Operation aborted"));
@@ -76,20 +142,17 @@ export function createFindTool(cwd: string, options?: FindToolOptions): AgentToo
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 						const ops = customOps ?? defaultFindOperations;
 
-						// If custom operations provided with glob, use that
+						// If custom operations provide glob(), use that instead of fd.
 						if (customOps?.glob) {
 							if (!(await ops.exists(searchPath))) {
 								reject(new Error(`Path not found: ${searchPath}`));
 								return;
 							}
-
 							const results = await ops.glob(pattern, searchPath, {
 								ignore: ["**/node_modules/**", "**/.git/**"],
 								limit: effectiveLimit,
 							});
-
 							signal?.removeEventListener("abort", onAbort);
-
 							if (results.length === 0) {
 								resolve({
 									content: [{ type: "text", text: "No files found matching pattern" }],
@@ -98,36 +161,28 @@ export function createFindTool(cwd: string, options?: FindToolOptions): AgentToo
 								return;
 							}
 
-							// Relativize paths
+							// Relativize paths against the search root for stable output.
 							const relativized = results.map((p) => {
-								if (p.startsWith(searchPath)) {
-									return p.slice(searchPath.length + 1);
-								}
-								return path.relative(searchPath, p);
+								if (p.startsWith(searchPath)) return toPosixPath(p.slice(searchPath.length + 1));
+								return toPosixPath(path.relative(searchPath, p));
 							});
-
 							const resultLimitReached = relativized.length >= effectiveLimit;
 							const rawOutput = relativized.join("\n");
 							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-
 							let resultOutput = truncation.content;
 							const details: FindToolDetails = {};
 							const notices: string[] = [];
-
 							if (resultLimitReached) {
 								notices.push(`${effectiveLimit} results limit reached`);
 								details.resultLimitReached = effectiveLimit;
 							}
-
 							if (truncation.truncated) {
 								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 								details.truncation = truncation;
 							}
-
 							if (notices.length > 0) {
 								resultOutput += `\n\n[${notices.join(". ")}]`;
 							}
-
 							resolve({
 								content: [{ type: "text", text: resultOutput }],
 								details: Object.keys(details).length > 0 ? details : undefined,
@@ -135,19 +190,55 @@ export function createFindTool(cwd: string, options?: FindToolOptions): AgentToo
 							return;
 						}
 
-						// Default: use native Rust glob
-						const globResult = await nativeGlob({
-							pattern,
-							path: searchPath,
-							hidden: true,
-							gitignore: true,
-							cache: true,
-							maxResults: effectiveLimit,
-						});
+						// Default implementation uses fd.
+						const fdPath = await ensureTool("fd", true);
+						if (!fdPath) {
+							reject(new Error("fd is not available and could not be downloaded"));
+							return;
+						}
 
+						// Build fd arguments.
+						const args: string[] = [
+							"--glob",
+							"--color=never",
+							"--hidden",
+							"--max-results",
+							String(effectiveLimit),
+						];
+						// Include .gitignore files from the search tree.
+						const gitignoreFiles = new Set<string>();
+						const rootGitignore = path.join(searchPath, ".gitignore");
+						if (existsSync(rootGitignore)) gitignoreFiles.add(rootGitignore);
+						try {
+							const nestedGitignores = globSync("**/.gitignore", {
+								cwd: searchPath,
+								dot: true,
+								absolute: true,
+								ignore: ["**/node_modules/**", "**/.git/**"],
+							});
+							for (const file of nestedGitignores) gitignoreFiles.add(file);
+						} catch {
+							// ignore
+						}
+						for (const gitignorePath of gitignoreFiles) args.push("--ignore-file", gitignorePath);
+						args.push(pattern, searchPath);
+
+						const result = spawnSync(fdPath, args, { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
 						signal?.removeEventListener("abort", onAbort);
+						if (result.error) {
+							reject(new Error(`Failed to run fd: ${result.error.message}`));
+							return;
+						}
 
-						if (globResult.matches.length === 0) {
+						const output = result.stdout?.trim() || "";
+						if (result.status !== 0) {
+							const errorMsg = result.stderr?.trim() || `fd exited with code ${result.status}`;
+							if (!output) {
+								reject(new Error(errorMsg));
+								return;
+							}
+						}
+						if (!output) {
 							resolve({
 								content: [{ type: "text", text: "No files found matching pattern" }],
 								details: undefined,
@@ -155,33 +246,41 @@ export function createFindTool(cwd: string, options?: FindToolOptions): AgentToo
 							return;
 						}
 
-						// Native glob returns paths relative to the search root
-						const relativized = globResult.matches.map((m: { path: string }) => m.path);
+						const lines = output.split("\n");
+						const relativized: string[] = [];
+						for (const rawLine of lines) {
+							const line = rawLine.replace(/\r$/, "").trim();
+							if (!line) continue;
+							const hadTrailingSlash = line.endsWith("/") || line.endsWith("\\");
+							let relativePath = line;
+							if (line.startsWith(searchPath)) {
+								relativePath = line.slice(searchPath.length + 1);
+							} else {
+								relativePath = path.relative(searchPath, line);
+							}
+							if (hadTrailingSlash && !relativePath.endsWith("/")) relativePath += "/";
+							relativized.push(toPosixPath(relativePath));
+						}
 
 						const resultLimitReached = relativized.length >= effectiveLimit;
 						const rawOutput = relativized.join("\n");
 						const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-
 						let resultOutput = truncation.content;
 						const details: FindToolDetails = {};
 						const notices: string[] = [];
-
 						if (resultLimitReached) {
 							notices.push(
 								`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
 							);
 							details.resultLimitReached = effectiveLimit;
 						}
-
 						if (truncation.truncated) {
 							notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 							details.truncation = truncation;
 						}
-
 						if (notices.length > 0) {
 							resultOutput += `\n\n[${notices.join(". ")}]`;
 						}
-
 						resolve({
 							content: [{ type: "text", text: resultOutput }],
 							details: Object.keys(details).length > 0 ? details : undefined,
@@ -193,8 +292,23 @@ export function createFindTool(cwd: string, options?: FindToolOptions): AgentToo
 				})();
 			});
 		},
+		renderCall(args, theme, context) {
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			text.setText(formatFindCall(args, theme));
+			return text;
+		},
+		renderResult(result, options, theme, context) {
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			text.setText(formatFindResult(result as any, options, theme, context.showImages));
+			return text;
+		},
 	};
 }
 
-/** Default find tool using process.cwd() - for backwards compatibility */
+export function createFindTool(cwd: string, options?: FindToolOptions): AgentTool<typeof findSchema> {
+	return wrapToolDefinition(createFindToolDefinition(cwd, options));
+}
+
+/** Default find tool using process.cwd() for backwards compatibility. */
+export const findToolDefinition = createFindToolDefinition(process.cwd());
 export const findTool = createFindTool(process.cwd());

@@ -11,10 +11,22 @@ import type { Tool, ToolCall } from "../types.js";
 // Chrome extensions with Manifest V3 don't allow eval/Function constructor
 const isBrowserExtension = typeof globalThis !== "undefined" && (globalThis as any).chrome?.runtime?.id !== undefined;
 
-// Create a singleton AJV instance with formats (only if not in browser extension)
-// AJV requires 'unsafe-eval' CSP which is not allowed in Manifest V3
+function canUseRuntimeCodegen(): boolean {
+	if (isBrowserExtension) {
+		return false;
+	}
+
+	try {
+		new Function("return true;");
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+// Create a singleton AJV instance with formats only when runtime code generation is available.
 let ajv: any = null;
-if (!isBrowserExtension) {
+if (canUseRuntimeCodegen()) {
 	try {
 		ajv = new Ajv({
 			allErrors: true,
@@ -23,9 +35,23 @@ if (!isBrowserExtension) {
 		});
 		addFormats(ajv);
 	} catch (_e) {
-		// AJV initialization failed (likely CSP restriction)
 		console.warn("AJV validation disabled due to CSP restrictions");
 	}
+}
+
+/**
+ * Finds a tool by name and validates the tool call arguments against its TypeBox schema
+ * @param tools Array of tool definitions
+ * @param toolCall The tool call from the LLM
+ * @returns The validated arguments
+ * @throws Error if tool is not found or validation fails
+ */
+export function validateToolCall(tools: Tool[], toolCall: ToolCall): any {
+	const tool = tools.find((t) => t.name === toolCall.name);
+	if (!tool) {
+		throw new Error(`Tool "${toolCall.name}" not found`);
+	}
+	return validateToolArguments(tool, toolCall);
 }
 
 /**
@@ -36,14 +62,12 @@ if (!isBrowserExtension) {
  * @throws Error with formatted message if validation fails
  */
 export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
-	// Skip validation in browser extension environment (CSP restrictions prevent AJV from working)
-	if (!ajv || isBrowserExtension) {
-		// Trust the LLM's output without validation
-		// Browser extensions can't use AJV due to Manifest V3 CSP restrictions
+	// Skip validation in environments where runtime code generation is unavailable.
+	if (!ajv || !canUseRuntimeCodegen()) {
 		return toolCall.arguments;
 	}
 
-	// Compile the schema
+	// Compile the schema.
 	const validate = ajv.compile(tool.parameters);
 
 	// Clone arguments so AJV can safely mutate for type coercion

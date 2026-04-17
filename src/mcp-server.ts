@@ -85,7 +85,7 @@ export async function startMcpServer(options: {
   // cancels the tool call or the transport closes). Threading it into
   // AgentTool.execute ensures long-running tools (Bash, WebFetch, grep on
   // huge trees) actually stop when the client gives up on the result.
-  server.setRequestHandler(CallToolRequestSchema, async (request: any, extra: any) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request: { params: { name: string; arguments?: Record<string, unknown> } }, extra: { signal?: AbortSignal }) => {
     const { name, arguments: args } = request.params
     const tool = toolMap.get(name)
     if (!tool) {
@@ -108,7 +108,7 @@ export async function startMcpServer(options: {
       // Convert AgentToolResult content blocks to MCP content format.
       // text and image pass through; any other shape is serialized as text
       // so the client sees the payload rather than an empty response.
-      const content = result.content.map((block: any) => {
+      const content = result.content.map((block: { type: string; text?: string; data?: string; mimeType?: string }) => {
         if (block.type === 'text') return { type: 'text' as const, text: block.text ?? '' }
         if (block.type === 'image') {
           return {

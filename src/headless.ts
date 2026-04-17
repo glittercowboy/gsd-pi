@@ -17,7 +17,8 @@ import { join } from 'node:path'
 import { resolve } from 'node:path'
 import { ChildProcess } from 'node:child_process'
 
-import { RpcClient, SessionManager } from '@gsd/pi-coding-agent'
+import { RpcClient } from '@gsd/agent-modes'
+import { SessionManager } from '@gsd/pi-coding-agent'
 import type { SessionInfo } from '@gsd/pi-coding-agent'
 import { getProjectSessionsDir } from './project-sessions.js'
 import { loadAndValidateAnswerFile, AnswerInjector } from './headless-answers.js'
@@ -443,7 +444,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   const pendingResponseTimers = new Map<string, ReturnType<typeof setTimeout>>()
   let supervisedFallback = false
   let stopSupervisedReader: (() => void) | null = null
-  const onStdinClose = () => {
+  const onStdinClose = (): void => {
     supervisedFallback = true
     process.stderr.write('[headless] Warning: orchestrator stdin closed, falling back to auto-response\n')
   }
@@ -728,14 +729,16 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   })
 
   // Signal handling
-  const signalHandler = () => {
+  const signalHandler = (): void => {
     process.stderr.write('\n[headless] Interrupted, stopping child process...\n')
     interrupted = true
     exitCode = EXIT_CANCELLED
     // Kill child process — don't await, just fire and exit.
     // The main flow may be awaiting a promise that resolves when the child dies,
     // which would race with this handler. Exit synchronously to ensure correct exit code.
-    try { client.stop().catch(() => {}) } catch {}
+    void client.stop().catch((error: unknown) => {
+      process.stderr.write(`[headless] Warning: failed to stop child process: ${error instanceof Error ? error.message : String(error)}\n`)
+    })
     if (timeoutTimer) clearTimeout(timeoutTimer)
     if (idleTimer) clearTimeout(idleTimer)
     // Emit batch JSON result if in json mode before exiting
@@ -757,10 +760,8 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   }
 
   // v2 protocol negotiation — attempt init for structured completion events
-  let v2Enabled = false
   try {
     await client.init({ clientId: 'gsd-headless' })
-    v2Enabled = true
   } catch {
     process.stderr.write('[headless] Warning: v2 init failed, falling back to v1 string-matching\n')
   }
@@ -816,9 +817,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   }
 
   // Detect child process crash (read-only exit event subscription — not stdin access)
-  const internalProcess = (client as any).process as ChildProcess
+  const internalProcess = Reflect.get(client as object, 'process') as ChildProcess | undefined
   if (internalProcess) {
-    internalProcess.on('exit', (code) => {
+    internalProcess.on('exit', (code: number | null) => {
       if (!completed) {
         const msg = `[headless] Child process exited unexpectedly with code ${code ?? 'null'}\n`
         process.stderr.write(msg)
@@ -856,7 +857,6 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     // Disable the overall timeout — auto-mode has its own internal supervisor.
     if (timeoutTimer) clearTimeout(timeoutTimer)
     completed = false
-    milestoneReady = false
     blocked = false
     const autoCompletionPromise = new Promise<void>((resolve) => {
       resolveCompletion = resolve

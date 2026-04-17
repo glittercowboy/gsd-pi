@@ -6,6 +6,7 @@ import chalk from "chalk";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.js";
+import { migrateKeybindingsConfig } from "./core/keybindings.js";
 
 const MIGRATION_GUIDE_URL =
 	"https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/CHANGELOG.md#extensions-migration";
@@ -16,7 +17,7 @@ const EXTENSIONS_DOC_URL = "https://github.com/badlogic/pi-mono/blob/main/packag
  *
  * @returns Array of provider names that were migrated
  */
-function migrateAuthToAuthJson(): string[] {
+export function migrateAuthToAuthJson(): string[] {
 	const agentDir = getAgentDir();
 	const authPath = join(agentDir, "auth.json");
 	const oauthPath = join(agentDir, "oauth.json");
@@ -79,7 +80,7 @@ function migrateAuthToAuthJson(): string[] {
  *
  * See: https://github.com/badlogic/pi-mono/issues/320
  */
-function migrateSessionsFromAgentRoot(): void {
+export function migrateSessionsFromAgentRoot(): void {
 	const agentDir = getAgentDir();
 
 	// Find all .jsonl files directly in agentDir (not in subdirectories)
@@ -150,6 +151,23 @@ function migrateCommandsToPrompts(baseDir: string, label: string): boolean {
 		}
 	}
 	return false;
+}
+
+function migrateKeybindingsConfigFile(): void {
+	const configPath = join(getAgentDir(), "keybindings.json");
+	if (!existsSync(configPath)) return;
+
+	try {
+		const parsed = JSON.parse(readFileSync(configPath, "utf-8")) as unknown;
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+			return;
+		}
+		const { config, migrated } = migrateKeybindingsConfig(parsed as Record<string, unknown>);
+		if (!migrated) return;
+		writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf-8");
+	} catch {
+		// Ignore malformed files during migration
+	}
 }
 
 /**
@@ -290,6 +308,7 @@ export function runMigrations(cwd: string = process.cwd()): {
 	const migratedAuthProviders = migrateAuthToAuthJson();
 	migrateSessionsFromAgentRoot();
 	migrateToolsToBin();
+	migrateKeybindingsConfigFile();
 	const deprecationWarnings = migrateExtensionSystem(cwd);
 	return { migratedAuthProviders, deprecationWarnings };
 }

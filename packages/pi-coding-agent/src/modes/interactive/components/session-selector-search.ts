@@ -1,4 +1,4 @@
-import { fuzzyMatch } from "@gsd/pi-tui";
+import { fuzzyMatch } from "@mariozechner/pi-tui";
 import type { SessionInfo } from "../../../core/session-manager.js";
 
 export type SortMode = "threaded" | "recent" | "relevance";
@@ -36,7 +36,7 @@ function matchesNameFilter(session: SessionInfo, filter: NameFilter): boolean {
 	return hasSessionName(session);
 }
 
-function parseSearchQuery(query: string): ParsedSearchQuery {
+export function parseSearchQuery(query: string): ParsedSearchQuery {
 	const trimmed = query.trim();
 	if (!trimmed) {
 		return { mode: "tokens", tokens: [], regex: null };
@@ -113,7 +113,7 @@ function parseSearchQuery(query: string): ParsedSearchQuery {
 	return { mode: "tokens", tokens, regex: null };
 }
 
-function matchSession(session: SessionInfo, parsed: ParsedSearchQuery): MatchResult {
+export function matchSession(session: SessionInfo, parsed: ParsedSearchQuery): MatchResult {
 	const text = getSessionSearchText(session);
 
 	if (parsed.mode === "regex") {

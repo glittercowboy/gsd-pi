@@ -1,40 +1,12 @@
-// GSD Login Dialog Component — OAuth login flow UI
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
-import { getOAuthProviders } from "@gsd/pi-ai/oauth";
-import { Container, type Focusable, getEditorKeybindings, Input, Spacer, Text, truncateToWidth, type TUI } from "@gsd/pi-tui";
-import { execFile } from "child_process";
+import { getOAuthProviders } from "@mariozechner/pi-ai/oauth";
+import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@mariozechner/pi-tui";
+import { exec } from "child_process";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
 
-function wrapPlainText(text: string, width: number): string[] {
-	const lines: string[] = [];
-	const safeWidth = Math.max(1, width);
-	for (let idx = 0; idx < text.length; idx += safeWidth) {
-		lines.push(text.slice(idx, idx + safeWidth));
-	}
-	return lines.length > 0 ? lines : [""];
-}
-
-export function buildAuthUrlPresentation(url: string, terminalColumns: number): {
-	displayUrl: string;
-	fullUrlLines: string[];
-} {
-	const maxUrlWidth = Math.max(20, terminalColumns - 4);
-	const displayUrl = truncateToWidth(url, maxUrlWidth);
-	return {
-		displayUrl,
-		fullUrlLines: displayUrl === url ? [] : wrapPlainText(url, maxUrlWidth),
-	};
-}
-
 /**
- * Login dialog component - replaces editor during OAuth login flow.
- *
- * Guards against stuck UI by:
- * - Rejecting any outstanding promise before creating a new one
- * - Listening on the internal AbortSignal so external cancellation cleans up
- * - Exposing a public dispose() method so the caller can force-cleanup
+ * Login dialog component - replaces editor during OAuth login flow
  */
 export class LoginDialogComponent extends Container implements Focusable {
 	private contentContainer: Container;
@@ -43,7 +15,6 @@ export class LoginDialogComponent extends Container implements Focusable {
 	private abortController = new AbortController();
 	private inputResolver?: (value: string) => void;
 	private inputRejecter?: (error: Error) => void;
-	private disposed = false;
 
 	// Focusable implementation - propagate to input for IME cursor positioning
 	private _focused = false;
@@ -91,49 +62,20 @@ export class LoginDialogComponent extends Container implements Focusable {
 
 		// Bottom border
 		this.addChild(new DynamicBorder());
-
-		// Wire abort signal so external cancellation rejects pending promises
-		this.abortController.signal.addEventListener("abort", () => {
-			this.rejectPending("Login cancelled");
-		});
 	}
 
 	get signal(): AbortSignal {
 		return this.abortController.signal;
 	}
 
-	/**
-	 * Reject any outstanding input promise without triggering a full cancel.
-	 * Safe to call multiple times.
-	 */
-	private rejectPending(reason: string): void {
+	private cancel(): void {
+		this.abortController.abort();
 		if (this.inputRejecter) {
-			const rejecter = this.inputRejecter;
+			this.inputRejecter(new Error("Login cancelled"));
 			this.inputResolver = undefined;
 			this.inputRejecter = undefined;
-			rejecter(new Error(reason));
 		}
-	}
-
-	private cancel(): void {
-		if (this.disposed) return;
-		this.abortController.abort();
-		// rejectPending is also called by the abort listener, but guard with
-		// disposed flag and nulling to avoid double-reject
-		this.rejectPending("Login cancelled");
 		this.onComplete(false, "Login cancelled");
-	}
-
-	/**
-	 * Force-dispose the dialog, rejecting any pending promises.
-	 * Called by the parent when restoring the editor, as a safety net
-	 * to ensure no promises are left dangling.
-	 */
-	dispose(): void {
-		if (this.disposed) return;
-		this.disposed = true;
-		this.abortController.abort();
-		this.rejectPending("Login dialog disposed");
 	}
 
 	/**
@@ -142,36 +84,20 @@ export class LoginDialogComponent extends Container implements Focusable {
 	showAuth(url: string, instructions?: string): void {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
-
-		// Truncate the visible URL text so it never wraps (which would break
-		// the OSC 8 hyperlink). The full URL is still the link target.
-		const { displayUrl, fullUrlLines } = buildAuthUrlPresentation(url, this.tui.terminal.columns);
-		const urlLink = `\x1b]8;;${url}\x07${theme.fg("accent", displayUrl)}\x1b]8;;\x07`;
-		this.contentContainer.addChild(new Text(urlLink, 1, 0));
+		this.contentContainer.addChild(new Text(theme.fg("accent", url), 1, 0));
 
 		const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
-		this.contentContainer.addChild(new Text(theme.fg("dim", clickHint), 1, 0));
-
-		if (fullUrlLines.length > 0) {
-			this.contentContainer.addChild(new Spacer(1));
-			this.contentContainer.addChild(new Text(theme.fg("dim", "Full URL:"), 1, 0));
-			for (const line of fullUrlLines) {
-				this.contentContainer.addChild(new Text(theme.fg("dim", line), 1, 0));
-			}
-		}
+		const hyperlink = `\x1b]8;;${url}\x07${clickHint}\x1b]8;;\x07`;
+		this.contentContainer.addChild(new Text(theme.fg("dim", hyperlink), 1, 0));
 
 		if (instructions) {
 			this.contentContainer.addChild(new Spacer(1));
 			this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
 		}
 
-		// PowerShell's Start-Process handles URLs with '&' safely; cmd /c start does not.
-		if (process.platform === "win32") {
-			execFile("powershell", ["-c", `Start-Process '${url.replace(/'/g, "''")}'`], () => {});
-		} else {
-			const openCmd = process.platform === "darwin" ? "open" : "xdg-open";
-			execFile(openCmd, [url], () => {});
-		}
+		// Try to open browser
+		const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+		exec(`${openCmd} "${url}"`);
 
 		this.tui.requestRender();
 	}
@@ -180,13 +106,10 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Show input for manual code/URL entry (for callback server providers)
 	 */
 	showManualInput(prompt: string): Promise<string> {
-		// Reject any previous pending promise before creating a new one
-		this.rejectPending("Superseded by new input prompt");
-
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("dim", prompt), 1, 0));
 		this.contentContainer.addChild(this.input);
-		this.contentContainer.addChild(new Text(`(${keyHint("selectCancel", "to cancel")})`, 1, 0));
+		this.contentContainer.addChild(new Text(`(${keyHint("tui.select.cancel", "to cancel")})`, 1, 0));
 		this.tui.requestRender();
 
 		return new Promise((resolve, reject) => {
@@ -200,9 +123,6 @@ export class LoginDialogComponent extends Container implements Focusable {
 	 * Note: Does NOT clear content, appends to existing (preserves URL from showAuth)
 	 */
 	showPrompt(message: string, placeholder?: string): Promise<string> {
-		// Reject any previous pending promise before creating a new one
-		this.rejectPending("Superseded by new input prompt");
-
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("text", message), 1, 0));
 		if (placeholder) {
@@ -210,7 +130,11 @@ export class LoginDialogComponent extends Container implements Focusable {
 		}
 		this.contentContainer.addChild(this.input);
 		this.contentContainer.addChild(
-			new Text(`(${keyHint("selectCancel", "to cancel,")} ${keyHint("selectConfirm", "to submit")})`, 1, 0),
+			new Text(
+				`(${keyHint("tui.select.cancel", "to cancel,")} ${keyHint("tui.select.confirm", "to submit")})`,
+				1,
+				0,
+			),
 		);
 
 		this.input.setValue("");
@@ -228,7 +152,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	showWaiting(message: string): void {
 		this.contentContainer.addChild(new Spacer(1));
 		this.contentContainer.addChild(new Text(theme.fg("dim", message), 1, 0));
-		this.contentContainer.addChild(new Text(`(${keyHint("selectCancel", "to cancel")})`, 1, 0));
+		this.contentContainer.addChild(new Text(`(${keyHint("tui.select.cancel", "to cancel")})`, 1, 0));
 		this.tui.requestRender();
 	}
 
@@ -241,11 +165,9 @@ export class LoginDialogComponent extends Container implements Focusable {
 	}
 
 	handleInput(data: string): void {
-		if (this.disposed) return;
+		const kb = getKeybindings();
 
-		const kb = getEditorKeybindings();
-
-		if (kb.matches(data, "selectCancel")) {
+		if (kb.matches(data, "tui.select.cancel")) {
 			this.cancel();
 			return;
 		}

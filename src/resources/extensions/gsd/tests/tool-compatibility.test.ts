@@ -8,17 +8,11 @@ import {
   getAllToolCompatibility,
   registerMcpToolCompatibility,
   resetToolCompatibilityRegistry,
-} from "@gsd/pi-coding-agent";
-
-import {
   isToolCompatibleWithProvider,
   filterToolsForProvider,
   adjustToolSet,
-} from "../model-router.js";
-
-import {
   getProviderCapabilities,
-} from "@gsd/pi-ai";
+} from "../model-router.js";
 
 // ─── Tool Compatibility Registry ────────────────────────────────────────────
 

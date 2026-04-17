@@ -6,18 +6,23 @@
 import {
 	Container,
 	type Focusable,
-	getEditorKeybindings,
+	getKeybindings,
 	Spacer,
 	Text,
 	type TUI,
 } from "@gsd/pi-tui";
 import type { AuthStorage } from "../../../core/auth-storage.js";
-import { getDiscoverableProviders } from "../../../core/model-discovery.js";
-import { providerDisplayName } from "./model-selector.js";
 import type { ModelRegistry } from "../../../core/model-registry.js";
-import { ModelsJsonWriter } from "../../../core/models-json-writer.js";
-import { theme } from "../theme/theme.js";
+import { theme } from "../../../core/theme/theme.js";
 import { rawKeyHint } from "./keybinding-hints.js";
+
+// Stub: model-discovery and models-json-writer removed in 0.67.2
+function getDiscoverableProviders(): string[] { return []; }
+class ModelsJsonWriter {
+	constructor(_path: string) {}
+	removeProvider(_name: string): void {}
+}
+function providerDisplayName(name: string): string { return name; }
 
 interface ProviderInfo {
 	name: string;
@@ -165,7 +170,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
 	}
 
 	handleInput(keyData: string): void {
-		const kb = getEditorKeybindings();
+		const kb = getKeybindings();
 
 		if (kb.matches(keyData, "selectUp")) {
 			if (this.providers.length === 0) return;

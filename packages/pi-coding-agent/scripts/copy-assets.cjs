@@ -32,22 +32,15 @@ function copyDirRecursive(src, dest, filter) {
   }
 }
 
-// Theme assets
-mkdirSync('dist/modes/interactive/theme', { recursive: true });
-safeCpSync('src/modes/interactive/theme', 'dist/modes/interactive/theme', {
+// Theme assets (relocated from modes/interactive/theme/ to core/theme/ in Phase 3)
+mkdirSync('dist/core/theme', { recursive: true });
+safeCpSync('src/core/theme', 'dist/core/theme', {
   recursive: true,
   filter: (s) => !s.endsWith('.ts'),
 });
 
-// Export HTML templates and vendor files
-mkdirSync('dist/core/export-html/vendor', { recursive: true });
-safeCpSync('src/core/export-html/template.html', 'dist/core/export-html/template.html');
-safeCpSync('src/core/export-html/template.css', 'dist/core/export-html/template.css');
-safeCpSync('src/core/export-html/template.js', 'dist/core/export-html/template.js');
-safeCpSync('src/core/export-html/vendor', 'dist/core/export-html/vendor', {
-  recursive: true,
-  filter: (s) => !s.endsWith('.ts'),
-});
+// Export HTML templates moved to @gsd/agent-core (CORE-01 extraction)
+// They are copied by gsd-agent-core's build, not here.
 
 // LSP defaults
 mkdirSync('dist/core/lsp', { recursive: true });

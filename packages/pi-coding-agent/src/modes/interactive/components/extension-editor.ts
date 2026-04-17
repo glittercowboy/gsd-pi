@@ -12,15 +12,15 @@ import {
 	Editor,
 	type EditorOptions,
 	type Focusable,
-	getEditorKeybindings,
+	getKeybindings,
 	Spacer,
 	Text,
 	type TUI,
-} from "@gsd/pi-tui";
+} from "@mariozechner/pi-tui";
 import type { KeybindingsManager } from "../../../core/keybindings.js";
 import { getEditorTheme, theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
-import { appKeyHint, keyHint } from "./keybinding-hints.js";
+import { keyHint } from "./keybinding-hints.js";
 
 export class ExtensionEditorComponent extends Container implements Focusable {
 	private editor: Editor;
@@ -78,12 +78,12 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		// Add hint
 		const hasExternalEditor = !!(process.env.VISUAL || process.env.EDITOR);
 		const hint =
-			keyHint("selectConfirm", "submit") +
+			keyHint("tui.select.confirm", "submit") +
 			"  " +
-			keyHint("newLine", "newline") +
+			keyHint("tui.input.newLine", "newline") +
 			"  " +
-			keyHint("selectCancel", "cancel") +
-			(hasExternalEditor ? `  ${appKeyHint(this.keybindings, "externalEditor", "external editor")}` : "");
+			keyHint("tui.select.cancel", "cancel") +
+			(hasExternalEditor ? `  ${keyHint("app.editor.external", "external editor")}` : "");
 		this.addChild(new Text(hint, 1, 0));
 
 		this.addChild(new Spacer(1));
@@ -93,15 +93,15 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 	}
 
 	handleInput(keyData: string): void {
-		const kb = getEditorKeybindings();
+		const kb = getKeybindings();
 		// Escape or Ctrl+C to cancel
-		if (kb.matches(keyData, "selectCancel")) {
+		if (kb.matches(keyData, "tui.select.cancel")) {
 			this.onCancelCallback();
 			return;
 		}
 
 		// External editor (app keybinding)
-		if (this.keybindings.matches(keyData, "externalEditor")) {
+		if (this.keybindings.matches(keyData, "app.editor.external")) {
 			this.openExternalEditor();
 			return;
 		}
@@ -113,9 +113,6 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 	private openExternalEditor(): void {
 		const editorCmd = process.env.VISUAL || process.env.EDITOR;
 		if (!editorCmd) {
-			// No editor configured — nothing to do.
-			// The main interactive-mode handler shows a warning with an iTerm2 hint;
-			// this component is a secondary editor so we silently bail.
 			return;
 		}
 

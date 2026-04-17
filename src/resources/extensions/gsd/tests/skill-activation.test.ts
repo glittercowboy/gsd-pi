@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { loadSkills } from "@gsd/pi-coding-agent";
 import { buildSkillActivationBlock } from "../auto-prompts.js";
 import type { GSDPreferences } from "../preferences.js";
 
@@ -15,14 +14,13 @@ function cleanup(base: string): void {
   rmSync(base, { recursive: true, force: true });
 }
 
+// pi 0.67.2: getLoadedSkills removed. buildSkillActivationBlock now calls
+// loadSkills({ cwd: base }) which reads from base/.pi/skills (CONFIG_DIR_NAME=".pi").
+// Skills must be written to base/.pi/skills/<name>/SKILL.md to be discovered.
 function writeSkill(base: string, name: string, description: string): void {
-  const dir = join(base, "skills", name);
+  const dir = join(base, ".pi", "skills", name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`);
-}
-
-function loadOnlyTestSkills(base: string): void {
-  loadSkills({ cwd: base, includeDefaults: false, skillPaths: [join(base, "skills")] });
 }
 
 function buildBlock(
@@ -44,7 +42,6 @@ test("buildSkillActivationBlock does not auto-activate skills via broad context 
   try {
     writeSkill(base, "react", "Use for React components, hooks, JSX, and frontend UI work.");
     writeSkill(base, "swiftui", "Use for SwiftUI views, iOS layout, and Apple platform UI work.");
-    loadOnlyTestSkills(base);
 
     const result = buildBlock(base, {
       sliceTitle: "Build React dashboard",
@@ -65,7 +62,6 @@ test("buildSkillActivationBlock activates skills via prefer_skills when context 
   try {
     writeSkill(base, "react", "Use for React components, hooks, JSX, and frontend UI work.");
     writeSkill(base, "swiftui", "Use for SwiftUI views, iOS layout, and Apple platform UI work.");
-    loadOnlyTestSkills(base);
 
     const result = buildBlock(base, {
       sliceTitle: "Build React dashboard",
@@ -86,7 +82,6 @@ test("buildSkillActivationBlock includes always_use_skills from preferences usin
   const base = makeTempBase();
   try {
     writeSkill(base, "swift-testing", "Use for Swift Testing assertions and verification patterns.");
-    loadOnlyTestSkills(base);
 
     const result = buildBlock(base, { taskTitle: "Unrelated task title" }, {
       always_use_skills: ["swift-testing"],
@@ -103,7 +98,6 @@ test("buildSkillActivationBlock includes skill_rules matches and task-plan skill
   try {
     writeSkill(base, "prisma", "Use for Prisma schema, migrations, and ORM queries.");
     writeSkill(base, "accessibility", "Use for accessibility, aria attributes, and keyboard support.");
-    loadOnlyTestSkills(base);
 
     const taskPlan = [
       "---",
@@ -131,7 +125,6 @@ test("buildSkillActivationBlock honors avoid_skills against always_use_skills", 
   const base = makeTempBase();
   try {
     writeSkill(base, "react", "Use for React components and frontend UI work.");
-    loadOnlyTestSkills(base);
 
     const result = buildBlock(base, {
       taskTitle: "Implement React settings panel",
@@ -150,7 +143,6 @@ test("buildSkillActivationBlock falls back cleanly when nothing matches", () => 
   const base = makeTempBase();
   try {
     writeSkill(base, "swiftui", "Use for SwiftUI apps.");
-    loadOnlyTestSkills(base);
 
     const result = buildBlock(base, {
       taskTitle: "Plain text docs task",
@@ -168,7 +160,6 @@ test("buildSkillActivationBlock does not activate skills from extraContext or ta
     writeSkill(base, "xcode-build", "Use for Xcode build workflows and iOS compilation.");
     writeSkill(base, "ableton-lom", "Use for Ableton Live Object Model scripting.");
     writeSkill(base, "frontend-design", "Use for frontend design systems and UI components.");
-    loadOnlyTestSkills(base);
 
     const taskPlan = [
       "---",
@@ -198,7 +189,6 @@ test("buildSkillActivationBlock rejects skill names with special characters", ()
     // Skill names with quotes, braces, or other non-alphanumeric characters are
     // rejected by the SAFE_SKILL_NAME guard to prevent prompt injection.
     writeSkill(base, "my-skill's", "Skill with apostrophe in name.");
-    loadOnlyTestSkills(base);
 
     const result = buildBlock(base, {}, {
       always_use_skills: ["my-skill's"],
@@ -217,7 +207,6 @@ test("buildSkillActivationBlock allows valid skill names and rejects invalid one
     writeSkill(base, "react", "React skill.");
     writeSkill(base, "bad'name", "Injection attempt.");
     writeSkill(base, "good-skill-2", "Another valid skill.");
-    loadOnlyTestSkills(base);
 
     const result = buildBlock(base, {}, {
       always_use_skills: ["react", "bad'name", "good-skill-2"],

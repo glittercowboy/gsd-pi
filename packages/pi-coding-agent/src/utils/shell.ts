@@ -118,17 +118,6 @@ export function getShellConfig(): { shell: string; args: string[] } {
 	return cachedShellConfig;
 }
 
-/**
- * On Windows + Git Bash, rewrite Windows-style NUL redirects to /dev/null.
- * Git Bash doesn't recognize NUL as a device name and creates a literal file
- * that is undeletable due to NUL being a reserved Windows device name.
- * No-op on non-Windows platforms.
- */
-export function sanitizeCommand(command: string): string {
-	if (process.platform !== "win32") return command;
-	return command.replace(/(\d*>>?) *\bNUL\b(?=\s|;|\||&|\)|$)/gi, "$1 /dev/null");
-}
-
 export function getShellEnv(): NodeJS.ProcessEnv {
 	const binDir = getBinDir();
 	const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
@@ -192,6 +181,7 @@ export function killProcessTree(pid: number): void {
 		try {
 			spawn("taskkill", ["/F", "/T", "/PID", String(pid)], {
 				stdio: "ignore",
+				detached: true,
 			});
 		} catch {
 			// Ignore errors if taskkill fails

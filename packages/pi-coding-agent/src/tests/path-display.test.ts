@@ -8,7 +8,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { toPosixPath } from "../utils/path-display.js";
-import { buildSystemPrompt } from "../core/system-prompt.js";
+import { buildSystemPrompt } from "@gsd/agent-core";
 
 // ─── toPosixPath ────────────────────────────────────────────────────────────
 

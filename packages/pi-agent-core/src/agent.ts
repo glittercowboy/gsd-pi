@@ -1,10 +1,4 @@
-/**
- * Agent class that uses the agent-loop directly.
- * No transport abstraction - calls streamSimple via the loop.
- */
-
 import {
-	getModel,
 	type ImageContent,
 	type Message,
 	type Model,
@@ -13,9 +7,11 @@ import {
 	type TextContent,
 	type ThinkingBudgets,
 	type Transport,
-} from "@gsd/pi-ai";
-import { agentLoop, agentLoopContinue, ZERO_USAGE } from "./agent-loop.js";
+} from "@mariozechner/pi-ai";
+import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.js";
 import type {
+	AfterToolCallContext,
+	AfterToolCallResult,
 	AgentContext,
 	AgentEvent,
 	AgentLoopConfig,
@@ -24,489 +20,403 @@ import type {
 	AgentTool,
 	BeforeToolCallContext,
 	BeforeToolCallResult,
-	AfterToolCallContext,
-	AfterToolCallResult,
 	StreamFn,
-	ThinkingLevel,
+	ToolExecutionMode,
 } from "./types.js";
 
-/**
- * Default convertToLlm: Keep only LLM-compatible messages, convert attachments.
- */
 function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
-	return messages.filter((m) => m.role === "user" || m.role === "assistant" || m.role === "toolResult");
+	return messages.filter(
+		(message) => message.role === "user" || message.role === "assistant" || message.role === "toolResult",
+	);
 }
 
+const EMPTY_USAGE = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+const DEFAULT_MODEL = {
+	id: "unknown",
+	name: "unknown",
+	api: "unknown",
+	provider: "unknown",
+	baseUrl: "",
+	reasoning: false,
+	input: [],
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	contextWindow: 0,
+	maxTokens: 0,
+} satisfies Model<any>;
+
+type QueueMode = "all" | "one-at-a-time";
+
+type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "pendingToolCalls" | "errorMessage"> & {
+	isStreaming: boolean;
+	streamingMessage?: AgentMessage;
+	pendingToolCalls: Set<string>;
+	errorMessage?: string;
+};
+
+function createMutableAgentState(
+	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>,
+): MutableAgentState {
+	let tools = initialState?.tools?.slice() ?? [];
+	let messages = initialState?.messages?.slice() ?? [];
+
+	return {
+		systemPrompt: initialState?.systemPrompt ?? "",
+		model: initialState?.model ?? DEFAULT_MODEL,
+		thinkingLevel: initialState?.thinkingLevel ?? "off",
+		get tools() {
+			return tools;
+		},
+		set tools(nextTools: AgentTool<any>[]) {
+			tools = nextTools.slice();
+		},
+		get messages() {
+			return messages;
+		},
+		set messages(nextMessages: AgentMessage[]) {
+			messages = nextMessages.slice();
+		},
+		isStreaming: false,
+		streamingMessage: undefined,
+		pendingToolCalls: new Set<string>(),
+		errorMessage: undefined,
+	};
+}
+
+/** Options for constructing an {@link Agent}. */
 export interface AgentOptions {
-	initialState?: Partial<AgentState>;
-
-	/**
-	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.
-	 * Default filters to user/assistant/toolResult and converts attachments.
-	 */
+	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>;
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
-
-	/**
-	 * Optional transform applied to context before convertToLlm.
-	 * Use for context pruning, injecting external context, etc.
-	 */
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
-
-	/**
-	 * Steering mode: "all" = send all steering messages at once, "one-at-a-time" = one per turn
-	 */
-	steeringMode?: "all" | "one-at-a-time";
-
-	/**
-	 * Follow-up mode: "all" = send all follow-up messages at once, "one-at-a-time" = one per turn
-	 */
-	followUpMode?: "all" | "one-at-a-time";
-
-	/**
-	 * Custom stream function (for proxy backends, etc.). Default uses streamSimple.
-	 */
 	streamFn?: StreamFn;
-
-	/**
-	 * Optional session identifier forwarded to LLM providers.
-	 * Used by providers that support session-based caching (e.g., OpenAI Codex).
-	 */
-	sessionId?: string;
-
-	/**
-	 * Resolves an API key dynamically for each LLM call.
-	 * Useful for expiring tokens (e.g., GitHub Copilot OAuth).
-	 */
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
-
-	/**
-	 * Inspect or replace provider payloads before they are sent.
-	 */
 	onPayload?: SimpleStreamOptions["onPayload"];
-
-	/**
-	 * Custom token budgets for thinking levels (token-based providers only).
-	 */
+	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
+	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+	steeringMode?: QueueMode;
+	followUpMode?: QueueMode;
+	sessionId?: string;
 	thinkingBudgets?: ThinkingBudgets;
-
-	/**
-	 * Preferred transport for providers that support multiple transports.
-	 */
 	transport?: Transport;
-
-	/**
-	 * Maximum delay in milliseconds to wait for a retry when the server requests a long wait.
-	 * If the server's requested delay exceeds this value, the request fails immediately,
-	 * allowing higher-level retry logic to handle it with user visibility.
-	 * Default: 60000 (60 seconds). Set to 0 to disable the cap.
-	 */
 	maxRetryDelayMs?: number;
-
-	/**
-	 * Determines whether a model uses external tool execution (tools handled
-	 * by the provider, not dispatched locally). Evaluated per-loop so model
-	 * switches mid-session are handled correctly.
-	 */
-	externalToolExecution?: (model: Model<any>) => boolean;
-
-	/**
-	 * Optional provider-specific options to merge into the next stream call.
-	 *
-	 * Use this for runtime-only callbacks or handles that should not live in
-	 * shared agent state, such as UI bridges for external CLI providers.
-	 */
-	getProviderOptions?: (model: Model<any>) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
+	toolExecution?: ToolExecutionMode;
 }
+
+class PendingMessageQueue {
+	private messages: AgentMessage[] = [];
+
+	constructor(public mode: QueueMode) {}
+
+	enqueue(message: AgentMessage): void {
+		this.messages.push(message);
+	}
+
+	hasItems(): boolean {
+		return this.messages.length > 0;
+	}
+
+	drain(): AgentMessage[] {
+		if (this.mode === "all") {
+			const drained = this.messages.slice();
+			this.messages = [];
+			return drained;
+		}
+
+		const first = this.messages[0];
+		if (!first) {
+			return [];
+		}
+		this.messages = this.messages.slice(1);
+		return [first];
+	}
+
+	clear(): void {
+		this.messages = [];
+	}
+}
+
+type ActiveRun = {
+	promise: Promise<void>;
+	resolve: () => void;
+	abortController: AbortController;
+};
 
 /**
- * Internal wrapper that tracks message origin for origin-aware queue clearing.
- * "user" = typed by human in TUI; "system" = generated by extensions/background jobs.
+ * Stateful wrapper around the low-level agent loop.
+ *
+ * `Agent` owns the current transcript, emits lifecycle events, executes tools,
+ * and exposes queueing APIs for steering and follow-up messages.
  */
-interface QueueEntry {
-	message: AgentMessage;
-	origin: "user" | "system";
-}
-
 export class Agent {
-	private _state: AgentState = {
-		systemPrompt: "",
-		model: getModel("google", "gemini-2.5-flash-lite-preview-06-17"),
-		thinkingLevel: "off",
-		tools: [],
-		messages: [],
-		isStreaming: false,
-		streamMessage: null,
-		pendingToolCalls: new Set<string>(),
-		error: undefined,
-	};
+	private _state: MutableAgentState;
+	private readonly listeners = new Set<(event: AgentEvent, signal: AbortSignal) => Promise<void> | void>();
+	private readonly steeringQueue: PendingMessageQueue;
+	private readonly followUpQueue: PendingMessageQueue;
 
-	private listeners = new Set<(e: AgentEvent) => void>();
-	private abortController?: AbortController;
-	private convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
-	private transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
-	private steeringQueue: QueueEntry[] = [];
-	private followUpQueue: QueueEntry[] = [];
-	private steeringMode: "all" | "one-at-a-time";
-	private followUpMode: "all" | "one-at-a-time";
+	public convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
+	public transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
 	public streamFn: StreamFn;
-	private _sessionId?: string;
 	public getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
-	private _onPayload?: SimpleStreamOptions["onPayload"];
-	private runningPrompt?: Promise<void>;
-	private resolveRunningPrompt?: () => void;
-	private _thinkingBudgets?: ThinkingBudgets;
-	private _transport: Transport;
-	private _maxRetryDelayMs?: number;
-	private _beforeToolCall?: AgentLoopConfig["beforeToolCall"];
-	private _afterToolCall?: AgentLoopConfig["afterToolCall"];
-	private _externalToolExecution?: (model: Model<any>) => boolean;
-	private _getProviderOptions?: AgentOptions["getProviderOptions"];
+	public onPayload?: SimpleStreamOptions["onPayload"];
+	public beforeToolCall?: (
+		context: BeforeToolCallContext,
+		signal?: AbortSignal,
+	) => Promise<BeforeToolCallResult | undefined>;
+	public afterToolCall?: (
+		context: AfterToolCallContext,
+		signal?: AbortSignal,
+	) => Promise<AfterToolCallResult | undefined>;
+	private activeRun?: ActiveRun;
+	/** Session identifier forwarded to providers for cache-aware backends. */
+	public sessionId?: string;
+	/** Optional per-level thinking token budgets forwarded to the stream function. */
+	public thinkingBudgets?: ThinkingBudgets;
+	/** Preferred transport forwarded to the stream function. */
+	public transport: Transport;
+	/** Optional cap for provider-requested retry delays. */
+	public maxRetryDelayMs?: number;
+	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
+	public toolExecution: ToolExecutionMode;
 
-	constructor(opts: AgentOptions = {}) {
-		this._state = { ...this._state, ...opts.initialState };
-		this.convertToLlm = opts.convertToLlm || defaultConvertToLlm;
-		this.transformContext = opts.transformContext;
-		this.steeringMode = opts.steeringMode || "one-at-a-time";
-		this.followUpMode = opts.followUpMode || "one-at-a-time";
-		this.streamFn = opts.streamFn || streamSimple;
-		this._sessionId = opts.sessionId;
-		this.getApiKey = opts.getApiKey;
-		this._onPayload = opts.onPayload;
-		this._thinkingBudgets = opts.thinkingBudgets;
-		this._transport = opts.transport ?? "sse";
-		this._maxRetryDelayMs = opts.maxRetryDelayMs;
-		this._externalToolExecution = opts.externalToolExecution;
-		this._getProviderOptions = opts.getProviderOptions;
+	constructor(options: AgentOptions = {}) {
+		this._state = createMutableAgentState(options.initialState);
+		this.convertToLlm = options.convertToLlm ?? defaultConvertToLlm;
+		this.transformContext = options.transformContext;
+		this.streamFn = options.streamFn ?? streamSimple;
+		this.getApiKey = options.getApiKey;
+		this.onPayload = options.onPayload;
+		this.beforeToolCall = options.beforeToolCall;
+		this.afterToolCall = options.afterToolCall;
+		this.steeringQueue = new PendingMessageQueue(options.steeringMode ?? "one-at-a-time");
+		this.followUpQueue = new PendingMessageQueue(options.followUpMode ?? "one-at-a-time");
+		this.sessionId = options.sessionId;
+		this.thinkingBudgets = options.thinkingBudgets;
+		this.transport = options.transport ?? "sse";
+		this.maxRetryDelayMs = options.maxRetryDelayMs;
+		this.toolExecution = options.toolExecution ?? "parallel";
 	}
 
 	/**
-	 * Get the current session ID used for provider caching.
+	 * Subscribe to agent lifecycle events.
+	 *
+	 * Listener promises are awaited in subscription order and are included in
+	 * the current run's settlement. Listeners also receive the active abort
+	 * signal for the current run.
+	 *
+	 * `agent_end` is the final emitted event for a run, but the agent does not
+	 * become idle until all awaited listeners for that event have settled.
 	 */
-	get sessionId(): string | undefined {
-		return this._sessionId;
+	subscribe(listener: (event: AgentEvent, signal: AbortSignal) => Promise<void> | void): () => void {
+		this.listeners.add(listener);
+		return () => this.listeners.delete(listener);
 	}
 
 	/**
-	 * Set the session ID for provider caching.
-	 * Call this when switching sessions (new session, branch, resume).
+	 * Current agent state.
+	 *
+	 * Assigning `state.tools` or `state.messages` copies the provided top-level array.
 	 */
-	set sessionId(value: string | undefined) {
-		this._sessionId = value;
-	}
-
-	/**
-	 * Get the current thinking budgets.
-	 */
-	get thinkingBudgets(): ThinkingBudgets | undefined {
-		return this._thinkingBudgets;
-	}
-
-	/**
-	 * Set custom thinking budgets for token-based providers.
-	 */
-	set thinkingBudgets(value: ThinkingBudgets | undefined) {
-		this._thinkingBudgets = value;
-	}
-
-	/**
-	 * Get the current preferred transport.
-	 */
-	get transport(): Transport {
-		return this._transport;
-	}
-
-	/**
-	 * Set the preferred transport.
-	 */
-	setTransport(value: Transport) {
-		this._transport = value;
-	}
-
-	/**
-	 * Get the current max retry delay in milliseconds.
-	 */
-	get maxRetryDelayMs(): number | undefined {
-		return this._maxRetryDelayMs;
-	}
-
-	/**
-	 * Set the maximum delay to wait for server-requested retries.
-	 * Set to 0 to disable the cap.
-	 */
-	set maxRetryDelayMs(value: number | undefined) {
-		this._maxRetryDelayMs = value;
-	}
-
-	/**
-	 * Install a hook called before each tool executes, after argument validation.
-	 * Return `{ block: true }` to prevent execution.
-	 */
-	setBeforeToolCall(fn: AgentLoopConfig["beforeToolCall"]): void {
-		this._beforeToolCall = fn;
-	}
-
-	/**
-	 * Install a hook called after each tool executes, before results are emitted.
-	 * Return field overrides for content/details/isError.
-	 */
-	setAfterToolCall(fn: AgentLoopConfig["afterToolCall"]): void {
-		this._afterToolCall = fn;
-	}
-
 	get state(): AgentState {
 		return this._state;
 	}
 
-	subscribe(fn: (e: AgentEvent) => void): () => void {
-		this.listeners.add(fn);
-		return () => this.listeners.delete(fn);
+	/** Controls how queued steering messages are drained. */
+	set steeringMode(mode: QueueMode) {
+		this.steeringQueue.mode = mode;
 	}
 
-	// State mutators
-	setSystemPrompt(v: string) {
-		this._state.systemPrompt = v;
+	get steeringMode(): QueueMode {
+		return this.steeringQueue.mode;
 	}
 
-	setModel(m: Model<any>) {
-		this._state.model = m;
+	/** Controls how queued follow-up messages are drained. */
+	set followUpMode(mode: QueueMode) {
+		this.followUpQueue.mode = mode;
 	}
 
-	setThinkingLevel(l: ThinkingLevel) {
-		this._state.thinkingLevel = l;
+	get followUpMode(): QueueMode {
+		return this.followUpQueue.mode;
 	}
 
-	setSteeringMode(mode: "all" | "one-at-a-time") {
-		this.steeringMode = mode;
+	/** Queue a message to be injected after the current assistant turn finishes. */
+	steer(message: AgentMessage): void {
+		this.steeringQueue.enqueue(message);
 	}
 
-	getSteeringMode(): "all" | "one-at-a-time" {
-		return this.steeringMode;
+	/** Queue a message to run only after the agent would otherwise stop. */
+	followUp(message: AgentMessage): void {
+		this.followUpQueue.enqueue(message);
 	}
 
-	setFollowUpMode(mode: "all" | "one-at-a-time") {
-		this.followUpMode = mode;
+	/** Remove all queued steering messages. */
+	clearSteeringQueue(): void {
+		this.steeringQueue.clear();
 	}
 
-	getFollowUpMode(): "all" | "one-at-a-time" {
-		return this.followUpMode;
+	/** Remove all queued follow-up messages. */
+	clearFollowUpQueue(): void {
+		this.followUpQueue.clear();
 	}
 
-	setTools(t: AgentTool<any>[]) {
-		this._state.tools = t;
+	/** Remove all queued steering and follow-up messages. */
+	clearAllQueues(): void {
+		this.clearSteeringQueue();
+		this.clearFollowUpQueue();
 	}
 
-	replaceMessages(ms: AgentMessage[]) {
-		this._state.messages = ms.slice();
-	}
-
-	appendMessage(m: AgentMessage) {
-		this._state.messages = [...this._state.messages, m];
-	}
-
-	/**
-	 * Queue a steering message to interrupt the agent mid-run.
-	 * Delivered after current tool execution, skips remaining tools.
-	 */
-	steer(m: AgentMessage, origin: "user" | "system" = "system") {
-		this.steeringQueue.push({ message: m, origin });
-	}
-
-	/**
-	 * Queue a follow-up message to be processed after the agent finishes.
-	 * Delivered only when agent has no more tool calls or steering messages.
-	 */
-	followUp(m: AgentMessage, origin: "user" | "system" = "system") {
-		this.followUpQueue.push({ message: m, origin });
-	}
-
-	clearSteeringQueue() {
-		this.steeringQueue = [];
-	}
-
-	clearFollowUpQueue() {
-		this.followUpQueue = [];
-	}
-
-	clearAllQueues() {
-		this.steeringQueue = [];
-		this.followUpQueue = [];
-	}
-
-	/**
-	 * Drain user-origin messages from queues, leaving system messages in place.
-	 * Used during abort to preserve messages the user explicitly typed.
-	 */
-	drainUserMessages(): { steering: AgentMessage[]; followUp: AgentMessage[] } {
-		const userSteering = this.steeringQueue.filter((e) => e.origin === "user").map((e) => e.message);
-		const userFollowUp = this.followUpQueue.filter((e) => e.origin === "user").map((e) => e.message);
-		this.steeringQueue = this.steeringQueue.filter((e) => e.origin !== "user");
-		this.followUpQueue = this.followUpQueue.filter((e) => e.origin !== "user");
-		return { steering: userSteering, followUp: userFollowUp };
-	}
-
+	/** Returns true when either queue still contains pending messages. */
 	hasQueuedMessages(): boolean {
-		return this.steeringQueue.length > 0 || this.followUpQueue.length > 0;
+		return this.steeringQueue.hasItems() || this.followUpQueue.hasItems();
 	}
 
-	private dequeueSteeringMessages(): AgentMessage[] {
-		if (this.steeringMode === "one-at-a-time") {
-			if (this.steeringQueue.length > 0) {
-				const first = this.steeringQueue[0];
-				this.steeringQueue = this.steeringQueue.slice(1);
-				return [first.message];
-			}
-			return [];
-		}
-
-		const steering = this.steeringQueue.map((e) => e.message);
-		this.steeringQueue = [];
-		return steering;
+	/** Active abort signal for the current run, if any. */
+	get signal(): AbortSignal | undefined {
+		return this.activeRun?.abortController.signal;
 	}
 
-	private dequeueFollowUpMessages(): AgentMessage[] {
-		if (this.followUpMode === "one-at-a-time") {
-			if (this.followUpQueue.length > 0) {
-				const first = this.followUpQueue[0];
-				this.followUpQueue = this.followUpQueue.slice(1);
-				return [first.message];
-			}
-			return [];
-		}
-
-		const followUp = this.followUpQueue.map((e) => e.message);
-		this.followUpQueue = [];
-		return followUp;
+	/** Abort the current run, if one is active. */
+	abort(): void {
+		this.activeRun?.abortController.abort();
 	}
 
-	clearMessages() {
-		this._state.messages = [];
-	}
-
-	abort() {
-		this.abortController?.abort();
-	}
-
+	/**
+	 * Resolve when the current run and all awaited event listeners have finished.
+	 *
+	 * This resolves after `agent_end` listeners settle.
+	 */
 	waitForIdle(): Promise<void> {
-		return this.runningPrompt ?? Promise.resolve();
+		return this.activeRun?.promise ?? Promise.resolve();
 	}
 
-	reset() {
+	/** Clear transcript state, runtime state, and queued messages. */
+	reset(): void {
 		this._state.messages = [];
 		this._state.isStreaming = false;
-		this._state.streamMessage = null;
+		this._state.streamingMessage = undefined;
 		this._state.pendingToolCalls = new Set<string>();
-		this._state.error = undefined;
-		this.steeringQueue = [];
-		this.followUpQueue = [];
+		this._state.errorMessage = undefined;
+		this.clearFollowUpQueue();
+		this.clearSteeringQueue();
 	}
 
-	/** Send a prompt with an AgentMessage */
+	/** Start a new prompt from text, a single message, or a batch of messages. */
 	async prompt(message: AgentMessage | AgentMessage[]): Promise<void>;
 	async prompt(input: string, images?: ImageContent[]): Promise<void>;
-	async prompt(input: string | AgentMessage | AgentMessage[], images?: ImageContent[]) {
-		if (this._state.isStreaming) {
+	async prompt(input: string | AgentMessage | AgentMessage[], images?: ImageContent[]): Promise<void> {
+		if (this.activeRun) {
 			throw new Error(
 				"Agent is already processing a prompt. Use steer() or followUp() to queue messages, or wait for completion.",
 			);
 		}
-
-		const model = this._state.model;
-		if (!model) throw new Error("No model configured");
-
-		let msgs: AgentMessage[];
-
-		if (Array.isArray(input)) {
-			msgs = input;
-		} else if (typeof input === "string") {
-			const content: Array<TextContent | ImageContent> = [{ type: "text", text: input }];
-			if (images && images.length > 0) {
-				content.push(...images);
-			}
-			msgs = [
-				{
-					role: "user",
-					content,
-					timestamp: Date.now(),
-				},
-			];
-		} else {
-			msgs = [input];
-		}
-
-		await this._runLoop(msgs);
+		const messages = this.normalizePromptInput(input, images);
+		await this.runPromptMessages(messages);
 	}
 
-	/**
-	 * Continue from current context (used for retries and resuming queued messages).
-	 */
-	async continue() {
-		if (this._state.isStreaming) {
+	/** Continue from the current transcript. The last message must be a user or tool-result message. */
+	async continue(): Promise<void> {
+		if (this.activeRun) {
 			throw new Error("Agent is already processing. Wait for completion before continuing.");
 		}
 
-		const messages = this._state.messages;
-		if (messages.length === 0) {
+		const lastMessage = this._state.messages[this._state.messages.length - 1];
+		if (!lastMessage) {
 			throw new Error("No messages to continue from");
 		}
-		if (messages[messages.length - 1].role === "assistant") {
-			const queuedSteering = this.dequeueSteeringMessages();
+
+		if (lastMessage.role === "assistant") {
+			const queuedSteering = this.steeringQueue.drain();
 			if (queuedSteering.length > 0) {
-				await this._runLoop(queuedSteering, { skipInitialSteeringPoll: true });
+				await this.runPromptMessages(queuedSteering, { skipInitialSteeringPoll: true });
 				return;
 			}
 
-			const queuedFollowUp = this.dequeueFollowUpMessages();
-			if (queuedFollowUp.length > 0) {
-				await this._runLoop(queuedFollowUp);
+			const queuedFollowUps = this.followUpQueue.drain();
+			if (queuedFollowUps.length > 0) {
+				await this.runPromptMessages(queuedFollowUps);
 				return;
 			}
 
 			throw new Error("Cannot continue from message role: assistant");
 		}
 
-		await this._runLoop(undefined);
+		await this.runContinuation();
 	}
 
-	/**
-	 * Run the agent loop.
-	 * If messages are provided, starts a new conversation turn with those messages.
-	 * Otherwise, continues from existing context.
-	 */
-	private async _runLoop(messages?: AgentMessage[], options?: { skipInitialSteeringPoll?: boolean }) {
-		const model = this._state.model;
-		if (!model) throw new Error("No model configured");
+	private normalizePromptInput(
+		input: string | AgentMessage | AgentMessage[],
+		images?: ImageContent[],
+	): AgentMessage[] {
+		if (Array.isArray(input)) {
+			return input;
+		}
 
-		this._state.activeInferenceModel = model;
+		if (typeof input !== "string") {
+			return [input];
+		}
 
-		this.runningPrompt = new Promise<void>((resolve) => {
-			this.resolveRunningPrompt = resolve;
+		const content: Array<TextContent | ImageContent> = [{ type: "text", text: input }];
+		if (images && images.length > 0) {
+			content.push(...images);
+		}
+		return [{ role: "user", content, timestamp: Date.now() }];
+	}
+
+	private async runPromptMessages(
+		messages: AgentMessage[],
+		options: { skipInitialSteeringPoll?: boolean } = {},
+	): Promise<void> {
+		await this.runWithLifecycle(async (signal) => {
+			await runAgentLoop(
+				messages,
+				this.createContextSnapshot(),
+				this.createLoopConfig(options),
+				(event) => this.processEvents(event),
+				signal,
+				this.streamFn,
+			);
 		});
+	}
 
-		this.abortController = new AbortController();
-		this._state.isStreaming = true;
-		this._state.streamMessage = null;
-		this._state.error = undefined;
+	private async runContinuation(): Promise<void> {
+		await this.runWithLifecycle(async (signal) => {
+			await runAgentLoopContinue(
+				this.createContextSnapshot(),
+				this.createLoopConfig(),
+				(event) => this.processEvents(event),
+				signal,
+				this.streamFn,
+			);
+		});
+	}
 
-		const reasoning = this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel;
-
-		const context: AgentContext = {
+	private createContextSnapshot(): AgentContext {
+		return {
 			systemPrompt: this._state.systemPrompt,
 			messages: this._state.messages.slice(),
-			tools: this._state.tools,
+			tools: this._state.tools.slice(),
 		};
+	}
 
-		let skipInitialSteeringPoll = options?.skipInitialSteeringPoll === true;
-		const providerOptions = await this._getProviderOptions?.(model);
-
-		const config: AgentLoopConfig = {
-			...(providerOptions ?? {}),
-			model,
-			reasoning,
-			sessionId: this._sessionId,
-			onPayload: this._onPayload,
-			transport: this._transport,
-			thinkingBudgets: this._thinkingBudgets,
-			maxRetryDelayMs: this._maxRetryDelayMs,
+	private createLoopConfig(options: { skipInitialSteeringPoll?: boolean } = {}): AgentLoopConfig {
+		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
+		return {
+			model: this._state.model,
+			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
+			sessionId: this.sessionId,
+			onPayload: this.onPayload,
+			transport: this.transport,
+			thinkingBudgets: this.thinkingBudgets,
+			maxRetryDelayMs: this.maxRetryDelayMs,
+			toolExecution: this.toolExecution,
+			beforeToolCall: this.beforeToolCall,
+			afterToolCall: this.afterToolCall,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
@@ -515,113 +425,115 @@ export class Agent {
 					skipInitialSteeringPoll = false;
 					return [];
 				}
-				return this.dequeueSteeringMessages();
+				return this.steeringQueue.drain();
 			},
-			getFollowUpMessages: async () => this.dequeueFollowUpMessages(),
-			beforeToolCall: this._beforeToolCall,
-			afterToolCall: this._afterToolCall,
-			externalToolExecution: this._externalToolExecution?.(model) ?? false,
+			getFollowUpMessages: async () => this.followUpQueue.drain(),
 		};
+	}
 
-		let partial: AgentMessage | null = null;
+	private async runWithLifecycle(executor: (signal: AbortSignal) => Promise<void>): Promise<void> {
+		if (this.activeRun) {
+			throw new Error("Agent is already processing.");
+		}
+
+		const abortController = new AbortController();
+		let resolvePromise = () => {};
+		const promise = new Promise<void>((resolve) => {
+			resolvePromise = resolve;
+		});
+		this.activeRun = { promise, resolve: resolvePromise, abortController };
+
+		this._state.isStreaming = true;
+		this._state.streamingMessage = undefined;
+		this._state.errorMessage = undefined;
 
 		try {
-			const stream = messages
-				? agentLoop(messages, context, config, this.abortController.signal, this.streamFn)
-				: agentLoopContinue(context, config, this.abortController.signal, this.streamFn);
-
-			for await (const event of stream) {
-				// Update internal state based on events
-				switch (event.type) {
-					case "message_start":
-					case "message_update":
-						partial = event.message;
-						this._state.streamMessage = event.message;
-						break;
-
-					case "message_end":
-						partial = null;
-						this._state.streamMessage = null;
-						this.appendMessage(event.message);
-						break;
-
-					case "tool_execution_start":
-						this._updatePendingToolCalls("add", event.toolCallId);
-						break;
-
-					case "tool_execution_end":
-						this._updatePendingToolCalls("delete", event.toolCallId);
-						break;
-
-					case "turn_end":
-						if (event.message.role === "assistant" && (event.message as any).errorMessage) {
-							this._state.error = (event.message as any).errorMessage;
-						}
-						break;
-
-					case "agent_end":
-						this._state.isStreaming = false;
-						this._state.streamMessage = null;
-						break;
-				}
-
-				// Emit to listeners
-				this.emit(event);
-			}
-
-			// Handle any remaining partial message
-			if (partial && partial.role === "assistant" && partial.content.length > 0) {
-				const onlyEmpty = !partial.content.some(
-					(c) =>
-						(c.type === "thinking" && c.thinking.trim().length > 0) ||
-						(c.type === "text" && c.text.trim().length > 0) ||
-						(c.type === "toolCall" && c.name.trim().length > 0),
-				);
-				if (!onlyEmpty) {
-					this.appendMessage(partial);
-				} else {
-					if (this.abortController?.signal.aborted) {
-						throw new Error("Request was aborted");
-					}
-				}
-			}
-		} catch (err: any) {
-			const errorMsg: AgentMessage = {
-				role: "assistant",
-				content: [{ type: "text", text: "" }],
-				api: model.api,
-				provider: model.provider,
-				model: model.id,
-				usage: ZERO_USAGE,
-				stopReason: this.abortController?.signal.aborted ? "aborted" : "error",
-				errorMessage: err?.message || String(err),
-				timestamp: Date.now(),
-			} as AgentMessage;
-
-			this.appendMessage(errorMsg);
-			this._state.error = err?.message || String(err);
-			this.emit({ type: "agent_end", messages: [errorMsg] });
+			await executor(abortController.signal);
+		} catch (error) {
+			await this.handleRunFailure(error, abortController.signal.aborted);
 		} finally {
-			this._state.isStreaming = false;
-			this._state.streamMessage = null;
-			this._state.pendingToolCalls = new Set<string>();
-			this._state.activeInferenceModel = undefined;
-			this.abortController = undefined;
-			this.resolveRunningPrompt?.();
-			this.runningPrompt = undefined;
-			this.resolveRunningPrompt = undefined;
+			this.finishRun();
 		}
 	}
 
-	private _updatePendingToolCalls(action: "add" | "delete", id: string): void {
-		const s = new Set(this._state.pendingToolCalls);
-		s[action](id);
-		this._state.pendingToolCalls = s;
+	private async handleRunFailure(error: unknown, aborted: boolean): Promise<void> {
+		const failureMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: "" }],
+			api: this._state.model.api,
+			provider: this._state.model.provider,
+			model: this._state.model.id,
+			usage: EMPTY_USAGE,
+			stopReason: aborted ? "aborted" : "error",
+			errorMessage: error instanceof Error ? error.message : String(error),
+			timestamp: Date.now(),
+		} satisfies AgentMessage;
+		this._state.messages.push(failureMessage);
+		this._state.errorMessage = failureMessage.errorMessage;
+		await this.processEvents({ type: "agent_end", messages: [failureMessage] });
 	}
 
-	private emit(e: AgentEvent) {
+	private finishRun(): void {
+		this._state.isStreaming = false;
+		this._state.streamingMessage = undefined;
+		this._state.pendingToolCalls = new Set<string>();
+		this.activeRun?.resolve();
+		this.activeRun = undefined;
+	}
+
+	/**
+	 * Reduce internal state for a loop event, then await listeners.
+	 *
+	 * `agent_end` only means no further loop events will be emitted. The run is
+	 * considered idle later, after all awaited listeners for `agent_end` finish
+	 * and `finishRun()` clears runtime-owned state.
+	 */
+	private async processEvents(event: AgentEvent): Promise<void> {
+		switch (event.type) {
+			case "message_start":
+				this._state.streamingMessage = event.message;
+				break;
+
+			case "message_update":
+				this._state.streamingMessage = event.message;
+				break;
+
+			case "message_end":
+				this._state.streamingMessage = undefined;
+				this._state.messages.push(event.message);
+				break;
+
+			case "tool_execution_start": {
+				const pendingToolCalls = new Set(this._state.pendingToolCalls);
+				pendingToolCalls.add(event.toolCallId);
+				this._state.pendingToolCalls = pendingToolCalls;
+				break;
+			}
+
+			case "tool_execution_end": {
+				const pendingToolCalls = new Set(this._state.pendingToolCalls);
+				pendingToolCalls.delete(event.toolCallId);
+				this._state.pendingToolCalls = pendingToolCalls;
+				break;
+			}
+
+			case "turn_end":
+				if (event.message.role === "assistant" && event.message.errorMessage) {
+					this._state.errorMessage = event.message.errorMessage;
+				}
+				break;
+
+			case "agent_end":
+				this._state.streamingMessage = undefined;
+				break;
+		}
+
+		const signal = this.activeRun?.abortController.signal;
+		if (!signal) {
+			throw new Error("Agent listener invoked outside active run");
+		}
 		for (const listener of this.listeners) {
-			listener(e);
+			await listener(event, signal);
 		}
 	}
 }

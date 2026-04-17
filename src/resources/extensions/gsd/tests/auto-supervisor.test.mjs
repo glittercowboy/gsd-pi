@@ -7,10 +7,21 @@ import { writeUnitRuntimeRecord, readUnitRuntimeRecord } from '../unit-runtime.t
 import { resolveAutoSupervisorConfig } from '../preferences.ts';
 
 test('resolveAutoSupervisorConfig provides safe timeout defaults', () => {
-  const supervisor = resolveAutoSupervisorConfig();
-  assert.equal(supervisor.soft_timeout_minutes, 20);
-  assert.equal(supervisor.idle_timeout_minutes, 10);
-  assert.equal(supervisor.hard_timeout_minutes, 30);
+  // Isolate from user's real ~/.gsd/preferences.md by pointing GSD_HOME to a temp dir
+  const savedGsdHome = process.env.GSD_HOME;
+  const savedHome = process.env.HOME;
+  try {
+    process.env.GSD_HOME = '/tmp/gsd-no-such-home-for-test-supervisor';
+    process.env.HOME = '/tmp/gsd-no-such-home-for-test-supervisor';
+    const supervisor = resolveAutoSupervisorConfig();
+    assert.equal(supervisor.soft_timeout_minutes, 20);
+    assert.equal(supervisor.idle_timeout_minutes, 10);
+    assert.equal(supervisor.hard_timeout_minutes, 30);
+  } finally {
+    if (savedGsdHome !== undefined) process.env.GSD_HOME = savedGsdHome;
+    else delete process.env.GSD_HOME;
+    process.env.HOME = savedHome;
+  }
 });
 
 test('writeUnitRuntimeRecord persists progress and recovery metadata defaults', () => {

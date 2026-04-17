@@ -2,7 +2,9 @@ import { spawn } from "node:child_process";
 import * as fsPromises from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { LSP_LIVENESS_TIMEOUT_MS, LSP_STATE_CACHE_TTL_MS } from "../constants.js";
+// Constants inlined: ../constants.js removed in 0.67.2 upstream
+const LSP_LIVENESS_TIMEOUT_MS = 5000;
+const LSP_STATE_CACHE_TTL_MS = 30000;
 import { which } from "./config.js";
 
 /**

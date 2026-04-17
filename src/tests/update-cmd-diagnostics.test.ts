@@ -82,3 +82,65 @@ test("commands-handlers uses resolveInstallCommand instead of hardcoded npm (#41
     "/gsd update handler should use resolveInstallCommand for package manager detection",
   );
 });
+
+test("isBunInstall detects bun install via argv[1] even when process.versions.bun is undefined (#4145)", async () => {
+  const { isBunInstall } = await import("../update-check.js");
+  const orig = (process.versions as Record<string, string | undefined>).bun;
+  const origArgv1 = process.argv[1];
+  const origBunInstall = process.env.BUN_INSTALL;
+  try {
+    // Simulate running under Node (not Bun) — matches the real-world shim case
+    // where the bun-installed symlink's target has #!/usr/bin/env node.
+    delete (process.versions as Record<string, string | undefined>).bun;
+    delete process.env.BUN_INSTALL;
+
+    // argv[1] preserves the unresolved symlink path, not the realpath target.
+    process.argv[1] = join(process.env.HOME ?? "/home/user", ".bun", "bin", "gsd");
+    assert.equal(isBunInstall(), true, "should detect bun install from ~/.bun/bin/ argv[1]");
+
+    // Custom BUN_INSTALL location
+    process.env.BUN_INSTALL = "/opt/bun";
+    process.argv[1] = "/opt/bun/bin/gsd";
+    assert.equal(isBunInstall(), true, "should detect bun install from $BUN_INSTALL/bin/ argv[1]");
+
+    // Non-bun path must NOT match
+    delete process.env.BUN_INSTALL;
+    process.argv[1] = "/usr/local/lib/node_modules/gsd-pi/dist/loader.js";
+    assert.equal(isBunInstall(), false, "npm global install path should not match");
+
+    // Prefix false-positive guard: /.bun/bin-other should not match /.bun/bin
+    process.argv[1] = join(process.env.HOME ?? "/home/user", ".bun", "bin-other", "gsd");
+    assert.equal(isBunInstall(), false, "sibling dir with bin prefix should not match");
+  } finally {
+    if (orig === undefined) {
+      delete (process.versions as Record<string, string | undefined>).bun;
+    } else {
+      (process.versions as Record<string, string | undefined>).bun = orig;
+    }
+    process.argv[1] = origArgv1;
+    if (origBunInstall === undefined) {
+      delete process.env.BUN_INSTALL;
+    } else {
+      process.env.BUN_INSTALL = origBunInstall;
+    }
+  }
+});
+
+test("isBunInstall returns true when running under Bun runtime (#4145)", async () => {
+  const { isBunInstall } = await import("../update-check.js");
+  const orig = (process.versions as Record<string, string | undefined>).bun;
+  const origArgv1 = process.argv[1];
+  try {
+    (process.versions as Record<string, string | undefined>).bun = "1.0.0";
+    // Even with a non-bun argv[1], runtime detection wins
+    process.argv[1] = "/usr/local/lib/node_modules/gsd-pi/dist/loader.js";
+    assert.equal(isBunInstall(), true);
+  } finally {
+    if (orig === undefined) {
+      delete (process.versions as Record<string, string | undefined>).bun;
+    } else {
+      (process.versions as Record<string, string | undefined>).bun = orig;
+    }
+    process.argv[1] = origArgv1;
+  }
+});

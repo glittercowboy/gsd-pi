@@ -9,10 +9,18 @@ import type {
 	TextContent,
 	Tool,
 	ToolResultMessage,
-} from "@gsd/pi-ai";
+} from "@mariozechner/pi-ai";
 import type { Static, TSchema } from "@sinclair/typebox";
 
-/** Stream function - can return sync or Promise for async config lookup */
+/**
+ * Stream function used by the agent loop.
+ *
+ * Contract:
+ * - Must not throw or return a rejected promise for request/model/runtime failures.
+ * - Must return an AssistantMessageEventStream.
+ * - Failures must be encoded in the returned stream via protocol events and a
+ *   final AssistantMessage with stopReason "error" or "aborted" and errorMessage.
+ */
 export type StreamFn = (
 	...args: Parameters<typeof streamSimple>
 ) => ReturnType<typeof streamSimple> | Promise<ReturnType<typeof streamSimple>>;
@@ -49,6 +57,7 @@ export interface BeforeToolCallResult {
  * - `isError`: if provided, replaces the tool result error flag
  *
  * Omitted fields keep the original executed tool result values.
+ * There is no deep merge for `content` or `details`.
  */
 export interface AfterToolCallResult {
 	content?: (TextContent | ImageContent)[];
@@ -84,9 +93,6 @@ export interface AfterToolCallContext {
 	context: AgentContext;
 }
 
-/**
- * Configuration for the agent loop.
- */
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 
@@ -96,6 +102,9 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Each AgentMessage must be converted to a UserMessage, AssistantMessage, or ToolResultMessage
 	 * that the LLM can understand. AgentMessages that cannot be converted (e.g., UI-only notifications,
 	 * status messages) should be filtered out.
+	 *
+	 * Contract: must not throw or reject. Return a safe fallback value instead.
+	 * Throwing interrupts the low-level agent loop without producing a normal event sequence.
 	 *
 	 * @example
 	 * ```typescript
@@ -122,6 +131,9 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * - Context window management (pruning old messages)
 	 * - Injecting context from external sources
 	 *
+	 * Contract: must not throw or reject. Return the original messages or another
+	 * safe fallback value instead.
+	 *
 	 * @example
 	 * ```typescript
 	 * transformContext: async (messages) => {
@@ -139,17 +151,21 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 *
 	 * Useful for short-lived OAuth tokens (e.g., GitHub Copilot) that may expire
 	 * during long-running tool execution phases.
+	 *
+	 * Contract: must not throw or reject. Return undefined when no key is available.
 	 */
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 
 	/**
 	 * Returns steering messages to inject into the conversation mid-run.
 	 *
-	 * Called after each tool execution to check for user interruptions.
-	 * If messages are returned, remaining tool calls are skipped and
-	 * these messages are added to the context before the next LLM call.
+	 * Called after the current assistant turn finishes executing its tool calls.
+	 * If messages are returned, they are added to the context before the next LLM call.
+	 * Tool calls from the current assistant message are not skipped.
 	 *
 	 * Use this for "steering" the agent while it's working.
+	 *
+	 * Contract: must not throw or reject. Return [] when no steering messages are available.
 	 */
 	getSteeringMessages?: () => Promise<AgentMessage[]>;
 
@@ -161,6 +177,8 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * continues with another turn.
 	 *
 	 * Use this for follow-up messages that should wait until the agent finishes.
+	 *
+	 * Contract: must not throw or reject. Return [] when no follow-up messages are available.
 	 */
 	getFollowUpMessages?: () => Promise<AgentMessage[]>;
 
@@ -193,16 +211,6 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * The hook receives the agent abort signal and is responsible for honoring it.
 	 */
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
-
-	/**
-	 * When true, tool calls in assistant messages are rendered in the TUI
-	 * but NOT executed locally. Used for providers that handle tool execution
-	 * internally (e.g., Claude Code CLI via Agent SDK).
-	 *
-	 * The agent loop emits tool_execution_start/end events for TUI rendering
-	 * but skips tool.execute() and does not add tool results to context.
-	 */
-	externalToolExecution?: boolean;
 }
 
 /**
@@ -237,40 +245,59 @@ export interface CustomAgentMessages {
 export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessages];
 
 /**
- * Agent state containing all configuration and conversation data.
+ * Public agent state.
+ *
+ * `tools` and `messages` use accessor properties so implementations can copy
+ * assigned arrays before storing them.
  */
 export interface AgentState {
+	/** System prompt sent with each model request. */
 	systemPrompt: string;
+	/** Active model used for future turns. */
 	model: Model<any>;
+	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
-	tools: AgentTool<any>[];
-	messages: AgentMessage[]; // Can include attachments + custom message types
-	isStreaming: boolean;
-	streamMessage: AgentMessage | null;
-	pendingToolCalls: Set<string>;
-	error?: string;
+	/** Available tools. Assigning a new array copies the top-level array. */
+	set tools(tools: AgentTool<any>[]);
+	get tools(): AgentTool<any>[];
+	/** Conversation transcript. Assigning a new array copies the top-level array. */
+	set messages(messages: AgentMessage[]);
+	get messages(): AgentMessage[];
 	/**
-	 * The model currently being used for inference. Set at _runLoop() start,
-	 * cleared when the loop ends. When present, UI should display this instead
-	 * of `model` to avoid showing a stale value after a mid-turn model switch.
+	 * True while the agent is processing a prompt or continuation.
+	 *
+	 * This remains true until awaited `agent_end` listeners settle.
 	 */
-	activeInferenceModel?: Model<any>;
+	readonly isStreaming: boolean;
+	/** Partial assistant message for the current streamed response, if any. */
+	readonly streamingMessage?: AgentMessage;
+	/** Tool call ids currently executing. */
+	readonly pendingToolCalls: ReadonlySet<string>;
+	/** Error message from the most recent failed or aborted assistant turn, if any. */
+	readonly errorMessage?: string;
 }
 
+/** Final or partial result produced by a tool. */
 export interface AgentToolResult<T> {
-	// Content blocks supporting text and images
+	/** Text or image content returned to the model. */
 	content: (TextContent | ImageContent)[];
-	// Details to be displayed in a UI or logged
+	/** Arbitrary structured details for logs or UI rendering. */
 	details: T;
 }
 
-// Callback for streaming tool execution updates
+/** Callback used by tools to stream partial execution updates. */
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
-// AgentTool extends Tool but adds the execute function
+/** Tool definition used by the agent runtime. */
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
-	// A human-readable label for the tool to be displayed in UI
+	/** Human-readable label for UI display. */
 	label: string;
+	/**
+	 * Optional compatibility shim for raw tool-call arguments before schema validation.
+	 * Must return an object that matches `TParameters`.
+	 */
+	prepareArguments?: (args: unknown) => Static<TParameters>;
+	/** Execute the tool call. Throw on failure instead of encoding errors in `content`. */
 	execute: (
 		toolCallId: string,
 		params: Static<TParameters>,
@@ -279,16 +306,22 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	) => Promise<AgentToolResult<TDetails>>;
 }
 
-// AgentContext is like Context but uses AgentTool
+/** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
+	/** System prompt included with the request. */
 	systemPrompt: string;
+	/** Transcript visible to the model. */
 	messages: AgentMessage[];
+	/** Tools available for this run. */
 	tools?: AgentTool<any>[];
 }
 
 /**
  * Events emitted by the Agent for UI updates.
- * These events provide fine-grained lifecycle information for messages, turns, and tool executions.
+ *
+ * `agent_end` is the last event emitted for a run, but awaited `Agent.subscribe()`
+ * listeners for that event are still part of run settlement. The agent becomes
+ * idle only after those listeners finish.
  */
 export type AgentEvent =
 	// Agent lifecycle

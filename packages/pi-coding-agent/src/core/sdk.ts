@@ -1,37 +1,17 @@
 import { join } from "node:path";
-
-/**
- * Structured error thrown when all credentials for a provider are in a
- * backoff window.  Carries typed metadata so callers (e.g. the auto-loop)
- * can make informed retry decisions instead of string-matching the message.
- */
-export class CredentialCooldownError extends Error {
-	readonly code = "AUTH_COOLDOWN" as const;
-	/** Milliseconds until the earliest credential becomes available, or undefined if unknown. */
-	readonly retryAfterMs: number | undefined;
-
-	constructor(provider: string, retryAfterMs?: number) {
-		super(
-			`All credentials for "${provider}" are in a cooldown window. ` +
-				`Please wait a moment and try again, or switch to a different provider.`,
-		);
-		this.name = "CredentialCooldownError";
-		this.retryAfterMs = retryAfterMs;
-	}
-}
-import { Agent, type AgentMessage, type ThinkingLevel } from "@gsd/pi-agent-core";
-import type { Message, Model } from "@gsd/pi-ai";
+import { Agent, type AgentMessage, type ThinkingLevel } from "@mariozechner/pi-agent-core";
+import { type Message, type Model, streamSimple } from "@mariozechner/pi-ai";
 import { getAgentDir, getDocsPath } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
-import type { ExtensionRunner, LoadExtensionsResult, ToolDefinition } from "./extensions/index.js";
+import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefinition } from "./extensions/index.js";
 import { convertToLlm } from "./messages.js";
 import { ModelRegistry } from "./model-registry.js";
 import { findInitialModel } from "./model-resolver.js";
 import type { ResourceLoader } from "./resource-loader.js";
 import { DefaultResourceLoader } from "./resource-loader.js";
-import { SessionManager } from "./session-manager.js";
+import { getDefaultSessionDir, SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { time } from "./timings.js";
 import {
@@ -50,17 +30,12 @@ import {
 	editTool,
 	findTool,
 	grepTool,
-	hashlineCodingTools,
-	hashlineEditTool,
-	hashlineReadTool,
-	createHashlineCodingTools,
-	createHashlineEditTool,
-	createHashlineReadTool,
 	lsTool,
 	readOnlyTools,
 	readTool,
 	type Tool,
 	type ToolName,
+	withFileMutationQueue,
 	writeTool,
 } from "./tools/index.js";
 
@@ -72,7 +47,7 @@ export interface CreateAgentSessionOptions {
 
 	/** Auth storage for credentials. Default: AuthStorage.create(agentDir/auth.json) */
 	authStorage?: AuthStorage;
-	/** Model registry. Default: new ModelRegistry(authStorage, agentDir/models.json) */
+	/** Model registry. Default: ModelRegistry.create(authStorage, agentDir/models.json) */
 	modelRegistry?: ModelRegistry;
 
 	/** Model to use. Default: from settings, else first available */
@@ -95,10 +70,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
-
-	/** Optional: check if the claude-code CLI provider is ready (installed + authed).
-	 * Passed to RetryHandler for third-party block recovery (#3772). */
-	isClaudeCodeReady?: () => boolean;
+	/** Session start event metadata for extension runtime startup. */
+	sessionStartEvent?: SessionStartEvent;
 }
 
 /** Result from createAgentSession */
@@ -113,13 +86,13 @@ export interface CreateAgentSessionResult {
 
 // Re-exports
 
+export * from "./agent-session-runtime.js";
 export type {
 	ExtensionAPI,
 	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionFactory,
 	SlashCommandInfo,
-	SlashCommandLocation,
 	SlashCommandSource,
 	ToolDefinition,
 } from "./extensions/index.js";
@@ -139,6 +112,7 @@ export {
 	codingTools,
 	readOnlyTools,
 	allTools as allBuiltInTools,
+	withFileMutationQueue,
 	// Tool factories (for custom cwd)
 	createCodingTools,
 	createReadOnlyTools,
@@ -149,13 +123,6 @@ export {
 	createGrepTool,
 	createFindTool,
 	createLsTool,
-	// Hashline edit mode
-	hashlineCodingTools,
-	hashlineEditTool,
-	hashlineReadTool,
-	createHashlineCodingTools,
-	createHashlineEditTool,
-	createHashlineReadTool,
 };
 
 // Helper Functions
@@ -173,7 +140,7 @@ function getDefaultAgentDir(): string {
  * const { session } = await createAgentSession();
  *
  * // With explicit model
- * import { getModel } from '@gsd/pi-ai';
+ * import { getModel } from '@mariozechner/pi-ai';
  * const { session } = await createAgentSession({
  *   model: getModel('anthropic', 'claude-opus-4-5'),
  *   thinkingLevel: 'high',
@@ -208,26 +175,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const authPath = options.agentDir ? join(agentDir, "auth.json") : undefined;
 	const modelsPath = options.agentDir ? join(agentDir, "models.json") : undefined;
 	const authStorage = options.authStorage ?? AuthStorage.create(authPath);
-	const modelRegistry = options.modelRegistry ?? new ModelRegistry(authStorage, modelsPath);
+	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
-	const sessionManager = options.sessionManager ?? SessionManager.create(cwd);
+	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 
 	if (!resourceLoader) {
 		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
 		await resourceLoader.reload();
 		time("resourceLoader.reload");
 	}
-
-	// Flush provider registrations queued during extension loading so that
-	// extension models (e.g. pi-claude-cli) are visible in the registry before
-	// findInitialModel() runs. bindCore() repeats this flush as a safety net
-	// for any late-arriving registrations.
-	const { runtime: extensionRuntime } = resourceLoader.getExtensions();
-	for (const { name, config } of extensionRuntime.pendingProviderRegistrations) {
-		modelRegistry.registerProvider(name, config);
-	}
-	extensionRuntime.pendingProviderRegistrations = [];
 
 	// Check if session has existing data to restore
 	const existingSession = sessionManager.buildSessionContext();
@@ -240,23 +197,13 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && existingSession.model) {
 		const restoredModel = modelRegistry.find(existingSession.model.provider, existingSession.model.modelId);
-		if (restoredModel && (await modelRegistry.getApiKey(restoredModel))) {
+		if (restoredModel && modelRegistry.hasConfiguredAuth(restoredModel)) {
 			model = restoredModel;
 		}
 		if (!model) {
 			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
 		}
 	}
-
-	// Flush extension provider registrations so extension-provided models (e.g. claude-code/*)
-	// are available in the registry before model resolution. Without this, findInitialModel()
-	// cannot find extension models and falls back to built-in providers (#3534).
-	const extensionsForModelResolution = resourceLoader.getExtensions();
-	for (const { name, config } of extensionsForModelResolution.runtime.pendingProviderRegistrations) {
-		modelRegistry.registerProvider(name, config);
-	}
-	// Clear the queue so bindCore() doesn't re-register the same providers.
-	extensionsForModelResolution.runtime.pendingProviderRegistrations = [];
 
 	// If still no model, use findInitialModel (checks settings default, then provider defaults)
 	if (!model) {
@@ -295,10 +242,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingLevel = "off";
 	}
 
-	const editMode = settingsManager.getEditMode();
-	const defaultActiveToolNames: ToolName[] = editMode === "hashline"
-		? ["hashline_read", "bash", "hashline_edit", "write", "lsp"]
-		: ["read", "bash", "edit", "write", "lsp"];
+	const defaultActiveToolNames: ToolName[] = ["read", "bash", "edit", "write"];
 	const initialActiveToolNames: ToolName[] = options.tools
 		? options.tools.map((t) => t.name).filter((n): n is ToolName => n in allTools)
 		: defaultActiveToolNames;
@@ -352,12 +296,23 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			tools: [],
 		},
 		convertToLlm: convertToLlmWithBlockImages,
-		onPayload: async (payload, currentModel) => {
+		streamFn: async (model, context, options) => {
+			const auth = await modelRegistry.getApiKeyAndHeaders(model);
+			if (!auth.ok) {
+				throw new Error(auth.error);
+			}
+			return streamSimple(model, context, {
+				...options,
+				apiKey: auth.apiKey,
+				headers: auth.headers || options?.headers ? { ...auth.headers, ...options?.headers } : undefined,
+			});
+		},
+		onPayload: async (payload, _model) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("before_provider_request")) {
 				return payload;
 			}
-			return runner.emitBeforeProviderRequest(payload, currentModel);
+			return runner.emitBeforeProviderRequest(payload);
 		},
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {
@@ -370,104 +325,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		transport: settingsManager.getTransport(),
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		maxRetryDelayMs: settingsManager.getRetrySettings().maxDelayMs,
-		externalToolExecution: (m) => modelRegistry.getProviderAuthMode(m.provider) === "externalCli",
-		getProviderOptions: async (currentModel) => {
-			if (currentModel.provider !== "claude-code") return undefined;
-			const runner = extensionRunnerRef.current;
-			if (!runner?.hasUI()) return undefined;
-			return {
-				extensionUIContext: runner.getUIContext(),
-			};
-		},
-		getApiKey: async (provider) => {
-			// Use the provider argument from the in-flight request;
-			// agent.state.model may already be switched mid-turn.
-			const resolvedProvider = provider || agent.state.model?.provider;
-			if (!resolvedProvider) {
-				throw new Error("No model selected");
-			}
-			const authMode = modelRegistry.getProviderAuthMode(resolvedProvider);
-			if (authMode === "externalCli" || authMode === "none") {
-				return undefined;
-			}
-
-			// Retry key resolution with backoff to handle transient network failures
-			// (e.g., OAuth token refresh failing due to brief connectivity loss).
-			// When credentials are in a cooldown window (e.g., after a 429), wait
-			// for the backoff to expire instead of using fixed delays that are
-			// shorter than the cooldown duration.
-			const maxAttempts = 3;
-			const baseDelayMs = 2000;
-			const maxCooldownWaitMs = 60_000; // Don't wait longer than 60s (skip quota-exhausted 30min backoffs)
-			for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-				const key = await modelRegistry.getApiKeyForProvider(resolvedProvider);
-				if (key) return key;
-
-				// On the last attempt, fall through to error handling below
-				if (attempt >= maxAttempts) break;
-
-				// Only retry if credentials exist (network issue) — no point retrying
-				// when there are genuinely no credentials configured.
-				const hasAuth = modelRegistry.authStorage.hasAuth(resolvedProvider);
-				const model = agent.state.model;
-				const isOAuth = model && modelRegistry.isUsingOAuth(model);
-				if (!hasAuth && !isOAuth) break;
-
-				// If credentials are in a cooldown window, wait for the earliest
-				// one to expire rather than using a fixed delay that's too short.
-				const backoffExpiry = modelRegistry.authStorage.getEarliestBackoffExpiry(resolvedProvider);
-				if (backoffExpiry !== undefined) {
-					const waitMs = backoffExpiry - Date.now() + 500; // 500ms buffer
-					if (waitMs > 0 && waitMs <= maxCooldownWaitMs) {
-						await new Promise(resolve => setTimeout(resolve, waitMs));
-						continue; // Retry immediately after cooldown clears
-					}
-					if (waitMs > maxCooldownWaitMs) {
-						break; // Quota-exhausted or very long backoff — don't block
-					}
-				}
-
-				// Standard exponential backoff for non-cooldown transient failures
-				await new Promise(resolve => setTimeout(resolve, baseDelayMs * attempt));
-			}
-
-			// All retries exhausted — throw descriptive error.
-			// Check if credentials exist but are temporarily in a backoff window
-			// (e.g., after a 429). This message intentionally avoids phrases like
-			// "rate limit" / "429" to prevent isRetryableError() from re-entering
-			// the retry handler and creating cascading error entries (#3429).
-			const hasAuth = modelRegistry.authStorage.hasAuth(resolvedProvider);
-			if (hasAuth) {
-				const expiry = modelRegistry.authStorage.getEarliestBackoffExpiry(resolvedProvider);
-				const retryAfterMs = expiry !== undefined ? Math.max(0, expiry - Date.now()) : undefined;
-				throw new CredentialCooldownError(resolvedProvider, retryAfterMs);
-			}
-			const model = agent.state.model;
-			const isOAuth = model && modelRegistry.isUsingOAuth(model);
-			if (isOAuth) {
-				// If credentials exist but are all in a backoff window (quota / rate-limit),
-				// surface a specific message instead of the misleading "Authentication failed".
-				if (modelRegistry.authStorage.areAllCredentialsBackedOff(resolvedProvider)) {
-					const expiry = modelRegistry.authStorage.getEarliestBackoffExpiry(resolvedProvider);
-					const retryAfterMs = expiry !== undefined ? Math.max(0, expiry - Date.now()) : undefined;
-					throw new CredentialCooldownError(resolvedProvider, retryAfterMs);
-				}
-				throw new Error(
-					`Authentication failed for "${resolvedProvider}". ` +
-						`Credentials may have expired or network is unavailable. ` +
-						`Run '/login ${resolvedProvider}' to re-authenticate.`,
-				);
-			}
-			throw new Error(
-				`No API key found for "${resolvedProvider}". ` +
-					`Set an API key environment variable or run '/login ${resolvedProvider}'.`,
-			);
-		},
 	});
 
 	// Restore messages if session has existing data
 	if (hasExistingSession) {
-		agent.replaceMessages(existingSession.messages);
+		agent.state.messages = existingSession.messages;
 		if (!hasThinkingEntry) {
 			sessionManager.appendThinkingLevelChange(thinkingLevel);
 		}
@@ -490,7 +352,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRegistry,
 		initialActiveToolNames,
 		extensionRunnerRef,
-		isClaudeCodeReady: options.isClaudeCodeReady,
+		sessionStartEvent: options.sessionStartEvent,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

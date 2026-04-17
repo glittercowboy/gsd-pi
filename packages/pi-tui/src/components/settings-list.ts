@@ -1,5 +1,5 @@
 import { fuzzyFilter } from "../fuzzy.js";
-import { getEditorKeybindings } from "../keybindings.js";
+import { getKeybindings } from "../keybindings.js";
 import type { Component } from "../tui.js";
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "../utils.js";
 import { Input } from "./input.js";
@@ -91,8 +91,7 @@ export class SettingsList implements Component {
 		const lines: string[] = [];
 
 		if (this.searchEnabled && this.searchInput) {
-			const rendered = this.searchInput.render(width);
-			for (let i = 0; i < rendered.length; i++) lines.push(rendered[i]);
+			lines.push(...this.searchInput.render(width));
 			lines.push("");
 		}
 
@@ -175,17 +174,17 @@ export class SettingsList implements Component {
 		}
 
 		// Main list input handling
-		const kb = getEditorKeybindings();
+		const kb = getKeybindings();
 		const displayItems = this.searchEnabled ? this.filteredItems : this.items;
-		if (kb.matches(data, "selectUp")) {
+		if (kb.matches(data, "tui.select.up")) {
 			if (displayItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === 0 ? displayItems.length - 1 : this.selectedIndex - 1;
-		} else if (kb.matches(data, "selectDown")) {
+		} else if (kb.matches(data, "tui.select.down")) {
 			if (displayItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === displayItems.length - 1 ? 0 : this.selectedIndex + 1;
-		} else if (kb.matches(data, "selectConfirm") || data === " ") {
+		} else if (kb.matches(data, "tui.select.confirm") || data === " ") {
 			this.activateItem();
-		} else if (kb.matches(data, "selectCancel")) {
+		} else if (kb.matches(data, "tui.select.cancel")) {
 			this.onCancel();
 		} else if (this.searchEnabled && this.searchInput) {
 			const sanitized = data.replace(/ /g, "");

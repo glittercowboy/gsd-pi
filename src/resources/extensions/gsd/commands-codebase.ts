@@ -66,7 +66,7 @@ export async function handleCodebase(
         `Codebase map generated: ${result.fileCount} files\n` +
         `Written to: ${outPath}` +
         (result.truncated ? `\n⚠ Truncated — increase --max-files to include all files` : ""),
-        "success",
+        "info",
       );
       return;
     }
@@ -91,7 +91,7 @@ export async function handleCodebase(
         `Codebase map updated: ${result.fileCount} files\n` +
         `  Added: ${result.added} | Removed: ${result.removed} | Unchanged: ${result.unchanged}` +
         (result.truncated ? `\n⚠ Truncated — increase --max-files to include all files` : ""),
-        "success",
+        "info",
       );
       return;
     }

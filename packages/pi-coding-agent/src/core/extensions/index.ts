@@ -6,16 +6,12 @@ export type { ExtensionManifest } from "./extension-manifest.js";
 export { readManifest, readManifestFromEntryPath } from "./extension-manifest.js";
 export type { SortResult, SortWarning } from "./extension-sort.js";
 export { sortExtensionPaths } from "./extension-sort.js";
-export type { SlashCommandInfo, SlashCommandLocation, SlashCommandSource } from "../slash-commands.js";
+export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.js";
 export {
 	createExtensionRuntime,
 	discoverAndLoadExtensions,
-	getUntrustedExtensionPaths,
-	importExtensionModule,
-	isProjectTrusted,
 	loadExtensionFromFactory,
 	loadExtensions,
-	trustProject,
 } from "./loader.js";
 export type {
 	ExtensionErrorListener,
@@ -165,6 +161,4 @@ export { isToolCallEventType, isToolResultEventType } from "./types.js";
 export {
 	wrapRegisteredTool,
 	wrapRegisteredTools,
-	wrapToolsWithExtensions,
-	wrapToolWithExtensions,
 } from "./wrapper.js";

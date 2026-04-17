@@ -5,9 +5,132 @@
 import type { ComplexityTier, ClassificationResult, TaskMetadata } from "./complexity-classifier.js";
 import { tierOrdinal } from "./complexity-classifier.js";
 import type { ResolvedModelConfig } from "./preferences.js";
-import { getProviderCapabilities, type ProviderCapabilities } from "@gsd/pi-ai";
-import { getToolCompatibility, getAllToolCompatibility } from "@gsd/pi-coding-agent";
-import type { ToolCompatibility } from "@gsd/pi-coding-agent";
+
+// ─── GSD-owned provider capability types (replaced removed pi 0.67.2 APIs) ──
+
+/**
+ * Capability descriptor for a provider API.
+ * Replaces the removed pi-ai getProviderCapabilities/ProviderCapabilities.
+ */
+export interface ProviderCapabilities {
+  /** Provider supports tool/function calling. */
+  toolCalling: boolean;
+  /** Provider can receive image content in tool results. */
+  imageToolResults: boolean;
+  /** JSON schema features unsupported by this provider. */
+  unsupportedSchemaFeatures: string[];
+}
+
+/**
+ * Compatibility metadata for a named tool.
+ * Replaces the removed pi-coding-agent ToolCompatibility type.
+ */
+export interface ToolCompatibility {
+  /** Tool produces image output (e.g. screenshot tools). */
+  producesImages?: boolean;
+  /** JSON schema features this tool's definition uses. */
+  schemaFeatures?: string[];
+  /** Minimum capability tier required to use this tool. */
+  minCapabilityTier?: string;
+}
+
+// Provider capability registry — hardcoded GSD-owned defaults.
+// Anthropic providers support full tool calling and image results.
+// OpenAI/Google/others have varying schema restrictions.
+const PROVIDER_CAPABILITIES: Record<string, ProviderCapabilities> = {
+  "anthropic-messages": { toolCalling: true, imageToolResults: true, unsupportedSchemaFeatures: [] },
+  "anthropic":          { toolCalling: true, imageToolResults: true, unsupportedSchemaFeatures: [] },
+  "claude-code":        { toolCalling: true, imageToolResults: true, unsupportedSchemaFeatures: [] },
+  "openai-responses":   { toolCalling: true, imageToolResults: false, unsupportedSchemaFeatures: [] },
+  "openai-completions": { toolCalling: true, imageToolResults: false, unsupportedSchemaFeatures: [] },
+  "google":             { toolCalling: true, imageToolResults: false, unsupportedSchemaFeatures: [] },
+  "google-gemini-cli":  { toolCalling: true, imageToolResults: false, unsupportedSchemaFeatures: [] },
+  "deepseek":           { toolCalling: true, imageToolResults: false, unsupportedSchemaFeatures: [] },
+  "google-generative-ai": { toolCalling: true, imageToolResults: true, unsupportedSchemaFeatures: ["patternProperties", "additionalProperties"] },
+  "mistral-conversations": { toolCalling: true, imageToolResults: false, unsupportedSchemaFeatures: [] },
+};
+
+// Unknown providers are treated as fully permissive — no capability filtering.
+// This matches the test contract: "unknown provider passes all tools".
+const DEFAULT_PROVIDER_CAPABILITIES: ProviderCapabilities = {
+  toolCalling: true,
+  imageToolResults: true,
+  unsupportedSchemaFeatures: [],
+};
+
+/**
+ * Return capability descriptor for a provider API string.
+ * Replaces removed pi-ai getProviderCapabilities.
+ */
+export function getProviderCapabilities(providerApi: string): ProviderCapabilities {
+  return PROVIDER_CAPABILITIES[providerApi] ?? DEFAULT_PROVIDER_CAPABILITIES;
+}
+
+// Tool compatibility registry — hardcoded GSD-owned metadata.
+// Only tools with special capability requirements need entries.
+const TOOL_COMPATIBILITY: Record<string, ToolCompatibility> = {
+  bash:            { producesImages: false },
+  read:            { producesImages: false },
+  write:           { producesImages: false },
+  edit:            { producesImages: false },
+  grep:            { producesImages: false },
+  find:            { producesImages: false },
+  ls:              { producesImages: false },
+  lsp:             { producesImages: false },
+  glob:            { producesImages: false },
+  notebook_read:   { producesImages: false },
+  notebook_edit:   { producesImages: false },
+};
+
+// Snapshot of built-in tool entries for reset purposes (captured after initial population)
+const BUILTIN_TOOL_NAMES = new Set(Object.keys(TOOL_COMPATIBILITY));
+
+/**
+ * Return compatibility metadata for a tool, or undefined if no constraints.
+ * Replaces removed pi-coding-agent getToolCompatibility.
+ */
+export function getToolCompatibility(toolName: string): ToolCompatibility | undefined {
+  return TOOL_COMPATIBILITY[toolName];
+}
+
+/**
+ * Register compatibility metadata for a named tool.
+ * Replaces removed pi-coding-agent registerToolCompatibility.
+ */
+export function registerToolCompatibility(toolName: string, meta: ToolCompatibility): void {
+  TOOL_COMPATIBILITY[toolName] = meta;
+}
+
+/**
+ * Return all registered tool compatibility entries.
+ * Replaces removed pi-coding-agent getAllToolCompatibility.
+ */
+export function getAllToolCompatibility(): Map<string, ToolCompatibility> {
+  return new Map(Object.entries(TOOL_COMPATIBILITY));
+}
+
+/**
+ * Register an MCP tool with default schema feature metadata.
+ * Replaces removed pi-coding-agent registerMcpToolCompatibility.
+ */
+export function registerMcpToolCompatibility(toolName: string, overrides?: Partial<ToolCompatibility>): void {
+  TOOL_COMPATIBILITY[toolName] = {
+    schemaFeatures: ["patternProperties", "additionalProperties", "oneOf", "anyOf"],
+    ...overrides,
+  };
+}
+
+/**
+ * Reset the tool compatibility registry to only built-in entries.
+ * Replaces removed pi-coding-agent resetToolCompatibilityRegistry.
+ */
+export function resetToolCompatibilityRegistry(): void {
+  for (const key of Object.keys(TOOL_COMPATIBILITY)) {
+    if (!BUILTIN_TOOL_NAMES.has(key)) {
+      delete TOOL_COMPATIBILITY[key];
+    }
+  }
+}
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 

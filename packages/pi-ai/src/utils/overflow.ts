@@ -9,6 +9,7 @@ import type { AssistantMessage } from "../types.js";
  * Provider-specific patterns (with example error messages):
  *
  * - Anthropic: "prompt is too long: 213462 tokens > 200000 maximum"
+ * - Anthropic: "413 {\"error\":{\"type\":\"request_too_large\",\"message\":\"Request exceeds the maximum size\"}}"
  * - OpenAI: "Your input exceeds the context window of this model"
  * - Google: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"
  * - xAI: "This model's maximum prompt length is 131072 but the request contains 537812 tokens"
@@ -19,13 +20,14 @@ import type { AssistantMessage } from "../types.js";
  * - GitHub Copilot: "prompt token count of X exceeds the limit of Y"
  * - MiniMax: "invalid params, context window exceeds limit"
  * - Kimi For Coding: "Your request exceeded model token limit: X (requested: Y)"
- * - Cerebras: Returns "400/413 status code (no body)" - handled separately below
+ * - Cerebras: "400/413 status code (no body)"
  * - Mistral: "Prompt contains X tokens ... too large for model with Y maximum context length"
  * - z.ai: Does NOT error, accepts overflow silently - handled via usage.input > contextWindow
- * - Ollama: Silently truncates input - not detectable via error message
+ * - Ollama: Some deployments truncate silently, others return errors like "prompt too long; exceeded max context length by X tokens"
  */
 const OVERFLOW_PATTERNS = [
-	/prompt is too long/i, // Anthropic
+	/prompt is too long/i, // Anthropic token overflow
+	/request_too_large/i, // Anthropic request byte-size overflow (HTTP 413)
 	/input is too long for requested model/i, // Amazon Bedrock
 	/exceeds the context window/i, // OpenAI (Completions & Responses API)
 	/input token count.*exceeds the maximum/i, // Google (Gemini)
@@ -39,9 +41,26 @@ const OVERFLOW_PATTERNS = [
 	/exceeded model token limit/i, // Kimi For Coding
 	/too large for model with \d+ maximum context length/i, // Mistral
 	/model_context_window_exceeded/i, // z.ai non-standard finish_reason surfaced as error text
+	/prompt too long; exceeded (?:max )?context length/i, // Ollama explicit overflow error
 	/context[_ ]length[_ ]exceeded/i, // Generic fallback
 	/too many tokens/i, // Generic fallback
 	/token limit exceeded/i, // Generic fallback
+	/^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i, // Cerebras: 400/413 with no body
+];
+
+/**
+ * Patterns that indicate non-overflow errors (e.g. rate limiting, server errors).
+ * Error messages matching any of these are excluded from overflow detection
+ * even if they also match an OVERFLOW_PATTERN.
+ *
+ * Example: Bedrock formats throttling errors as "ThrottlingException: Too many tokens,
+ * please wait before trying again." which would match the /too many tokens/i overflow
+ * pattern without this exclusion.
+ */
+const NON_OVERFLOW_PATTERNS = [
+	/^(Throttling error|Service unavailable):/i, // AWS Bedrock non-overflow errors (human-readable prefixes from formatBedrockError)
+	/rate limit/i, // Generic rate limiting
+	/too many requests/i, // Generic HTTP 429 style
 ];
 
 /**
@@ -56,7 +75,7 @@ const OVERFLOW_PATTERNS = [
  * ## Reliability by Provider
  *
  * **Reliable detection (returns error with detectable message):**
- * - Anthropic: "prompt is too long: X tokens > Y maximum"
+ * - Anthropic: "prompt is too long: X tokens > Y maximum" or "request_too_large"
  * - OpenAI (Completions & Responses): "exceeds the context window"
  * - Google Gemini: "input token count exceeds the maximum"
  * - xAI (Grok): "maximum prompt length is X but request contains Y"
@@ -71,8 +90,9 @@ const OVERFLOW_PATTERNS = [
  * **Unreliable detection:**
  * - z.ai: Sometimes accepts overflow silently (detectable via usage.input > contextWindow),
  *   sometimes returns rate limit errors. Pass contextWindow param to detect silent overflow.
- * - Ollama: Silently truncates input without error. Cannot be detected via this function.
- *   The response will have usage.input < expected, but we don't know the expected value.
+ * - Ollama: May truncate input silently for some setups, but may also return explicit
+ *   overflow errors that match the patterns above. Silent truncation still cannot be
+ *   detected here because we do not know the expected token count.
  *
  * ## Custom Providers
  *
@@ -92,27 +112,9 @@ const OVERFLOW_PATTERNS = [
 export function isContextOverflow(message: AssistantMessage, contextWindow?: number): boolean {
 	// Case 1: Check error message patterns
 	if (message.stopReason === "error" && message.errorMessage) {
-		// Check known patterns
-		if (OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!))) {
-			return true;
-		}
-
-		// Cerebras returns 400/413 with no body for context overflow
-		// Note: 429 is rate limiting (requests/tokens per time), NOT context overflow
-		if (/^4(00|13)\s*(status code)?\s*\(no body\)/i.test(message.errorMessage)) {
-			return true;
-		}
-	}
-
-	// Some providers surface overflow as assistant text while putting a generic
-	// classifier value in errorMessage (e.g. claude-code: errorMessage="success",
-	// text="Prompt is too long"). Check rendered text as a fallback.
-	if (message.stopReason === "error") {
-		const assistantText = message.content
-			.filter((block) => block.type === "text")
-			.map((block) => block.text)
-			.join("\n");
-		if (assistantText && OVERFLOW_PATTERNS.some((p) => p.test(assistantText))) {
+		// Skip messages matching known non-overflow patterns (e.g. throttling / rate-limit)
+		const isNonOverflow = NON_OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!));
+		if (!isNonOverflow && OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!))) {
 			return true;
 		}
 	}
@@ -126,4 +128,11 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 	}
 
 	return false;
+}
+
+/**
+ * Get the overflow patterns for testing purposes.
+ */
+export function getOverflowPatterns(): RegExp[] {
+	return [...OVERFLOW_PATTERNS];
 }

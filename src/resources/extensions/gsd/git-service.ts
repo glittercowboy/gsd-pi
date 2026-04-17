@@ -760,7 +760,6 @@ export class GitServiceImpl {
    * Run pre-merge verification check. Auto-detects test runner from project
    * files, or uses custom command from prefs.pre_merge_check.
    * Gated on prefs.pre_merge_check (false = skip, string = custom command).
-   * Stub: to be implemented in T03.
    */
   runPreMergeCheck(): PreMergeCheckResult {
     if (this.prefs.pre_merge_check === false) {

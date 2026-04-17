@@ -8,7 +8,8 @@
 
 import type { Readable } from 'node:stream'
 
-import { RpcClient, attachJsonlLineReader } from '@gsd/pi-coding-agent'
+import { RpcClient } from '@gsd/agent-modes'
+import { attachJsonlLineReader } from '@gsd/pi-coding-agent'
 
 // ---------------------------------------------------------------------------
 // Types

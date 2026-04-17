@@ -13,8 +13,8 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { readFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import type {
 	Agent,
 	AgentEvent,
@@ -22,23 +22,24 @@ import type {
 	AgentState,
 	AgentTool,
 	ThinkingLevel,
-} from "@gsd/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@gsd/pi-ai";
-import { modelsAreEqual, resetApiProviders, supportsXhigh } from "@gsd/pi-ai";
-import { Type } from "@sinclair/typebox";
+} from "@mariozechner/pi-agent-core";
+import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@mariozechner/pi-ai";
+import { isContextOverflow, modelsAreEqual, resetApiProviders, supportsXhigh } from "@mariozechner/pi-ai";
 import { getDocsPath } from "../config.js";
-import { getErrorMessage } from "../utils/error.js";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
-import { type BashResult, executeBash as executeBashCommand, executeBashWithOperations } from "./bash-executor.js";
+import { sleep } from "../utils/sleep.js";
+import { type BashResult, executeBashWithOperations } from "./bash-executor.js";
 import {
 	type CompactionResult,
 	calculateContextTokens,
 	collectEntriesForBranchSummary,
+	compact,
 	estimateContextTokens,
 	generateBranchSummary,
+	prepareCompaction,
+	shouldCompact,
 } from "./compaction/index.js";
-import { CompactionOrchestrator } from "./compaction-orchestrator.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
@@ -52,9 +53,9 @@ import {
 	type MessageEndEvent,
 	type MessageStartEvent,
 	type MessageUpdateEvent,
-	type SessionBeforeForkResult,
-	type SessionBeforeSwitchResult,
+	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
+	type SessionStartEvent,
 	type ShutdownHandler,
 	type ToolDefinition,
 	type ToolExecutionEndEvent,
@@ -67,19 +68,18 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
-import { FallbackResolver } from "./fallback-resolver.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
-import { RetryHandler } from "./retry-handler.js";
-import { isImageDimensionError, downsizeConversationImages } from "./image-overflow-recovery.js";
-import type { BranchSummaryEntry, SessionManager } from "./session-manager.js";
-import { getLatestCompactionEntry } from "./session-manager.js";
+import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.js";
+import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.js";
 import type { SettingsManager } from "./settings-manager.js";
-import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
+import type { SlashCommandInfo } from "./slash-commands.js";
+import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
 import { buildSystemPrompt } from "./system-prompt.js";
-import type { BashOperations } from "./tools/bash.js";
-import { createAllTools } from "./tools/index.js";
+import { type BashOperations, createLocalBashOperations } from "./tools/bash.js";
+import { createAllToolDefinitions } from "./tools/index.js";
+import { createToolDefinitionFromAgentTool, wrapToolDefinition } from "./tools/tool-definition-wrapper.js";
 
 // ============================================================================
 // Skill Block Parsing
@@ -109,36 +109,24 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 }
 
 /** Session-specific events that extend the core AgentEvent */
-export type SessionStateChangeReason =
-	| "set_model"
-	| "set_thinking_level"
-	| "set_steering_mode"
-	| "set_follow_up_mode"
-	| "set_auto_compaction"
-	| "set_auto_retry"
-	| "abort_retry"
-	| "new_session"
-	| "switch_session"
-	| "set_session_name"
-	| "fork";
-
 export type AgentSessionEvent =
 	| AgentEvent
-	| { type: "session_state_changed"; reason: SessionStateChangeReason }
-	| { type: "auto_compaction_start"; reason: "threshold" | "overflow" }
 	| {
-			type: "auto_compaction_end";
+			type: "queue_update";
+			steering: readonly string[];
+			followUp: readonly string[];
+	  }
+	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
+	| {
+			type: "compaction_end";
+			reason: "manual" | "threshold" | "overflow";
 			result: CompactionResult | undefined;
 			aborted: boolean;
 			willRetry: boolean;
 			errorMessage?: string;
 	  }
 	| { type: "auto_retry_start"; attempt: number; maxAttempts: number; delayMs: number; errorMessage: string }
-	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string }
-	| { type: "fallback_provider_switch"; from: string; to: string; reason: string }
-	| { type: "fallback_provider_restored"; provider: string; reason: string }
-	| { type: "fallback_chain_exhausted"; reason: string }
-	| { type: "image_overflow_recovery"; strippedCount: number; imageCount: number };
+	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
 
 /** Listener function for agent session events */
 export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
@@ -162,13 +150,17 @@ export interface AgentSessionConfig {
 	modelRegistry: ModelRegistry;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
-	/** Override base tools (useful for custom runtimes). */
+	/**
+	 * Override base tools (useful for custom runtimes).
+	 *
+	 * These are synthesized into minimal ToolDefinitions internally so AgentSession can keep
+	 * a definition-first registry even when callers provide plain AgentTool instances.
+	 */
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
-	/** Optional: check if the claude-code CLI provider is ready (installed + authed).
-	 * Passed through to RetryHandler for third-party block recovery (#3772). */
-	isClaudeCodeReady?: () => boolean;
+	/** Session start event metadata emitted when extensions bind to this runtime. */
+	sessionStartEvent?: SessionStartEvent;
 }
 
 export interface ExtensionBindings {
@@ -215,6 +207,12 @@ export interface SessionStats {
 		total: number;
 	};
 	cost: number;
+	contextUsage?: ContextUsage;
+}
+
+interface ToolDefinitionEntry {
+	definition: ToolDefinition;
+	sourceInfo: SourceInfo;
 }
 
 // ============================================================================
@@ -250,19 +248,19 @@ export class AgentSession {
 	/** Messages queued to be included with the next user prompt as context ("asides"). */
 	private _pendingNextTurnMessages: CustomMessage[] = [];
 
-	// Delegated subsystems
-	private _retryHandler: RetryHandler;
-	private _compactionOrchestrator: CompactionOrchestrator;
+	// Compaction state
+	private _compactionAbortController: AbortController | undefined = undefined;
+	private _autoCompactionAbortController: AbortController | undefined = undefined;
+	private _overflowRecoveryAttempted = false;
 
-	// Cumulative session stats — survives compaction (#1423)
-	private _cumulativeCost = 0;
-	private _cumulativeInputTokens = 0;
-	private _cumulativeOutputTokens = 0;
-	private _cumulativeToolCalls = 0;
+	// Branch summarization state
+	private _branchSummaryAbortController: AbortController | undefined = undefined;
 
-	/** Cost of the most recent assistant response (for per-prompt display). */
-	private _lastTurnCost = 0;
-
+	// Retry state
+	private _retryAbortController: AbortController | undefined = undefined;
+	private _retryAttempt = 0;
+	private _retryPromise: Promise<void> | undefined = undefined;
+	private _retryResolve: (() => void) | undefined = undefined;
 
 	// Bash execution state
 	private _bashAbortController: AbortController | undefined = undefined;
@@ -274,11 +272,12 @@ export class AgentSession {
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
-	private _baseToolRegistry: Map<string, AgentTool> = new Map();
+	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _baseToolsOverride?: Record<string, AgentTool>;
+	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionShutdownHandler?: ShutdownHandler;
@@ -288,11 +287,9 @@ export class AgentSession {
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
 
-	// Provider fallback resolver
-	private _fallbackResolver: FallbackResolver;
-
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
+	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
 
@@ -308,49 +305,14 @@ export class AgentSession {
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRegistry = config.modelRegistry;
-		this._fallbackResolver = new FallbackResolver(
-			this.settingsManager,
-			this._modelRegistry.authStorage,
-			this._modelRegistry,
-		);
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._baseToolsOverride = config.baseToolsOverride;
-
-		// Initialize delegated subsystems
-		this._retryHandler = new RetryHandler({
-			agent: this.agent,
-			settingsManager: this.settingsManager,
-			modelRegistry: this._modelRegistry,
-			fallbackResolver: this._fallbackResolver,
-			getModel: () => this.model,
-			getSessionId: () => this.sessionId,
-			emit: (event) => this._emit(event),
-			onModelChange: (model) => this.sessionManager.appendModelChange(model.provider, model.id),
-			isClaudeCodeReady: config.isClaudeCodeReady,
-		});
-
-		this._compactionOrchestrator = new CompactionOrchestrator({
-			agent: this.agent,
-			sessionManager: this.sessionManager,
-			settingsManager: this.settingsManager,
-			modelRegistry: this._modelRegistry,
-			getModel: () => this.model,
-			getSessionId: () => this.sessionId,
-			getExtensionRunner: () => this._extensionRunner,
-			emit: (event) => this._emit(event),
-			disconnectFromAgent: () => this._disconnectFromAgent(),
-			reconnectToAgent: () => this._reconnectToAgent(),
-			abort: () => this.abort(),
-		});
+		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
-
-		// Install tool hooks that await the event queue before emitting extension events.
-		// This ensures extensions always see settled state (e.g., assistant message appended)
-		// even when tools execute in parallel.
 		this._installAgentToolHooks();
 
 		this._buildRuntime({
@@ -364,9 +326,89 @@ export class AgentSession {
 		return this._modelRegistry;
 	}
 
-	/** Fallback resolver for cross-provider fallback */
-	get fallbackResolver(): FallbackResolver {
-		return this._fallbackResolver;
+	private async _getRequiredRequestAuth(model: Model<any>): Promise<{
+		apiKey: string;
+		headers?: Record<string, string>;
+	}> {
+		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
+		if (!result.ok) {
+			throw new Error(result.error);
+		}
+		if (result.apiKey) {
+			return { apiKey: result.apiKey, headers: result.headers };
+		}
+
+		const isOAuth = this._modelRegistry.isUsingOAuth(model);
+		if (isOAuth) {
+			throw new Error(
+				`Authentication failed for "${model.provider}". ` +
+					`Credentials may have expired or network is unavailable. ` +
+					`Run '/login ${model.provider}' to re-authenticate.`,
+			);
+		}
+		throw new Error(
+			`No API key found for ${model.provider}.\n\n` +
+				`Use /login or set an API key environment variable. See ${join(getDocsPath(), "providers.md")}`,
+		);
+	}
+
+	/**
+	 * Install tool hooks once on the Agent instance.
+	 *
+	 * The callbacks read `this._extensionRunner` at execution time, so extension reload swaps in the
+	 * new runner without reinstalling hooks. Extension-specific tool wrappers are still used to adapt
+	 * registered tool execution to the extension context. Tool call and tool result interception now
+	 * happens here instead of in wrappers.
+	 */
+	private _installAgentToolHooks(): void {
+		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+			const runner = this._extensionRunner;
+			if (!runner?.hasHandlers("tool_call")) {
+				return undefined;
+			}
+
+			await this._agentEventQueue;
+
+			try {
+				return await runner.emitToolCall({
+					type: "tool_call",
+					toolName: toolCall.name,
+					toolCallId: toolCall.id,
+					input: args as Record<string, unknown>,
+				});
+			} catch (err) {
+				if (err instanceof Error) {
+					throw err;
+				}
+				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+			}
+		};
+
+		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
+			const runner = this._extensionRunner;
+			if (!runner?.hasHandlers("tool_result")) {
+				return undefined;
+			}
+
+			const hookResult = await runner.emitToolResult({
+				type: "tool_result",
+				toolName: toolCall.name,
+				toolCallId: toolCall.id,
+				input: args as Record<string, unknown>,
+				content: result.content,
+				details: isError ? undefined : result.details,
+				isError,
+			});
+
+			if (!hookResult || isError) {
+				return undefined;
+			}
+
+			return {
+				content: hookResult.content,
+				details: hookResult.details,
+			};
+		};
 	}
 
 	// =========================================================================
@@ -380,8 +422,12 @@ export class AgentSession {
 		}
 	}
 
-	private _emitSessionStateChanged(reason: SessionStateChangeReason): void {
-		this._emit({ type: "session_state_changed", reason });
+	private _emitQueueUpdate(): void {
+		this._emit({
+			type: "queue_update",
+			steering: [...this._steeringMessages],
+			followUp: [...this._followUpMessages],
+		});
 	}
 
 	// Track last assistant message for auto-compaction check
@@ -391,7 +437,7 @@ export class AgentSession {
 	private _handleAgentEvent = (event: AgentEvent): void => {
 		// Create retry promise synchronously before queueing async processing.
 		// Agent.emit() calls this handler synchronously, and prompt() calls waitForRetry()
-		// as soon as agent.prompt() resolves. If the retry promise is created only inside
+		// as soon as agent.prompt() resolves. If _retryPromise is created only inside
 		// _processAgentEvent, slow earlier queued events can delay agent_end processing
 		// and waitForRetry() can miss the in-flight retry.
 		this._createRetryPromiseForAgentEnd(event);
@@ -406,26 +452,53 @@ export class AgentSession {
 	};
 
 	private _createRetryPromiseForAgentEnd(event: AgentEvent): void {
-		if (event.type !== "agent_end") return;
-		this._retryHandler.createRetryPromiseForAgentEnd(event.messages);
+		if (event.type !== "agent_end" || this._retryPromise) {
+			return;
+		}
+
+		const settings = this.settingsManager.getRetrySettings();
+		if (!settings.enabled) {
+			return;
+		}
+
+		const lastAssistant = this._findLastAssistantInMessages(event.messages);
+		if (!lastAssistant || !this._isRetryableError(lastAssistant)) {
+			return;
+		}
+
+		this._retryPromise = new Promise((resolve) => {
+			this._retryResolve = resolve;
+		});
+	}
+
+	private _findLastAssistantInMessages(messages: AgentMessage[]): AssistantMessage | undefined {
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const message = messages[i];
+			if (message.role === "assistant") {
+				return message as AssistantMessage;
+			}
+		}
+		return undefined;
 	}
 
 	private async _processAgentEvent(event: AgentEvent): Promise<void> {
 		// When a user message starts, check if it's from either queue and remove it BEFORE emitting
 		// This ensures the UI sees the updated queue state
 		if (event.type === "message_start" && event.message.role === "user") {
-			this._compactionOrchestrator.resetOverflowRecovery();
+			this._overflowRecoveryAttempted = false;
 			const messageText = this._getUserMessageText(event.message);
 			if (messageText) {
 				// Check steering queue first
 				const steeringIndex = this._steeringMessages.indexOf(messageText);
 				if (steeringIndex !== -1) {
 					this._steeringMessages.splice(steeringIndex, 1);
+					this._emitQueueUpdate();
 				} else {
 					// Check follow-up queue
 					const followUpIndex = this._followUpMessages.indexOf(messageText);
 					if (followUpIndex !== -1) {
 						this._followUpMessages.splice(followUpIndex, 1);
+						this._emitQueueUpdate();
 					}
 				}
 			}
@@ -462,22 +535,20 @@ export class AgentSession {
 			if (event.message.role === "assistant") {
 				this._lastAssistantMessage = event.message;
 
-				// Accumulate session stats that survive compaction (#1423)
 				const assistantMsg = event.message as AssistantMessage;
-				this._lastTurnCost = assistantMsg.usage?.cost?.total ?? 0;
-				this._cumulativeCost += assistantMsg.usage?.cost?.total ?? 0;
-				this._cumulativeInputTokens += assistantMsg.usage?.input ?? 0;
-				this._cumulativeOutputTokens += assistantMsg.usage?.output ?? 0;
-				this._cumulativeToolCalls += assistantMsg.content.filter((c) => c.type === "toolCall").length;
-
 				if (assistantMsg.stopReason !== "error") {
-					this._compactionOrchestrator.clearOverflowRecovery();
+					this._overflowRecoveryAttempted = false;
 				}
 
 				// Reset retry counter immediately on successful assistant response
 				// This prevents accumulation across multiple LLM calls within a turn
-				if (assistantMsg.stopReason !== "error") {
-					this._retryHandler.handleSuccessfulResponse();
+				if (assistantMsg.stopReason !== "error" && this._retryAttempt > 0) {
+					this._emit({
+						type: "auto_retry_end",
+						success: true,
+						attempt: this._retryAttempt,
+					});
+					this._retryAttempt = 0;
 				}
 			}
 		}
@@ -488,107 +559,23 @@ export class AgentSession {
 			this._lastAssistantMessage = undefined;
 
 			// Check for retryable errors first (overloaded, rate limit, server errors)
-			if (this._retryHandler.isRetryableError(msg)) {
-				const didRetry = await this._retryHandler.handleRetryableError(msg);
+			if (this._isRetryableError(msg)) {
+				const didRetry = await this._handleRetryableError(msg);
 				if (didRetry) return; // Retry was initiated, don't proceed to compaction
 			}
 
-			// Check for image dimension overflow (many-image 400 error).
-			// When a session accumulates many images, the API rejects requests
-			// whose images exceed the many-image dimension limit. Strip older
-			// images from the conversation and auto-retry. (#2874)
-			if (
-				msg.stopReason === "error" &&
-				isImageDimensionError(msg.errorMessage)
-			) {
-				const messages = this.agent.state.messages;
-				const result = downsizeConversationImages(messages as Message[]);
-				if (result.processed) {
-					// Remove the trailing error assistant message, then replace
-					if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-						this.agent.replaceMessages(messages.slice(0, -1));
-					}
-
-					this._emit({
-						type: "image_overflow_recovery",
-						strippedCount: result.strippedCount,
-						imageCount: result.imageCount,
-					});
-
-					// Auto-retry after downsizing
-					setTimeout(() => {
-						this.agent.continue().catch(() => {});
-					}, 0);
-					return;
-				}
-			}
-
-			await this._compactionOrchestrator.checkCompaction(msg);
+			this._resolveRetry();
+			await this._checkCompaction(msg);
 		}
 	}
 
-	/**
-	 * Install beforeToolCall/afterToolCall hooks on the Agent.
-	 *
-	 * These hooks await `_agentEventQueue` before emitting extension events,
-	 * ensuring that all prior events (including `message_end` which appends
-	 * the assistant message) have fully settled. This prevents a race condition
-	 * in parallel tool execution where extension `tool_call` handlers could
-	 * see stale agent state.
-	 */
-	private _installAgentToolHooks(): void {
-		this.agent.setBeforeToolCall(async ({ toolCall, args }) => {
-			// Wait for all queued agent events to settle before emitting to extensions
-			await this._agentEventQueue;
-
-			if (!this._extensionRunner?.hasHandlers("tool_call")) return undefined;
-
-			try {
-				const callResult = await this._extensionRunner.emitToolCall({
-					type: "tool_call",
-					toolName: toolCall.name,
-					toolCallId: toolCall.id,
-					input: args as Record<string, unknown>,
-				});
-
-				if (callResult?.block) {
-					return {
-						block: true,
-						reason: callResult.reason || "Tool execution was blocked by an extension",
-					};
-				}
-			} catch (err) {
-				return { block: true, reason: err instanceof Error ? err.message : `Extension failed, blocking execution: ${String(err)}` };
-			}
-
-			return undefined;
-		});
-
-		this.agent.setAfterToolCall(async ({ toolCall, args, result, isError }) => {
-			// Wait for all queued agent events to settle
-			await this._agentEventQueue;
-
-			if (!this._extensionRunner?.hasHandlers("tool_result")) return undefined;
-
-			const resultResult = await this._extensionRunner.emitToolResult({
-				type: "tool_result",
-				toolName: toolCall.name,
-				toolCallId: toolCall.id,
-				input: args as Record<string, unknown>,
-				content: result.content,
-				details: result.details,
-				isError,
-			});
-
-			if (resultResult) {
-				return {
-					content: resultResult.content ?? undefined,
-					details: resultResult.details ?? undefined,
-				};
-			}
-
-			return undefined;
-		});
+	/** Resolve the pending retry promise */
+	private _resolveRetry(): void {
+		if (this._retryResolve) {
+			this._retryResolve();
+			this._retryResolve = undefined;
+			this._retryPromise = undefined;
+		}
 	}
 
 	/** Extract text content from a message */
@@ -728,8 +715,6 @@ export class AgentSession {
 	 * Call this when completely done with the session.
 	 */
 	dispose(): void {
-		this._extensionErrorUnsubscriber?.();
-		this._extensionErrorUnsubscriber = undefined;
 		this._disconnectFromAgent();
 		this._eventListeners = [];
 	}
@@ -765,7 +750,7 @@ export class AgentSession {
 
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
-		return this._retryHandler.retryAttempt;
+		return this._retryAttempt;
 	}
 
 	/**
@@ -777,14 +762,19 @@ export class AgentSession {
 	}
 
 	/**
-	 * Get all configured tools with name, description, and parameter schema.
+	 * Get all configured tools with name, description, parameter schema, and source metadata.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolRegistry.values()).map((t) => ({
-			name: t.name,
-			description: t.description,
-			parameters: t.parameters,
+		return Array.from(this._toolDefinitions.values()).map(({ definition, sourceInfo }) => ({
+			name: definition.name,
+			description: definition.description,
+			parameters: definition.parameters,
+			sourceInfo,
 		}));
+	}
+
+	getToolDefinition(name: string): ToolDefinition | undefined {
+		return this._toolDefinitions.get(name)?.definition;
 	}
 
 	/**
@@ -794,63 +784,29 @@ export class AgentSession {
 	 * Changes take effect on the next agent turn.
 	 */
 	setActiveToolsByName(toolNames: string[]): void {
-		const requestedToolNames = [...new Set([...toolNames, ...this._getBuiltinToolNames()])];
 		const tools: AgentTool[] = [];
 		const validToolNames: string[] = [];
-		for (const name of requestedToolNames) {
+		for (const name of toolNames) {
 			const tool = this._toolRegistry.get(name);
 			if (tool) {
 				tools.push(tool);
 				validToolNames.push(name);
 			}
 		}
-		this.agent.setTools(tools);
-
+		this.agent.state.tools = tools;
 
 		// Rebuild base system prompt with new tool set
 		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this.agent.state.systemPrompt = this._baseSystemPrompt;
 	}
 
 	/** Whether compaction or branch summarization is currently running */
 	get isCompacting(): boolean {
-		return this._compactionOrchestrator.isCompacting;
-	}
-
-	/**
-	 * Switch edit mode between standard (text-match) and hashline (LINE#ID anchors).
-	 * Swaps the active read/edit tools and rebuilds the system prompt.
-	 */
-	setEditMode(mode: "standard" | "hashline"): void {
-		this.settingsManager.setEditMode(mode);
-
-		// Get current active tool registry keys
-		const currentKeys = new Set<string>();
-		for (const [key, tool] of this._toolRegistry.entries()) {
-			if (this.agent.state.tools.includes(tool)) {
-				currentKeys.add(key);
-			}
-		}
-
-		// Swap read tools
-		if (mode === "hashline") {
-			currentKeys.delete("read");
-			currentKeys.add("hashline_read");
-			currentKeys.delete("edit");
-			currentKeys.add("hashline_edit");
-		} else {
-			currentKeys.delete("hashline_read");
-			currentKeys.add("read");
-			currentKeys.delete("hashline_edit");
-			currentKeys.add("edit");
-		}
-
-		this.setActiveToolsByName([...currentKeys]);
-	}
-
-	/** Current edit mode */
-	get editMode(): "standard" | "hashline" {
-		return this.settingsManager.getEditMode();
+		return (
+			this._autoCompactionAbortController !== undefined ||
+			this._compactionAbortController !== undefined ||
+			this._branchSummaryAbortController !== undefined
+		);
 	}
 
 	/** All messages including custom types like BashExecutionMessage */
@@ -860,12 +816,12 @@ export class AgentSession {
 
 	/** Current steering mode */
 	get steeringMode(): "all" | "one-at-a-time" {
-		return this.agent.getSteeringMode();
+		return this.agent.steeringMode;
 	}
 
 	/** Current follow-up mode */
 	get followUpMode(): "all" | "one-at-a-time" {
-		return this.agent.getFollowUpMode();
+		return this.agent.followUpMode;
 	}
 
 	/** Current session file path, or undefined if sessions are disabled */
@@ -920,48 +876,6 @@ export class AgentSession {
 			}
 		}
 		return Array.from(unique);
-	}
-
-	private _findSkillByName(skillName: string) {
-		return this.resourceLoader.getSkills().skills.find((skill) => skill.name === skillName);
-	}
-
-	private _formatMissingSkillMessage(skillName: string): string {
-		const availableSkills = this.resourceLoader.getSkills().skills.map((skill) => skill.name).join(", ") || "(none)";
-		return `Skill "${skillName}" not found. Available skills: ${availableSkills}`;
-	}
-
-	private _emitSkillExpansionError(skillFilePath: string, err: unknown): void {
-		this._extensionRunner?.emitError({
-			extensionPath: skillFilePath,
-			event: "skill_expansion",
-			error: getErrorMessage(err),
-		});
-	}
-
-	private _renderSkillInvocation(skill: { name: string; filePath: string; baseDir: string }, args?: string): string {
-		const content = readFileSync(skill.filePath, "utf-8");
-		const body = stripFrontmatter(content).trim();
-		const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
-		return args && args.trim() ? `${skillBlock}\n\n${args.trim()}` : skillBlock;
-	}
-
-	private _expandSkillByName(skillName: string, args?: string): string {
-		const skill = this._findSkillByName(skillName);
-		if (!skill) {
-			throw new Error(this._formatMissingSkillMessage(skillName));
-		}
-
-		try {
-			return this._renderSkillInvocation(skill, args);
-		} catch (err) {
-			this._emitSkillExpansionError(skill.filePath, err);
-			throw err;
-		}
-	}
-
-	private _formatSkillInvocation(skillName: string, args?: string): string {
-		return this._expandSkillByName(skillName, args);
 	}
 
 	private _rebuildSystemPrompt(toolNames: string[]): string {
@@ -1077,21 +991,7 @@ export class AgentSession {
 			);
 		}
 
-		// Check if a higher-priority provider in the fallback chain has recovered
-		const restoration = await this._fallbackResolver.checkForRestoration(this.model);
-		if (restoration) {
-			const previousProvider = `${this.model.provider}/${this.model.id}`;
-			this.agent.setModel(restoration.model);
-			this.sessionManager.appendModelChange(restoration.model.provider, restoration.model.id);
-			this._emit({
-				type: "fallback_provider_restored",
-				provider: `${restoration.model.provider}/${restoration.model.id}`,
-				reason: `Restored from ${previousProvider}`,
-			});
-		}
-
-		// Validate provider readiness
-		if (!this._modelRegistry.isProviderRequestReady(this.model.provider)) {
+		if (!this._modelRegistry.hasConfiguredAuth(this.model)) {
 			const isOAuth = this._modelRegistry.isUsingOAuth(this.model);
 			if (isOAuth) {
 				throw new Error(
@@ -1109,7 +1009,7 @@ export class AgentSession {
 		// Check if we need to compact before sending (catches aborted responses)
 		const lastAssistant = this._findLastAssistantMessage();
 		if (lastAssistant) {
-			await this._compactionOrchestrator.checkCompaction(lastAssistant, false);
+			await this._checkCompaction(lastAssistant, false);
 		}
 
 		// Build messages array (custom message if any, then user message)
@@ -1154,15 +1054,15 @@ export class AgentSession {
 			}
 			// Apply extension-modified system prompt, or reset to base
 			if (result?.systemPrompt) {
-				this.agent.setSystemPrompt(result.systemPrompt);
+				this.agent.state.systemPrompt = result.systemPrompt;
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this.agent.setSystemPrompt(this._baseSystemPrompt);
+				this.agent.state.systemPrompt = this._baseSystemPrompt;
 			}
 		}
 
 		await this.agent.prompt(messages);
-		await this._retryHandler.waitForRetry();
+		await this.waitForRetry();
 	}
 
 	/**
@@ -1190,7 +1090,7 @@ export class AgentSession {
 			this._extensionRunner.emitError({
 				extensionPath: `command:${commandName}`,
 				event: "command",
-				error: getErrorMessage(err),
+				error: err instanceof Error ? err.message : String(err),
 			});
 			return true;
 		}
@@ -1208,82 +1108,29 @@ export class AgentSession {
 		const skillName = spaceIndex === -1 ? text.slice(7) : text.slice(7, spaceIndex);
 		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1).trim();
 
-		if (!this._findSkillByName(skillName)) return text;
+		const skill = this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
+		if (!skill) return text; // Unknown skill, pass through
 
 		try {
-			return this._formatSkillInvocation(skillName, args);
-		} catch {
-			return text;
+			const content = readFileSync(skill.filePath, "utf-8");
+			const body = stripFrontmatter(content).trim();
+			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
+			return args ? `${skillBlock}\n\n${args}` : skillBlock;
+		} catch (err) {
+			// Emit error like extension commands do
+			this._extensionRunner?.emitError({
+				extensionPath: skill.filePath,
+				event: "skill_expansion",
+				error: err instanceof Error ? err.message : String(err),
+			});
+			return text; // Return original on error
 		}
 	}
 
-	private _createBuiltInSkillTool(): AgentTool {
-		const skillSchema = Type.Object({
-			skill: Type.String({ description: "The skill name. E.g., 'commit', 'review-pr', or 'pdf'" }),
-			args: Type.Optional(Type.String({ description: "Optional arguments for the skill" })),
-		});
-
-		return {
-			name: "Skill",
-			label: "Skill",
-			description:
-				"Execute a skill within the main conversation. Use this tool when users ask for a slash command or reference a skill by name. Returns the expanded skill block and appends args after it.",
-			parameters: skillSchema,
-			execute: async (_toolCallId, params: unknown) => {
-				const input = params as { skill: string; args?: string };
-				try {
-					return {
-						content: [
-							{
-								type: "text",
-								text: this._expandSkillByName(input.skill, input.args),
-							},
-						],
-						details: undefined,
-					};
-				} catch (err) {
-					return {
-						content: [{ type: "text", text: getErrorMessage(err) }],
-						details: undefined,
-					};
-				}
-			},
-		};
-	}
-
-	private _getBuiltinToolNames(): string[] {
-		return this._getBuiltinTools().map((tool) => tool.name);
-	}
-
-	private _getBuiltinTools(): AgentTool[] {
-		return [this._createBuiltInSkillTool()];
-	}
-
-	private _getRegisteredToolDefinitions(): ToolDefinition[] {
-		const registeredTools = this._extensionRunner?.getAllRegisteredTools() ?? [];
-		return registeredTools.map((tool) => tool.definition);
-	}
-
-	private _getBuiltinToolDefinitions(): ToolDefinition[] {
-		return this._getBuiltinTools().map((tool) => ({
-			name: tool.name,
-			label: tool.label,
-			description: tool.description,
-			parameters: tool.parameters,
-			execute: async () => ({ content: [], details: undefined }),
-		}));
-	}
-
-	getRenderableToolDefinition(toolName: string): ToolDefinition | undefined {
-		const normalizedToolName = toolName.toLowerCase();
-		return [...this._getBuiltinToolDefinitions(), ...this._getRegisteredToolDefinitions()].find(
-			(tool) => tool.name.toLowerCase() === normalizedToolName,
-		);
-	}
-
 	/**
-	 * Queue a steering message to interrupt the agent mid-run.
-	 * Delivered after current tool execution, skips remaining tools.
+	 * Queue a steering message while the agent is running.
+	 * Delivered after the current assistant turn finishes executing its tool calls,
+	 * before the next LLM call.
 	 * Expands skill commands and prompt templates. Errors on extension commands.
 	 * @param images Optional image attachments to include with the message
 	 * @throws Error if text is an extension command
@@ -1326,18 +1173,16 @@ export class AgentSession {
 	 */
 	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
 		this._steeringMessages.push(text);
+		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.steer(
-			{
-				role: "user",
-				content,
-				timestamp: Date.now(),
-			},
-			"user",
-		);
+		this.agent.steer({
+			role: "user",
+			content,
+			timestamp: Date.now(),
+		});
 	}
 
 	/**
@@ -1345,18 +1190,16 @@ export class AgentSession {
 	 */
 	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
 		this._followUpMessages.push(text);
+		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
 		}
-		this.agent.followUp(
-			{
-				role: "user",
-				content,
-				timestamp: Date.now(),
-			},
-			"user",
-		);
+		this.agent.followUp({
+			role: "user",
+			content,
+			timestamp: Date.now(),
+		});
 	}
 
 	/**
@@ -1411,7 +1254,7 @@ export class AgentSession {
 		} else if (options?.triggerTurn) {
 			await this.agent.prompt(appMessage);
 		} else {
-			this.agent.appendMessage(appMessage);
+			this.agent.state.messages.push(appMessage);
 			this.sessionManager.appendCustomMessageEntry(
 				message.customType,
 				message.content,
@@ -1469,29 +1312,12 @@ export class AgentSession {
 	 * @returns Object with steering and followUp arrays
 	 */
 	clearQueue(): { steering: string[]; followUp: string[] } {
-		// Drain user-origin messages from agent queues before clearing.
-		// This preserves messages the user explicitly typed during streaming,
-		// while system-generated messages (extension notifications, etc.) are discarded.
-		const userMessages = this.agent.drainUserMessages();
-
-		// Extract text content from preserved user messages
-		const extractText = (m: AgentMessage): string => {
-			if (!("content" in m) || !Array.isArray(m.content)) return "";
-			const textPart = m.content.find((c: { type: string }) => c.type === "text");
-			return textPart && "text" in textPart ? (textPart as { text: string }).text : "";
-		};
-		const preservedSteering = userMessages.steering.map(extractText).filter((t) => t.length > 0);
-		const preservedFollowUp = userMessages.followUp.map(extractText).filter((t) => t.length > 0);
-
-		// Session-level string arrays track what was queued for display purposes.
-		// Return the full set (session-tracked + any agent-only user messages).
-		const steering = [...this._steeringMessages, ...preservedSteering];
-		const followUp = [...this._followUpMessages, ...preservedFollowUp];
+		const steering = [...this._steeringMessages];
+		const followUp = [...this._followUpMessages];
 		this._steeringMessages = [];
 		this._followUpMessages = [];
-
-		// Clear remaining system messages from agent queues
 		this.agent.clearAllQueues();
+		this._emitQueueUpdate();
 		return { steering, followUp };
 	}
 
@@ -1518,107 +1344,9 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
-		this._retryHandler.abortRetry();
+		this.abortRetry();
 		this.agent.abort();
 		await this.agent.waitForIdle();
-		// Ensure agent_end is emitted even when abort interrupts a tool call (#1414).
-		// The agent may go idle without emitting agent_end if the abort happens
-		// between tool execution and response processing.
-		if (!this.isStreaming && this._extensionRunner) {
-			await this._extensionRunner.emit({
-				type: "agent_end",
-				messages: this.agent.state.messages,
-			});
-		}
-	}
-
-	/**
-	 * Start a new session, optionally with initial messages and parent tracking.
-	 * Clears all messages and starts a new session.
-	 * Listeners are preserved and will continue receiving events.
-	 * @param options.parentSession - Optional parent session path for tracking
-	 * @param options.setup - Optional callback to initialize session (e.g., append messages)
-	 * @returns true if completed, false if cancelled by extension
-	 */
-	async newSession(options?: {
-		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
-	}): Promise<boolean> {
-		const previousSessionFile = this.sessionFile;
-
-		// Emit session_before_switch event with reason "new" (can be cancelled)
-		if (this._extensionRunner?.hasHandlers("session_before_switch")) {
-			const result = (await this._extensionRunner.emit({
-				type: "session_before_switch",
-				reason: "new",
-			})) as SessionBeforeSwitchResult | undefined;
-
-			if (result?.cancel) {
-				return false;
-			}
-		}
-
-	// #4243: Must call abort() BEFORE _disconnectFromAgent() so that
-	// message_end/agent_end events fire and the #4216 finalization code
-	// can run before we unsubscribe from the event bus.
-	await this.abort();
-	this._disconnectFromAgent();
-	this.agent.reset();
-		// Update cwd to current process directory — auto-mode may have chdir'd
-		// into a worktree since the original session was created.
-		const previousCwd = this._cwd;
-		this._cwd = process.cwd();
-		this.sessionManager.newSession({ parentSession: options?.parentSession });
-		this.agent.sessionId = this.sessionManager.getSessionId();
-		this._steeringMessages = [];
-		this._followUpMessages = [];
-		this._pendingNextTurnMessages = [];
-
-		this.sessionManager.appendThinkingLevelChange(this.thinkingLevel);
-
-		// Rebuild tools when cwd changed (e.g., auto-mode entered a worktree).
-		// Tools capture cwd at creation time for path resolution — without
-		// rebuilding, write/read/edit/bash resolve relative paths against
-		// the original project root instead of the worktree (#633).
-		if (this._cwd !== previousCwd) {
-			this._buildRuntime({
-				activeToolNames: this.getActiveToolNames(),
-				includeAllExtensionTools: true,
-			});
-		} else {
-			// Even when cwd hasn't changed, restore the full tool set (#3616).
-			// Extensions (e.g., discuss flows) may narrow the active tool list
-			// via setActiveTools() during a session. Without this refresh, the
-			// narrowed set persists into the next session — causing tools like
-			// gsd_plan_slice to be missing from auto-mode subagent sessions.
-			this._refreshToolRegistry({
-				activeToolNames: this.getActiveToolNames(),
-				includeAllExtensionTools: true,
-			});
-		}
-
-		// Run setup callback if provided (e.g., to append initial messages)
-		if (options?.setup) {
-			await options.setup(this.sessionManager);
-			// Sync agent state with session manager after setup
-			const sessionContext = this.sessionManager.buildSessionContext();
-			this.agent.replaceMessages(sessionContext.messages);
-		}
-
-		this._reconnectToAgent();
-
-		// Emit session_switch event with reason "new" to extensions
-		if (this._extensionRunner) {
-			await this._extensionRunner.emit({
-				type: "session_switch",
-				reason: "new",
-				previousSessionFile,
-			});
-		}
-
-		// Emit session event to custom tools
-		this._emitSessionStateChanged("new_session");
-		return true;
 	}
 
 	// =========================================================================
@@ -1641,42 +1369,25 @@ export class AgentSession {
 	}
 
 	/**
-	 * Apply a model change: set the model on the agent, persist to session/settings,
-	 * re-clamp thinking level, and emit the model_select event.
-	 */
-	private async _applyModelChange(
-		model: Model<any>,
-		thinkingLevel: ThinkingLevel,
-		source: "set" | "cycle" | "restore",
-		options?: { persist?: boolean },
-	): Promise<void> {
-		const previousModel = this.model;
-		// Explicit model switches must cancel any in-flight retry loop from the
-		// previous provider/model. Otherwise stale provider backoff errors can
-		// continue to land after the user or runtime has already switched models.
-		this._retryHandler.abortRetry();
-		this.agent.setModel(model);
-		this.sessionManager.appendModelChange(model.provider, model.id);
-		if (options?.persist !== false) {
-			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
-		}
-		this.setThinkingLevel(thinkingLevel);
-		await this._emitModelSelect(model, previousModel, source);
-		this._emitSessionStateChanged("set_model");
-	}
-
-	/**
 	 * Set model directly.
-	 * Validates provider readiness, saves to session and settings.
-	 * @throws Error if provider is not ready (missing credentials for apiKey/oauth providers)
+	 * Validates that auth is configured, saves to session and settings.
+	 * @throws Error if no auth is configured for the model
 	 */
-	async setModel(model: Model<any>, options?: { persist?: boolean }): Promise<void> {
-		if (!this._modelRegistry.isProviderRequestReady(model.provider)) {
+	async setModel(model: Model<any>): Promise<void> {
+		if (!this._modelRegistry.hasConfiguredAuth(model)) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
 
+		const previousModel = this.model;
 		const thinkingLevel = this._getThinkingLevelForModelSwitch();
-		await this._applyModelChange(model, thinkingLevel, "set", options);
+		this.agent.state.model = model;
+		this.sessionManager.appendModelChange(model.provider, model.id);
+		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+
+		// Re-clamp thinking level for new model's capabilities
+		this.setThinkingLevel(thinkingLevel);
+
+		await this._emitModelSelect(model, previousModel, "set");
 	}
 
 	/**
@@ -1685,21 +1396,15 @@ export class AgentSession {
 	 * @param direction - "forward" (default) or "backward"
 	 * @returns The new model info, or undefined if only one model available
 	 */
-	async cycleModel(direction: "forward" | "backward" = "forward", options?: { persist?: boolean }): Promise<ModelCycleResult | undefined> {
+	async cycleModel(direction: "forward" | "backward" = "forward"): Promise<ModelCycleResult | undefined> {
 		if (this._scopedModels.length > 0) {
-			return this._cycleScopedModel(direction, options);
+			return this._cycleScopedModel(direction);
 		}
-		return this._cycleAvailableModel(direction, options);
+		return this._cycleAvailableModel(direction);
 	}
 
-	private _getReadyScopedModels(): Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> {
-		return this._scopedModels.filter((scoped) =>
-			this._modelRegistry.isProviderRequestReady(scoped.model.provider),
-		);
-	}
-
-	private async _cycleScopedModel(direction: "forward" | "backward", options?: { persist?: boolean }): Promise<ModelCycleResult | undefined> {
-		const scopedModels = this._getReadyScopedModels();
+	private async _cycleScopedModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
+		const scopedModels = this._scopedModels.filter((scoped) => this._modelRegistry.hasConfiguredAuth(scoped.model));
 		if (scopedModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
@@ -1709,16 +1414,25 @@ export class AgentSession {
 		const len = scopedModels.length;
 		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		const next = scopedModels[nextIndex];
-
-		// Explicit scoped model thinking level overrides current session level;
-		// undefined scoped model thinking level inherits the current session preference.
 		const thinkingLevel = this._getThinkingLevelForModelSwitch(next.thinkingLevel);
-		await this._applyModelChange(next.model, thinkingLevel, "cycle", options);
+
+		// Apply model
+		this.agent.state.model = next.model;
+		this.sessionManager.appendModelChange(next.model.provider, next.model.id);
+		this.settingsManager.setDefaultModelAndProvider(next.model.provider, next.model.id);
+
+		// Apply thinking level.
+		// - Explicit scoped model thinking level overrides current session level
+		// - Undefined scoped model thinking level inherits the current session preference
+		// setThinkingLevel clamps to model capabilities.
+		this.setThinkingLevel(thinkingLevel);
+
+		await this._emitModelSelect(next.model, currentModel, "cycle");
 
 		return { model: next.model, thinkingLevel: this.thinkingLevel, isScoped: true };
 	}
 
-	private async _cycleAvailableModel(direction: "forward" | "backward", options?: { persist?: boolean }): Promise<ModelCycleResult | undefined> {
+	private async _cycleAvailableModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
 		const availableModels = await this._modelRegistry.getAvailable();
 		if (availableModels.length <= 1) return undefined;
 
@@ -1731,7 +1445,14 @@ export class AgentSession {
 		const nextModel = availableModels[nextIndex];
 
 		const thinkingLevel = this._getThinkingLevelForModelSwitch();
-		await this._applyModelChange(nextModel, thinkingLevel, "cycle", options);
+		this.agent.state.model = nextModel;
+		this.sessionManager.appendModelChange(nextModel.provider, nextModel.id);
+		this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
+
+		// Re-clamp thinking level for new model's capabilities
+		this.setThinkingLevel(thinkingLevel);
+
+		await this._emitModelSelect(nextModel, currentModel, "cycle");
 
 		return { model: nextModel, thinkingLevel: this.thinkingLevel, isScoped: false };
 	}
@@ -1752,14 +1473,13 @@ export class AgentSession {
 		// Only persist if actually changing
 		const isChanging = effectiveLevel !== this.agent.state.thinkingLevel;
 
-		this.agent.setThinkingLevel(effectiveLevel);
+		this.agent.state.thinkingLevel = effectiveLevel;
 
 		if (isChanging) {
 			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
 			if (this.supportsThinking() || effectiveLevel !== "off") {
 				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
 			}
-			this._emitSessionStateChanged("set_thinking_level");
 		}
 	}
 
@@ -1839,9 +1559,8 @@ export class AgentSession {
 	 * Saves to settings.
 	 */
 	setSteeringMode(mode: "all" | "one-at-a-time"): void {
-		this.agent.setSteeringMode(mode);
+		this.agent.steeringMode = mode;
 		this.settingsManager.setSteeringMode(mode);
-		this._emitSessionStateChanged("set_steering_mode");
 	}
 
 	/**
@@ -1849,9 +1568,8 @@ export class AgentSession {
 	 * Saves to settings.
 	 */
 	setFollowUpMode(mode: "all" | "one-at-a-time"): void {
-		this.agent.setFollowUpMode(mode);
+		this.agent.followUpMode = mode;
 		this.settingsManager.setFollowUpMode(mode);
-		this._emitSessionStateChanged("set_follow_up_mode");
 	}
 
 	// =========================================================================
@@ -1864,28 +1582,426 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
-		return this._compactionOrchestrator.compact(customInstructions);
+		this._disconnectFromAgent();
+		await this.abort();
+		this._compactionAbortController = new AbortController();
+		this._emit({ type: "compaction_start", reason: "manual" });
+
+		try {
+			if (!this.model) {
+				throw new Error("No model selected");
+			}
+
+			const { apiKey, headers } = await this._getRequiredRequestAuth(this.model);
+
+			const pathEntries = this.sessionManager.getBranch();
+			const settings = this.settingsManager.getCompactionSettings();
+
+			const preparation = prepareCompaction(pathEntries, settings);
+			if (!preparation) {
+				// Check why we can't compact
+				const lastEntry = pathEntries[pathEntries.length - 1];
+				if (lastEntry?.type === "compaction") {
+					throw new Error("Already compacted");
+				}
+				throw new Error("Nothing to compact (session too small)");
+			}
+
+			let extensionCompaction: CompactionResult | undefined;
+			let fromExtension = false;
+
+			if (this._extensionRunner?.hasHandlers("session_before_compact")) {
+				const result = (await this._extensionRunner.emit({
+					type: "session_before_compact",
+					preparation,
+					branchEntries: pathEntries,
+					customInstructions,
+					signal: this._compactionAbortController.signal,
+				})) as SessionBeforeCompactResult | undefined;
+
+				if (result?.cancel) {
+					throw new Error("Compaction cancelled");
+				}
+
+				if (result?.compaction) {
+					extensionCompaction = result.compaction;
+					fromExtension = true;
+				}
+			}
+
+			let summary: string;
+			let firstKeptEntryId: string;
+			let tokensBefore: number;
+			let details: unknown;
+
+			if (extensionCompaction) {
+				// Extension provided compaction content
+				summary = extensionCompaction.summary;
+				firstKeptEntryId = extensionCompaction.firstKeptEntryId;
+				tokensBefore = extensionCompaction.tokensBefore;
+				details = extensionCompaction.details;
+			} else {
+				// Generate compaction result
+				const result = await compact(
+					preparation,
+					this.model,
+					apiKey,
+					headers,
+					customInstructions,
+					this._compactionAbortController.signal,
+				);
+				summary = result.summary;
+				firstKeptEntryId = result.firstKeptEntryId;
+				tokensBefore = result.tokensBefore;
+				details = result.details;
+			}
+
+			if (this._compactionAbortController.signal.aborted) {
+				throw new Error("Compaction cancelled");
+			}
+
+			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
+			const newEntries = this.sessionManager.getEntries();
+			const sessionContext = this.sessionManager.buildSessionContext();
+			this.agent.state.messages = sessionContext.messages;
+
+			// Get the saved compaction entry for the extension event
+			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
+				| CompactionEntry
+				| undefined;
+
+			if (this._extensionRunner && savedCompactionEntry) {
+				await this._extensionRunner.emit({
+					type: "session_compact",
+					compactionEntry: savedCompactionEntry,
+					fromExtension,
+				});
+			}
+
+			const compactionResult = {
+				summary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+			};
+			this._emit({
+				type: "compaction_end",
+				reason: "manual",
+				result: compactionResult,
+				aborted: false,
+				willRetry: false,
+			});
+			return compactionResult;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
+			this._emit({
+				type: "compaction_end",
+				reason: "manual",
+				result: undefined,
+				aborted,
+				willRetry: false,
+				errorMessage: aborted ? undefined : `Compaction failed: ${message}`,
+			});
+			throw error;
+		} finally {
+			this._compactionAbortController = undefined;
+			this._reconnectToAgent();
+		}
 	}
 
-	/** Cancel in-progress compaction (manual or auto) */
+	/**
+	 * Cancel in-progress compaction (manual or auto).
+	 */
 	abortCompaction(): void {
-		this._compactionOrchestrator.abortCompaction();
+		this._compactionAbortController?.abort();
+		this._autoCompactionAbortController?.abort();
 	}
 
-	/** Cancel in-progress branch summarization */
+	/**
+	 * Cancel in-progress branch summarization.
+	 */
 	abortBranchSummary(): void {
-		this._compactionOrchestrator.abortBranchSummary();
+		this._branchSummaryAbortController?.abort();
 	}
 
-	/** Toggle auto-compaction setting */
+	/**
+	 * Check if compaction is needed and run it.
+	 * Called after agent_end and before prompt submission.
+	 *
+	 * Two cases:
+	 * 1. Overflow: LLM returned context overflow error, remove error message from agent state, compact, auto-retry
+	 * 2. Threshold: Context over threshold, compact, NO auto-retry (user continues manually)
+	 *
+	 * @param assistantMessage The assistant message to check
+	 * @param skipAbortedCheck If false, include aborted messages (for pre-prompt check). Default: true
+	 */
+	private async _checkCompaction(assistantMessage: AssistantMessage, skipAbortedCheck = true): Promise<void> {
+		const settings = this.settingsManager.getCompactionSettings();
+		if (!settings.enabled) return;
+
+		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
+		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return;
+
+		const contextWindow = this.model?.contextWindow ?? 0;
+
+		// Skip overflow check if the message came from a different model.
+		// This handles the case where user switched from a smaller-context model (e.g. opus)
+		// to a larger-context model (e.g. codex) - the overflow error from the old model
+		// shouldn't trigger compaction for the new model.
+		const sameModel =
+			this.model && assistantMessage.provider === this.model.provider && assistantMessage.model === this.model.id;
+
+		// Skip compaction checks if this assistant message is older than the latest
+		// compaction boundary. This prevents a stale pre-compaction usage/error
+		// from retriggering compaction on the first prompt after compaction.
+		const compactionEntry = getLatestCompactionEntry(this.sessionManager.getBranch());
+		const assistantIsFromBeforeCompaction =
+			compactionEntry !== null && assistantMessage.timestamp <= new Date(compactionEntry.timestamp).getTime();
+		if (assistantIsFromBeforeCompaction) {
+			return;
+		}
+
+		// Case 1: Overflow - LLM returned context overflow error
+		if (sameModel && isContextOverflow(assistantMessage, contextWindow)) {
+			if (this._overflowRecoveryAttempted) {
+				this._emit({
+					type: "compaction_end",
+					reason: "overflow",
+					result: undefined,
+					aborted: false,
+					willRetry: false,
+					errorMessage:
+						"Context overflow recovery failed after one compact-and-retry attempt. Try reducing context or switching to a larger-context model.",
+				});
+				return;
+			}
+
+			this._overflowRecoveryAttempted = true;
+			// Remove the error message from agent state (it IS saved to session for history,
+			// but we don't want it in context for the retry)
+			const messages = this.agent.state.messages;
+			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+				this.agent.state.messages = messages.slice(0, -1);
+			}
+			await this._runAutoCompaction("overflow", true);
+			return;
+		}
+
+		// Case 2: Threshold - context is getting large
+		// For error messages (no usage data), estimate from last successful response.
+		// This ensures sessions that hit persistent API errors (e.g. 529) can still compact.
+		let contextTokens: number;
+		if (assistantMessage.stopReason === "error") {
+			const messages = this.agent.state.messages;
+			const estimate = estimateContextTokens(messages);
+			if (estimate.lastUsageIndex === null) return; // No usage data at all
+			// Verify the usage source is post-compaction. Kept pre-compaction messages
+			// have stale usage reflecting the old (larger) context and would falsely
+			// trigger compaction right after one just finished.
+			const usageMsg = messages[estimate.lastUsageIndex];
+			if (
+				compactionEntry &&
+				usageMsg.role === "assistant" &&
+				(usageMsg as AssistantMessage).timestamp <= new Date(compactionEntry.timestamp).getTime()
+			) {
+				return;
+			}
+			contextTokens = estimate.tokens;
+		} else {
+			contextTokens = calculateContextTokens(assistantMessage.usage);
+		}
+		if (shouldCompact(contextTokens, contextWindow, settings)) {
+			await this._runAutoCompaction("threshold", false);
+		}
+	}
+
+	/**
+	 * Internal: Run auto-compaction with events.
+	 */
+	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<void> {
+		const settings = this.settingsManager.getCompactionSettings();
+
+		this._emit({ type: "compaction_start", reason });
+		this._autoCompactionAbortController = new AbortController();
+
+		try {
+			if (!this.model) {
+				this._emit({
+					type: "compaction_end",
+					reason,
+					result: undefined,
+					aborted: false,
+					willRetry: false,
+				});
+				return;
+			}
+
+			const authResult = await this._modelRegistry.getApiKeyAndHeaders(this.model);
+			if (!authResult.ok || !authResult.apiKey) {
+				this._emit({
+					type: "compaction_end",
+					reason,
+					result: undefined,
+					aborted: false,
+					willRetry: false,
+				});
+				return;
+			}
+			const { apiKey, headers } = authResult;
+
+			const pathEntries = this.sessionManager.getBranch();
+
+			const preparation = prepareCompaction(pathEntries, settings);
+			if (!preparation) {
+				this._emit({
+					type: "compaction_end",
+					reason,
+					result: undefined,
+					aborted: false,
+					willRetry: false,
+				});
+				return;
+			}
+
+			let extensionCompaction: CompactionResult | undefined;
+			let fromExtension = false;
+
+			if (this._extensionRunner?.hasHandlers("session_before_compact")) {
+				const extensionResult = (await this._extensionRunner.emit({
+					type: "session_before_compact",
+					preparation,
+					branchEntries: pathEntries,
+					customInstructions: undefined,
+					signal: this._autoCompactionAbortController.signal,
+				})) as SessionBeforeCompactResult | undefined;
+
+				if (extensionResult?.cancel) {
+					this._emit({
+						type: "compaction_end",
+						reason,
+						result: undefined,
+						aborted: true,
+						willRetry: false,
+					});
+					return;
+				}
+
+				if (extensionResult?.compaction) {
+					extensionCompaction = extensionResult.compaction;
+					fromExtension = true;
+				}
+			}
+
+			let summary: string;
+			let firstKeptEntryId: string;
+			let tokensBefore: number;
+			let details: unknown;
+
+			if (extensionCompaction) {
+				// Extension provided compaction content
+				summary = extensionCompaction.summary;
+				firstKeptEntryId = extensionCompaction.firstKeptEntryId;
+				tokensBefore = extensionCompaction.tokensBefore;
+				details = extensionCompaction.details;
+			} else {
+				// Generate compaction result
+				const compactResult = await compact(
+					preparation,
+					this.model,
+					apiKey,
+					headers,
+					undefined,
+					this._autoCompactionAbortController.signal,
+				);
+				summary = compactResult.summary;
+				firstKeptEntryId = compactResult.firstKeptEntryId;
+				tokensBefore = compactResult.tokensBefore;
+				details = compactResult.details;
+			}
+
+			if (this._autoCompactionAbortController.signal.aborted) {
+				this._emit({
+					type: "compaction_end",
+					reason,
+					result: undefined,
+					aborted: true,
+					willRetry: false,
+				});
+				return;
+			}
+
+			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension);
+			const newEntries = this.sessionManager.getEntries();
+			const sessionContext = this.sessionManager.buildSessionContext();
+			this.agent.state.messages = sessionContext.messages;
+
+			// Get the saved compaction entry for the extension event
+			const savedCompactionEntry = newEntries.find((e) => e.type === "compaction" && e.summary === summary) as
+				| CompactionEntry
+				| undefined;
+
+			if (this._extensionRunner && savedCompactionEntry) {
+				await this._extensionRunner.emit({
+					type: "session_compact",
+					compactionEntry: savedCompactionEntry,
+					fromExtension,
+				});
+			}
+
+			const result: CompactionResult = {
+				summary,
+				firstKeptEntryId,
+				tokensBefore,
+				details,
+			};
+			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
+
+			if (willRetry) {
+				const messages = this.agent.state.messages;
+				const lastMsg = messages[messages.length - 1];
+				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
+					this.agent.state.messages = messages.slice(0, -1);
+				}
+
+				setTimeout(() => {
+					this.agent.continue().catch(() => {});
+				}, 100);
+			} else if (this.agent.hasQueuedMessages()) {
+				// Auto-compaction can complete while follow-up/steering/custom messages are waiting.
+				// Kick the loop so queued messages are actually delivered.
+				setTimeout(() => {
+					this.agent.continue().catch(() => {});
+				}, 100);
+			}
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : "compaction failed";
+			this._emit({
+				type: "compaction_end",
+				reason,
+				result: undefined,
+				aborted: false,
+				willRetry: false,
+				errorMessage:
+					reason === "overflow"
+						? `Context overflow recovery failed: ${errorMessage}`
+						: `Auto-compaction failed: ${errorMessage}`,
+			});
+		} finally {
+			this._autoCompactionAbortController = undefined;
+		}
+	}
+
+	/**
+	 * Toggle auto-compaction setting.
+	 */
 	setAutoCompactionEnabled(enabled: boolean): void {
-		this._compactionOrchestrator.setAutoCompactionEnabled(enabled);
-		this._emitSessionStateChanged("set_auto_compaction");
+		this.settingsManager.setCompactionEnabled(enabled);
 	}
 
 	/** Whether auto-compaction is enabled */
 	get autoCompactionEnabled(): boolean {
-		return this._compactionOrchestrator.autoCompactionEnabled;
+		return this.settingsManager.getCompactionEnabled();
 	}
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
@@ -1904,8 +2020,8 @@ export class AgentSession {
 
 		if (this._extensionRunner) {
 			this._applyExtensionBindings(this._extensionRunner);
-			await this._extensionRunner.emit({ type: "session_start" });
-			await this.extendResourcesFromExtensions("startup");
+			await this._extensionRunner.emit(this._sessionStartEvent);
+			await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
 		}
 	}
 
@@ -1931,7 +2047,7 @@ export class AgentSession {
 
 		this._resourceLoader.extendResources(extensionPaths);
 		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this.agent.state.systemPrompt = this._baseSystemPrompt;
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -1966,51 +2082,47 @@ export class AgentSession {
 		runner.setUIContext(this._extensionUIContext);
 		runner.bindCommandContext(this._extensionCommandContextActions);
 
-		try {
-			this._extensionErrorUnsubscriber?.();
-		} catch {
-			// Ignore errors from previous unsubscriber
-		}
+		this._extensionErrorUnsubscriber?.();
 		this._extensionErrorUnsubscriber = this._extensionErrorListener
 			? runner.onError(this._extensionErrorListener)
 			: undefined;
 	}
 
+	private _refreshCurrentModelFromRegistry(): void {
+		const currentModel = this.model;
+		if (!currentModel) {
+			return;
+		}
+
+		const refreshedModel = this._modelRegistry.find(currentModel.provider, currentModel.id);
+		if (!refreshedModel || refreshedModel === currentModel) {
+			return;
+		}
+
+		this.agent.state.model = refreshedModel;
+	}
+
 	private _bindExtensionCore(runner: ExtensionRunner): void {
-		const normalizeLocation = (source: string): SlashCommandLocation | undefined => {
-			if (source === "user" || source === "project" || source === "path") {
-				return source;
-			}
-			return undefined;
-		};
-
-		const reservedBuiltins = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
-
 		const getCommands = (): SlashCommandInfo[] => {
-			const extensionCommands: SlashCommandInfo[] = runner
-				.getRegisteredCommandsWithPaths()
-				.filter(({ command }) => !reservedBuiltins.has(command.name))
-				.map(({ command, extensionPath }) => ({
-					name: command.name,
-					description: command.description,
-					source: "extension",
-					path: extensionPath,
-				}));
+			const extensionCommands: SlashCommandInfo[] = runner.getRegisteredCommands().map((command) => ({
+				name: command.invocationName,
+				description: command.description,
+				source: "extension",
+				sourceInfo: command.sourceInfo,
+			}));
 
 			const templates: SlashCommandInfo[] = this.promptTemplates.map((template) => ({
 				name: template.name,
 				description: template.description,
 				source: "prompt",
-				location: normalizeLocation(template.source),
-				path: template.filePath,
+				sourceInfo: template.sourceInfo,
 			}));
 
 			const skills: SlashCommandInfo[] = this._resourceLoader.getSkills().skills.map((skill) => ({
 				name: `skill:${skill.name}`,
 				description: skill.description,
 				source: "skill",
-				location: normalizeLocation(skill.source),
-				path: skill.filePath,
+				sourceInfo: skill.sourceInfo,
 			}));
 
 			return [...extensionCommands, ...templates, ...skills];
@@ -2023,7 +2135,7 @@ export class AgentSession {
 						runner.emitError({
 							extensionPath: "<runtime>",
 							event: "send_message",
-							error: getErrorMessage(err),
+							error: err instanceof Error ? err.message : String(err),
 						});
 					});
 				},
@@ -2032,28 +2144,9 @@ export class AgentSession {
 						runner.emitError({
 							extensionPath: "<runtime>",
 							event: "send_user_message",
-							error: getErrorMessage(err),
+							error: err instanceof Error ? err.message : String(err),
 						});
 					});
-				},
-				retryLastTurn: () => {
-					const messages = this.agent.state.messages;
-					const last = messages[messages.length - 1];
-					if (last?.role === "assistant" && (last as AssistantMessage).stopReason === "error") {
-						// If the error was an image dimension overflow, downsize images
-						// before retrying so the retry doesn't hit the same error (#2874)
-						if (isImageDimensionError((last as AssistantMessage).errorMessage)) {
-							downsizeConversationImages(messages as Message[]);
-						}
-						this.agent.replaceMessages(messages.slice(0, -1));
-						this.agent.continue().catch((err) => {
-							runner.emitError({
-								extensionPath: "<runtime>",
-								event: "retry_last_turn",
-								error: getErrorMessage(err),
-							});
-						});
-					}
 				},
 				appendEntry: (customType, data) => {
 					this.sessionManager.appendCustomEntry(customType, data);
@@ -2072,9 +2165,9 @@ export class AgentSession {
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
 				refreshTools: () => this._refreshToolRegistry(),
 				getCommands,
-				setModel: async (model, options) => {
-					if (!this.modelRegistry.isProviderRequestReady(model.provider)) return false;
-					await this.setModel(model, options);
+				setModel: async (model) => {
+					if (!this.modelRegistry.hasConfiguredAuth(model)) return false;
+					await this.setModel(model);
 					return true;
 				},
 				getThinkingLevel: () => this.thinkingLevel,
@@ -2083,6 +2176,7 @@ export class AgentSession {
 			{
 				getModel: () => this.model,
 				isIdle: () => !this.isStreaming,
+				getSignal: () => this.agent.signal,
 				abort: () => this.abort(),
 				hasPendingMessages: () => this.pendingMessageCount > 0,
 				shutdown: () => {
@@ -2102,6 +2196,16 @@ export class AgentSession {
 				},
 				getSystemPrompt: () => this.systemPrompt,
 			},
+			{
+				registerProvider: (name, config) => {
+					this._modelRegistry.registerProvider(name, config);
+					this._refreshCurrentModelFromRegistry();
+				},
+				unregisterProvider: (name) => {
+					this._modelRegistry.unregisterProvider(name);
+					this._refreshCurrentModelFromRegistry();
+				},
+			},
 		);
 	}
 
@@ -2112,42 +2216,56 @@ export class AgentSession {
 		const registeredTools = this._extensionRunner?.getAllRegisteredTools() ?? [];
 		const allCustomTools = [
 			...registeredTools,
-			...this._customTools.map((def) => ({ definition: def, extensionPath: "<sdk>" })),
+			...this._customTools.map((definition) => ({
+				definition,
+				sourceInfo: createSyntheticSourceInfo(`<sdk:${definition.name}>`, { source: "sdk" }),
+			})),
 		];
+		const definitionRegistry = new Map<string, ToolDefinitionEntry>(
+			Array.from(this._baseToolDefinitions.entries()).map(([name, definition]) => [
+				name,
+				{
+					definition,
+					sourceInfo: createSyntheticSourceInfo(`<builtin:${name}>`, { source: "builtin" }),
+				},
+			]),
+		);
+		for (const tool of allCustomTools) {
+			definitionRegistry.set(tool.definition.name, {
+				definition: tool.definition,
+				sourceInfo: tool.sourceInfo,
+			});
+		}
+		this._toolDefinitions = definitionRegistry;
 		this._toolPromptSnippets = new Map(
-			allCustomTools
-				.map((registeredTool) => {
-					const snippet = this._normalizePromptSnippet(
-						registeredTool.definition.promptSnippet ?? registeredTool.definition.description,
-					);
-					return snippet ? ([registeredTool.definition.name, snippet] as const) : undefined;
+			Array.from(definitionRegistry.values())
+				.map(({ definition }) => {
+					const snippet = this._normalizePromptSnippet(definition.promptSnippet);
+					return snippet ? ([definition.name, snippet] as const) : undefined;
 				})
 				.filter((entry): entry is readonly [string, string] => entry !== undefined),
 		);
 		this._toolPromptGuidelines = new Map(
-			allCustomTools
-				.map((registeredTool) => {
-					const guidelines = this._normalizePromptGuidelines(registeredTool.definition.promptGuidelines);
-					return guidelines.length > 0 ? ([registeredTool.definition.name, guidelines] as const) : undefined;
+			Array.from(definitionRegistry.values())
+				.map(({ definition }) => {
+					const guidelines = this._normalizePromptGuidelines(definition.promptGuidelines);
+					return guidelines.length > 0 ? ([definition.name, guidelines] as const) : undefined;
 				})
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
 		const wrappedExtensionTools = this._extensionRunner
 			? wrapRegisteredTools(allCustomTools, this._extensionRunner)
 			: [];
-		const builtinTools = this._getBuiltinTools();
 
-		const toolRegistry = new Map(this._baseToolRegistry);
-		for (const tool of builtinTools) {
-			toolRegistry.set(tool.name, tool);
-		}
+		const toolRegistry = new Map(
+			Array.from(this._baseToolDefinitions.values()).map((definition) => [
+				definition.name,
+				wrapToolDefinition(definition),
+			]),
+		);
 		for (const tool of wrappedExtensionTools as AgentTool[]) {
 			toolRegistry.set(tool.name, tool);
 		}
-
-		// Tool interception (tool_call/tool_result extension events) is handled by
-		// beforeToolCall/afterToolCall hooks installed in _installAgentToolHooks(),
-		// which await _agentEventQueue for safe parallel execution.
 		this._toolRegistry = toolRegistry;
 
 		const nextActiveToolNames = options?.activeToolNames
@@ -2176,21 +2294,21 @@ export class AgentSession {
 	}): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
-		const baseTools = this._baseToolsOverride
-			? this._baseToolsOverride
-			: createAllTools(this._cwd, {
+		const baseToolDefinitions = this._baseToolsOverride
+			? Object.fromEntries(
+					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
+						name,
+						createToolDefinitionFromAgentTool(tool),
+					]),
+				)
+			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
-					bash: {
-						commandPrefix: shellCommandPrefix,
-						interceptor: {
-							enabled: this.settingsManager.getBashInterceptorEnabled(),
-							rules: this.settingsManager.getBashInterceptorRules(),
-						},
-						availableToolNames: () => this.getActiveToolNames(),
-					},
+					bash: { commandPrefix: shellCommandPrefix },
 				});
 
-		this._baseToolRegistry = new Map(Object.entries(baseTools).map(([name, tool]) => [name, tool as AgentTool]));
+		this._baseToolDefinitions = new Map(
+			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
+		);
 
 		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
@@ -2221,7 +2339,7 @@ export class AgentSession {
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)
-			: ["read", "bash", "edit", "write", "lsp"];
+			: ["read", "bash", "edit", "write"];
 		const baseActiveToolNames = options.activeToolNames ?? defaultActiveToolNames;
 		this._refreshToolRegistry({
 			activeToolNames: baseActiveToolNames,
@@ -2232,7 +2350,7 @@ export class AgentSession {
 	async reload(): Promise<void> {
 		const previousFlagValues = this._extensionRunner?.getFlagValues();
 		await this._extensionRunner?.emit({ type: "session_shutdown" });
-		this.settingsManager.reload();
+		await this.settingsManager.reload();
 		resetApiProviders();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
@@ -2247,38 +2365,150 @@ export class AgentSession {
 			this._extensionShutdownHandler ||
 			this._extensionErrorListener;
 		if (this._extensionRunner && hasBindings) {
-			await this._extensionRunner.emit({ type: "session_start" });
+			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			await this.extendResourcesFromExtensions("reload");
 		}
 	}
 
 	// =========================================================================
-	// Auto-Retry (delegated to RetryHandler)
+	// Auto-Retry
 	// =========================================================================
 
-	/** Cancel in-progress retry */
-	abortRetry(): void {
-		const hadRetry = this._retryHandler.isRetrying;
-		this._retryHandler.abortRetry();
-		if (hadRetry) {
-			this._emitSessionStateChanged("abort_retry");
+	/**
+	 * Check if an error is retryable (overloaded, rate limit, server errors).
+	 * Context overflow errors are NOT retryable (handled by compaction instead).
+	 */
+	private _isRetryableError(message: AssistantMessage): boolean {
+		if (message.stopReason !== "error" || !message.errorMessage) return false;
+
+		// Context overflow is handled by compaction, not retry
+		const contextWindow = this.model?.contextWindow ?? 0;
+		if (isContextOverflow(message, contextWindow)) return false;
+
+		const err = message.errorMessage;
+		// Match: overloaded_error, provider returned error, rate limit, 429, 500, 502, 503, 504, service unavailable, network/connection errors, fetch failed, request ended without sending chunks, terminated, retry delay exceeded
+		return /overloaded|provider.?returned.?error|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|network.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|socket hang up|ended without|timed? out|timeout|terminated|retry delay/i.test(
+			err,
+		);
+	}
+
+	/**
+	 * Handle retryable errors with exponential backoff.
+	 * @returns true if retry was initiated, false if max retries exceeded or disabled
+	 */
+	private async _handleRetryableError(message: AssistantMessage): Promise<boolean> {
+		const settings = this.settingsManager.getRetrySettings();
+		if (!settings.enabled) {
+			this._resolveRetry();
+			return false;
 		}
+
+		// Retry promise is created synchronously in _handleAgentEvent for agent_end.
+		// Keep a defensive fallback here in case a future refactor bypasses that path.
+		if (!this._retryPromise) {
+			this._retryPromise = new Promise((resolve) => {
+				this._retryResolve = resolve;
+			});
+		}
+
+		this._retryAttempt++;
+
+		if (this._retryAttempt > settings.maxRetries) {
+			// Max retries exceeded, emit final failure and reset
+			this._emit({
+				type: "auto_retry_end",
+				success: false,
+				attempt: this._retryAttempt - 1,
+				finalError: message.errorMessage,
+			});
+			this._retryAttempt = 0;
+			this._resolveRetry(); // Resolve so waitForRetry() completes
+			return false;
+		}
+
+		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+
+		this._emit({
+			type: "auto_retry_start",
+			attempt: this._retryAttempt,
+			maxAttempts: settings.maxRetries,
+			delayMs,
+			errorMessage: message.errorMessage || "Unknown error",
+		});
+
+		// Remove error message from agent state (keep in session for history)
+		const messages = this.agent.state.messages;
+		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+			this.agent.state.messages = messages.slice(0, -1);
+		}
+
+		// Wait with exponential backoff (abortable)
+		this._retryAbortController = new AbortController();
+		try {
+			await sleep(delayMs, this._retryAbortController.signal);
+		} catch {
+			// Aborted during sleep - emit end event so UI can clean up
+			const attempt = this._retryAttempt;
+			this._retryAttempt = 0;
+			this._retryAbortController = undefined;
+			this._emit({
+				type: "auto_retry_end",
+				success: false,
+				attempt,
+				finalError: "Retry cancelled",
+			});
+			this._resolveRetry();
+			return false;
+		}
+		this._retryAbortController = undefined;
+
+		// Retry via continue() - use setTimeout to break out of event handler chain
+		setTimeout(() => {
+			this.agent.continue().catch(() => {
+				// Retry failed - will be caught by next agent_end
+			});
+		}, 0);
+
+		return true;
+	}
+
+	/**
+	 * Cancel in-progress retry.
+	 */
+	abortRetry(): void {
+		this._retryAbortController?.abort();
+		// Note: _retryAttempt is reset in the catch block of _autoRetry
+		this._resolveRetry();
+	}
+
+	/**
+	 * Wait for any in-progress retry to complete.
+	 * Returns immediately if no retry is in progress.
+	 */
+	private async waitForRetry(): Promise<void> {
+		if (!this._retryPromise) {
+			return;
+		}
+
+		await this._retryPromise;
+		await this.agent.waitForIdle();
 	}
 
 	/** Whether auto-retry is currently in progress */
 	get isRetrying(): boolean {
-		return this._retryHandler.isRetrying;
+		return this._retryPromise !== undefined;
 	}
 
 	/** Whether auto-retry is enabled */
 	get autoRetryEnabled(): boolean {
-		return this._retryHandler.autoRetryEnabled;
+		return this.settingsManager.getRetryEnabled();
 	}
 
-	/** Toggle auto-retry setting */
+	/**
+	 * Toggle auto-retry setting.
+	 */
 	setAutoRetryEnabled(enabled: boolean): void {
-		this._retryHandler.setAutoRetryEnabled(enabled);
-		this._emitSessionStateChanged("set_auto_retry");
+		this.settingsManager.setRetryEnabled(enabled);
 	}
 
 	// =========================================================================
@@ -2296,7 +2526,7 @@ export class AgentSession {
 	async executeBash(
 		command: string,
 		onChunk?: (chunk: string) => void,
-		options?: { excludeFromContext?: boolean; operations?: BashOperations; loginShell?: boolean },
+		options?: { excludeFromContext?: boolean; operations?: BashOperations },
 	): Promise<BashResult> {
 		this._bashAbortController = new AbortController();
 
@@ -2305,16 +2535,15 @@ export class AgentSession {
 		const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
 
 		try {
-			const result = options?.operations
-				? await executeBashWithOperations(resolvedCommand, process.cwd(), options.operations, {
-						onChunk,
-						signal: this._bashAbortController.signal,
-					})
-				: await executeBashCommand(resolvedCommand, {
-						onChunk,
-						signal: this._bashAbortController.signal,
-						loginShell: options?.loginShell,
-					});
+			const result = await executeBashWithOperations(
+				resolvedCommand,
+				this.sessionManager.getCwd(),
+				options?.operations ?? createLocalBashOperations(),
+				{
+					onChunk,
+					signal: this._bashAbortController.signal,
+				},
+			);
 
 			this.recordBashResult(command, result, options);
 			return result;
@@ -2346,7 +2575,7 @@ export class AgentSession {
 			this._pendingBashMessages.push(bashMessage);
 		} else {
 			// Add to agent state immediately
-			this.agent.appendMessage(bashMessage);
+			this.agent.state.messages.push(bashMessage);
 
 			// Save to session
 			this.sessionManager.appendMessage(bashMessage);
@@ -2379,7 +2608,7 @@ export class AgentSession {
 
 		for (const bashMessage of this._pendingBashMessages) {
 			// Add to agent state
-			this.agent.appendMessage(bashMessage);
+			this.agent.state.messages.push(bashMessage);
 
 			// Save to session
 			this.sessionManager.appendMessage(bashMessage);
@@ -2393,160 +2622,10 @@ export class AgentSession {
 	// =========================================================================
 
 	/**
-	 * Switch to a different session file.
-	 * Aborts current operation, loads messages, restores model/thinking.
-	 * Listeners are preserved and will continue receiving events.
-	 * @returns true if switch completed, false if cancelled by extension
-	 */
-	async switchSession(sessionPath: string): Promise<boolean> {
-		const previousSessionFile = this.sessionManager.getSessionFile();
-
-		// Emit session_before_switch event (can be cancelled)
-		if (this._extensionRunner?.hasHandlers("session_before_switch")) {
-			const result = (await this._extensionRunner.emit({
-				type: "session_before_switch",
-				reason: "resume",
-				targetSessionFile: sessionPath,
-			})) as SessionBeforeSwitchResult | undefined;
-
-			if (result?.cancel) {
-				return false;
-			}
-		}
-
-	// #4243: Must call abort() BEFORE _disconnectFromAgent() so that
-	// message_end/agent_end events fire and the #4216 finalization code
-	// can run before we unsubscribe from the event bus.
-	await this.abort();
-	this._disconnectFromAgent();
-	this._steeringMessages = [];
-		this._followUpMessages = [];
-		this._pendingNextTurnMessages = [];
-
-		// Set new session
-		this.sessionManager.setSessionFile(sessionPath);
-		this.agent.sessionId = this.sessionManager.getSessionId();
-
-		// Reload messages
-		const sessionContext = this.sessionManager.buildSessionContext();
-
-		// Emit session_switch event to extensions
-		if (this._extensionRunner) {
-			await this._extensionRunner.emit({
-				type: "session_switch",
-				reason: "resume",
-				previousSessionFile,
-			});
-		}
-
-		// Emit session event to custom tools
-
-		this.agent.replaceMessages(sessionContext.messages);
-
-		// Restore model if saved
-		if (sessionContext.model) {
-			const previousModel = this.model;
-			const availableModels = await this._modelRegistry.getAvailable();
-			const match = availableModels.find(
-				(m) => m.provider === sessionContext.model!.provider && m.id === sessionContext.model!.modelId,
-			);
-			if (match) {
-				this.agent.setModel(match);
-				await this._emitModelSelect(match, previousModel, "restore");
-			}
-		}
-
-		const hasThinkingEntry = this.sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
-		const defaultThinkingLevel = this.settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
-
-		if (hasThinkingEntry) {
-			// Restore thinking level if saved (setThinkingLevel clamps to model capabilities)
-			this.setThinkingLevel(sessionContext.thinkingLevel as ThinkingLevel);
-		} else {
-			const availableLevels = this.getAvailableThinkingLevels();
-			const effectiveLevel = availableLevels.includes(defaultThinkingLevel)
-				? defaultThinkingLevel
-				: this._clampThinkingLevel(defaultThinkingLevel, availableLevels);
-			this.agent.setThinkingLevel(effectiveLevel);
-			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
-		}
-
-		this._reconnectToAgent();
-		this._emitSessionStateChanged("switch_session");
-		return true;
-	}
-
-	/**
 	 * Set a display name for the current session.
 	 */
 	setSessionName(name: string): void {
 		this.sessionManager.appendSessionInfo(name);
-		this._emitSessionStateChanged("set_session_name");
-	}
-
-	/**
-	 * Create a fork from a specific entry.
-	 * Emits before_fork/fork session events to extensions.
-	 *
-	 * @param entryId ID of the entry to fork from
-	 * @returns Object with:
-	 *   - selectedText: The text of the selected user message (for editor pre-fill)
-	 *   - cancelled: True if an extension cancelled the fork
-	 */
-	async fork(entryId: string): Promise<{ selectedText: string; cancelled: boolean }> {
-		const previousSessionFile = this.sessionFile;
-		const selectedEntry = this.sessionManager.getEntry(entryId);
-
-		if (!selectedEntry || selectedEntry.type !== "message" || selectedEntry.message.role !== "user") {
-			throw new Error("Invalid entry ID for forking");
-		}
-
-		const selectedText = this._extractUserMessageText(selectedEntry.message.content);
-
-		let skipConversationRestore = false;
-
-		// Emit session_before_fork event (can be cancelled)
-		if (this._extensionRunner?.hasHandlers("session_before_fork")) {
-			const result = (await this._extensionRunner.emit({
-				type: "session_before_fork",
-				entryId,
-			})) as SessionBeforeForkResult | undefined;
-
-			if (result?.cancel) {
-				return { selectedText, cancelled: true };
-			}
-			skipConversationRestore = result?.skipConversationRestore ?? false;
-		}
-
-		// Clear pending messages (bound to old session state)
-		this._pendingNextTurnMessages = [];
-
-		if (!selectedEntry.parentId) {
-			this.sessionManager.newSession({ parentSession: previousSessionFile });
-		} else {
-			this.sessionManager.createBranchedSession(selectedEntry.parentId);
-		}
-		this.agent.sessionId = this.sessionManager.getSessionId();
-
-		// Reload messages from entries (works for both file and in-memory mode)
-		const sessionContext = this.sessionManager.buildSessionContext();
-
-		// Emit session_fork event to extensions (after fork completes)
-		if (this._extensionRunner) {
-			await this._extensionRunner.emit({
-				type: "session_fork",
-				previousSessionFile,
-			});
-		}
-
-		// Emit session event to custom tools (with reason "fork")
-
-		if (!skipConversationRestore) {
-			this.agent.replaceMessages(sessionContext.messages);
-		}
-
-		this._emitSessionStateChanged("fork");
-		return { selectedText, cancelled: false };
 	}
 
 	// =========================================================================
@@ -2609,7 +2688,7 @@ export class AgentSession {
 		};
 
 		// Set up abort controller for summarization
-		this._compactionOrchestrator.branchSummaryAbortController = new AbortController();
+		this._branchSummaryAbortController = new AbortController();
 		let extensionSummary: { summary: string; details?: unknown } | undefined;
 		let fromExtension = false;
 
@@ -2618,7 +2697,7 @@ export class AgentSession {
 			const result = (await this._extensionRunner.emit({
 				type: "session_before_tree",
 				preparation,
-				signal: this._compactionOrchestrator.branchSummaryAbortController.signal,
+				signal: this._branchSummaryAbortController.signal,
 			})) as SessionBeforeTreeResult | undefined;
 
 			if (result?.cancel) {
@@ -2647,20 +2726,18 @@ export class AgentSession {
 		let summaryDetails: unknown;
 		if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 			const model = this.model!;
-			if (!this._modelRegistry.isProviderRequestReady(model.provider)) {
-				throw new Error(`No API key for ${model.provider}`);
-			}
-			const apiKey = await this._modelRegistry.getApiKey(model, this.sessionId);
+			const { apiKey, headers } = await this._getRequiredRequestAuth(model);
 			const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
 			const result = await generateBranchSummary(entriesToSummarize, {
 				model,
 				apiKey,
-				signal: this._compactionOrchestrator.branchSummaryAbortController.signal,
+				headers,
+				signal: this._branchSummaryAbortController.signal,
 				customInstructions,
 				replaceInstructions,
 				reserveTokens: branchSummarySettings.reserveTokens,
 			});
-			this._compactionOrchestrator.branchSummaryAbortController = undefined;
+			this._branchSummaryAbortController = undefined;
 			if (result.aborted) {
 				return { cancelled: true, aborted: true };
 			}
@@ -2727,7 +2804,7 @@ export class AgentSession {
 
 		// Update agent state
 		const sessionContext = this.sessionManager.buildSessionContext();
-		this.agent.replaceMessages(sessionContext.messages);
+		this.agent.state.messages = sessionContext.messages;
 
 		// Emit session_tree event
 		if (this._extensionRunner) {
@@ -2742,7 +2819,7 @@ export class AgentSession {
 
 		// Emit to custom tools
 
-		this._compactionOrchestrator.branchSummaryAbortController = undefined;
+		this._branchSummaryAbortController = undefined;
 		return { editorText, cancelled: false, summaryEntry };
 	}
 
@@ -2810,26 +2887,19 @@ export class AgentSession {
 			sessionId: this.sessionId,
 			userMessages,
 			assistantMessages,
-			toolCalls: Math.max(toolCalls, this._cumulativeToolCalls),
+			toolCalls,
 			toolResults,
 			totalMessages: state.messages.length,
 			tokens: {
-				input: Math.max(totalInput, this._cumulativeInputTokens),
-				output: Math.max(totalOutput, this._cumulativeOutputTokens),
+				input: totalInput,
+				output: totalOutput,
 				cacheRead: totalCacheRead,
 				cacheWrite: totalCacheWrite,
-				total: Math.max(totalInput + totalOutput, this._cumulativeInputTokens + this._cumulativeOutputTokens) + totalCacheRead + totalCacheWrite,
+				total: totalInput + totalOutput + totalCacheRead + totalCacheWrite,
 			},
-			cost: Math.max(totalCost, this._cumulativeCost),
+			cost: totalCost,
+			contextUsage: this.getContextUsage(),
 		};
-	}
-
-	/**
-	 * Get the cost of the most recent assistant response.
-	 * Returns 0 if no assistant message has been received yet.
-	 */
-	getLastTurnCost(): number {
-		return this._lastTurnCost;
 	}
 
 	getContextUsage(): ContextUsage | undefined {
@@ -2886,10 +2956,11 @@ export class AgentSession {
 	async exportToHtml(outputPath?: string): Promise<string> {
 		const themeName = this.settingsManager.getTheme();
 
-		// Create tool renderer for extension and built-in tool HTML rendering
-		const toolRenderer = createToolHtmlRenderer({
-			getToolDefinition: (name) => this.getRenderableToolDefinition(name),
+		// Create tool renderer if we have an extension runner (for custom tool HTML rendering)
+		const toolRenderer: ToolHtmlRenderer = createToolHtmlRenderer({
+			getToolDefinition: (name) => this.getToolDefinition(name),
 			theme,
+			cwd: this.sessionManager.getCwd(),
 		});
 
 		return await exportSessionToHtml(this.sessionManager, this.state, {
@@ -2897,6 +2968,42 @@ export class AgentSession {
 			themeName,
 			toolRenderer,
 		});
+	}
+
+	/**
+	 * Export the current session branch to a JSONL file.
+	 * Writes the session header followed by all entries on the current branch path.
+	 * @param outputPath Target file path. If omitted, generates a timestamped file in cwd.
+	 * @returns The resolved output file path.
+	 */
+	exportToJsonl(outputPath?: string): string {
+		const filePath = resolve(outputPath ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`);
+		const dir = dirname(filePath);
+		if (!existsSync(dir)) {
+			mkdirSync(dir, { recursive: true });
+		}
+
+		const header: SessionHeader = {
+			type: "session",
+			version: CURRENT_SESSION_VERSION,
+			id: this.sessionManager.getSessionId(),
+			timestamp: new Date().toISOString(),
+			cwd: this.sessionManager.getCwd(),
+		};
+
+		const branchEntries = this.sessionManager.getBranch();
+		const lines = [JSON.stringify(header)];
+
+		// Re-chain parentIds to form a linear sequence
+		let prevId: string | null = null;
+		for (const entry of branchEntries) {
+			const linear = { ...entry, parentId: prevId };
+			lines.push(JSON.stringify(linear));
+			prevId = entry.id;
+		}
+
+		writeFileSync(filePath, `${lines.join("\n")}\n`);
+		return filePath;
 	}
 
 	// =========================================================================

@@ -11,7 +11,7 @@ import {
 import {
   registerToolCompatibility,
   resetToolCompatibilityRegistry,
-} from "@gsd/pi-coding-agent";
+} from "../model-router.js";
 
 test.afterEach(() => {
   resetToolCompatibilityRegistry();

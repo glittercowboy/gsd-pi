@@ -102,7 +102,7 @@ async function addBacklogItem(basePath: string, title: string, ctx: ExtensionCom
   items.push({ id, title: title.replace(/^['"]|['"]$/g, ""), done: false, note: `added ${date}` });
   writeBacklog(basePath, items);
 
-  ctx.ui.notify(`Added ${id}: "${title}"`, "success");
+  ctx.ui.notify(`Added ${id}: "${title}"`, "info");
 }
 
 async function promoteBacklogItem(
@@ -153,7 +153,7 @@ async function removeBacklogItem(basePath: string, itemId: string, ctx: Extensio
 
   const removed = items.splice(idx, 1)[0];
   writeBacklog(basePath, items);
-  ctx.ui.notify(`Removed ${removed.id}: "${removed.title}"`, "success");
+  ctx.ui.notify(`Removed ${removed.id}: "${removed.title}"`, "info");
 }
 
 export async function handleBacklog(

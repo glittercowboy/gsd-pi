@@ -187,7 +187,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
         const indexPath = join(gsdRoot(basePath), "reports", "index.html");
         ctx.ui.notify(
           `Generated ${paths.length} report snapshot${paths.length !== 1 ? "s" : ""}:\n${paths.map(p => `  ${p}`).join("\n")}\nOpening reports index in browser...`,
-          "success",
+          "info",
         );
         openInBrowser(indexPath);
       } else {
@@ -214,7 +214,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
         });
         ctx.ui.notify(
           `HTML report saved: .gsd/reports/${bn(outPath)}\nOpening in browser...`,
-          "success",
+          "info",
         );
         openInBrowser(outPath);
       }
@@ -261,7 +261,7 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
     };
     const outPath = join(exportDir, `export-${timestamp}.json`);
     writeFileSync(outPath, JSON.stringify(report, null, 2) + "\n", "utf-8");
-    ctx.ui.notify(`Exported to ${fileLink(outPath)}`, "success");
+    ctx.ui.notify(`Exported to ${fileLink(outPath)}`, "info");
   } else {
     const totals = getProjectTotals(units);
     const phases = aggregateByPhase(units);
@@ -305,6 +305,6 @@ export async function handleExport(args: string, ctx: ExtensionCommandContext, b
 
     const outPath = join(exportDir, `export-${timestamp}.md`);
     writeFileSync(outPath, md, "utf-8");
-    ctx.ui.notify(`Exported to ${fileLink(outPath)}`, "success");
+    ctx.ui.notify(`Exported to ${fileLink(outPath)}`, "info");
   }
 }

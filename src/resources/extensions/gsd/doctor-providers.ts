@@ -37,6 +37,30 @@ export interface ProviderCheckResult {
   required: boolean;
 }
 
+// ── Provider routing constants ────────────────────────────────────────────────
+
+/**
+ * Providers that use external CLI authentication (not API keys).
+ * These are always considered "found" — the host CLI handles auth.
+ */
+const CLI_AUTH_PROVIDERS = new Set([
+  "claude-code",
+  "openai-codex",
+  "google-gemini-cli",
+  "google-antigravity",
+]);
+
+/**
+ * Providers that can serve models normally associated with another provider.
+ * Key = the provider whose models can be served, Value = alternative providers to check.
+ * e.g. GitHub Copilot subscriptions can access Claude and GPT models.
+ */
+const PROVIDER_ROUTES: Record<string, string[]> = {
+  anthropic: ["github-copilot", "claude-code"],
+  openai: ["github-copilot", "openai-codex"],
+  google: ["google-gemini-cli"],
+};
+
 // ── Model → Provider ID mapping ───────────────────────────────────────────────
 
 /**
@@ -125,8 +149,36 @@ interface KeyLookup {
   backedOff: boolean;
 }
 
+/**
+ * Map of CLI provider IDs to their binary names on disk.
+ * Used for lightweight binary-presence checks (PATH scan, no subprocess).
+ */
+const CLI_BINARY_MAP: Record<string, string> = {
+  "claude-code": "claude",
+  "openai-codex": "codex",
+  "google-gemini-cli": "gemini",
+  "google-antigravity": "antigravity",
+};
+
+/**
+ * Check if a CLI provider's binary exists anywhere in PATH.
+ * Fast filesystem scan — no subprocess, no network, sub-1ms.
+ */
+function isCliBinaryInPath(providerId: string): boolean {
+  const binary = CLI_BINARY_MAP[providerId];
+  if (!binary) return false;
+  const pathDirs = (process.env.PATH ?? "").split(":");
+  return pathDirs.some(dir => dir && existsSync(join(dir, binary)));
+}
+
 function resolveKey(providerId: string): KeyLookup {
   const info = PROVIDER_REGISTRY.find(p => p.id === providerId);
+
+  // claude-code never stores credentials in auth.json — GSD delegates entirely to
+  // the local CLI binary. Presence of the binary in PATH is the only signal.
+  if (providerId === "claude-code") {
+    return { found: isCliBinaryInPath("claude-code"), source: "env", backedOff: false };
+  }
 
   if (providerId === "anthropic-vertex" && process.env.ANTHROPIC_VERTEX_PROJECT_ID) {
     return { found: true, source: "env", backedOff: false };
@@ -137,17 +189,18 @@ function resolveKey(providerId: string): KeyLookup {
   if (existsSync(authPath)) {
     try {
       const auth = AuthStorage.create(authPath);
-      const creds = auth.getCredentialsForProvider(providerId);
-      if (creds.length > 0) {
+      // pi 0.67.2: getCredentialsForProvider removed; use get() + has()
+      // areAllCredentialsBackedOff removed; the concept no longer exists — return false
+      const cred = auth.get(providerId);
+      if (cred) {
         // Filter out empty placeholder keys (from skipped onboarding)
-        const hasRealKey = creds.some(c =>
-          c.type === "oauth" || (c.type === "api_key" && (c as { key?: string }).key)
-        );
+        const hasRealKey =
+          cred.type === "oauth" || (cred.type === "api_key" && cred.key);
         if (hasRealKey) {
           return {
             found: true,
             source: "auth.json",
-            backedOff: auth.areAllCredentialsBackedOff(providerId),
+            backedOff: false,
           };
         }
       }
@@ -173,28 +226,6 @@ function resolveKey(providerId: string): KeyLookup {
 }
 
 // ── Individual check groups ────────────────────────────────────────────────────
-
-/**
- * Providers that can serve models normally associated with another provider.
- * Key = the provider whose models can be served, Value = alternative providers to check.
- * e.g. GitHub Copilot subscriptions can access Claude and GPT models.
- */
-const PROVIDER_ROUTES: Record<string, string[]> = {
-  anthropic: ["github-copilot"],
-  openai: ["github-copilot", "openai-codex"],
-  google: ["google-gemini-cli"],
-};
-
-/**
- * Providers that use external CLI authentication (not API keys).
- * These are always considered "ok" — the host CLI handles auth.
- */
-const CLI_AUTH_PROVIDERS = new Set([
-  "claude-code",
-  "openai-codex",
-  "google-gemini-cli",
-  "google-antigravity",
-]);
 
 function checkLlmProviders(): ProviderCheckResult[] {
   const required = collectConfiguredModelProviders();

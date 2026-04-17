@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { AutoDashboardData } from "./bridge-service.ts";
+import type { AutoDashboardData } from "./auto-dashboard-types.ts";
 import { resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts";
 
 const AUTO_DASHBOARD_MAX_BUFFER = 1024 * 1024;

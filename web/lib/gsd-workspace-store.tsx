@@ -66,6 +66,12 @@ import type {
 } from "./session-browser-contract"
 import { authFetch, appendAuthParam } from "./auth"
 import { ContextualTips } from "../../packages/pi-coding-agent/src/core/contextual-tips.ts"
+import type {
+  WorkspaceIndex,
+  WorkspaceScopeTarget,
+  WorkspaceSliceTarget,
+  WorkspaceValidationIssue,
+} from "../../src/shared/workspace-types.ts"
 
 export type WorkspaceStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated"
 export type WorkspaceConnectionState =
@@ -127,29 +133,7 @@ export interface BridgeRuntimeSnapshot {
 }
 
 export type { WorkspaceTaskTarget, RiskLevel, WorkspaceSliceTarget, WorkspaceMilestoneTarget } from "./workspace-types.js"
-
-export interface WorkspaceScopeTarget {
-  scope: string
-  label: string
-  kind: "project" | "milestone" | "slice" | "task"
-}
-
-export interface WorkspaceValidationIssue {
-  message?: string
-  [key: string]: unknown
-}
-
-export interface WorkspaceIndex {
-  milestones: WorkspaceMilestoneTarget[]
-  active: {
-    milestoneId?: string
-    sliceId?: string
-    taskId?: string
-    phase: string
-  }
-  scopes: WorkspaceScopeTarget[]
-  validationIssues: WorkspaceValidationIssue[]
-}
+export type { WorkspaceIndex, WorkspaceScopeTarget, WorkspaceValidationIssue }
 
 export interface RtkSessionSavings {
   commands: number
@@ -195,12 +179,13 @@ export interface WorkspaceOnboardingProviderState {
   required: true
   recommended: boolean
   configured: boolean
-  configuredVia: "auth_file" | "environment" | "runtime" | null
+  configuredVia: "auth_file" | "environment" | "runtime" | "external_cli" | null
   supports: {
     apiKey: boolean
     oauth: boolean
     oauthAvailable: boolean
     usesCallbackServer: boolean
+    externalCli: boolean
   }
 }
 
@@ -258,7 +243,7 @@ export interface WorkspaceOnboardingState {
     blocking: true
     skippable: false
     satisfied: boolean
-    satisfiedBy: { providerId: string; source: "auth_file" | "environment" | "runtime" } | null
+    satisfiedBy: { providerId: string; source: "auth_file" | "environment" | "runtime" | "external_cli" } | null
     providers: WorkspaceOnboardingProviderState[]
   }
   optional: {

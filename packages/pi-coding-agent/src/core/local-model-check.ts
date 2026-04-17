@@ -1,22 +1,17 @@
 /**
- * local-model-check.ts — Utility to detect if a model baseUrl is local.
+ * Local model detection utilities.
  *
- * Leaf module with zero transitive dependencies on TypeScript parameter properties.
- * Used by ModelRegistry and tests.
+ * Restored from pi-mono 0.57.1 — removed in 0.67.2 but still referenced
+ * by GSD tests (offline-mode.test.ts). GSD vendor patch.
  */
 
 /**
- * Check if a model's baseUrl points to a local endpoint.
- * Returns true for localhost, 127.0.0.1, 0.0.0.0, ::1, or unix socket paths.
- * Returns false if baseUrl is empty (cloud provider) or points to a remote host.
+ * Returns true if the model is served from a local URL (localhost, loopback, unix socket).
  */
-export function isLocalModel(model: { baseUrl: string }): boolean {
+export function isLocalModel(model: { baseUrl?: string }): boolean {
 	const url = model.baseUrl;
 	if (!url) return false;
-
-	// Unix socket paths
 	if (url.startsWith("unix://") || url.startsWith("unix:")) return true;
-
 	try {
 		const parsed = new URL(url);
 		const hostname = parsed.hostname;
@@ -30,7 +25,6 @@ export function isLocalModel(model: { baseUrl: string }): boolean {
 			return true;
 		}
 	} catch {
-		// If URL parsing fails, check raw string for local patterns
 		if (
 			url.includes("localhost") ||
 			url.includes("127.0.0.1") ||
@@ -40,6 +34,12 @@ export function isLocalModel(model: { baseUrl: string }): boolean {
 			return true;
 		}
 	}
-
 	return false;
+}
+
+/**
+ * Returns true if all models in the chain are local.
+ */
+export function isAllLocalChain(models: Array<{ baseUrl?: string }>): boolean {
+	return models.length > 0 && models.every(isLocalModel);
 }

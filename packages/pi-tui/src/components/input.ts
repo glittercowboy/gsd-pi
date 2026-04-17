@@ -1,9 +1,9 @@
-import { getEditorKeybindings } from "../keybindings.js";
+import { getKeybindings } from "../keybindings.js";
 import { decodeKittyPrintable } from "../keys.js";
 import { KillRing } from "../kill-ring.js";
 import { type Component, CURSOR_MARKER, type Focusable } from "../tui.js";
 import { UndoStack } from "../undo-stack.js";
-import { getSegmenter, isPunctuationChar, isWhitespaceChar, visibleWidth } from "../utils.js";
+import { getSegmenter, isPunctuationChar, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.js";
 
 const segmenter = getSegmenter();
 
@@ -20,22 +20,9 @@ export class Input implements Component, Focusable {
 	private cursor: number = 0; // Cursor position in the value
 	public onSubmit?: (value: string) => void;
 	public onEscape?: () => void;
-	public placeholder: string = "";
-	/** When true, render obscured characters instead of the actual value. */
-	public secure: boolean = false;
 
 	/** Focusable interface - set by TUI when focus changes */
-	private _focused: boolean = false;
-	get focused(): boolean {
-		return this._focused;
-	}
-	set focused(value: boolean) {
-		this._focused = value;
-		if (!value) {
-			this.isInPaste = false;
-			this.pasteBuffer = "";
-		}
-	}
+	focused: boolean = false;
 
 	// Bracketed paste mode buffering
 	private pasteBuffer: string = "";
@@ -95,69 +82,69 @@ export class Input implements Component, Focusable {
 			return;
 		}
 
-		const kb = getEditorKeybindings();
+		const kb = getKeybindings();
 
 		// Escape/Cancel
-		if (kb.matches(data, "selectCancel")) {
+		if (kb.matches(data, "tui.select.cancel")) {
 			if (this.onEscape) this.onEscape();
 			return;
 		}
 
 		// Undo
-		if (kb.matches(data, "undo")) {
+		if (kb.matches(data, "tui.editor.undo")) {
 			this.undo();
 			return;
 		}
 
 		// Submit
-		if (kb.matches(data, "submit") || data === "\n") {
+		if (kb.matches(data, "tui.input.submit") || data === "\n") {
 			if (this.onSubmit) this.onSubmit(this.value);
 			return;
 		}
 
 		// Deletion
-		if (kb.matches(data, "deleteCharBackward")) {
+		if (kb.matches(data, "tui.editor.deleteCharBackward")) {
 			this.handleBackspace();
 			return;
 		}
 
-		if (kb.matches(data, "deleteCharForward")) {
+		if (kb.matches(data, "tui.editor.deleteCharForward")) {
 			this.handleForwardDelete();
 			return;
 		}
 
-		if (kb.matches(data, "deleteWordBackward")) {
+		if (kb.matches(data, "tui.editor.deleteWordBackward")) {
 			this.deleteWordBackwards();
 			return;
 		}
 
-		if (kb.matches(data, "deleteWordForward")) {
+		if (kb.matches(data, "tui.editor.deleteWordForward")) {
 			this.deleteWordForward();
 			return;
 		}
 
-		if (kb.matches(data, "deleteToLineStart")) {
+		if (kb.matches(data, "tui.editor.deleteToLineStart")) {
 			this.deleteToLineStart();
 			return;
 		}
 
-		if (kb.matches(data, "deleteToLineEnd")) {
+		if (kb.matches(data, "tui.editor.deleteToLineEnd")) {
 			this.deleteToLineEnd();
 			return;
 		}
 
 		// Kill ring actions
-		if (kb.matches(data, "yank")) {
+		if (kb.matches(data, "tui.editor.yank")) {
 			this.yank();
 			return;
 		}
-		if (kb.matches(data, "yankPop")) {
+		if (kb.matches(data, "tui.editor.yankPop")) {
 			this.yankPop();
 			return;
 		}
 
 		// Cursor movement
-		if (kb.matches(data, "cursorLeft")) {
+		if (kb.matches(data, "tui.editor.cursorLeft")) {
 			this.lastAction = null;
 			if (this.cursor > 0) {
 				const beforeCursor = this.value.slice(0, this.cursor);
@@ -168,7 +155,7 @@ export class Input implements Component, Focusable {
 			return;
 		}
 
-		if (kb.matches(data, "cursorRight")) {
+		if (kb.matches(data, "tui.editor.cursorRight")) {
 			this.lastAction = null;
 			if (this.cursor < this.value.length) {
 				const afterCursor = this.value.slice(this.cursor);
@@ -179,24 +166,24 @@ export class Input implements Component, Focusable {
 			return;
 		}
 
-		if (kb.matches(data, "cursorLineStart")) {
+		if (kb.matches(data, "tui.editor.cursorLineStart")) {
 			this.lastAction = null;
 			this.cursor = 0;
 			return;
 		}
 
-		if (kb.matches(data, "cursorLineEnd")) {
+		if (kb.matches(data, "tui.editor.cursorLineEnd")) {
 			this.lastAction = null;
 			this.cursor = this.value.length;
 			return;
 		}
 
-		if (kb.matches(data, "cursorWordLeft")) {
+		if (kb.matches(data, "tui.editor.cursorWordLeft")) {
 			this.moveWordBackwards();
 			return;
 		}
 
-		if (kb.matches(data, "cursorWordRight")) {
+		if (kb.matches(data, "tui.editor.cursorWordRight")) {
 			this.moveWordForwards();
 			return;
 		}
@@ -433,7 +420,7 @@ export class Input implements Component, Focusable {
 		this.pushUndo();
 
 		// Clean the pasted text - remove newlines and carriage returns
-		const cleanText = pastedText.replace(/\r\n/g, "").replace(/\r/g, "").replace(/\n/g, "");
+		const cleanText = pastedText.replace(/\r\n/g, "").replace(/\r/g, "").replace(/\n/g, "").replace(/\t/g, "    ");
 
 		// Insert at cursor position
 		this.value = this.value.slice(0, this.cursor) + cleanText + this.value.slice(this.cursor);
@@ -448,74 +435,45 @@ export class Input implements Component, Focusable {
 		// Calculate visible window
 		const prompt = "> ";
 		const availableWidth = width - prompt.length;
-		const renderValue = this.secure ? "*".repeat(this.value.length) : this.value;
 
 		if (availableWidth <= 0) {
 			return [prompt];
 		}
 
-		// Show placeholder when value is empty
-		if (this.value === "" && this.placeholder) {
-			const placeholderText = this.placeholder.slice(0, availableWidth - 1);
-			const marker = this.focused ? CURSOR_MARKER : "";
-			const cursorChar = "\x1b[7m \x1b[27m"; // inverse space for cursor
-			const dimPlaceholder = `\x1b[2m${placeholderText}\x1b[22m`; // dim text
-			const padding = " ".repeat(Math.max(0, availableWidth - visibleWidth(placeholderText) - 1));
-			return [prompt + marker + cursorChar + dimPlaceholder + padding];
-		}
-
 		let visibleText = "";
 		let cursorDisplay = this.cursor;
+		const totalWidth = visibleWidth(this.value);
 
-		if (this.value.length < availableWidth) {
+		if (totalWidth < availableWidth) {
 			// Everything fits (leave room for cursor at end)
-			visibleText = renderValue;
+			visibleText = this.value;
 		} else {
 			// Need horizontal scrolling
-			// Reserve one character for cursor if it's at the end
+			// Reserve one column for cursor if it's at the end
 			const scrollWidth = this.cursor === this.value.length ? availableWidth - 1 : availableWidth;
-			const halfWidth = Math.floor(scrollWidth / 2);
+			const cursorCol = visibleWidth(this.value.slice(0, this.cursor));
 
-			const findValidStart = (start: number) => {
-				while (start < this.value.length) {
-					const charCode = this.value.charCodeAt(start);
-					// this is low surrogate, not a valid start
-					if (charCode >= 0xdc00 && charCode < 0xe000) {
-						start++;
-						continue;
-					}
-					break;
+			if (scrollWidth > 0) {
+				const halfWidth = Math.floor(scrollWidth / 2);
+				let startCol = 0;
+
+				if (cursorCol < halfWidth) {
+					// Cursor near start
+					startCol = 0;
+				} else if (cursorCol > totalWidth - halfWidth) {
+					// Cursor near end
+					startCol = Math.max(0, totalWidth - scrollWidth);
+				} else {
+					// Cursor in middle
+					startCol = Math.max(0, cursorCol - halfWidth);
 				}
-				return start;
-			};
 
-			const findValidEnd = (end: number) => {
-				while (end > 0) {
-					const charCode = this.value.charCodeAt(end - 1);
-					// this is high surrogate, might be split.
-					if (charCode >= 0xd800 && charCode < 0xdc00) {
-						end--;
-						continue;
-					}
-					break;
-				}
-				return end;
-			};
-
-			if (this.cursor < halfWidth) {
-				// Cursor near start
-				visibleText = renderValue.slice(0, findValidEnd(scrollWidth));
-				cursorDisplay = this.cursor;
-			} else if (this.cursor > this.value.length - halfWidth) {
-				// Cursor near end
-				const start = findValidStart(this.value.length - scrollWidth);
-				visibleText = renderValue.slice(start);
-				cursorDisplay = this.cursor - start;
+				visibleText = sliceByColumn(this.value, startCol, scrollWidth, true);
+				const beforeCursor = sliceByColumn(this.value, startCol, Math.max(0, cursorCol - startCol), true);
+				cursorDisplay = beforeCursor.length;
 			} else {
-				// Cursor in middle
-				const start = findValidStart(this.cursor - halfWidth);
-				visibleText = renderValue.slice(start, findValidEnd(start + scrollWidth));
-				cursorDisplay = halfWidth;
+				visibleText = "";
+				cursorDisplay = 0;
 			}
 		}
 

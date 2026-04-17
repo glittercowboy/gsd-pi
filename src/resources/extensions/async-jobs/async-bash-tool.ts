@@ -9,10 +9,10 @@
 import type { ToolDefinition } from "@gsd/pi-coding-agent";
 import {
 	getShellConfig,
-	sanitizeCommand,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 } from "@gsd/pi-coding-agent";
+import { sanitizeCommand } from "@gsd/agent-core";
 import { Type } from "@sinclair/typebox";
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream } from "node:fs";

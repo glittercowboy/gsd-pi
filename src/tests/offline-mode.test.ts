@@ -122,7 +122,7 @@ test("web search tool is filtered when PI_OFFLINE is set", async () => {
 
 	const toolExecPath = join(
 		process.cwd(),
-		"packages/pi-coding-agent/src/modes/interactive/components/tool-execution.ts",
+		"packages/gsd-agent-modes/src/modes/interactive/components/tool-execution.ts",
 	);
 	const content = readFileSync(toolExecPath, "utf-8");
 	assert.ok(
@@ -132,7 +132,7 @@ test("web search tool is filtered when PI_OFFLINE is set", async () => {
 
 	const chatControllerPath = join(
 		process.cwd(),
-		"packages/pi-coding-agent/src/modes/interactive/controllers/chat-controller.ts",
+		"packages/gsd-agent-modes/src/modes/interactive/controllers/chat-controller.ts",
 	);
 	const chatContent = readFileSync(chatControllerPath, "utf-8");
 	assert.ok(
@@ -149,7 +149,7 @@ test("version check is skipped when PI_OFFLINE is set", async () => {
 
 	const interactivePath = join(
 		process.cwd(),
-		"packages/pi-coding-agent/src/modes/interactive/interactive-mode.ts",
+		"packages/gsd-agent-modes/src/modes/interactive/interactive-mode.ts",
 	);
 	const content = readFileSync(interactivePath, "utf-8");
 	assert.ok(

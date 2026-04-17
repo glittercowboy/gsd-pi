@@ -92,7 +92,7 @@ export async function handleSessionReport(
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const outPath = join(reportsDir, `session-${timestamp}.md`);
     writeFileSync(outPath, `\`\`\`\n${report}\n\`\`\`\n`, "utf-8");
-    ctx.ui.notify(`Report saved: ${outPath}`, "success");
+    ctx.ui.notify(`Report saved: ${outPath}`, "info");
     return;
   }
 

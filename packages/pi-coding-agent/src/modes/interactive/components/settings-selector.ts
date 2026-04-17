@@ -1,19 +1,25 @@
-import type { ThinkingLevel } from "@gsd/pi-agent-core";
-import type { Transport } from "@gsd/pi-ai";
+import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { Transport } from "@mariozechner/pi-ai";
 import {
 	Container,
 	getCapabilities,
 	type SelectItem,
 	SelectList,
+	type SelectListLayoutOptions,
 	type SettingItem,
 	SettingsList,
 	Spacer,
 	Text,
-} from "@gsd/pi-tui";
+} from "@mariozechner/pi-tui";
 import { getSelectListTheme, getSettingsListTheme, theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 
-export const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
+const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
+	minPrimaryColumnWidth: 12,
+	maxPrimaryColumnWidth: 32,
+};
+
+const THINKING_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	off: "No reasoning",
 	minimal: "Very brief reasoning (~1k tokens)",
 	low: "Light reasoning (~2k tokens)",
@@ -37,15 +43,14 @@ export interface SettingsConfig {
 	availableThemes: string[];
 	hideThinkingBlock: boolean;
 	collapseChangelog: boolean;
+	enableInstallTelemetry: boolean;
 	doubleEscapeAction: "fork" | "tree" | "none";
 	treeFilterMode: "default" | "no-tools" | "user-only" | "labeled-only" | "all";
 	showHardwareCursor: boolean;
 	editorPaddingX: number;
 	autocompleteMaxVisible: number;
-	respectGitignoreInPicker: boolean;
 	quietStartup: boolean;
 	clearOnShrink: boolean;
-	timestampFormat: "date-time-iso" | "date-time-us";
 }
 
 export interface SettingsCallbacks {
@@ -62,22 +67,21 @@ export interface SettingsCallbacks {
 	onThemePreview?: (theme: string) => void;
 	onHideThinkingBlockChange: (hidden: boolean) => void;
 	onCollapseChangelogChange: (collapsed: boolean) => void;
+	onEnableInstallTelemetryChange: (enabled: boolean) => void;
 	onDoubleEscapeActionChange: (action: "fork" | "tree" | "none") => void;
 	onTreeFilterModeChange: (mode: "default" | "no-tools" | "user-only" | "labeled-only" | "all") => void;
 	onShowHardwareCursorChange: (enabled: boolean) => void;
 	onEditorPaddingXChange: (padding: number) => void;
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
-	onRespectGitignoreInPickerChange: (enabled: boolean) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
-	onTimestampFormatChange: (format: "date-time-iso" | "date-time-us") => void;
 	onCancel: () => void;
 }
 
 /**
  * A submenu component for selecting from a list of options.
  */
-export class SelectSubmenu extends Container {
+class SelectSubmenu extends Container {
 	private selectList: SelectList;
 
 	constructor(
@@ -104,7 +108,12 @@ export class SelectSubmenu extends Container {
 		this.addChild(new Spacer(1));
 
 		// Select list
-		this.selectList = new SelectList(options, Math.min(options.length, 10), getSelectListTheme());
+		this.selectList = new SelectList(
+			options,
+			Math.min(options.length, 10),
+			getSelectListTheme(),
+			SETTINGS_SUBMENU_SELECT_LIST_LAYOUT,
+		);
 
 		// Pre-select current value
 		const currentIndex = options.findIndex((o) => o.value === currentValue);
@@ -167,7 +176,7 @@ export class SettingsSelectorComponent extends Container {
 				id: "follow-up-mode",
 				label: "Follow-up mode",
 				description:
-					`${process.platform === "darwin" ? "⌥Enter" : "Alt+Enter"} queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.`,
+					"Alt+Enter queues follow-up messages until agent stops. 'one-at-a-time': deliver one, wait for response. 'all': deliver all at once.",
 				currentValue: config.followUpMode,
 				values: ["one-at-a-time", "all"],
 			},
@@ -197,6 +206,13 @@ export class SettingsSelectorComponent extends Container {
 				label: "Quiet startup",
 				description: "Disable verbose printing at startup",
 				currentValue: config.quietStartup ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "install-telemetry",
+				label: "Install telemetry",
+				description: "Send an anonymous version/update ping after changelog-detected updates",
+				currentValue: config.enableInstallTelemetry ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
@@ -347,26 +363,6 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
-		// Respect .gitignore in file picker toggle (insert after clear-on-shrink)
-		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
-		items.splice(clearOnShrinkIndex + 1, 0, {
-			id: "respect-gitignore-in-picker",
-			label: "Respect .gitignore in file picker",
-			description: "When false, @ file picker shows gitignored files too",
-			currentValue: config.respectGitignoreInPicker ? "true" : "false",
-			values: ["true", "false"],
-		});
-
-		// Timestamp format (insert after respect-gitignore-in-picker)
-		const gitignoreIndex = items.findIndex((item) => item.id === "respect-gitignore-in-picker");
-		items.splice(gitignoreIndex + 1, 0, {
-			id: "timestamp-format",
-			label: "Timestamp format",
-			description: "Date/time format for message timestamps",
-			currentValue: config.timestampFormat,
-			values: ["date-time-iso", "date-time-us"],
-		});
-
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -409,6 +405,9 @@ export class SettingsSelectorComponent extends Container {
 					case "quiet-startup":
 						callbacks.onQuietStartupChange(newValue === "true");
 						break;
+					case "install-telemetry":
+						callbacks.onEnableInstallTelemetryChange(newValue === "true");
+						break;
 					case "double-escape-action":
 						callbacks.onDoubleEscapeActionChange(newValue as "fork" | "tree");
 						break;
@@ -428,12 +427,6 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "clear-on-shrink":
 						callbacks.onClearOnShrinkChange(newValue === "true");
-						break;
-					case "respect-gitignore-in-picker":
-						callbacks.onRespectGitignoreInPickerChange(newValue === "true");
-						break;
-					case "timestamp-format":
-						callbacks.onTimestampFormatChange(newValue as "date-time-iso" | "date-time-us");
 						break;
 				}
 			},

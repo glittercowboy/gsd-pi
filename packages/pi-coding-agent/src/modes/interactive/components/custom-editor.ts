@@ -1,12 +1,12 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI, isKittyProtocolActive } from "@gsd/pi-tui";
-import type { AppAction, KeybindingsManager } from "../../../core/keybindings.js";
+import { Editor, type EditorOptions, type EditorTheme, type TUI } from "@mariozechner/pi-tui";
+import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.js";
 
 /**
  * Custom editor that handles app-level keybindings for coding-agent.
  */
 export class CustomEditor extends Editor {
 	private keybindings: KeybindingsManager;
-	public actionHandlers: Map<AppAction, () => void> = new Map();
+	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
 
 	// Special handlers that can be dynamically replaced
 	public onEscape?: () => void;
@@ -23,7 +23,7 @@ export class CustomEditor extends Editor {
 	/**
 	 * Register a handler for an app action.
 	 */
-	onAction(action: AppAction, handler: () => void): void {
+	onAction(action: AppKeybinding, handler: () => void): void {
 		this.actionHandlers.set(action, handler);
 	}
 
@@ -34,7 +34,7 @@ export class CustomEditor extends Editor {
 		}
 
 		// Check for paste image keybinding
-		if (this.keybindings.matches(data, "pasteImage")) {
+		if (this.keybindings.matches(data, "app.clipboard.pasteImage")) {
 			this.onPasteImage?.();
 			return;
 		}
@@ -42,10 +42,10 @@ export class CustomEditor extends Editor {
 		// Check app keybindings first
 
 		// Escape/interrupt - only if autocomplete is NOT active
-		if (this.keybindings.matches(data, "interrupt")) {
+		if (this.keybindings.matches(data, "app.interrupt")) {
 			if (!this.isShowingAutocomplete()) {
 				// Use dynamic onEscape if set, otherwise registered handler
-				const handler = this.onEscape ?? this.actionHandlers.get("interrupt");
+				const handler = this.onEscape ?? this.actionHandlers.get("app.interrupt");
 				if (handler) {
 					handler();
 					return;
@@ -57,9 +57,9 @@ export class CustomEditor extends Editor {
 		}
 
 		// Exit (Ctrl+D) - only when editor is empty
-		if (this.keybindings.matches(data, "exit")) {
+		if (this.keybindings.matches(data, "app.exit")) {
 			if (this.getText().length === 0) {
-				const handler = this.onCtrlD ?? this.actionHandlers.get("exit");
+				const handler = this.onCtrlD ?? this.actionHandlers.get("app.exit");
 				if (handler) handler();
 				return;
 			}
@@ -68,14 +68,7 @@ export class CustomEditor extends Editor {
 
 		// Check all other app actions
 		for (const [action, handler] of this.actionHandlers) {
-			if (action !== "interrupt" && action !== "exit" && this.keybindings.matches(data, action)) {
-				// When kitty protocol is not active, \x1b\r is ambiguous:
-				// it could be alt+enter (followUp) or shift+enter mapped via /terminal-setup.
-				// Prioritize newLine since that's what terminal-setup configures.
-				// Alt+enter followUp still works in kitty-protocol terminals.
-				if (action === "followUp" && !isKittyProtocolActive() && data === "\x1b\r") {
-					break; // Fall through to parent editor's newLine handling
-				}
+			if (action !== "app.interrupt" && action !== "app.exit" && this.keybindings.matches(data, action)) {
 				handler();
 				return;
 			}

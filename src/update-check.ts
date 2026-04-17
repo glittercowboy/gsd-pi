@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve as resolvePath, sep } from 'node:path'
+import { homedir } from 'node:os'
 import chalk from 'chalk'
 import { appRoot } from './app-paths.js'
 import { execSync } from 'node:child_process'
@@ -74,10 +75,29 @@ export async function fetchLatestVersionFromRegistry(
   }
 }
 
+/**
+ * Detects whether the currently-running gsd binary was installed via `bun add -g`.
+ *
+ * Bun's global bin entries on macOS/Linux are plain symlinks that point at the
+ * package's bin file. The OS honors the target file's shebang, so a bin with
+ * `#!/usr/bin/env node` runs under Node and `process.versions.bun` is undefined
+ * — even though the binary was installed by bun. Checking the runtime alone
+ * (PR #4147) misses this path. Inspect the unresolved invocation path instead.
+ */
+export function isBunInstall(argv1: string | undefined = process.argv[1]): boolean {
+  if ('bun' in process.versions) return true
+  if (!argv1) return false
+
+  const bunBinDirs: string[] = []
+  if (process.env.BUN_INSTALL) bunBinDirs.push(join(process.env.BUN_INSTALL, 'bin'))
+  bunBinDirs.push(join(homedir(), '.bun', 'bin'))
+
+  const resolved = resolvePath(argv1)
+  return bunBinDirs.some((dir) => resolved.startsWith(resolvePath(dir) + sep))
+}
+
 export function resolveInstallCommand(pkg: string): string {
-  if ('bun' in process.versions) {
-    return `bun add -g ${pkg}`
-  }
+  if (isBunInstall()) return `bun add -g ${pkg}`
   return `npm install -g ${pkg}`
 }
 

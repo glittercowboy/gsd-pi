@@ -171,6 +171,8 @@ test("getAllKeyStatuses detects keys in auth.json", () => {
 });
 
 test("getAllKeyStatuses detects multiple keys", () => {
+  // auth.get() returns the raw array for multi-credential providers.
+  // getAllKeyStatuses normalizes arrays and reports credentialCount and round-robin.
   const auth = makeAuth({
     openai: [
       { type: "api_key", key: "sk-key1" },

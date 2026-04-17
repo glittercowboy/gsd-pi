@@ -5,9 +5,9 @@
  * dependency audits, handles auto-fix retry logic, and writes
  * verification evidence JSON.
  *
- * Extracted from handleAgentEnd() in auto.ts. Returns a sentinel
- * value instead of calling return/pauseAuto directly — the caller
- * checks the result and handles control flow.
+ * Extracted from the pre-loop agent_end handler in auto.ts. Returns a
+ * sentinel value instead of calling return/pauseAuto directly — the
+ * caller checks the result and handles control flow.
  */
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";

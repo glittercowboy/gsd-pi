@@ -1,6 +1,4 @@
-// Lazy-loaded: OpenAI SDK is imported on first use, not at startup.
-// This avoids penalizing users who don't use OpenAI models.
-import type OpenAI from "openai";
+import OpenAI from "openai";
 import type {
 	ChatCompletionAssistantMessageParam,
 	ChatCompletionChunk,
@@ -31,15 +29,9 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
-import {
-	assertStreamSuccess,
-	buildInitialOutput,
-	createOpenAIClient,
-	finalizeStream,
-	handleStreamError,
-} from "./openai-shared.js";
-import { transformMessagesWithReport } from "./transform-messages.js";
+import { transformMessages } from "./transform-messages.js";
 
 /**
  * Check if conversation messages contain tool calls or tool results.
@@ -73,15 +65,27 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {
-		const output = buildInitialOutput(model);
+		const output: AssistantMessage = {
+			role: "assistant",
+			content: [],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
 
 		try {
 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
-			const isZai = model.provider === "zai" || model.baseUrl.includes("api.z.ai");
-			const client = await createOpenAIClient(model, context, apiKey, {
-				optionsHeaders: options?.headers,
-				extraClientOptions: isZai ? { timeout: 100_000, maxRetries: 4 } : undefined,
-			});
+			const client = createClient(model, context, apiKey, options?.headers);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -111,6 +115,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 						});
 					} else if (block.type === "toolCall") {
 						block.arguments = parseStreamingJson(block.partialArgs);
+						// Finalize in-place and strip the scratch buffer so replay only
+						// carries parsed arguments.
 						delete block.partialArgs;
 						stream.push({
 							type: "toolcall_end",
@@ -123,36 +129,30 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			};
 
 			for await (const chunk of openaiStream) {
+				if (!chunk || typeof chunk !== "object") continue;
+
+				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
+				// and each chunk in a streamed completion carries the same id.
+				output.responseId ||= chunk.id;
 				if (chunk.usage) {
-					const cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens || 0;
-					const reasoningTokens = chunk.usage.completion_tokens_details?.reasoning_tokens || 0;
-					const input = (chunk.usage.prompt_tokens || 0) - cachedTokens;
-					const outputTokens = (chunk.usage.completion_tokens || 0) + reasoningTokens;
-					output.usage = {
-						// OpenAI includes cached tokens in prompt_tokens, so subtract to get non-cached input
-						input,
-						output: outputTokens,
-						cacheRead: cachedTokens,
-						cacheWrite: 0,
-						// Compute totalTokens ourselves since we add reasoning_tokens to output
-						// and some providers (e.g., Groq) don't include them in total_tokens
-						totalTokens: input + outputTokens + cachedTokens,
-						cost: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
-							cacheWrite: 0,
-							total: 0,
-						},
-					};
-					calculateCost(model, output.usage);
+					output.usage = parseChunkUsage(chunk.usage, model);
 				}
 
-				const choice = chunk.choices?.[0];
+				const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined;
 				if (!choice) continue;
 
+				// Fallback: some providers (e.g., Moonshot) return usage
+				// in choice.usage instead of the standard chunk.usage
+				if (!chunk.usage && (choice as any).usage) {
+					output.usage = parseChunkUsage((choice as any).usage, model);
+				}
+
 				if (choice.finish_reason) {
-					output.stopReason = mapStopReason(choice.finish_reason);
+					const finishReasonResult = mapStopReason(choice.finish_reason);
+					output.stopReason = finishReasonResult.stopReason;
+					if (finishReasonResult.errorMessage) {
+						output.errorMessage = finishReasonResult.errorMessage;
+					}
 				}
 
 				if (choice.delta) {
@@ -277,12 +277,32 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			}
 
 			finishCurrentBlock(currentBlock);
-			assertStreamSuccess(output, options?.signal);
-			finalizeStream(stream, output);
+			if (options?.signal?.aborted) {
+				throw new Error("Request was aborted");
+			}
+
+			if (output.stopReason === "aborted") {
+				throw new Error("Request was aborted");
+			}
+			if (output.stopReason === "error") {
+				throw new Error(output.errorMessage || "Provider returned an error stop reason");
+			}
+
+			stream.push({ type: "done", reason: output.stopReason, message: output });
+			stream.end();
 		} catch (error) {
+			for (const block of output.content) {
+				delete (block as { index?: number }).index;
+				// partialArgs is only a streaming scratch buffer; never persist it.
+				delete (block as { partialArgs?: string }).partialArgs;
+			}
+			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
 			// Some providers via OpenRouter give additional information in this field.
 			const rawMetadata = (error as any)?.error?.metadata?.raw;
-			handleStreamError(stream, output, error, options?.signal, rawMetadata);
+			if (rawMetadata) output.errorMessage += `\n${rawMetadata}`;
+			stream.push({ type: "error", reason: output.stopReason, error: output });
+			stream.end();
 		}
 	})();
 
@@ -309,6 +329,44 @@ export const streamSimpleOpenAICompletions: StreamFunction<"openai-completions",
 		toolChoice,
 	} satisfies OpenAICompletionsOptions);
 };
+
+function createClient(
+	model: Model<"openai-completions">,
+	context: Context,
+	apiKey?: string,
+	optionsHeaders?: Record<string, string>,
+) {
+	if (!apiKey) {
+		if (!process.env.OPENAI_API_KEY) {
+			throw new Error(
+				"OpenAI API key is required. Set OPENAI_API_KEY environment variable or pass it as an argument.",
+			);
+		}
+		apiKey = process.env.OPENAI_API_KEY;
+	}
+
+	const headers = { ...model.headers };
+	if (model.provider === "github-copilot") {
+		const hasImages = hasCopilotVisionInput(context.messages);
+		const copilotHeaders = buildCopilotDynamicHeaders({
+			messages: context.messages,
+			hasImages,
+		});
+		Object.assign(headers, copilotHeaders);
+	}
+
+	// Merge options headers last so they can override defaults
+	if (optionsHeaders) {
+		Object.assign(headers, optionsHeaders);
+	}
+
+	return new OpenAI({
+		apiKey,
+		baseURL: model.baseUrl,
+		dangerouslyAllowBrowser: true,
+		defaultHeaders: headers,
+	});
+}
 
 function buildParams(model: Model<"openai-completions">, context: Context, options?: OpenAICompletionsOptions) {
 	const compat = getCompat(model);
@@ -343,7 +401,9 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 
 	if (context.tools) {
 		params.tools = convertTools(context.tools, compat);
-		maybeAddOpenRouterAnthropicToolCacheControl(model, params.tools);
+		if (compat.zaiToolStream) {
+			(params as any).tool_stream = true;
+		}
 	} else if (hasToolHistory(context.messages)) {
 		// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
 		params.tools = [];
@@ -353,9 +413,22 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		params.tool_choice = options.toolChoice;
 	}
 
-	if ((compat.thinkingFormat === "zai" || compat.thinkingFormat === "qwen") && model.reasoning) {
-		// Both Z.ai and Qwen use enable_thinking: boolean
+	if (compat.thinkingFormat === "zai" && model.reasoning) {
 		(params as any).enable_thinking = !!options?.reasoningEffort;
+	} else if (compat.thinkingFormat === "qwen" && model.reasoning) {
+		(params as any).enable_thinking = !!options?.reasoningEffort;
+	} else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
+		(params as any).chat_template_kwargs = { enable_thinking: !!options?.reasoningEffort };
+	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
+		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
+		const openRouterParams = params as typeof params & { reasoning?: { effort?: string } };
+		if (options?.reasoningEffort) {
+			openRouterParams.reasoning = {
+				effort: mapReasoningEffort(options.reasoningEffort, compat.reasoningEffortMap),
+			};
+		} else {
+			openRouterParams.reasoning = { effort: "none" };
+		}
 	} else if (options?.reasoningEffort && model.reasoning && compat.supportsReasoningEffort) {
 		// OpenAI-style reasoning_effort
 		(params as any).reasoning_effort = mapReasoningEffort(options.reasoningEffort, compat.reasoningEffortMap);
@@ -378,19 +451,6 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 	}
 
 	return params;
-}
-
-function maybeAddOpenRouterAnthropicToolCacheControl(
-	model: Model<"openai-completions">,
-	tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
-): void {
-	if (model.provider !== "openrouter" || !model.id.startsWith("anthropic/")) return;
-	if (!tools?.length) return;
-
-	const lastTool = tools[tools.length - 1];
-	if ("function" in lastTool) {
-		Object.assign(lastTool.function, { cache_control: { type: "ephemeral" } });
-	}
 }
 
 function mapReasoningEffort(
@@ -455,7 +515,7 @@ export function convertMessages(
 		return id;
 	};
 
-	const transformedMessages = transformMessagesWithReport(context.messages, model, (id) => normalizeToolCallId(id), "openai-completions");
+	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
 
 	if (context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
@@ -518,15 +578,12 @@ export function convertMessages(
 			// Filter out empty text blocks to avoid API validation errors
 			const nonEmptyTextBlocks = textBlocks.filter((b) => b.text && b.text.trim().length > 0);
 			if (nonEmptyTextBlocks.length > 0) {
-				// GitHub Copilot requires assistant content as a string, not an array.
-				// Sending as array causes Claude models to re-answer all previous prompts.
-				if (model.provider === "github-copilot") {
-					assistantMsg.content = nonEmptyTextBlocks.map((b) => sanitizeSurrogates(b.text)).join("");
-				} else {
-					assistantMsg.content = nonEmptyTextBlocks.map((b) => {
-						return { type: "text", text: sanitizeSurrogates(b.text) };
-					});
-				}
+				// Always send assistant content as a plain string (OpenAI Chat Completions
+				// API standard format). Sending as an array of {type:"text", text:"..."}
+				// objects is non-standard and causes some models (e.g. DeepSeek V3.2 via
+				// NVIDIA NIM) to mirror the content-block structure literally in their
+				// output, producing recursive nesting like [{'type':'text','text':'[{...}]'}].
+				assistantMsg.content = nonEmptyTextBlocks.map((b) => sanitizeSurrogates(b.text)).join("");
 			}
 
 			// Handle thinking blocks
@@ -679,25 +736,67 @@ function convertTools(
 	}));
 }
 
-function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"]): StopReason {
-	if (reason === null) return "stop";
+function parseChunkUsage(
+	rawUsage: {
+		prompt_tokens?: number;
+		completion_tokens?: number;
+		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		completion_tokens_details?: { reasoning_tokens?: number };
+	},
+	model: Model<"openai-completions">,
+): AssistantMessage["usage"] {
+	const promptTokens = rawUsage.prompt_tokens || 0;
+	const reportedCachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
+	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens || 0;
+
+	// Normalize to pi-ai semantics:
+	// - cacheRead: hits from cache created by previous requests only
+	// - cacheWrite: tokens written to cache in this request
+	// Some OpenAI-compatible providers (observed on OpenRouter) report cached_tokens
+	// as (previous hits + current writes). In that case, remove cacheWrite from cacheRead.
+	const cacheReadTokens =
+		cacheWriteTokens > 0 ? Math.max(0, reportedCachedTokens - cacheWriteTokens) : reportedCachedTokens;
+
+	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
+	// Compute totalTokens ourselves since we add reasoning_tokens to output
+	// and some providers (e.g., Groq) don't include them in total_tokens
+	const outputTokens = (rawUsage.completion_tokens || 0) + reasoningTokens;
+	const usage: AssistantMessage["usage"] = {
+		input,
+		output: outputTokens,
+		cacheRead: cacheReadTokens,
+		cacheWrite: cacheWriteTokens,
+		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	calculateCost(model, usage);
+	return usage;
+}
+
+function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {
+	stopReason: StopReason;
+	errorMessage?: string;
+} {
+	if (reason === null) return { stopReason: "stop" };
 	switch (reason) {
 		case "stop":
-			return "stop";
+		case "end":
+			return { stopReason: "stop" };
 		case "length":
-			return "length";
+			return { stopReason: "length" };
 		case "function_call":
 		case "tool_calls":
-			return "toolUse";
+			return { stopReason: "toolUse" };
 		case "content_filter":
-			return "error";
+			return { stopReason: "error", errorMessage: "Provider finish_reason: content_filter" };
+		case "network_error":
+			return { stopReason: "error", errorMessage: "Provider finish_reason: network_error" };
 		default:
-			// Third-party and community models (e.g. Qwen GGUF quants) may emit
-			// non-standard finish_reason values like "eos_token", "eos", or
-			// "end_of_turn". The OpenAI spec defines finish_reason as a string,
-			// so we treat unrecognized values as a normal stop rather than
-			// throwing — which would abort in-flight tool calls (#863).
-			return "stop";
+			return {
+				stopReason: "error",
+				errorMessage: `Provider finish_reason: ${reason}`,
+			};
 	}
 }
 
@@ -748,9 +847,14 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
 		requiresThinkingAsText: false,
-		thinkingFormat: isZai ? "zai" : "openai",
+		thinkingFormat: isZai
+			? "zai"
+			: provider === "openrouter" || baseUrl.includes("openrouter.ai")
+				? "openrouter"
+				: "openai",
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
+		zaiToolStream: false,
 		supportsStrictMode: true,
 	};
 }
@@ -777,6 +881,7 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompletio
 		thinkingFormat: model.compat.thinkingFormat ?? detected.thinkingFormat,
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
+		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
 	};
 }

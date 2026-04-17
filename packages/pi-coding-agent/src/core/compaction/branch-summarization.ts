@@ -5,22 +5,23 @@
  * a summary of the branch being left so context isn't lost.
  */
 
-import type { AgentMessage } from "@gsd/pi-agent-core";
-import type { Model } from "@gsd/pi-ai";
-import { completeSimple } from "@gsd/pi-ai";
-import { COMPACTION_RESERVE_TOKENS } from "../constants.js";
-import { convertToLlm } from "../messages.js";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { Model } from "@mariozechner/pi-ai";
+import { completeSimple } from "@mariozechner/pi-ai";
+import {
+	convertToLlm,
+	createBranchSummaryMessage,
+	createCompactionSummaryMessage,
+	createCustomMessage,
+} from "../messages.js";
 import type { ReadonlySessionManager, SessionEntry } from "../session-manager.js";
 import { estimateTokens } from "./compaction.js";
 import {
 	computeFileLists,
 	createFileOps,
-	createSummarizationMessage,
 	extractFileOpsFromMessage,
-	extractTextContent,
 	type FileOperations,
 	formatFileOperations,
-	getMessageFromEntry,
 	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
 } from "./utils.js";
@@ -64,8 +65,10 @@ export interface CollectEntriesResult {
 export interface GenerateBranchSummaryOptions {
 	/** Model to use for summarization */
 	model: Model<any>;
-	/** API key for the model. Undefined for externalCli/none providers. */
-	apiKey: string | undefined;
+	/** API key for the model */
+	apiKey: string;
+	/** Request headers for the model */
+	headers?: Record<string, string>;
 	/** Abort signal for cancellation */
 	signal: AbortSignal;
 	/** Optional custom instructions for summarization */
@@ -132,6 +135,40 @@ export function collectEntriesForBranchSummary(
 	return { entries, commonAncestorId };
 }
 
+// ============================================================================
+// Entry to Message Conversion
+// ============================================================================
+
+/**
+ * Extract AgentMessage from a session entry.
+ * Similar to getMessageFromEntry in compaction.ts but also handles compaction entries.
+ */
+function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
+	switch (entry.type) {
+		case "message":
+			// Skip tool results - context is in assistant's tool call
+			if (entry.message.role === "toolResult") return undefined;
+			return entry.message;
+
+		case "custom_message":
+			return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
+
+		case "branch_summary":
+			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
+
+		case "compaction":
+			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
+
+		// These don't contribute to conversation content
+		case "thinking_level_change":
+		case "model_change":
+		case "custom":
+		case "label":
+		case "session_info":
+			return undefined;
+	}
+}
+
 /**
  * Prepare entries for summarization with token budget.
  *
@@ -171,7 +208,7 @@ export function prepareBranchEntries(entries: SessionEntry[], tokenBudget: numbe
 	// Second pass: walk from newest to oldest, adding messages until token budget
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
-		const message = getMessageFromEntry(entry, /* skipToolResults */ true);
+		const message = getMessageFromEntry(entry);
 		if (!message) continue;
 
 		// Extract file ops from assistant messages (tool calls)
@@ -247,7 +284,7 @@ export async function generateBranchSummary(
 	entries: SessionEntry[],
 	options: GenerateBranchSummaryOptions,
 ): Promise<BranchSummaryResult> {
-	const { model, apiKey, signal, customInstructions, replaceInstructions, reserveTokens = COMPACTION_RESERVE_TOKENS } = options;
+	const { model, apiKey, headers, signal, customInstructions, replaceInstructions, reserveTokens = 16384 } = options;
 
 	// Token budget = context window minus reserved space for prompt + response
 	const contextWindow = model.contextWindow || 128000;
@@ -275,11 +312,19 @@ export async function generateBranchSummary(
 	}
 	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${instructions}`;
 
+	const summarizationMessages = [
+		{
+			role: "user" as const,
+			content: [{ type: "text" as const, text: promptText }],
+			timestamp: Date.now(),
+		},
+	];
+
 	// Call LLM for summarization
 	const response = await completeSimple(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: createSummarizationMessage(promptText) },
-		{ apiKey, signal, maxTokens: 2048 },
+		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		{ apiKey, headers, signal, maxTokens: 2048 },
 	);
 
 	// Check if aborted or errored
@@ -290,7 +335,10 @@ export async function generateBranchSummary(
 		return { error: response.errorMessage || "Summarization failed" };
 	}
 
-	let summary = extractTextContent(response.content);
+	let summary = response.content
+		.filter((c): c is { type: "text"; text: string } => c.type === "text")
+		.map((c) => c.text)
+		.join("\n");
 
 	// Prepend preamble to provide context about the branch summary
 	summary = BRANCH_SUMMARY_PREAMBLE + summary;

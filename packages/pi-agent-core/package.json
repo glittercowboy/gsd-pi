@@ -14,5 +14,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@mariozechner/pi-ai": "file:../pi-ai"
+  },
+  "piVersion": "0.67.2"
 }

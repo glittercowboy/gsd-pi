@@ -9,7 +9,7 @@
  * 3. Merges both files if both exist (GSD takes precedence)
  */
 
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { agentDir } from './app-paths.js'

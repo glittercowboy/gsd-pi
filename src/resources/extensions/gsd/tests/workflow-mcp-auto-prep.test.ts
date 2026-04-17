@@ -3,48 +3,63 @@ import assert from "node:assert/strict";
 
 import { prepareWorkflowMcpForProject, shouldAutoPrepareWorkflowMcp } from "../workflow-mcp-auto-prep.ts";
 
-test("shouldAutoPrepareWorkflowMcp enables prep for externalCli local transport", () => {
+// pi 0.67.2: getProviderAuthMode and isProviderRequestReady removed from ModelRegistry.
+// shouldAutoPrepareWorkflowMcp now uses:
+//   - inferAuthModeFromBaseUrl(model.baseUrl) to detect local:// transports
+//   - getAll() to check if any registered model uses a local:// baseUrl
+//   - getAvailable() to check if claude-code has available models
+
+test("shouldAutoPrepareWorkflowMcp enables prep for local:// transport on current model", () => {
   const result = shouldAutoPrepareWorkflowMcp({
     model: { provider: "claude-code", baseUrl: "local://claude-code" },
     modelRegistry: {
-      getProviderAuthMode: () => "externalCli",
-      isProviderRequestReady: () => false,
+      getAll: () => [],
+      getAvailable: () => [],
     },
   });
 
   assert.equal(result, true);
 });
 
-test("shouldAutoPrepareWorkflowMcp enables prep when claude-code provider is ready", () => {
+test("shouldAutoPrepareWorkflowMcp enables prep when claude-code provider is in getAll() with local baseUrl", () => {
   const result = shouldAutoPrepareWorkflowMcp({
     model: { provider: "openai", baseUrl: "https://api.openai.com" },
     modelRegistry: {
-      getProviderAuthMode: () => "apiKey",
-      isProviderRequestReady: (provider: string) => provider === "claude-code",
+      getAll: () => [
+        { provider: "claude-code", baseUrl: "local://claude-code" },
+        { provider: "openai", baseUrl: "https://api.openai.com" },
+      ],
+      getAvailable: () => [],
     },
   });
 
   assert.equal(result, true);
 });
 
-test("shouldAutoPrepareWorkflowMcp enables prep when claude-code provider is registered", () => {
+test("shouldAutoPrepareWorkflowMcp enables prep when claude-code provider is available via getAvailable()", () => {
   const result = shouldAutoPrepareWorkflowMcp({
     model: { provider: "openai", baseUrl: "https://api.openai.com" },
     modelRegistry: {
-      getProviderAuthMode: (provider: string) => provider === "claude-code" ? "externalCli" : "apiKey",
-      isProviderRequestReady: () => false,
+      getAll: () => [],
+      getAvailable: () => [
+        { provider: "claude-code" },
+      ],
     },
   });
 
   assert.equal(result, true);
 });
 
-test("shouldAutoPrepareWorkflowMcp stays disabled when neither transport nor provider readiness match", () => {
+test("shouldAutoPrepareWorkflowMcp stays disabled when neither transport nor provider match", () => {
   const result = shouldAutoPrepareWorkflowMcp({
     model: { provider: "openai", baseUrl: "https://api.openai.com" },
     modelRegistry: {
-      getProviderAuthMode: () => "apiKey",
-      isProviderRequestReady: () => false,
+      getAll: () => [
+        { provider: "openai", baseUrl: "https://api.openai.com" },
+      ],
+      getAvailable: () => [
+        { provider: "openai" },
+      ],
     },
   });
 
@@ -52,16 +67,16 @@ test("shouldAutoPrepareWorkflowMcp stays disabled when neither transport nor pro
 });
 
 test("prepareWorkflowMcpForProject warns with /gsd mcp init guidance when prep fails", () => {
-  const notifications: Array<{ message: string; level: "info" | "warning" | "error" | "success" }> = [];
+  const notifications: Array<{ message: string; level: "info" | "warning" | "error" }> = [];
   const result = prepareWorkflowMcpForProject(
     {
       model: { provider: "claude-code", baseUrl: "local://claude-code" },
       modelRegistry: {
-        getProviderAuthMode: () => "externalCli",
-        isProviderRequestReady: () => true,
+        getAll: () => [{ provider: "claude-code", baseUrl: "local://claude-code" }],
+        getAvailable: () => [{ provider: "claude-code" }],
       },
       ui: {
-        notify: (message: string, level?: "info" | "warning" | "error" | "success") => {
+        notify: (message: string, level?: "info" | "warning" | "error") => {
           notifications.push({ message, level: level ?? "info" });
         },
       },

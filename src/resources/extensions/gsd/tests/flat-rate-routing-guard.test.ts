@@ -37,15 +37,26 @@ describe("flat-rate provider routing guard (#3453)", () => {
     // resolvePreferredModelConfig should not synthesize a routing
     // config from tier_models — it should return undefined so the
     // user's selected model is preserved.
-    const result = resolvePreferredModelConfig("execute-task", {
-      provider: "github-copilot",
-      id: "claude-sonnet-4",
-    });
+    // Isolate from user's real ~/.gsd/preferences.md via GSD_HOME
+    const savedGsdHome = process.env.GSD_HOME;
+    const savedHome = process.env.HOME;
+    try {
+      process.env.GSD_HOME = "/tmp/gsd-no-such-home-for-test-flat-rate";
+      process.env.HOME = "/tmp/gsd-no-such-home-for-test-flat-rate";
+      const result = resolvePreferredModelConfig("execute-task", {
+        provider: "github-copilot",
+        id: "claude-sonnet-4",
+      });
 
-    // Should be undefined (no routing config created for flat-rate)
-    // Note: this only tests the guard — if explicit per-unit config exists
-    // in preferences, that takes precedence regardless.
-    assert.equal(result, undefined, "Should not create routing config for copilot");
+      // Should be undefined (no routing config created for flat-rate)
+      // Note: this only tests the guard — if explicit per-unit config exists
+      // in preferences, that takes precedence regardless.
+      assert.equal(result, undefined, "Should not create routing config for copilot");
+    } finally {
+      if (savedGsdHome !== undefined) process.env.GSD_HOME = savedGsdHome;
+      else delete process.env.GSD_HOME;
+      process.env.HOME = savedHome;
+    }
   });
 });
 
@@ -131,11 +142,16 @@ describe("flat-rate provider extensibility (any/all/custom)", () => {
 });
 
 describe("buildFlatRateContext()", () => {
-  test("builds a context from ctx.modelRegistry.getProviderAuthMode + prefs", () => {
+  // pi 0.67.2 removed getProviderAuthMode from ModelRegistry.
+  // buildFlatRateContext now detects externalCli via getAll() + local:// baseUrl.
+
+  test("detects externalCli from local:// baseUrl via getAll()", () => {
     const ctx = {
       modelRegistry: {
-        getProviderAuthMode: (p: string) =>
-          p === "my-cli" ? "externalCli" : "apiKey",
+        getAll: () => [
+          { provider: "my-cli", baseUrl: "local://my-cli" },
+          { provider: "anthropic", baseUrl: "https://api.anthropic.com" },
+        ],
       },
     };
     const prefs = { flat_rate_providers: ["my-proxy"] };
@@ -145,12 +161,14 @@ describe("buildFlatRateContext()", () => {
     assert.deepEqual(ctxForCli.userFlatRate, ["my-proxy"]);
     assert.equal(isFlatRateProvider("my-cli", ctxForCli), true);
 
+    // my-proxy is flat-rate via userFlatRate, not authMode
     const ctxForProxy = buildFlatRateContext("my-proxy", ctx, prefs);
-    assert.equal(ctxForProxy.authMode, "apiKey");
+    assert.equal(ctxForProxy.authMode, undefined);
     assert.equal(isFlatRateProvider("my-proxy", ctxForProxy), true);
 
+    // anthropic has https baseUrl, not externalCli
     const ctxForOther = buildFlatRateContext("anthropic", ctx, prefs);
-    assert.equal(ctxForOther.authMode, "apiKey");
+    assert.equal(ctxForOther.authMode, undefined);
     assert.equal(isFlatRateProvider("anthropic", ctxForOther), false);
   });
 
@@ -164,7 +182,7 @@ describe("buildFlatRateContext()", () => {
   test("survives a registry lookup that throws", () => {
     const ctx = {
       modelRegistry: {
-        getProviderAuthMode: () => {
+        getAll: () => {
           throw new Error("registry boom");
         },
       },
@@ -174,10 +192,12 @@ describe("buildFlatRateContext()", () => {
     assert.equal(result.authMode, undefined);
   });
 
-  test("registry returning a non-canonical auth mode is ignored", () => {
+  test("non-local baseUrl does not produce externalCli", () => {
     const ctx = {
       modelRegistry: {
-        getProviderAuthMode: () => "weird-mode",
+        getAll: () => [
+          { provider: "anything", baseUrl: "https://api.example.com" },
+        ],
       },
     };
     const result = buildFlatRateContext("anything", ctx);

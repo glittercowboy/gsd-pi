@@ -21,7 +21,7 @@ export function installNotifyInterceptor(ctx: ExtensionContext): void {
 
   const originalNotify = ctx.ui.notify.bind(ctx.ui);
 
-  (ctx.ui as any).notify = (message: string, type?: "info" | "warning" | "error" | "success"): void => {
+  (ctx.ui as any).notify = (message: string, type?: "info" | "warning" | "error"): void => {
     try {
       appendNotification(message, (type ?? "info") as NotifySeverity, "notify");
     } catch {

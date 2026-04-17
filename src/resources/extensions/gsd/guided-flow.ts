@@ -52,6 +52,7 @@ import {
   getWorkflowTransportSupportError,
   getRequiredWorkflowToolsForGuidedUnit,
   supportsStructuredQuestions,
+  inferAuthModeFromBaseUrl,
 } from "./workflow-mcp.js";
 import {
   runPreparation,
@@ -274,7 +275,7 @@ export function checkAutoStartAfterDiscuss(): boolean {
   }
 
   pendingAutoStartMap.delete(basePath);
-  ctx.ui.notify(`Milestone ${milestoneId} ready.`, "success");
+  ctx.ui.notify(`Milestone ${milestoneId} ready.`, "info");
   startAutoDetached(ctx, pi, basePath, false, { step });
   return true;
 }
@@ -339,11 +340,7 @@ async function dispatchWorkflow(
         projectRoot: process.cwd(),
         surface: "guided flow",
         unitType,
-        authMode: result.appliedModel?.provider
-          ? ctx.modelRegistry.getProviderAuthMode(result.appliedModel.provider)
-          : ctx.model?.provider
-            ? ctx.modelRegistry.getProviderAuthMode(ctx.model.provider)
-            : undefined,
+        authMode: inferAuthModeFromBaseUrl(result.appliedModel?.baseUrl ?? ctx.model?.baseUrl),
         baseUrl: result.appliedModel?.baseUrl ?? ctx.model?.baseUrl,
       },
     );
@@ -402,10 +399,8 @@ function getStructuredQuestionsAvailability(
 ): "true" | "false" {
   if (!ctx) return "false";
 
-  const provider = ctx.model?.provider;
-  const authMode = provider ? ctx.modelRegistry.getProviderAuthMode(provider) : undefined;
   return supportsStructuredQuestions(pi.getActiveTools(), {
-    authMode,
+    authMode: inferAuthModeFromBaseUrl(ctx.model?.baseUrl),
     baseUrl: ctx.model?.baseUrl,
   }) ? "true" : "false";
 }

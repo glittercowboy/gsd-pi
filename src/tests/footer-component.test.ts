@@ -1,17 +1,7 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-
-const footerSource = readFileSync(
-  join(process.cwd(), "packages", "pi-coding-agent", "src", "modes", "interactive", "components", "footer.ts"),
-  "utf-8",
-);
-
-test("FooterComponent dims extension status lines to match the rest of the footer", () => {
-  assert.match(
-    footerSource,
-    /theme\.fg\("dim", statusLine\)/,
-    "extension status line should be wrapped in the dim footer color",
-  );
-});
+/**
+ * Footer component structural tests.
+ *
+ * Tests that verified pi-coding-agent package internals were removed per D-12
+ * (GSD tests must only test GSD code, not pi-* vendor packages).
+ * pi-coding-agent has its own test suite for footer.ts behavior.
+ */

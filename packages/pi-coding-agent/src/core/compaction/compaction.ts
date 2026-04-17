@@ -5,22 +5,22 @@
  * and after compaction the session is reloaded.
  */
 
-import type { AgentMessage } from "@gsd/pi-agent-core";
-import type { AssistantMessage, Model, Usage } from "@gsd/pi-ai";
-import { completeSimple } from "@gsd/pi-ai";
-import { COMPACTION_KEEP_RECENT_TOKENS, COMPACTION_RESERVE_TOKENS } from "../constants.js";
-import { convertToLlm } from "../messages.js";
-import type { CompactionEntry, SessionEntry } from "../session-manager.js";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AssistantMessage, Model, Usage } from "@mariozechner/pi-ai";
+import { completeSimple } from "@mariozechner/pi-ai";
 import {
-	collectMessages,
+	convertToLlm,
+	createBranchSummaryMessage,
+	createCompactionSummaryMessage,
+	createCustomMessage,
+} from "../messages.js";
+import { buildSessionContext, type CompactionEntry, type SessionEntry } from "../session-manager.js";
+import {
 	computeFileLists,
 	createFileOps,
-	createSummarizationMessage,
 	extractFileOpsFromMessage,
-	extractTextContent,
 	type FileOperations,
 	formatFileOperations,
-	getMessageFromEntry,
 	SUMMARIZATION_SYSTEM_PROMPT,
 	serializeConversation,
 } from "./utils.js";
@@ -68,6 +68,37 @@ function extractFileOperations(
 	return fileOps;
 }
 
+// ============================================================================
+// Message Extraction
+// ============================================================================
+
+/**
+ * Extract AgentMessage from an entry if it produces one.
+ * Returns undefined for entries that don't contribute to LLM context.
+ */
+function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
+	if (entry.type === "message") {
+		return entry.message;
+	}
+	if (entry.type === "custom_message") {
+		return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
+	}
+	if (entry.type === "branch_summary") {
+		return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
+	}
+	if (entry.type === "compaction") {
+		return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
+	}
+	return undefined;
+}
+
+function getMessageFromEntryForCompaction(entry: SessionEntry): AgentMessage | undefined {
+	if (entry.type === "compaction") {
+		return undefined;
+	}
+	return getMessageFromEntry(entry);
+}
+
 /** Result from compact() - SessionManager adds uuid/parentUuid when saving */
 export interface CompactionResult<T = unknown> {
 	summary: string;
@@ -89,8 +120,8 @@ export interface CompactionSettings {
 
 export const DEFAULT_COMPACTION_SETTINGS: CompactionSettings = {
 	enabled: true,
-	reserveTokens: COMPACTION_RESERVE_TOKENS,
-	keepRecentTokens: COMPACTION_KEEP_RECENT_TOKENS,
+	reserveTokens: 16384,
+	keepRecentTokens: 20000,
 };
 
 // ============================================================================
@@ -293,7 +324,10 @@ function findValidCutPoints(entries: SessionEntry[], startIndex: number, endInde
 			case "custom":
 			case "custom_message":
 			case "label":
+			case "session_info":
+				break;
 		}
+
 		// branch_summary and custom_message are user-role messages, valid cut points
 		if (entry.type === "branch_summary" || entry.type === "custom_message") {
 			cutPoints.push(i);
@@ -490,110 +524,18 @@ Use this EXACT format:
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
 /**
- * Split messages into chunks where each chunk's estimated token count
- * stays within `maxTokensPerChunk`. A single message that exceeds the
- * budget is placed alone in its own chunk (never dropped).
- */
-export function chunkMessages(messages: AgentMessage[], maxTokensPerChunk: number): AgentMessage[][] {
-	const chunks: AgentMessage[][] = [];
-	let currentChunk: AgentMessage[] = [];
-	let currentTokens = 0;
-
-	for (const msg of messages) {
-		const msgTokens = estimateTokens(msg);
-
-		if (currentChunk.length > 0 && currentTokens + msgTokens > maxTokensPerChunk) {
-			// Current chunk is full — start a new one
-			chunks.push(currentChunk);
-			currentChunk = [msg];
-			currentTokens = msgTokens;
-		} else {
-			currentChunk.push(msg);
-			currentTokens += msgTokens;
-		}
-	}
-
-	if (currentChunk.length > 0) {
-		chunks.push(currentChunk);
-	}
-
-	return chunks;
-}
-
-/** Type for the completion function, allowing injection for tests. */
-type CompleteFn = typeof completeSimple;
-
-/**
  * Generate a summary of the conversation using the LLM.
  * If previousSummary is provided, uses the update prompt to merge.
- *
- * When the messages exceed the model's context window, automatically
- * falls back to chunked summarization: summarize the first chunk,
- * then iteratively merge subsequent chunks using the update prompt.
- *
- * @param _completeFn - Internal override for testing; defaults to completeSimple.
  */
 export async function generateSummary(
 	currentMessages: AgentMessage[],
 	model: Model<any>,
 	reserveTokens: number,
-	apiKey: string | undefined,
+	apiKey: string,
+	headers?: Record<string, string>,
 	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
-	_completeFn?: CompleteFn,
-): Promise<string> {
-	const complete = _completeFn ?? completeSimple;
-
-	// Estimate total tokens for the messages to summarize
-	let totalTokens = 0;
-	for (const msg of currentMessages) {
-		totalTokens += estimateTokens(msg);
-	}
-
-	// Overhead for the prompt framing, system prompt, and response budget
-	const promptOverhead = 4_000;
-	const maxTokens = Math.floor(0.8 * reserveTokens);
-	const maxInputTokens = (model.contextWindow || 200_000) - reserveTokens - promptOverhead;
-
-	// If messages fit in the context window, use single-pass summarization
-	if (totalTokens <= maxInputTokens) {
-		return singlePassSummary(currentMessages, model, reserveTokens, apiKey, signal, customInstructions, previousSummary, complete);
-	}
-
-	// Chunked fallback: split messages and iteratively summarize
-	const chunks = chunkMessages(currentMessages, maxInputTokens);
-	let runningSummary = previousSummary;
-
-	for (let i = 0; i < chunks.length; i++) {
-		runningSummary = await singlePassSummary(
-			chunks[i],
-			model,
-			reserveTokens,
-			apiKey,
-			signal,
-			customInstructions,
-			runningSummary,
-			complete,
-		);
-	}
-
-	return runningSummary!;
-}
-
-/**
- * Single-pass summarization of messages using the LLM.
- * If previousSummary is provided, uses the update prompt to merge.
- */
-async function singlePassSummary(
-	currentMessages: AgentMessage[],
-	model: Model<any>,
-	reserveTokens: number,
-	apiKey: string | undefined,
-	signal?: AbortSignal,
-	customInstructions?: string,
-	previousSummary?: string,
-	complete: CompleteFn = completeSimple,
 ): Promise<string> {
 	const maxTokens = Math.floor(0.8 * reserveTokens);
 
@@ -615,13 +557,21 @@ async function singlePassSummary(
 	}
 	promptText += basePrompt;
 
-	const completionOptions = model.reasoning
-		? { maxTokens, signal, apiKey, reasoning: "high" as const }
-		: { maxTokens, signal, apiKey };
+	const summarizationMessages = [
+		{
+			role: "user" as const,
+			content: [{ type: "text" as const, text: promptText }],
+			timestamp: Date.now(),
+		},
+	];
 
-	const response = await complete(
+	const completionOptions = model.reasoning
+		? { maxTokens, signal, apiKey, headers, reasoning: "high" as const }
+		: { maxTokens, signal, apiKey, headers };
+
+	const response = await completeSimple(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: createSummarizationMessage(promptText) },
+		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		completionOptions,
 	);
 
@@ -629,7 +579,12 @@ async function singlePassSummary(
 		throw new Error(`Summarization failed: ${response.errorMessage || "Unknown error"}`);
 	}
 
-	return extractTextContent(response.content);
+	const textContent = response.content
+		.filter((c): c is { type: "text"; text: string } => c.type === "text")
+		.map((c) => c.text)
+		.join("\n");
+
+	return textContent;
 }
 
 // ============================================================================
@@ -669,12 +624,18 @@ export function prepareCompaction(
 			break;
 		}
 	}
-	const boundaryStart = prevCompactionIndex + 1;
+
+	let previousSummary: string | undefined;
+	let boundaryStart = 0;
+	if (prevCompactionIndex >= 0) {
+		const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
+		previousSummary = prevCompaction.summary;
+		const firstKeptEntryIndex = pathEntries.findIndex((entry) => entry.id === prevCompaction.firstKeptEntryId);
+		boundaryStart = firstKeptEntryIndex >= 0 ? firstKeptEntryIndex : prevCompactionIndex + 1;
+	}
 	const boundaryEnd = pathEntries.length;
 
-	const usageStart = prevCompactionIndex >= 0 ? prevCompactionIndex : 0;
-	const usageMessages = collectMessages(pathEntries, usageStart, boundaryEnd);
-	const tokensBefore = estimateContextTokens(usageMessages).tokens;
+	const tokensBefore = estimateContextTokens(buildSessionContext(pathEntries).messages).tokens;
 
 	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
 
@@ -688,18 +649,19 @@ export function prepareCompaction(
 	const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
 
 	// Messages to summarize (will be discarded after summary)
-	const messagesToSummarize = collectMessages(pathEntries, boundaryStart, historyEnd);
+	const messagesToSummarize: AgentMessage[] = [];
+	for (let i = boundaryStart; i < historyEnd; i++) {
+		const msg = getMessageFromEntryForCompaction(pathEntries[i]);
+		if (msg) messagesToSummarize.push(msg);
+	}
 
 	// Messages for turn prefix summary (if splitting a turn)
-	const turnPrefixMessages = cutPoint.isSplitTurn
-		? collectMessages(pathEntries, cutPoint.turnStartIndex, cutPoint.firstKeptEntryIndex)
-		: [];
-
-	// Get previous summary for iterative update
-	let previousSummary: string | undefined;
-	if (prevCompactionIndex >= 0) {
-		const prevCompaction = pathEntries[prevCompactionIndex] as CompactionEntry;
-		previousSummary = prevCompaction.summary;
+	const turnPrefixMessages: AgentMessage[] = [];
+	if (cutPoint.isSplitTurn) {
+		for (let i = cutPoint.turnStartIndex; i < cutPoint.firstKeptEntryIndex; i++) {
+			const msg = getMessageFromEntryForCompaction(pathEntries[i]);
+			if (msg) turnPrefixMessages.push(msg);
+		}
 	}
 
 	// Extract file operations from messages and previous compaction
@@ -753,7 +715,8 @@ Be concise. Focus on what's needed to understand the kept suffix.`;
 export async function compact(
 	preparation: CompactionPreparation,
 	model: Model<any>,
-	apiKey: string | undefined,
+	apiKey: string,
+	headers?: Record<string, string>,
 	customInstructions?: string,
 	signal?: AbortSignal,
 ): Promise<CompactionResult> {
@@ -780,12 +743,13 @@ export async function compact(
 						model,
 						settings.reserveTokens,
 						apiKey,
+						headers,
 						signal,
 						customInstructions,
 						previousSummary,
 					)
 				: Promise.resolve("No prior history."),
-			generateTurnPrefixSummary(turnPrefixMessages, model, settings.reserveTokens, apiKey, signal),
+			generateTurnPrefixSummary(turnPrefixMessages, model, settings.reserveTokens, apiKey, headers, signal),
 		]);
 		// Merge into single summary
 		summary = `${historyResult}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult}`;
@@ -796,6 +760,7 @@ export async function compact(
 			model,
 			settings.reserveTokens,
 			apiKey,
+			headers,
 			signal,
 			customInstructions,
 			previousSummary,
@@ -825,23 +790,34 @@ async function generateTurnPrefixSummary(
 	messages: AgentMessage[],
 	model: Model<any>,
 	reserveTokens: number,
-	apiKey: string | undefined,
+	apiKey: string,
+	headers?: Record<string, string>,
 	signal?: AbortSignal,
 ): Promise<string> {
 	const maxTokens = Math.floor(0.5 * reserveTokens); // Smaller budget for turn prefix
 	const llmMessages = convertToLlm(messages);
 	const conversationText = serializeConversation(llmMessages);
 	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
+	const summarizationMessages = [
+		{
+			role: "user" as const,
+			content: [{ type: "text" as const, text: promptText }],
+			timestamp: Date.now(),
+		},
+	];
 
 	const response = await completeSimple(
 		model,
-		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: createSummarizationMessage(promptText) },
-		{ maxTokens, signal, apiKey },
+		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
+		{ maxTokens, signal, apiKey, headers },
 	);
 
 	if (response.stopReason === "error") {
 		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
 	}
 
-	return extractTextContent(response.content);
+	return response.content
+		.filter((c): c is { type: "text"; text: string } => c.type === "text")
+		.map((c) => c.text)
+		.join("\n");
 }

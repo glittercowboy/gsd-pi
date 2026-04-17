@@ -1,16 +1,15 @@
-import type { Model } from "@gsd/pi-ai";
-import { providerDisplayName } from "./model-selector.js";
+import type { Model } from "@mariozechner/pi-ai";
 import {
 	Container,
 	type Focusable,
 	fuzzyFilter,
-	getEditorKeybindings,
+	getKeybindings,
 	Input,
 	Key,
 	matchesKey,
 	Spacer,
 	Text,
-} from "@gsd/pi-tui";
+} from "@mariozechner/pi-tui";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 
@@ -170,7 +169,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		const enabledCount = this.enabledIds?.length ?? this.allIds.length;
 		const allEnabled = this.enabledIds === null;
 		const countText = allEnabled ? "all enabled" : `${enabledCount}/${this.allIds.length} enabled`;
-		const parts = ["Enter toggle", "^A all", "^X clear", "^P provider", `${process.platform === "darwin" ? "⌥↑↓" : "Alt+↑↓"} reorder`, "^S save", countText];
+		const parts = ["Enter toggle", "^A all", "^X clear", "^P provider", "Alt+↑↓ reorder", "^S save", countText];
 		return this.isDirty
 			? theme.fg("dim", `  ${parts.join(" · ")} `) + theme.fg("warning", "(unsaved)")
 			: theme.fg("dim", `  ${parts.join(" · ")}`);
@@ -205,7 +204,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			const isSelected = i === this.selectedIndex;
 			const prefix = isSelected ? theme.fg("accent", "→ ") : "  ";
 			const modelText = isSelected ? theme.fg("accent", item.model.id) : item.model.id;
-			const providerBadge = theme.fg("muted", ` [${providerDisplayName(item.model.provider)}]`);
+			const providerBadge = theme.fg("muted", ` [${item.model.provider}]`);
 			const status = allEnabled ? "" : item.enabled ? theme.fg("success", " ✓") : theme.fg("dim", " ✗");
 			this.listContainer.addChild(new Text(`${prefix}${modelText}${providerBadge}${status}`, 0, 0));
 		}
@@ -225,16 +224,16 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	}
 
 	handleInput(data: string): void {
-		const kb = getEditorKeybindings();
+		const kb = getKeybindings();
 
 		// Navigation
-		if (kb.matches(data, "selectUp")) {
+		if (kb.matches(data, "tui.select.up")) {
 			if (this.filteredItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === 0 ? this.filteredItems.length - 1 : this.selectedIndex - 1;
 			this.updateList();
 			return;
 		}
-		if (kb.matches(data, "selectDown")) {
+		if (kb.matches(data, "tui.select.down")) {
 			if (this.filteredItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === this.filteredItems.length - 1 ? 0 : this.selectedIndex + 1;
 			this.updateList();
@@ -319,9 +318,14 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			return;
 		}
 
-		// Ctrl+C - always cancel immediately
+		// Ctrl+C - clear search or cancel if empty
 		if (matchesKey(data, Key.ctrl("c"))) {
-			this.callbacks.onCancel();
+			if (this.searchInput.getValue()) {
+				this.searchInput.setValue("");
+				this.refresh();
+			} else {
+				this.callbacks.onCancel();
+			}
 			return;
 		}
 

@@ -7,7 +7,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { getShellConfig, sanitizeCommand } from "@gsd/pi-coding-agent";
+import { getShellConfig } from "@gsd/pi-coding-agent";
+import { sanitizeCommand } from "@gsd/agent-core";
 import { rewriteCommandWithRtk } from "../shared/rtk.js";
 import type {
 	BgProcess,

@@ -733,9 +733,10 @@ test("config source-level: hydration skips api_key entries with empty keys", () 
   // The find() call in hydrateRemoteTokensFromAuth must filter for non-empty keys,
   // not just match on type === "api_key". This prevents stale empty-key entries
   // (left by removeProviderToken) from shadowing valid tokens.
+  // pi 0.67.2: auth.get() returns a single credential; empty-key guard is via truthy check on cred.key
   assert.ok(
-    configSrc.includes('c.type === "api_key" && !!c.key'),
-    "hydrateRemoteTokensFromAuth find() should require a non-empty key",
+    configSrc.includes('cred?.type === "api_key" && cred.key'),
+    "hydrateRemoteTokensFromAuth should require a non-empty api_key entry",
   );
 });
 

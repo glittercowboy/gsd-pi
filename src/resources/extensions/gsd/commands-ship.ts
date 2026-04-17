@@ -211,7 +211,7 @@ export async function handleShip(
 
     const prUrl = execFileSync("gh", ghArgs, { cwd: basePath, encoding: "utf-8" }).trim();
 
-    ctx.ui.notify(`PR created: ${prUrl}`, "success");
+    ctx.ui.notify(`PR created: ${prUrl}`, "info");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     ctx.ui.notify(`Failed to create PR: ${msg}`, "error");

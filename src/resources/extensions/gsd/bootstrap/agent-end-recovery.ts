@@ -200,7 +200,7 @@ export async function handleAgentEnd(
             retryState.currentRetryModelId = undefined;
             const modelToSet = resolveModelId(nextModelId, availableModels, ctx.model?.provider);
             if (modelToSet) {
-              const ok = await pi.setModel(modelToSet, { persist: false });
+              const ok = await pi.setModel(modelToSet);
               if (ok) {
                 ctx.ui.notify(`Model error${errorDetail}. Switched to fallback: ${nextModelId} and resuming.`, "warning");
                 pi.sendMessage({ customType: "gsd-auto-timeout-recovery", content: "Continue execution.", display: false }, { triggerTurn: true });
@@ -217,7 +217,7 @@ export async function handleAgentEnd(
         if (ctx.model?.id !== sessionModel.id || ctx.model?.provider !== sessionModel.provider) {
           const startModel = ctx.modelRegistry.getAvailable().find((m) => m.provider === sessionModel.provider && m.id === sessionModel.id);
           if (startModel) {
-            const ok = await pi.setModel(startModel, { persist: false });
+            const ok = await pi.setModel(startModel);
             if (ok) {
               retryState.networkRetryCount = 0;
               retryState.currentRetryModelId = undefined;

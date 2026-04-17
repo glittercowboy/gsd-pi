@@ -133,7 +133,7 @@ export async function handleUndo(args: string, ctx: ExtensionCommandContext, _pi
     results.push(`  Review with 'git diff --cached' then 'git commit' or 'git reset HEAD'`);
   }
 
-  ctx.ui.notify(results.join("\n"), "success");
+  ctx.ui.notify(results.join("\n"), "info");
   sendDesktopNotification("GSD", `Undone: ${unitType} (${unitId})`, "info", "complete", basename(basePath));
 }
 
@@ -268,7 +268,7 @@ export async function handleUndoTask(
   if (summaryDeleted) results.push("  - Deleted task summary file");
   results.push("  - Plan checkboxes re-rendered");
 
-  ctx.ui.notify(results.join("\n"), "success");
+  ctx.ui.notify(results.join("\n"), "info");
 }
 
 /**
@@ -374,7 +374,7 @@ export async function handleResetSlice(
   if (sliceFilesDeleted > 0) results.push(`  - ${sliceFilesDeleted} slice file(s) deleted (summary/UAT)`);
   results.push("  - Plan + roadmap checkboxes re-rendered");
 
-  ctx.ui.notify(results.join("\n"), "success");
+  ctx.ui.notify(results.join("\n"), "info");
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

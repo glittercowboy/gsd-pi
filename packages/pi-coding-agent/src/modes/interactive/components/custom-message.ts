@@ -1,6 +1,6 @@
-import type { TextContent } from "@gsd/pi-ai";
-import type { Component } from "@gsd/pi-tui";
-import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@gsd/pi-tui";
+import type { TextContent } from "@mariozechner/pi-ai";
+import type { Component } from "@mariozechner/pi-tui";
+import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@mariozechner/pi-tui";
 import type { MessageRenderer } from "../../../core/extensions/types.js";
 import type { CustomMessage } from "../../../core/messages.js";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
@@ -75,7 +75,7 @@ export class CustomMessageComponent extends Container {
 		this.box.clear();
 
 		// Default rendering: label + content
-		const label = theme.fg("customMessageLabel", theme.bold(`[${this.message.customType}]`));
+		const label = theme.fg("customMessageLabel", `\x1b[1m[${this.message.customType}]\x1b[22m`);
 		this.box.addChild(new Text(label, 0, 0));
 		this.box.addChild(new Spacer(1));
 

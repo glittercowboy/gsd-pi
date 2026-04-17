@@ -2,15 +2,8 @@
  * Shared utilities for compaction and branch summarization.
  */
 
-import type { AgentMessage } from "@gsd/pi-agent-core";
-import type { Message } from "@gsd/pi-ai";
-import { TOOL_RESULT_MAX_CHARS } from "../constants.js";
-import {
-	createBranchSummaryMessage,
-	createCompactionSummaryMessage,
-	createCustomMessage,
-} from "../messages.js";
-import type { SessionEntry } from "../session-manager.js";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { Message } from "@mariozechner/pi-ai";
 
 // ============================================================================
 // File Operation Tracking
@@ -89,104 +82,11 @@ export function formatFileOperations(readFiles: string[], modifiedFiles: string[
 }
 
 // ============================================================================
-// Message Extraction
-// ============================================================================
-
-/**
- * Extract AgentMessage from a session entry.
- *
- * Handles all entry types: message, custom_message, branch_summary, and compaction.
- * Returns undefined for entries that don't contribute to LLM context (e.g., settings changes).
- *
- * @param skipToolResults - If true, skips toolResult messages (used by branch summarization
- *   where tool call context is sufficient). Default false.
- */
-export function getMessageFromEntry(entry: SessionEntry, skipToolResults = false): AgentMessage | undefined {
-	switch (entry.type) {
-		case "message":
-			if (skipToolResults && entry.message.role === "toolResult") return undefined;
-			return entry.message;
-
-		case "custom_message":
-			return createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp);
-
-		case "branch_summary":
-			return createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp);
-
-		case "compaction":
-			return createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp);
-
-		case "thinking_level_change":
-		case "model_change":
-		case "custom":
-		case "label":
-			return undefined;
-	}
-}
-
-/**
- * Collect AgentMessages from a range of session entries.
- *
- * @param entries - Session entries array
- * @param startIndex - First index (inclusive)
- * @param endIndex - Last index (exclusive)
- * @param skipToolResults - If true, skips toolResult messages. Default false.
- */
-export function collectMessages(
-	entries: SessionEntry[],
-	startIndex: number,
-	endIndex: number,
-	skipToolResults = false,
-): AgentMessage[] {
-	const result: AgentMessage[] = [];
-	for (let i = startIndex; i < endIndex; i++) {
-		const msg = getMessageFromEntry(entries[i], skipToolResults);
-		if (msg) result.push(msg);
-	}
-	return result;
-}
-
-// ============================================================================
-// Text Content Extraction
-// ============================================================================
-
-/**
- * Extract text from an array of content blocks, filtering to text-type blocks.
- * Replaces the recurring `.filter(c => c.type === "text").map(c => c.text).join(sep)` pattern.
- */
-export function extractTextContent(
-	content: Array<{ type: string; text?: string }>,
-	separator = "\n",
-): string {
-	return content
-		.filter((c): c is { type: "text"; text: string } => c.type === "text")
-		.map((c) => c.text)
-		.join(separator);
-}
-
-// ============================================================================
-// Summarization Message Construction
-// ============================================================================
-
-/**
- * Create a single-message array for summarization prompts.
- * Wraps promptText in the standard `[{ role: "user", content: [{ type: "text", text }], timestamp }]` shape.
- */
-export function createSummarizationMessage(promptText: string): [{ role: "user"; content: [{ type: "text"; text: string }]; timestamp: number }] {
-	return [
-		{
-			role: "user" as const,
-			content: [{ type: "text" as const, text: promptText }],
-			timestamp: Date.now(),
-		},
-	];
-}
-
-// ============================================================================
 // Message Serialization
 // ============================================================================
 
-// TOOL_RESULT_MAX_CHARS imported from ../constants.js
+/** Maximum characters for a tool result in serialized summaries. */
+const TOOL_RESULT_MAX_CHARS = 2000;
 
 /**
  * Truncate text to a maximum character length for summarization.
@@ -218,7 +118,7 @@ export function serializeConversation(messages: Message[]): string {
 							.filter((c): c is { type: "text"; text: string } => c.type === "text")
 							.map((c) => c.text)
 							.join("");
-			if (content) parts.push(`**User said:** ${content}`);
+			if (content) parts.push(`[User]: ${content}`);
 		} else if (msg.role === "assistant") {
 			const textParts: string[] = [];
 			const thinkingParts: string[] = [];
@@ -239,13 +139,13 @@ export function serializeConversation(messages: Message[]): string {
 			}
 
 			if (thinkingParts.length > 0) {
-				parts.push(`**Assistant thinking:** ${thinkingParts.join("\n")}`);
+				parts.push(`[Assistant thinking]: ${thinkingParts.join("\n")}`);
 			}
 			if (textParts.length > 0) {
-				parts.push(`**Assistant responded:** ${textParts.join("\n")}`);
+				parts.push(`[Assistant]: ${textParts.join("\n")}`);
 			}
 			if (toolCalls.length > 0) {
-				parts.push(`**Assistant tool calls:** ${toolCalls.join("; ")}`);
+				parts.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
 			}
 		} else if (msg.role === "toolResult") {
 			const content = msg.content
@@ -253,7 +153,7 @@ export function serializeConversation(messages: Message[]): string {
 				.map((c) => c.text)
 				.join("");
 			if (content) {
-				parts.push(`**Tool result:** ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
+				parts.push(`[Tool result]: ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
 			}
 		}
 	}

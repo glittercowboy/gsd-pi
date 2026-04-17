@@ -2,7 +2,7 @@ import { accessSync, constants } from "node:fs";
 import * as os from "node:os";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 
-export const UNICODE_SPACES = /[\u00A0\u1680\u2000-\u200A\u202F\u205F\u3000]/g;
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
 const NARROW_NO_BREAK_SPACE = "\u202F";
 function normalizeUnicodeSpaces(str: string): string {
 	return str.replace(UNICODE_SPACES, " ");
@@ -48,23 +48,11 @@ export function expandPath(filePath: string): string {
 }
 
 /**
- * On Windows, convert MSYS/MinGW-style paths (/c/Users/...) to native
- * drive letter paths (C:\Users\...). LLMs often produce these when given
- * Windows paths in prompts.
- */
-function normalizeMsysPath(p: string): string {
-	if (process.platform === "win32" && /^\/[a-zA-Z]\//.test(p)) {
-		return `${p[1]!.toUpperCase()}:\\${p.slice(3).replace(/\//g, "\\")}`;
-	}
-	return p;
-}
-
-/**
  * Resolve a path relative to the given cwd.
- * Handles ~ expansion, MSYS-style paths on Windows, and absolute paths.
+ * Handles ~ expansion and absolute paths.
  */
 export function resolveToCwd(filePath: string, cwd: string): string {
-	const expanded = normalizeMsysPath(expandPath(filePath));
+	const expanded = expandPath(filePath);
 	if (isAbsolute(expanded)) {
 		return expanded;
 	}

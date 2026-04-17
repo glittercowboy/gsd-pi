@@ -5,18 +5,12 @@
  * Responses and events are emitted as JSON lines on stdout.
  */
 
-import type { AgentMessage, ThinkingLevel } from "@gsd/pi-agent-core";
-import type { ImageContent, Model } from "@gsd/pi-ai";
+import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { ImageContent, Model } from "@mariozechner/pi-ai";
 import type { SessionStats } from "../../core/agent-session.js";
 import type { BashResult } from "../../core/bash-executor.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
-
-// ============================================================================
-// RPC Protocol Versioning
-// ============================================================================
-
-/** Supported protocol versions. v1 is the implicit default; v2 requires an init handshake. */
-export type RpcProtocolVersion = 1 | 2;
+import type { SourceInfo } from "../../core/source-info.js";
 
 // ============================================================================
 // RPC Commands (stdin)
@@ -71,17 +65,7 @@ export type RpcCommand =
 	| { id?: string; type: "get_messages" }
 
 	// Commands (available for invocation via prompt)
-	| { id?: string; type: "get_commands" }
-
-	// Bridge-hosted native terminal
-	| { id?: string; type: "terminal_input"; data: string }
-	| { id?: string; type: "terminal_resize"; cols: number; rows: number }
-	| { id?: string; type: "terminal_redraw" }
-
-	// v2 Protocol
-	| { id?: string; type: "init"; protocolVersion: 2; clientId?: string }
-	| { id?: string; type: "shutdown"; graceful?: boolean }
-	| { id?: string; type: "subscribe"; events: string[] };
+	| { id?: string; type: "get_commands" };
 
 // ============================================================================
 // RPC Slash Command (for get_commands response)
@@ -95,10 +79,8 @@ export interface RpcSlashCommand {
 	description?: string;
 	/** What kind of command this is */
 	source: "extension" | "prompt" | "skill";
-	/** Where the command was loaded from (undefined for extensions) */
-	location?: "user" | "project" | "path";
-	/** File path to the command source */
-	path?: string;
+	/** Source metadata for the owning resource */
+	sourceInfo: SourceInfo;
 }
 
 // ============================================================================
@@ -116,13 +98,8 @@ export interface RpcSessionState {
 	sessionId: string;
 	sessionName?: string;
 	autoCompactionEnabled: boolean;
-	autoRetryEnabled: boolean;
-	retryInProgress: boolean;
-	retryAttempt: number;
 	messageCount: number;
 	pendingMessageCount: number;
-	/** Whether extension loading has completed. Commands from `get_commands` may be incomplete until true. */
-	extensionsReady: boolean;
 }
 
 // ============================================================================
@@ -132,9 +109,9 @@ export interface RpcSessionState {
 // Success responses with data
 export type RpcResponse =
 	// Prompting (async - events follow)
-	| { id?: string; type: "response"; command: "prompt"; success: true; runId?: string }
-	| { id?: string; type: "response"; command: "steer"; success: true; runId?: string }
-	| { id?: string; type: "response"; command: "follow_up"; success: true; runId?: string }
+	| { id?: string; type: "response"; command: "prompt"; success: true }
+	| { id?: string; type: "response"; command: "steer"; success: true }
+	| { id?: string; type: "response"; command: "follow_up"; success: true }
 	| { id?: string; type: "response"; command: "abort"; success: true }
 	| { id?: string; type: "response"; command: "new_session"; success: true; data: { cancelled: boolean } }
 
@@ -223,58 +200,8 @@ export type RpcResponse =
 			data: { commands: RpcSlashCommand[] };
 	  }
 
-	// Bridge-hosted native terminal
-	| { id?: string; type: "response"; command: "terminal_input"; success: true }
-	| { id?: string; type: "response"; command: "terminal_resize"; success: true }
-	| { id?: string; type: "response"; command: "terminal_redraw"; success: true }
-
-	// v2 Protocol
-	| { id?: string; type: "response"; command: "init"; success: true; data: RpcInitResult }
-	| { id?: string; type: "response"; command: "shutdown"; success: true }
-	| { id?: string; type: "response"; command: "subscribe"; success: true }
-
 	// Error response (any command can fail)
 	| { id?: string; type: "response"; command: string; success: false; error: string };
-
-// ============================================================================
-// v2 Protocol Types
-// ============================================================================
-
-/** Result of the init handshake (v2 only) */
-export interface RpcInitResult {
-	protocolVersion: 2;
-	sessionId: string;
-	capabilities: {
-		events: string[];
-		commands: string[];
-	};
-}
-
-/** v2 execution_complete event — emitted when a prompt/steer/follow_up finishes */
-export interface RpcExecutionCompleteEvent {
-	type: "execution_complete";
-	runId: string;
-	status: "completed" | "error" | "cancelled";
-	reason?: string;
-	stats: SessionStats;
-}
-
-/** v2 cost_update event — emitted per-turn with running cost data */
-export interface RpcCostUpdateEvent {
-	type: "cost_update";
-	runId: string;
-	turnCost: number;
-	cumulativeCost: number;
-	tokens: {
-		input: number;
-		output: number;
-		cacheRead: number;
-		cacheWrite: number;
-	};
-}
-
-/** Discriminated union of all v2-only event types */
-export type RpcV2Event = RpcExecutionCompleteEvent | RpcCostUpdateEvent;
 
 // ============================================================================
 // Extension UI Events (stdout)
@@ -282,7 +209,7 @@ export type RpcV2Event = RpcExecutionCompleteEvent | RpcCostUpdateEvent;
 
 /** Emitted when an extension needs user input */
 export type RpcExtensionUIRequest =
-	| { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number; allowMultiple?: boolean }
+	| { type: "extension_ui_request"; id: string; method: "select"; title: string; options: string[]; timeout?: number }
 	| { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }
 	| {
 			type: "extension_ui_request";
@@ -291,7 +218,6 @@ export type RpcExtensionUIRequest =
 			title: string;
 			placeholder?: string;
 			timeout?: number;
-			secure?: boolean;
 	  }
 	| { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }
 	| {
@@ -326,7 +252,6 @@ export type RpcExtensionUIRequest =
 /** Response to an extension UI request */
 export type RpcExtensionUIResponse =
 	| { type: "extension_ui_response"; id: string; value: string }
-	| { type: "extension_ui_response"; id: string; values: string[] }
 	| { type: "extension_ui_response"; id: string; confirmed: boolean }
 	| { type: "extension_ui_response"; id: string; cancelled: true };
 

@@ -19,7 +19,6 @@ import {
   markStepComplete,
   expandIteration,
   initializeGraph,
-  graphFromDefinition,
   type WorkflowGraph,
   type GraphStep,
 } from "../graph.ts";
@@ -459,9 +458,6 @@ describe("initializeGraph", () => {
     assert.deepStrictEqual(graph.steps[2].dependsOn, ["s1", "s2"]);
   });
 
-  it("is also exported as graphFromDefinition (backward compat)", (t) => {
-    assert.equal(graphFromDefinition, initializeGraph);
-  });
 });
 
 // ─── Atomic write safety ─────────────────────────────────────────────────

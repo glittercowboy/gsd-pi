@@ -18,15 +18,15 @@ export const isBunBinary =
 	import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN") || import.meta.url.includes("%7EBUN");
 
 /** Detect if Bun is the runtime (compiled binary or bun run) */
-const isBunRuntime = !!process.versions.bun;
+export const isBunRuntime = !!process.versions.bun;
 
 // =============================================================================
 // Install Method Detection
 // =============================================================================
 
-type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
+export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
 
-function detectInstallMethod(): InstallMethod {
+export function detectInstallMethod(): InstallMethod {
 	if (isBunBinary) {
 		return "bun-binary";
 	}
@@ -77,33 +77,29 @@ export function getUpdateInstruction(packageName: string): string {
  * - For Node.js (dist/): returns __dirname (the dist/ directory)
  * - For tsx (src/): returns parent directory (the package root)
  */
-let _cachedPackageDir: string | undefined;
-
-function getPackageDir(): string {
-	if (_cachedPackageDir !== undefined) return _cachedPackageDir;
-
+export function getPackageDir(): string {
 	// Allow override via environment variable (useful for Nix/Guix where store paths tokenize poorly)
 	const envDir = process.env.PI_PACKAGE_DIR;
 	if (envDir) {
-		if (envDir === "~") return (_cachedPackageDir = homedir());
-		if (envDir.startsWith("~/")) return (_cachedPackageDir = homedir() + envDir.slice(1));
-		return (_cachedPackageDir = envDir);
+		if (envDir === "~") return homedir();
+		if (envDir.startsWith("~/")) return homedir() + envDir.slice(1);
+		return envDir;
 	}
 
 	if (isBunBinary) {
 		// Bun binary: process.execPath points to the compiled executable
-		return (_cachedPackageDir = dirname(process.execPath));
+		return dirname(process.execPath);
 	}
 	// Node.js: walk up from __dirname until we find package.json
 	let dir = __dirname;
 	while (dir !== dirname(dir)) {
 		if (existsSync(join(dir, "package.json"))) {
-			return (_cachedPackageDir = dir);
+			return dir;
 		}
 		dir = dirname(dir);
 	}
 	// Fallback (shouldn't happen)
-	return (_cachedPackageDir = __dirname);
+	return __dirname;
 }
 
 /**
@@ -138,7 +134,7 @@ export function getExportTemplateDir(): string {
 }
 
 /** Get path to package.json */
-function getPackageJsonPath(): string {
+export function getPackageJsonPath(): string {
 	return join(getPackageDir(), "package.json");
 }
 
@@ -160,6 +156,26 @@ export function getExamplesPath(): string {
 /** Get path to CHANGELOG.md */
 export function getChangelogPath(): string {
 	return resolve(join(getPackageDir(), "CHANGELOG.md"));
+}
+
+/**
+ * Get path to built-in interactive assets directory.
+ * - For Bun binary: assets/ next to executable
+ * - For Node.js (dist/): dist/modes/interactive/assets/
+ * - For tsx (src/): src/modes/interactive/assets/
+ */
+export function getInteractiveAssetsDir(): string {
+	if (isBunBinary) {
+		return join(dirname(process.execPath), "assets");
+	}
+	const packageDir = getPackageDir();
+	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
+	return join(packageDir, srcOrDist, "modes", "interactive", "assets");
+}
+
+/** Get path to a bundled interactive asset */
+export function getBundledInteractiveAssetPath(name: string): string {
+	return join(getInteractiveAssetsDir(), name);
 }
 
 // =============================================================================
@@ -219,6 +235,11 @@ export function getSettingsPath(): string {
 	return join(getAgentDir(), "settings.json");
 }
 
+/** Get path to tools directory */
+export function getToolsDir(): string {
+	return join(getAgentDir(), "tools");
+}
+
 /** Get path to managed binaries directory (fd, rg) */
 export function getBinDir(): string {
 	return join(getAgentDir(), "bin");
@@ -232,11 +253,6 @@ export function getPromptsDir(): string {
 /** Get path to sessions directory */
 export function getSessionsDir(): string {
 	return join(getAgentDir(), "sessions");
-}
-
-/** Get path to content-addressed blob store directory */
-export function getBlobsDir(): string {
-	return join(getAgentDir(), "blobs");
 }
 
 /** Get path to debug log file */

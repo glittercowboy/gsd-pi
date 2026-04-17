@@ -101,7 +101,7 @@ function checkMemoryPressure(): { pressured: boolean; heapMB: number; limitMB: n
  * terminal condition is reached.
  *
  * This is the linear replacement for the recursive
- * dispatchNextUnit → handleAgentEnd → dispatchNextUnit chain.
+ * dispatchNextUnit → resolveAgentEnd → dispatchNextUnit chain.
  */
 export async function autoLoop(
   ctx: ExtensionContext,

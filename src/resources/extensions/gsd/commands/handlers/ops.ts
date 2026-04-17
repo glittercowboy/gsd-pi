@@ -6,6 +6,7 @@ import { handleConfig } from "../../commands-config.js";
 import { handleDoctor, handleCapture, handleKnowledge, handleRunHook, handleSkillHealth, handleSteer, handleTriage, handleUpdate } from "../../commands-handlers.js";
 import { handleInspect } from "../../commands-inspect.js";
 import { handleLogs } from "../../commands-logs.js";
+import { handleDebug } from "../../commands-debug.js";
 import { handleCleanupBranches, handleCleanupSnapshots, handleSkip, handleCleanupProjects, handleCleanupWorktrees, handleRecover } from "../../commands-maintenance.js";
 import { handleExport } from "../../export.js";
 import { handleHistory } from "../../history.js";
@@ -40,6 +41,10 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
   }
   if (trimmed === "logs" || trimmed.startsWith("logs ")) {
     await handleLogs(trimmed.replace(/^logs\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "debug" || trimmed.startsWith("debug ")) {
+    await handleDebug(trimmed.replace(/^debug\s*/, "").trim(), ctx, pi);
     return true;
   }
   if (trimmed === "forensics" || trimmed.startsWith("forensics ")) {

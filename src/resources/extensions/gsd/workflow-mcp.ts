@@ -348,6 +348,20 @@ export function usesWorkflowMcpTransport(
   return authMode === "externalCli" && typeof baseUrl === "string" && baseUrl.startsWith("local://");
 }
 
+/**
+ * Derive an authMode string from a model's baseUrl.
+ * pi 0.67.2 removed ModelRegistry.getProviderAuthMode; this helper infers
+ * the equivalent value from the model object that is still available.
+ * Returns "externalCli" when the baseUrl uses the local:// scheme (i.e.
+ * Claude Code CLI), undefined otherwise.
+ */
+export function inferAuthModeFromBaseUrl(
+  baseUrl: string | undefined,
+): WorkflowCapabilityOptions["authMode"] {
+  if (typeof baseUrl === "string" && baseUrl.startsWith("local://")) return "externalCli";
+  return undefined;
+}
+
 export function supportsStructuredQuestions(
   activeTools: string[],
   options: Pick<WorkflowCapabilityOptions, "authMode" | "baseUrl"> = {},

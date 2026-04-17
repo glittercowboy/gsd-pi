@@ -189,7 +189,8 @@ test('memory-extractor: buildMemoryLLMCall resolves API key from modelRegistry f
   const ctx = {
     modelRegistry: {
       getAvailable: () => [fakeModel],
-      getApiKey: async (_model: any) => {
+      // pi 0.67.2: getApiKey(model) renamed to getApiKeyForProvider(provider)
+      getApiKeyForProvider: async (_provider: string) => {
         getApiKeyCalled = true;
         return OAUTH_TOKEN;
       },
@@ -199,17 +200,17 @@ test('memory-extractor: buildMemoryLLMCall resolves API key from modelRegistry f
   const llmCallFn = buildMemoryLLMCall(ctx);
   assert.ok(llmCallFn !== null, 'buildMemoryLLMCall should return a function when models are available');
 
-  // The function should have resolved the API key eagerly via modelRegistry.getApiKey.
-  // Give the async getApiKey a tick to resolve.
+  // The function should have resolved the API key eagerly via modelRegistry.getApiKeyForProvider.
+  // Give the async getApiKeyForProvider a tick to resolve.
   await new Promise(resolve => setTimeout(resolve, 50));
-  assert.ok(getApiKeyCalled, 'buildMemoryLLMCall must call modelRegistry.getApiKey() to resolve OAuth tokens');
+  assert.ok(getApiKeyCalled, 'buildMemoryLLMCall must call modelRegistry.getApiKeyForProvider() to resolve OAuth tokens');
 });
 
 test('memory-extractor: buildMemoryLLMCall returns null when no models available', () => {
   const ctx = {
     modelRegistry: {
       getAvailable: () => [],
-      getApiKey: async () => undefined,
+      getApiKeyForProvider: async () => undefined,
     },
   } as any;
 
@@ -236,8 +237,9 @@ test('memory-extractor: buildMemoryLLMCall prefers haiku model', async () => {
   const ctx = {
     modelRegistry: {
       getAvailable: () => [sonnetModel, haikuModel],
-      getApiKey: async (model: any) => {
-        resolvedModelId = model.id;
+      // pi 0.67.2: getApiKey(model) renamed to getApiKeyForProvider(provider)
+      getApiKeyForProvider: async (provider: string) => {
+        resolvedModelId = provider;
         return 'sk-ant-oat-test-token';
       },
     },
@@ -246,9 +248,9 @@ test('memory-extractor: buildMemoryLLMCall prefers haiku model', async () => {
   const llmCallFn = buildMemoryLLMCall(ctx);
   assert.ok(llmCallFn !== null, 'should return a function');
 
-  // Wait for the async getApiKey to resolve
+  // Wait for the async getApiKeyForProvider to resolve
   await new Promise(resolve => setTimeout(resolve, 50));
-  assert.strictEqual(resolvedModelId, 'claude-3-5-haiku-20241022',
-    'should resolve API key for haiku model, not sonnet');
+  assert.strictEqual(resolvedModelId, 'anthropic',
+    'should resolve API key for the anthropic provider (haiku model provider)');
 });
 

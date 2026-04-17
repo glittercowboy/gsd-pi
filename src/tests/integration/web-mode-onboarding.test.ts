@@ -302,6 +302,7 @@ test("successful browser onboarding restarts the stale bridge child and unlocks 
   onboarding.configureOnboardingServiceForTests({
     authStorage,
     getEnvApiKey: () => undefined,
+    isExternalCliProvider: () => false,
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
   });
 
@@ -370,6 +371,7 @@ test("refresh failures keep the workspace locked and expose the failed bridge-re
   onboarding.configureOnboardingServiceForTests({
     authStorage,
     getEnvApiKey: () => undefined,
+    isExternalCliProvider: () => false,
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
   });
 
@@ -449,6 +451,7 @@ test("fresh gsd --web browser onboarding stays locked on failed validation and u
     browserLogPath,
     env: {
       GSD_WEB_TEST_FAKE_API_KEY_VALIDATION: "1",
+      GSD_WEB_TEST_DISABLE_EXTERNAL_CLI: "1",
       ANTHROPIC_API_KEY: "",
       OPENAI_API_KEY: "",
       GOOGLE_API_KEY: "",

@@ -2,13 +2,40 @@
  * Model resolution, scoping, and initial selection
  */
 
-import type { ThinkingLevel } from "@gsd/pi-agent-core";
-import { type Api, type Model, modelsAreEqual } from "@gsd/pi-ai";
+import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
+import { type Api, type KnownProvider, type Model, modelsAreEqual } from "@mariozechner/pi-ai";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import type { ModelRegistry } from "./model-registry.js";
+
+/** Default model IDs for each known provider */
+export const defaultModelPerProvider: Record<KnownProvider, string> = {
+	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
+	anthropic: "claude-opus-4-6",
+	openai: "gpt-5.4",
+	"azure-openai-responses": "gpt-5.2",
+	"openai-codex": "gpt-5.4",
+	google: "gemini-2.5-pro",
+	"google-gemini-cli": "gemini-2.5-pro",
+	"google-antigravity": "gemini-3.1-pro-high",
+	"google-vertex": "gemini-3-pro-preview",
+	"github-copilot": "gpt-4o",
+	openrouter: "openai/gpt-5.1-codex",
+	"vercel-ai-gateway": "anthropic/claude-opus-4-6",
+	xai: "grok-4-fast-non-reasoning",
+	groq: "openai/gpt-oss-120b",
+	cerebras: "zai-glm-4.7",
+	zai: "glm-5",
+	mistral: "devstral-medium-latest",
+	minimax: "MiniMax-M2.7",
+	"minimax-cn": "MiniMax-M2.7",
+	huggingface: "moonshotai/Kimi-K2.5",
+	opencode: "claude-opus-4-6",
+	"opencode-go": "kimi-k2.5",
+	"kimi-coding": "kimi-k2-thinking",
+};
 
 export interface ScopedModel {
 	model: Model<Api>;
@@ -30,26 +57,60 @@ function isAlias(id: string): boolean {
 }
 
 /**
+ * Find an exact model reference match.
+ * Supports either a bare model id or a canonical provider/modelId reference.
+ * When matching by bare id, ambiguous matches across providers are rejected.
+ */
+export function findExactModelReferenceMatch(
+	modelReference: string,
+	availableModels: Model<Api>[],
+): Model<Api> | undefined {
+	const trimmedReference = modelReference.trim();
+	if (!trimmedReference) {
+		return undefined;
+	}
+
+	const normalizedReference = trimmedReference.toLowerCase();
+
+	const canonicalMatches = availableModels.filter(
+		(model) => `${model.provider}/${model.id}`.toLowerCase() === normalizedReference,
+	);
+	if (canonicalMatches.length === 1) {
+		return canonicalMatches[0];
+	}
+	if (canonicalMatches.length > 1) {
+		return undefined;
+	}
+
+	const slashIndex = trimmedReference.indexOf("/");
+	if (slashIndex !== -1) {
+		const provider = trimmedReference.substring(0, slashIndex).trim();
+		const modelId = trimmedReference.substring(slashIndex + 1).trim();
+		if (provider && modelId) {
+			const providerMatches = availableModels.filter(
+				(model) =>
+					model.provider.toLowerCase() === provider.toLowerCase() &&
+					model.id.toLowerCase() === modelId.toLowerCase(),
+			);
+			if (providerMatches.length === 1) {
+				return providerMatches[0];
+			}
+			if (providerMatches.length > 1) {
+				return undefined;
+			}
+		}
+	}
+
+	const idMatches = availableModels.filter((model) => model.id.toLowerCase() === normalizedReference);
+	return idMatches.length === 1 ? idMatches[0] : undefined;
+}
+
+/**
  * Try to match a pattern to a model from the available models list.
  * Returns the matched model or undefined if no match found.
  */
 function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Model<Api> | undefined {
-	// Check for provider/modelId format (provider is everything before the first /)
-	const slashIndex = modelPattern.indexOf("/");
-	if (slashIndex !== -1) {
-		const provider = modelPattern.substring(0, slashIndex);
-		const modelId = modelPattern.substring(slashIndex + 1);
-		const providerMatch = availableModels.find(
-			(m) => m.provider.toLowerCase() === provider.toLowerCase() && m.id.toLowerCase() === modelId.toLowerCase(),
-		);
-		if (providerMatch) {
-			return providerMatch;
-		}
-		// No exact provider/model match - fall through to other matching
-	}
-
-	// Check for exact ID match (case-insensitive)
-	const exactMatch = availableModels.find((m) => m.id.toLowerCase() === modelPattern.toLowerCase());
+	const exactMatch = findExactModelReferenceMatch(modelPattern, availableModels);
 	if (exactMatch) {
 		return exactMatch;
 	}
@@ -91,11 +152,10 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 	const providerModels = availableModels.filter((m) => m.provider === provider);
 	if (providerModels.length === 0) return undefined;
 
-	// Use the first available model from this provider as a template for
-	// capabilities (context window, reasoning support, etc.). The user is
-	// explicitly providing a custom model id, so we just need any shape of
-	// model from the same provider to inherit from.
-	const baseModel = providerModels[0];
+	const defaultId = defaultModelPerProvider[provider as KnownProvider];
+	const baseModel = defaultId
+		? (providerModels.find((m) => m.id === defaultId) ?? providerModels[0])
+		: providerModels[0];
 
 	return {
 		...baseModel,
@@ -115,9 +175,9 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
  *    - If suffix is valid thinking level, use it and recurse on prefix
  *    - If suffix is invalid, warn and recurse on prefix with "off"
  *
- * @internal
+ * @internal Exported for testing
  */
-function parseModelPattern(
+export function parseModelPattern(
 	pattern: string,
 	availableModels: Model<Api>[],
 	options?: { allowInvalidThinkingLevelFallback?: boolean },
@@ -188,18 +248,6 @@ export async function resolveModelScope(patterns: string[], modelRegistry: Model
 	const scopedModels: ScopedModel[] = [];
 
 	for (const pattern of patterns) {
-		// Try exact match first (handles model IDs containing glob chars like [1m])
-		const exactResult = parseModelPattern(pattern, availableModels);
-		if (exactResult.model) {
-			if (exactResult.warning) {
-				console.warn(chalk.yellow(`Warning: ${exactResult.warning}`));
-			}
-			if (!scopedModels.find((sm) => modelsAreEqual(sm.model, exactResult.model!))) {
-				scopedModels.push({ model: exactResult.model, thinkingLevel: exactResult.thinkingLevel });
-			}
-			continue;
-		}
-
 		// Check if pattern contains glob characters
 		if (pattern.includes("*") || pattern.includes("?") || pattern.includes("[")) {
 			// Extract optional thinking level suffix (e.g., "provider/*:high")
@@ -472,12 +520,8 @@ export async function findInitialModel(options: {
 		};
 	}
 
-	// 3. Try saved default from settings — use it exactly as configured.
-	// Whatever the user chose is what gets used; no silent substitution.
-	// Skip the saved default if its provider is not request-ready (no auth
-	// available) so we fall through to an actually-usable model instead of
-	// returning a stale selection every selector surface would display.
-	if (defaultProvider && defaultModelId && modelRegistry.isProviderRequestReady(defaultProvider)) {
+	// 3. Try saved default from settings
+	if (defaultProvider && defaultModelId) {
 		const found = modelRegistry.find(defaultProvider, defaultModelId);
 		if (found) {
 			model = found;
@@ -492,20 +536,93 @@ export async function findInitialModel(options: {
 	const availableModels = await modelRegistry.getAvailable();
 
 	if (availableModels.length > 0) {
-		// Prefer a model from the user's saved provider if any is still available —
-		// provider stickiness, not a hard-coded Anthropic/OpenAI preference.
-		if (defaultProvider) {
-			const sameProvider = availableModels.find((m) => m.provider === defaultProvider);
-			if (sameProvider) {
-				return { model: sameProvider, thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
+		// Try to find a default model from known providers
+		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
+			const defaultId = defaultModelPerProvider[provider];
+			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
+			if (match) {
+				return { model: match, thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
 			}
 		}
 
-		// Otherwise use the first available — registry order reflects models.json
-		// order, which the user controls.
+		// If no default found, use first available
 		return { model: availableModels[0], thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
 	}
 
 	// 5. No model found
 	return { model: undefined, thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
+}
+
+/**
+ * Restore model from session, with fallback to available models
+ */
+export async function restoreModelFromSession(
+	savedProvider: string,
+	savedModelId: string,
+	currentModel: Model<Api> | undefined,
+	shouldPrintMessages: boolean,
+	modelRegistry: ModelRegistry,
+): Promise<{ model: Model<Api> | undefined; fallbackMessage: string | undefined }> {
+	const restoredModel = modelRegistry.find(savedProvider, savedModelId);
+
+	// Check if restored model exists and still has auth configured
+	const hasConfiguredAuth = restoredModel ? modelRegistry.hasConfiguredAuth(restoredModel) : false;
+
+	if (restoredModel && hasConfiguredAuth) {
+		if (shouldPrintMessages) {
+			console.log(chalk.dim(`Restored model: ${savedProvider}/${savedModelId}`));
+		}
+		return { model: restoredModel, fallbackMessage: undefined };
+	}
+
+	// Model not found or no API key - fall back
+	const reason = !restoredModel ? "model no longer exists" : "no auth configured";
+
+	if (shouldPrintMessages) {
+		console.error(chalk.yellow(`Warning: Could not restore model ${savedProvider}/${savedModelId} (${reason}).`));
+	}
+
+	// If we already have a model, use it as fallback
+	if (currentModel) {
+		if (shouldPrintMessages) {
+			console.log(chalk.dim(`Falling back to: ${currentModel.provider}/${currentModel.id}`));
+		}
+		return {
+			model: currentModel,
+			fallbackMessage: `Could not restore model ${savedProvider}/${savedModelId} (${reason}). Using ${currentModel.provider}/${currentModel.id}.`,
+		};
+	}
+
+	// Try to find any available model
+	const availableModels = await modelRegistry.getAvailable();
+
+	if (availableModels.length > 0) {
+		// Try to find a default model from known providers
+		let fallbackModel: Model<Api> | undefined;
+		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
+			const defaultId = defaultModelPerProvider[provider];
+			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
+			if (match) {
+				fallbackModel = match;
+				break;
+			}
+		}
+
+		// If no default found, use first available
+		if (!fallbackModel) {
+			fallbackModel = availableModels[0];
+		}
+
+		if (shouldPrintMessages) {
+			console.log(chalk.dim(`Falling back to: ${fallbackModel.provider}/${fallbackModel.id}`));
+		}
+
+		return {
+			model: fallbackModel,
+			fallbackMessage: `Could not restore model ${savedProvider}/${savedModelId} (${reason}). Using ${fallbackModel.provider}/${fallbackModel.id}.`,
+		};
+	}
+
+	// No models available
+	return { model: undefined, fallbackMessage: undefined };
 }

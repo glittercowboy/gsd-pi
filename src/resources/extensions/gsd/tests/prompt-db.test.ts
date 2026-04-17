@@ -360,7 +360,7 @@ test('prompt-db: re-import updates DB when source markdown changes', () => {
 `;
   writeFileSync(join(gsdDir, 'DECISIONS.md'), updatedDecisions);
 
-  // Re-import (simulating what handleAgentEnd does)
+  // Re-import (simulating what the agent_end path does)
   migrateFromMarkdown(tmpDir);
 
   // Verify DB now has 3 decisions

@@ -195,7 +195,7 @@ const ANSI_REGEX = /\x1b\[([\d;]*)m/g;
 /**
  * Convert ANSI-escaped text to HTML with inline styles.
  */
-function ansiToHtml(text: string): string {
+export function ansiToHtml(text: string): string {
 	const style = createEmptyStyle();
 	let result = "";
 	let lastIndex = 0;

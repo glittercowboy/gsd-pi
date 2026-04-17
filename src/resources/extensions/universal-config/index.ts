@@ -114,7 +114,7 @@ export default function universalConfig(pi: ExtensionAPI) {
 
   // ── Invalidate cache on session switch ──────────────────────────────────
 
-  pi.on("session_switch", () => {
+  pi.on("session_before_switch", () => {
     cachedResult = null;
   });
 }

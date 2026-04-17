@@ -258,7 +258,7 @@ test("handleUndoTask with --force resets task and re-renders plan", async () => 
     assert.match(planContent, /\[ \] \*\*T01:/);
 
     // Success notification
-    assert.equal(notifications[0]?.level, "success");
+    assert.equal(notifications[0]?.level, "info");
     assert.match(notifications[0]?.message ?? "", /Reset task M001\/S01\/T01/);
   } finally {
     closeDatabase();
@@ -308,7 +308,7 @@ test("handleUndoTask accepts partial ID (T01) and resolves from state", async ()
 
     const task = getTask("M001", "S01", "T01");
     assert.equal(task?.status, "pending");
-    assert.equal(notifications[0]?.level, "success");
+    assert.equal(notifications[0]?.level, "info");
   } finally {
     closeDatabase();
     rmSync(base, { recursive: true, force: true });
@@ -437,7 +437,7 @@ test("handleResetSlice with --force resets slice and all tasks", async () => {
     assert.match(roadmapContent, /\[ \] \*\*S01:/);
 
     // Success notification
-    assert.equal(notifications[0]?.level, "success");
+    assert.equal(notifications[0]?.level, "info");
     assert.match(notifications[0]?.message ?? "", /Reset slice M001\/S01/);
   } finally {
     closeDatabase();

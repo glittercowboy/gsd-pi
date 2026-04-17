@@ -1,5 +1,5 @@
-import type { AgentMessage } from "@gsd/pi-agent-core";
-import type { ImageContent, Message, TextContent } from "@gsd/pi-ai";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
 import { randomUUID } from "crypto";
 import {
 	appendFileSync,
@@ -13,11 +13,10 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { atomicWriteFileSync } from "./fs-utils.js";
 import { readdir, readFile, stat } from "fs/promises";
 import { join, resolve } from "path";
-import { getAgentDir as getDefaultAgentDir, getBlobsDir, getSessionsDir } from "../config.js";
-import { tryAcquireLockSync } from "./lock-utils.js";
+import { v7 as uuidv7 } from "uuid";
+import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -25,30 +24,6 @@ import {
 	createCompactionSummaryMessage,
 	createCustomMessage,
 } from "./messages.js";
-import { BlobStore, externalizeImageData, isBlobRef, resolveImageData } from "./blob-store.js";
-
-/** Inline concurrency limiter to cap parallel async operations. */
-function pLimit(concurrency: number) {
-	const queue: (() => void)[] = [];
-	let active = 0;
-	return <T>(fn: () => Promise<T>): Promise<T> => {
-		return new Promise<T>((resolve, reject) => {
-			const run = () => {
-				active++;
-				fn().then(resolve, reject).finally(() => {
-					active--;
-					if (queue.length > 0) queue.shift()!();
-				});
-			};
-			if (active < concurrency) run();
-			else queue.push(run);
-		});
-	};
-}
-
-const BLOB_EXTERNALIZE_THRESHOLD = 1024; // 1KB minimum to externalize
-const MAX_PERSIST_CHARS = 500_000;
-const TRUNCATION_NOTICE = "\n\n[Session persistence truncated large content]";
 
 export const CURRENT_SESSION_VERSION = 3;
 
@@ -62,6 +37,7 @@ export interface SessionHeader {
 }
 
 export interface NewSessionOptions {
+	id?: string;
 	parentSession?: string;
 }
 
@@ -179,6 +155,8 @@ export interface SessionTreeNode {
 	children: SessionTreeNode[];
 	/** Resolved label for this entry, if any */
 	label?: string;
+	/** Timestamp of the latest label change for this entry, if any */
+	labelTimestamp?: string;
 }
 
 export interface SessionContext {
@@ -203,14 +181,6 @@ export interface SessionInfo {
 	allMessagesText: string;
 }
 
-export interface SessionUsageTotals {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
-	cost: number;
-}
-
 export type ReadonlySessionManager = Pick<
 	SessionManager,
 	| "getCwd"
@@ -224,19 +194,12 @@ export type ReadonlySessionManager = Pick<
 	| "getBranch"
 	| "getHeader"
 	| "getEntries"
-	| "getUsageTotals"
 	| "getTree"
 	| "getSessionName"
 >;
 
-function createEmptyUsageTotals(): SessionUsageTotals {
-	return {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		cost: 0,
-	};
+function createSessionId(): string {
+	return uuidv7();
 }
 
 /** Generate a unique short ID (8 hex chars, collision-checked) */
@@ -462,122 +425,17 @@ export function buildSessionContext(
  * Compute the default session directory for a cwd.
  * Encodes cwd into a safe directory name under ~/.pi/agent/sessions/.
  */
-function getDefaultSessionDir(cwd: string): string {
+export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultAgentDir()): string {
 	const safePath = `--${cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
-	const sessionDir = join(getDefaultAgentDir(), "sessions", safePath);
+	const sessionDir = join(agentDir, "sessions", safePath);
 	if (!existsSync(sessionDir)) {
 		mkdirSync(sessionDir, { recursive: true });
 	}
 	return sessionDir;
 }
 
-function isImageBlock(value: unknown): value is { type: "image"; data: string; mimeType?: string } {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		"type" in value &&
-		(value as { type?: string }).type === "image" &&
-		"data" in value &&
-		typeof (value as { data?: string }).data === "string"
-	);
-}
-
-function truncateString(s: string, maxLength: number): string {
-	if (s.length <= maxLength) return s;
-	// Avoid splitting surrogate pairs
-	if (maxLength > 0 && s.charCodeAt(maxLength - 1) >= 0xd800 && s.charCodeAt(maxLength - 1) <= 0xdbff) {
-		return s.slice(0, maxLength - 1);
-	}
-	return s.slice(0, maxLength);
-}
-
-/**
- * Prepare an entry for JSONL persistence: externalize large images to blob store,
- * truncate oversized strings, strip transient fields.
- */
-function prepareForPersistence(obj: unknown, blobStore: BlobStore, key?: string): unknown {
-	if (obj === null || obj === undefined) return obj;
-
-	if (typeof obj === "string") {
-		if (obj.length > MAX_PERSIST_CHARS) {
-			// Cryptographic signatures must be preserved exactly or cleared entirely
-			if (key === "thinkingSignature" || key === "thoughtSignature" || key === "textSignature") {
-				return "";
-			}
-			const limit = Math.max(0, MAX_PERSIST_CHARS - TRUNCATION_NOTICE.length);
-			return `${truncateString(obj, limit)}${TRUNCATION_NOTICE}`;
-		}
-		return obj;
-	}
-
-	if (Array.isArray(obj)) {
-		let changed = false;
-		const result = obj.map((item) => {
-			// Externalize oversized images to blob store
-			if (key === "content" && isImageBlock(item)) {
-				if (!isBlobRef(item.data) && item.data.length >= BLOB_EXTERNALIZE_THRESHOLD) {
-					changed = true;
-					const blobRef = externalizeImageData(blobStore, item.data);
-					return { ...item, data: blobRef };
-				}
-			}
-			const newItem = prepareForPersistence(item, blobStore, key);
-			if (newItem !== item) changed = true;
-			return newItem;
-		});
-		return changed ? result : obj;
-	}
-
-	if (typeof obj === "object") {
-		let changed = false;
-		const result: Record<string, unknown> = {};
-		for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-			// Strip transient properties
-			if (k === "partialJson" || k === "jsonlEvents") {
-				changed = true;
-				continue;
-			}
-			const newV = prepareForPersistence(v, blobStore, k);
-			result[k] = newV;
-			if (newV !== v) changed = true;
-		}
-		// Update lineCount if content was truncated (for FileMentionFile)
-		if (changed && "lineCount" in result && "content" in result && typeof result.content === "string") {
-			result.lineCount = (result.content as string).split("\n").length;
-		}
-		return changed ? result : obj;
-	}
-
-	return obj;
-}
-
-/**
- * Resolve blob references in loaded entries, replacing `blob:sha256:<hash>` data
- * fields with actual base64 content. Mutates entries in place.
- */
-function resolveBlobRefsInEntries(entries: FileEntry[], blobStore: BlobStore): void {
-	for (const entry of entries) {
-		if (entry.type === "session") continue;
-
-		let contentArray: unknown[] | undefined;
-		if (entry.type === "message") {
-			const content = ((entry as SessionMessageEntry).message as { content?: unknown }).content;
-			if (Array.isArray(content)) contentArray = content;
-		} else if (entry.type === "custom_message" && Array.isArray((entry as any).content)) {
-			contentArray = (entry as any).content;
-		}
-
-		if (!contentArray) continue;
-
-		for (const block of contentArray) {
-			if (isImageBlock(block) && isBlobRef(block.data)) {
-				(block as { data: string }).data = resolveImageData(blobStore, block.data);
-			}
-		}
-	}
-}
-
-function loadEntriesFromFile(filePath: string): FileEntry[] {
+/** Exported for testing */
+export function loadEntriesFromFile(filePath: string): FileEntry[] {
 	if (!existsSync(filePath)) return [];
 
 	const content = readFileSync(filePath, "utf8");
@@ -619,7 +477,8 @@ function isValidSessionFile(filePath: string): boolean {
 	}
 }
 
-function findMostRecentSession(sessionDir: string): string | null {
+/** Exported for testing */
+export function findMostRecentSession(sessionDir: string): string | null {
 	try {
 		const files = readdirSync(sessionDir)
 			.filter((f) => f.endsWith(".jsonl"))
@@ -713,12 +572,10 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 		let name: string | undefined;
 
 		for (const entry of entries) {
-			// Extract session name (use latest)
+			// Extract session name (use latest, including explicit clears)
 			if (entry.type === "session_info") {
 				const infoEntry = entry as SessionInfoEntry;
-				if (infoEntry.name) {
-					name = infoEntry.name.trim();
-				}
+				name = infoEntry.name?.trim() || undefined;
 			}
 
 			if (entry.type !== "message") continue;
@@ -817,18 +674,15 @@ export class SessionManager {
 	private persist: boolean;
 	private flushed: boolean = false;
 	private fileEntries: FileEntry[] = [];
-	private sessionEntries: SessionEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
-	private blobStore: BlobStore;
 	private labelsById: Map<string, string> = new Map();
+	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
-	private usageTotals: SessionUsageTotals = createEmptyUsageTotals();
 
 	private constructor(cwd: string, sessionDir: string, sessionFile: string | undefined, persist: boolean) {
 		this.cwd = cwd;
 		this.sessionDir = sessionDir;
 		this.persist = persist;
-		this.blobStore = new BlobStore(getBlobsDir());
 		if (persist && sessionDir && !existsSync(sessionDir)) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
@@ -838,37 +692,6 @@ export class SessionManager {
 		} else {
 			this.newSession();
 		}
-	}
-
-	/**
-	 * Check if the last assistant turn in the session appears to have been
-	 * interrupted (e.g., the last message is from the assistant with tool_use
-	 * blocks but no subsequent tool_result message).
-	 */
-	wasInterrupted(): boolean {
-		// Walk backwards to find the last message entry
-		for (let i = this.fileEntries.length - 1; i >= 0; i--) {
-			const entry = this.fileEntries[i];
-			if (entry.type !== "message") continue;
-
-			const msg = entry.message;
-			if (msg.role === "user") return false; // clean user turn boundary
-			if (msg.role === "assistant") {
-				// Check if the assistant message contains tool_use blocks
-				const content = Array.isArray(msg.content) ? msg.content : [];
-				const hasToolUse = content.some(
-					(block) => block.type === "toolCall",
-				);
-				if (hasToolUse) {
-					// If the last message is an assistant tool_use with no following
-					// tool_result message, the turn was likely interrupted
-					return true;
-				}
-				return false; // assistant message without tool_use = completed text response
-			}
-			return false;
-		}
-		return false;
 	}
 
 	/** Switch to a different session file (used for resume and branching) */
@@ -889,14 +712,13 @@ export class SessionManager {
 			}
 
 			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
-			this.sessionId = header?.id ?? randomUUID();
+			this.sessionId = header?.id ?? createSessionId();
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
 			}
 
 			this._buildIndex();
-			resolveBlobRefsInEntries(this.fileEntries, this.blobStore);
 			this.flushed = true;
 		} else {
 			const explicitPath = this.sessionFile;
@@ -906,7 +728,7 @@ export class SessionManager {
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
-		this.sessionId = randomUUID();
+		this.sessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const header: SessionHeader = {
 			type: "session",
@@ -917,11 +739,9 @@ export class SessionManager {
 			parentSession: options?.parentSession,
 		};
 		this.fileEntries = [header];
-		this.sessionEntries = [];
 		this.byId.clear();
 		this.labelsById.clear();
 		this.leafId = null;
-		this.usageTotals = createEmptyUsageTotals();
 		this.flushed = false;
 
 		if (this.persist) {
@@ -932,22 +752,21 @@ export class SessionManager {
 	}
 
 	private _buildIndex(): void {
-		this.sessionEntries = [];
 		this.byId.clear();
 		this.labelsById.clear();
+		this.labelTimestampsById.clear();
 		this.leafId = null;
-		this.usageTotals = createEmptyUsageTotals();
 		for (const entry of this.fileEntries) {
 			if (entry.type === "session") continue;
-			this.sessionEntries.push(entry);
 			this.byId.set(entry.id, entry);
 			this.leafId = entry.id;
-			this._accumulateUsage(entry);
 			if (entry.type === "label") {
 				if (entry.label) {
 					this.labelsById.set(entry.targetId, entry.label);
+					this.labelTimestampsById.set(entry.targetId, entry.timestamp);
 				} else {
 					this.labelsById.delete(entry.targetId);
+					this.labelTimestampsById.delete(entry.targetId);
 				}
 			}
 		}
@@ -956,13 +775,7 @@ export class SessionManager {
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
 		const content = `${this.fileEntries.map((e) => JSON.stringify(e)).join("\n")}\n`;
-		let release: (() => void) | undefined;
-		try {
-			release = tryAcquireLockSync(this.sessionFile);
-			atomicWriteFileSync(this.sessionFile, content);
-		} finally {
-			release?.();
-		}
+		writeFileSync(this.sessionFile, content);
 	}
 
 	isPersisted(): boolean {
@@ -995,48 +808,21 @@ export class SessionManager {
 			return;
 		}
 
-		let release: (() => void) | undefined;
-		try {
-			release = tryAcquireLockSync(this.sessionFile);
-			if (!this.flushed) {
-				for (const e of this.fileEntries) {
-					const prepared = prepareForPersistence(e, this.blobStore) as FileEntry;
-					appendFileSync(this.sessionFile, `${JSON.stringify(prepared)}\n`);
-				}
-				this.flushed = true;
-			} else {
-				const prepared = prepareForPersistence(entry, this.blobStore) as FileEntry;
-				appendFileSync(this.sessionFile, `${JSON.stringify(prepared)}\n`);
+		if (!this.flushed) {
+			for (const e of this.fileEntries) {
+				appendFileSync(this.sessionFile, `${JSON.stringify(e)}\n`);
 			}
-		} finally {
-			release?.();
+			this.flushed = true;
+		} else {
+			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
 		}
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
 		this.fileEntries.push(entry);
-		this.sessionEntries.push(entry);
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
-		this._accumulateUsage(entry);
 		this._persist(entry);
-	}
-
-	private _accumulateUsage(entry: SessionEntry): void {
-		if (entry.type !== "message" || entry.message.role !== "assistant") {
-			return;
-		}
-
-		const usage = entry.message.usage;
-		if (!usage) {
-			return;
-		}
-
-		this.usageTotals.input += usage.input;
-		this.usageTotals.output += usage.output;
-		this.usageTotals.cacheRead += usage.cacheRead;
-		this.usageTotals.cacheWrite += usage.cacheWrite;
-		this.usageTotals.cost += usage.cost.total;
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1136,12 +922,13 @@ export class SessionManager {
 
 	/** Get the current session name from the latest session_info entry, if any. */
 	getSessionName(): string | undefined {
-		// Walk entries in reverse to find the latest session_info with a name
+		// Walk entries in reverse to find the latest session_info entry.
+		// Empty names explicitly clear the session title.
 		const entries = this.getEntries();
 		for (let i = entries.length - 1; i >= 0; i--) {
 			const entry = entries[i];
-			if (entry.type === "session_info" && entry.name) {
-				return entry.name;
+			if (entry.type === "session_info") {
+				return entry.name?.trim() || undefined;
 			}
 		}
 		return undefined;
@@ -1231,8 +1018,10 @@ export class SessionManager {
 		this._appendEntry(entry);
 		if (label) {
 			this.labelsById.set(targetId, label);
+			this.labelTimestampsById.set(targetId, entry.timestamp);
 		} else {
 			this.labelsById.delete(targetId);
+			this.labelTimestampsById.delete(targetId);
 		}
 		return entry.id;
 	}
@@ -1275,11 +1064,7 @@ export class SessionManager {
 	 * change the leaf pointer. Entries cannot be modified or deleted.
 	 */
 	getEntries(): SessionEntry[] {
-		return [...this.sessionEntries];
-	}
-
-	getUsageTotals(): SessionUsageTotals {
-		return { ...this.usageTotals };
+		return this.fileEntries.filter((e): e is SessionEntry => e.type !== "session");
 	}
 
 	/**
@@ -1295,7 +1080,8 @@ export class SessionManager {
 		// Create nodes with resolved labels
 		for (const entry of entries) {
 			const label = this.labelsById.get(entry.id);
-			nodeMap.set(entry.id, { entry, children: [], label });
+			const labelTimestamp = this.labelTimestampsById.get(entry.id);
+			nodeMap.set(entry.id, { entry, children: [], label, labelTimestamp });
 		}
 
 		// Build tree
@@ -1391,7 +1177,7 @@ export class SessionManager {
 		// Filter out LabelEntry from path - we'll recreate them from the resolved map
 		const pathWithoutLabels = path.filter((e) => e.type !== "label");
 
-		const newSessionId = randomUUID();
+		const newSessionId = createSessionId();
 		const timestamp = new Date().toISOString();
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 		const newSessionFile = join(this.getSessionDir(), `${fileTimestamp}_${newSessionId}.jsonl`);
@@ -1407,10 +1193,10 @@ export class SessionManager {
 
 		// Collect labels for entries in the path
 		const pathEntryIds = new Set(pathWithoutLabels.map((e) => e.id));
-		const labelsToWrite: Array<{ targetId: string; label: string }> = [];
+		const labelsToWrite: Array<{ targetId: string; label: string; timestamp: string }> = [];
 		for (const [targetId, label] of this.labelsById) {
 			if (pathEntryIds.has(targetId)) {
-				labelsToWrite.push({ targetId, label });
+				labelsToWrite.push({ targetId, label, timestamp: this.labelTimestampsById.get(targetId)! });
 			}
 		}
 
@@ -1419,12 +1205,12 @@ export class SessionManager {
 			const lastEntryId = pathWithoutLabels[pathWithoutLabels.length - 1]?.id || null;
 			let parentId = lastEntryId;
 			const labelEntries: LabelEntry[] = [];
-			for (const { targetId, label } of labelsToWrite) {
+			for (const { targetId, label, timestamp: labelTimestamp } of labelsToWrite) {
 				const labelEntry: LabelEntry = {
 					type: "label",
 					id: generateId(new Set(pathEntryIds)),
 					parentId,
-					timestamp: new Date().toISOString(),
+					timestamp: labelTimestamp,
 					targetId,
 					label,
 				};
@@ -1457,12 +1243,12 @@ export class SessionManager {
 		// In-memory mode: replace current session with the path + labels
 		const labelEntries: LabelEntry[] = [];
 		let parentId = pathWithoutLabels[pathWithoutLabels.length - 1]?.id || null;
-		for (const { targetId, label } of labelsToWrite) {
+		for (const { targetId, label, timestamp: labelTimestamp } of labelsToWrite) {
 			const labelEntry: LabelEntry = {
 				type: "label",
 				id: generateId(new Set([...pathEntryIds, ...labelEntries.map((e) => e.id)])),
 				parentId,
-				timestamp: new Date().toISOString(),
+				timestamp: labelTimestamp,
 				targetId,
 				label,
 			};
@@ -1489,12 +1275,13 @@ export class SessionManager {
 	 * Open a specific session file.
 	 * @param path Path to session file
 	 * @param sessionDir Optional session directory for /new or /branch. If omitted, derives from file's parent.
+	 * @param cwdOverride Optional cwd override instead of the session header cwd.
 	 */
-	static open(path: string, sessionDir?: string): SessionManager {
+	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
 		// Extract cwd from session header if possible, otherwise use process.cwd()
 		const entries = loadEntriesFromFile(path);
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
-		const cwd = header?.cwd ?? process.cwd();
+		const cwd = cwdOverride ?? header?.cwd ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ?? resolve(path, "..");
 		return new SessionManager(cwd, dir, path, true);
@@ -1543,7 +1330,7 @@ export class SessionManager {
 		}
 
 		// Create new session file with new ID but forked content
-		const newSessionId = randomUUID();
+		const newSessionId = createSessionId();
 		const timestamp = new Date().toISOString();
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 		const newSessionFile = join(dir, `${fileTimestamp}_${newSessionId}.jsonl`);
@@ -1557,14 +1344,14 @@ export class SessionManager {
 			cwd: targetCwd,
 			parentSession: sourcePath,
 		};
-		// Build complete fork content and write atomically to prevent partial files on crash
-		const lines = [JSON.stringify(newHeader)];
+		appendFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`);
+
+		// Copy all non-header entries from source
 		for (const entry of sourceEntries) {
 			if (entry.type !== "session") {
-				lines.push(JSON.stringify(entry));
+				appendFileSync(newSessionFile, `${JSON.stringify(entry)}\n`);
 			}
 		}
-		atomicWriteFileSync(newSessionFile, lines.join("\n") + "\n");
 
 		return new SessionManager(targetCwd, dir, newSessionFile, true);
 	}
@@ -1614,17 +1401,13 @@ export class SessionManager {
 			const sessions: SessionInfo[] = [];
 			const allFiles = dirFiles.flat();
 
-			// Limit concurrency to avoid memory spikes with many session files
-			const limit = pLimit(10);
 			const results = await Promise.all(
-				allFiles.map((file) =>
-					limit(async () => {
-						const info = await buildSessionInfo(file);
-						loaded++;
-						onProgress?.(loaded, totalFiles);
-						return info;
-					}),
-				),
+				allFiles.map(async (file) => {
+					const info = await buildSessionInfo(file);
+					loaded++;
+					onProgress?.(loaded, totalFiles);
+					return info;
+				}),
 			);
 
 			for (const info of results) {

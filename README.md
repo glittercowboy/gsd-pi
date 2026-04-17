@@ -27,85 +27,120 @@ One command. Walk away. Come back to a built project with clean git history.
 
 ---
 
-## What's New in v2.71
+## What's New in v2.75
 
-### MCP Secure Env Collect
+### Knowledge Graph & Learning Extraction
 
-- **Secure credential collection over MCP** — the new `secure_env_collect` tool uses MCP form elicitation to collect secrets (API keys, tokens) from external clients without exposing values in tool output. Masks input in interactive mode.
-- **Hardened elicitation schema** — MCP elicitation schema handling is stricter, with proper validation and fallback for providers that don't support forms.
+- **Knowledge graph system** — GSD now builds a structured knowledge graph from project artifacts. Learnings, decisions, and patterns are parsed into queryable graph nodes.
+- **`/gsd extract-learnings`** — new command extracts decisions, lessons, patterns, and surprises from completed phase artifacts into `LEARNINGS.md`, which feeds the knowledge graph automatically.
 
-### MCP Reliability
+### Unified Orchestration Kernel (UOK)
 
-- **Stream ordering preserved** — MCP tool output now renders in the correct order, fixing interleaved output in Claude Code and other MCP clients.
-- **isError flag propagation** — workflow tool execution failures now correctly return `isError: true`, so MCP clients can distinguish success from failure.
-- **Multi-round discuss questions** — new-project discuss phase supports multi-round questioning with structured question gates.
+- **UOK is now the default** — the unified orchestration kernel replaces the legacy execution path. Plan-v2 compile gates, unified audit envelopes, turn-level git transaction modes, reactive/parallel scheduling via execution graph, and model policy filtering are all enforced by default. Legacy fallback remains as an emergency escape.
 
-### Model Selection Hardening
+### Extension API
 
-- **Unconfigured models blocked** — models without a configured provider are filtered from selection surfaces, preventing dispatch failures.
-- **Provider readiness required** — saved default model selection now verifies the provider is ready before accepting it.
-- **Session override honored** — `/gsd model` selection persists as a session override across all dispatch phases.
-- **Minimal context guard** — model override logic is skipped in minimal command contexts where it doesn't apply.
+- **GSD Extension API** — third-party extensions can now be loaded from `.gsd/extensions/`, with a formal API surface for hooking into the GSD lifecycle (#3338).
 
-### Auto-Mode Resilience
+### v1 Command Parity
 
-- **Credential cooldown recovery** — auto-mode survives transient 429 rate-limit responses with structured cooldown errors and a bounded retry budget.
-- **Fire-and-forget auto start** — auto start is detached from active turns to prevent blocking.
-- **Scoped forensics** — stuck-loop forensics are now scoped to auto sessions only, preventing false positives in interactive use.
+- **12 missing commands added** — GSD v2 now covers all v1 commands, closing the migration gap.
 
 ### TUI Improvements
 
-- **Overlay subscription fix** — resolved overlay subscription lifecycle and `Ctrl+Shift+P` shortcut conflict.
-- **Improved overlays and shortcuts** — GSD overlays, keyboard shortcuts, and notification flows redesigned for consistency.
-- **Pinned output restored** — pinned output bar displays above the editor during tool execution again.
-- **Turn completion cleanup** — pinned latest output is cleared on turn completion, preventing stale output from persisting.
-- **Secure input masking** — extension input values are masked in interactive mode when collecting secrets.
+- **Chat frame redesign** — compaction notices, tool execution cards, and the chat frame now share a unified styling with timestamps and model headers.
+- **Inline tool calls** — assistant tool calls render inline with text instead of grouped at the end.
+- **Compaction and success fixes** — tool cards no longer stick after compaction; success notifications are properly promoted.
 
-### Provider Fixes
+### Auto-Mode & Reliability
 
-- **Full OAuth login URLs** — OAuth login URLs are now displayed in full instead of being truncated.
-- **MiniMax bearer auth** — MiniMax Anthropic API requests use proper bearer authentication.
-- **Case-insensitive tool rendering** — renderable tool matching is now case-insensitive, fixing missed tool output.
-- **Headless idle timeout** — idle timeout is kept off during interactive tool execution in headless mode.
+- **Session timeout recovery** — auto-resume timer handles session creation timeouts; timeout counter resets on resume.
+- **Compaction checkpoint fix** — all session phases are checkpointed during compaction, not just the executing phase.
+- **MCP worktree routing** — tool writes are routed to the active worktree when a milestone has one; worktree paths are accepted in the project root guard.
+- **Single-writer DB invariant** — the engine database now enforces a single-writer invariant, preventing corruption from concurrent access.
 
-### Reliability & Internals
+### Providers & CI
 
-- **TOCTOU file locking** — race conditions in event log and custom workflow graph file locking are fixed with proper atomic lock acquisition.
-- **State derive refactor** — `deriveStateFromDb` god function extracted into composable, testable helpers.
-- **Windows portability** — hardened cross-platform portability across runtime, tooling, and CI.
-- **Model routing transparency** — dynamic routing is skipped for interactive dispatches; model changes are always shown in the banner.
-- **Capability-aware routing (ADR-004)** — full implementation of capability scoring, `before_model_select` hook, and task metadata extraction.
-- **Multi-model provider strategy (ADR-005)** — infrastructure for multi-provider model selection wired into live paths.
-- **Anti-fabrication guardrails** — discuss prompts enforce turn-taking to prevent fabricated user responses.
-- **Milestone worktree cleanup** — merged worktree cleanup uses the milestone branch instead of generic lookups.
-- **Tool cache control** — `cache_control` breakpoints added to tool definitions for improved prompt caching.
+- **Alibaba DashScope** — added as a standalone provider (#3891).
+- **Persistent language preference** — `/gsd language` sets a persistent language preference.
+- **Flat-rate provider detection** — extended to custom and externalCli providers.
+- **Thinking level as effort** — Claude Code now passes thinking level as an effort parameter.
+- **Hardened release pipeline** — workspace versions synced in release commits, package-lock.json regenerated during bumps, incremental build cache issues resolved.
 
 See the full [Changelog](./CHANGELOG.md) for details on every release.
 
 <details>
-<summary>Previous highlights (v2.70 and earlier)</summary>
+<summary>v2.74 highlights</summary>
+
+- **DB-authoritative milestone completeness** — milestone completion state is derived from the database, not file markers (#4179)
+- **Flat-rate provider detection** — extended to custom and externalCli providers
+- **Thinking level as effort** — Claude Code passes thinking level as an effort parameter
+- **False milestone merge prevention** — auto-mode no longer falsely merges after a `complete-milestone` failure (#4175)
+- **Premature auto-stop fix** — prevents auto-mode from stopping early on blocked phase + missing reassessment
+- **Inline tool call rendering** — assistant tool calls render inline with text instead of grouped at the end
+- **Custom model preservation** — custom model selection preserved on `/gsd auto` bootstrap (#4122)
+
+</details>
+
+<details>
+<summary>v2.73 highlights</summary>
+
+- **Alibaba DashScope provider** — added as a standalone provider (#3891)
+- **Layered depth enforcement** — discuss phase enforces depth gates for thorough requirements gathering (#4079)
+- **Memory pressure watchdog** — stuck detection state persisted across sessions (#3708)
+- **Ollama cloud auth** — cloud auth support and real context window resolution via `/api/show` (#4017)
+- **DB corruption prevention** — direct writes to `gsd.db` blocked via hooks (#3674)
+- **Circular dependency cleanup** — 3 circular dependencies broken in extension modules (#3730)
+- **Subagent permissions** — GSD subagents default to `bypassPermissions` with safe built-ins pre-authorized
+- **Security hardening** — auth middleware activated, shutdown/update routes hardened (#4023)
+- **Stale slice reconciliation** — stale slice rows reconciled and STATE.md rebuilt before DB close (#3658)
+- **Subagent model preference** — `subagent_model` preference wired through to dispatch prompt builders
+- **Pipeline integrity** — 5 pipeline issues addressed from release audit, package-lock.json regenerated during bumps
+
+</details>
+
+<details>
+<summary>v2.72 highlights</summary>
+
+- **8 specialist subagents** — new specialist subagents and slim pro agents with GSD phase guard to prevent conflicts
+- **Model selection hardening** — unconfigured models blocked from selection, provider readiness required, session override honored
+- **Auto-mode resilience** — credential cooldown recovery with bounded retry budget, fire-and-forget auto start, scoped forensics
+- **TUI overhaul** — overlays, keyboard shortcuts, and notification flows redesigned for consistency
+- **Capability-aware routing (ADR-004)** — full implementation of capability scoring, `before_model_select` hook, and task metadata extraction
+- **Multi-model provider strategy (ADR-005)** — infrastructure for multi-provider model selection wired into live paths
+- **Anti-fabrication guardrails** — discuss prompts enforce turn-taking to prevent fabricated user responses
+- **Windows portability** — hardened cross-platform portability across runtime, tooling, and CI
+- **MCP reliability** — every registered tool exposed, SDK subpath resolution fixed, abort signals threaded through
+- **Tool cache control** — `cache_control` breakpoints added to tool definitions for improved prompt caching
+
+</details>
+
+<details>
+<summary>v2.71 highlights</summary>
+
+- **Secure credential collection over MCP** — `secure_env_collect` tool uses MCP form elicitation to collect secrets without exposing values in tool output
+- **MCP stream ordering** — tool output renders in correct order, fixing interleaved output in Claude Code and other MCP clients
+- **isError flag propagation** — workflow tool execution failures correctly return `isError: true`
+- **Multi-round discuss questions** — new-project discuss phase supports multi-round questioning with structured question gates
+- **TOCTOU file locking** — race conditions in event log and custom workflow graph file locking fixed with atomic lock acquisition
+- **State derive refactor** — `deriveStateFromDb` god function extracted into composable, testable helpers
+- **Pinned output fixes** — restored above editor during tool execution, cleared on turn completion
+
+</details>
+
+<details>
+<summary>v2.70 and earlier</summary>
 
 - **Full workflow over MCP (v2.68)** — slice replanning, milestone management, slice completion, task completion, and core planning tools exposed over MCP
 - **Transport-gated MCP (v2.68)** — workflow tool availability adapts to provider transport capabilities automatically
 - **Contextual tips system (v2.68)** — TUI and web terminal surface contextual tips based on workflow state
 - **Ask user questions over MCP (v2.70)** — interactive questions exposed via elicitation for external integrations
 - **Tiered Context Injection (M005)** — relevance-scoped context with 65%+ token reduction
-- **Resilient transient error recovery** — defers to Core RetryHandler and fixes cmdCtx race conditions
-- **Anthropic subscription routing** — auto-routed through Claude Code CLI provider with proper display names
 - **5-wave state machine hardening** — critical data integrity fixes across atomic writes, event log reconciliation, session recovery
-- **Discussion gate enforcement** — mechanical enforcement with fail-closed behavior
 - **Slice-level parallelism** — dependency-aware parallel dispatch within a milestone
-- **Persistent notification panel** — TUI overlay, widget, and web API for real-time notifications
 - **MCP server** — 6 read-only project state tools for external integrations, auto-wrapup guard, and question dedup
 - **Ollama extension** — first-class local LLM support via Ollama, with dynamic routing enabled by default
-- **Discord bot & daemon** — dedicated daemon package, Discord bot, and headless text mode with tool calls
-- **Capability-aware model routing (ADR-004)** — capability scoring, `before_model_select` hook, and task metadata extraction
 - **VS Code sidebar redesign** — SCM provider, checkpoints, diagnostics panel, activity feed, workflow controls, session forking
-- **`/gsd parallel watch`** — native TUI overlay for real-time worker monitoring
-- **Codebase map** — automatic codebase map injection for fresh agent contexts
-- **`--resume` flag** — resume previous sessions from the CLI
-- **Concurrent invocation guard** — prevents overlapping auto-mode runs
-- **VS Code integration** — status bar, file decorations, bash terminal, session tree, conversation history, and code lens
 - **Skills overhaul** — 30+ skill packs covering major frameworks, databases, and cloud platforms
 - **Single-writer state engine** — disciplined state transitions with machine guards and TOCTOU hardening
 - **DB-backed planning tools** — atomic SQLite tool calls for state transitions

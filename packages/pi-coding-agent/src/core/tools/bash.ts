@@ -1,111 +1,27 @@
 import { randomBytes } from "node:crypto";
 import { createWriteStream, existsSync } from "node:fs";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool } from "@gsd/pi-agent-core";
+import type { AgentTool } from "@mariozechner/pi-agent-core";
+import { Container, Text, truncateToWidth } from "@mariozechner/pi-tui";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
-import { getShellConfig, getShellEnv, killProcessTree, sanitizeCommand } from "../../utils/shell.js";
-import { type BashInterceptorRule, compileInterceptor, DEFAULT_BASH_INTERCEPTOR_RULES } from "./bash-interceptor.js";
+import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
+import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.js";
+import { theme } from "../../modes/interactive/theme/theme.js";
+import { waitForChildProcess } from "../../utils/child-process.js";
+import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
+import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
+import { getTextOutput, invalidArgText, str } from "./render-utils.js";
+import { wrapToolDefinition } from "./tool-definition-wrapper.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
-import type { ArtifactManager } from "../artifact-manager.js";
-
-// Cached Win32 FFI handles for restoring VT input after child processes
-let _vtHandles: { GetConsoleMode: any; SetConsoleMode: any; handle: any } | null = null;
-function restoreWindowsVTInput(): void {
-	if (process.platform !== "win32") return;
-	try {
-		if (!_vtHandles) {
-			const cjsRequire = createRequire(import.meta.url);
-			const koffi = cjsRequire("koffi");
-			const k32 = koffi.load("kernel32.dll");
-			const GetStdHandle = k32.func("void* __stdcall GetStdHandle(int)");
-			const GetConsoleMode = k32.func("bool __stdcall GetConsoleMode(void*, _Out_ uint32_t*)");
-			const SetConsoleMode = k32.func("bool __stdcall SetConsoleMode(void*, uint32_t)");
-			const handle = GetStdHandle(-10);
-			_vtHandles = { GetConsoleMode, SetConsoleMode, handle };
-		}
-		const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
-		const mode = new Uint32Array(1);
-		_vtHandles.GetConsoleMode(_vtHandles.handle, mode);
-		if (!(mode[0]! & ENABLE_VIRTUAL_TERMINAL_INPUT)) {
-			_vtHandles.SetConsoleMode(_vtHandles.handle, mode[0]! | ENABLE_VIRTUAL_TERMINAL_INPUT);
-		}
-	} catch { /* koffi not available */ }
-}
 
 /**
- * Generate a unique temp file path for bash output
+ * Generate a unique temp file path for bash output.
  */
 function getTempFilePath(): string {
 	const id = randomBytes(8).toString("hex");
 	return join(tmpdir(), `pi-bash-${id}.log`);
-}
-
-/**
- * Detect whether a command fragment ends with an unquoted & (background operator).
- * Returns true for patterns like: `cmd &`, `cmd arg &`, `cmd & disown`, `(cmd) &`.
- * Returns false when & appears inside a string literal or as &&.
- */
-function endsWithBackgroundOperator(fragment: string): boolean {
-	// Remove content inside single-quoted strings to avoid false positives
-	const stripped = fragment.replace(/'[^']*'/g, "''");
-	// Match trailing & not preceded by another & (i.e., not &&)
-	return /(?<!&)&\s*(?:disown\s*)?(?:#.*)?$/.test(stripped.trim());
-}
-
-/**
- * Determine whether a command segment already redirects stdout away from the terminal.
- * Checks for >, >>, &>, |, /dev/null redirects.
- */
-function hasOutputRedirect(segment: string): boolean {
-	// Remove single-quoted strings to avoid matching inside them
-	const stripped = segment.replace(/'[^']*'/g, "''");
-	// Match >, >> not preceded by 2 (stderr-only) — we only care about stdout
-	// Also match &> (combined), >&, or a pipe | which routes stdout elsewhere
-	return /(?<!\d)(?:>>?|&>|>&|\|)/.test(stripped);
-}
-
-/**
- * Rewrite a command that uses & for backgrounding so the background process
- * does not inherit the bash tool's stdout/stderr pipes.
- *
- * Without this, `python -m http.server 8080 &` causes the bash tool to hang
- * indefinitely because Node.js keeps the pipe open until every process that
- * inherited it exits — including the long-running server.
- *
- * The rewrite adds `>/dev/null 2>&1` before each & where stdout is not already
- * redirected, ensuring the background process detaches from the pipes while
- * still producing a human-readable notice in the tool output.
- *
- * Returns { command: string; rewritten: boolean }.
- */
-export function rewriteBackgroundCommand(command: string): { command: string; rewritten: boolean } {
-	// Quick pre-check: if there's no & at all, skip the more expensive processing
-	if (!command.includes("&")) return { command, rewritten: false };
-
-	// Split on ; and newlines to handle compound commands.
-	// We rewrite each segment independently.
-	// Note: this is intentionally simple and covers the common LLM patterns.
-	// It does not attempt to parse complex nested subshells.
-	const segments = command.split(/(?<=[;\n])/);
-	let anyRewritten = false;
-
-	const rewrittenSegments = segments.map((segment) => {
-		if (!endsWithBackgroundOperator(segment)) return segment;
-		if (hasOutputRedirect(segment)) return segment;
-
-		anyRewritten = true;
-		// Insert >/dev/null 2>&1 before the trailing & (and optional disown/comment)
-		return segment.replace(
-			/(?<!&)(&\s*(?:disown\s*)?(?:#.*)?)$/,
-			">/dev/null 2>&1 $1",
-		);
-	});
-
-	if (!anyRewritten) return { command, rewritten: false };
-	return { command: rewrittenSegments.join(""), rewritten: true };
 }
 
 const bashSchema = Type.Object({
@@ -118,19 +34,18 @@ export type BashToolInput = Static<typeof bashSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
-	artifactId?: string;
 }
 
 /**
  * Pluggable operations for the bash tool.
- * Override these to delegate command execution to remote systems (e.g., SSH).
+ * Override these to delegate command execution to remote systems (for example SSH).
  */
 export interface BashOperations {
 	/**
 	 * Execute a command and stream output.
-	 * @param command - The command to execute
-	 * @param cwd - Working directory
-	 * @param options - Execution options
+	 * @param command The command to execute
+	 * @param cwd Working directory
+	 * @param options Execution options
 	 * @returns Promise resolving to exit code (null if killed)
 	 */
 	exec: (
@@ -146,93 +61,71 @@ export interface BashOperations {
 }
 
 /**
- * Default bash operations using local shell
+ * Create bash operations using pi's built-in local shell execution backend.
+ *
+ * This is useful for extensions that intercept user_bash and still want pi's
+ * standard local shell behavior while wrapping or rewriting commands.
  */
-const defaultBashOperations: BashOperations = {
-	exec: (command, cwd, { onData, signal, timeout, env }) => {
-		return new Promise((resolve, reject) => {
-			const { shell, args } = getShellConfig();
-
-			if (!existsSync(cwd)) {
-				reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`));
-				return;
-			}
-
-			// On Windows, detached: true sets CREATE_NEW_PROCESS_GROUP which can
-			// cause EINVAL in VSCode/ConPTY terminal contexts.  The bg-shell
-			// extension already guards this (process-manager.ts); align here.
-			// Process-tree cleanup uses taskkill /F /T on Windows regardless.
-			const child = spawn(shell, [...args, command], {
-				cwd,
-				detached: process.platform !== "win32",
-				env: env ?? getShellEnv(),
-				stdio: ["ignore", "pipe", "pipe"],
-			});
-
-			let timedOut = false;
-
-			// Set timeout if provided
-			let timeoutHandle: NodeJS.Timeout | undefined;
-			if (timeout !== undefined && timeout > 0) {
-				timeoutHandle = setTimeout(() => {
-					timedOut = true;
-					if (child.pid) {
-						killProcessTree(child.pid);
-					}
-				}, timeout * 1000);
-			}
-
-			// Stream stdout and stderr
-			if (child.stdout) {
-				child.stdout.on("data", onData);
-			}
-			if (child.stderr) {
-				child.stderr.on("data", onData);
-			}
-
-			// Handle shell spawn errors
-			child.on("error", (err) => {
-				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (signal) signal.removeEventListener("abort", onAbort);
-				reject(err);
-			});
-
-			// Handle abort signal - kill entire process tree
-			const onAbort = () => {
-				if (child.pid) {
-					killProcessTree(child.pid);
-				}
-			};
-
-			if (signal) {
-				if (signal.aborted) {
-					onAbort();
-				} else {
-					signal.addEventListener("abort", onAbort, { once: true });
-				}
-			}
-
-			// Handle process exit
-			child.on("close", (code) => {
-				restoreWindowsVTInput();
-				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (signal) signal.removeEventListener("abort", onAbort);
-
-				if (signal?.aborted) {
-					reject(new Error("aborted"));
+export function createLocalBashOperations(): BashOperations {
+	return {
+		exec: (command, cwd, { onData, signal, timeout, env }) => {
+			return new Promise((resolve, reject) => {
+				const { shell, args } = getShellConfig();
+				if (!existsSync(cwd)) {
+					reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`));
 					return;
 				}
-
-				if (timedOut) {
-					reject(new Error(`timeout:${timeout}`));
-					return;
+				const child = spawn(shell, [...args, command], {
+					cwd,
+					detached: true,
+					env: env ?? getShellEnv(),
+					stdio: ["ignore", "pipe", "pipe"],
+				});
+				let timedOut = false;
+				let timeoutHandle: NodeJS.Timeout | undefined;
+				// Set timeout if provided.
+				if (timeout !== undefined && timeout > 0) {
+					timeoutHandle = setTimeout(() => {
+						timedOut = true;
+						if (child.pid) killProcessTree(child.pid);
+					}, timeout * 1000);
 				}
-
-				resolve({ exitCode: code });
+				// Stream stdout and stderr.
+				child.stdout?.on("data", onData);
+				child.stderr?.on("data", onData);
+				// Handle abort signal by killing the entire process tree.
+				const onAbort = () => {
+					if (child.pid) killProcessTree(child.pid);
+				};
+				if (signal) {
+					if (signal.aborted) onAbort();
+					else signal.addEventListener("abort", onAbort, { once: true });
+				}
+				// Handle shell spawn errors and wait for the process to terminate without hanging
+				// on inherited stdio handles held by detached descendants.
+				waitForChildProcess(child)
+					.then((code) => {
+						if (timeoutHandle) clearTimeout(timeoutHandle);
+						if (signal) signal.removeEventListener("abort", onAbort);
+						if (signal?.aborted) {
+							reject(new Error("aborted"));
+							return;
+						}
+						if (timedOut) {
+							reject(new Error(`timeout:${timeout}`));
+							return;
+						}
+						resolve({ exitCode: code });
+					})
+					.catch((err) => {
+						if (timeoutHandle) clearTimeout(timeoutHandle);
+						if (signal) signal.removeEventListener("abort", onAbort);
+						reject(err);
+					});
 			});
-		});
-	},
-};
+		},
+	};
+}
 
 export interface BashSpawnContext {
 	command: string;
@@ -243,149 +136,198 @@ export interface BashSpawnContext {
 export type BashSpawnHook = (context: BashSpawnContext) => BashSpawnContext;
 
 function resolveSpawnContext(command: string, cwd: string, spawnHook?: BashSpawnHook): BashSpawnContext {
-	const baseContext: BashSpawnContext = {
-		command,
-		cwd,
-		env: { ...getShellEnv() },
-	};
-
+	const baseContext: BashSpawnContext = { command, cwd, env: { ...getShellEnv() } };
 	return spawnHook ? spawnHook(baseContext) : baseContext;
 }
 
 export interface BashToolOptions {
 	/** Custom operations for command execution. Default: local shell */
 	operations?: BashOperations;
-	/** Command prefix prepended to every command (e.g., "shopt -s expand_aliases" for alias support) */
+	/** Command prefix prepended to every command (for example shell setup commands) */
 	commandPrefix?: string;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
-	/** Session-scoped artifact storage. When provided, spills to artifact files instead of temp files. */
-	artifactManager?: ArtifactManager;
-	/** Bash interceptor configuration — blocks commands that duplicate dedicated tools */
-	interceptor?: {
-		enabled: boolean;
-		rules?: BashInterceptorRule[];
-	};
-	/** Tool names available in the session, used by the interceptor to check if replacement tools exist */
-	availableToolNames?: string[] | (() => string[]);
 }
 
-export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
-	const ops = options?.operations ?? defaultBashOperations;
+const BASH_PREVIEW_LINES = 5;
+
+type BashRenderState = {
+	startedAt: number | undefined;
+	endedAt: number | undefined;
+	interval: NodeJS.Timeout | undefined;
+};
+
+type BashResultRenderState = {
+	cachedWidth: number | undefined;
+	cachedLines: string[] | undefined;
+	cachedSkipped: number | undefined;
+};
+
+class BashResultRenderComponent extends Container {
+	state: BashResultRenderState = {
+		cachedWidth: undefined,
+		cachedLines: undefined,
+		cachedSkipped: undefined,
+	};
+}
+
+function formatDuration(ms: number): string {
+	return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function formatBashCall(args: { command?: string; timeout?: number } | undefined): string {
+	const command = str(args?.command);
+	const timeout = args?.timeout as number | undefined;
+	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
+	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
+	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix;
+}
+
+function rebuildBashResultRenderComponent(
+	component: BashResultRenderComponent,
+	result: {
+		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+		details?: BashToolDetails;
+	},
+	options: ToolRenderResultOptions,
+	showImages: boolean,
+	startedAt: number | undefined,
+	endedAt: number | undefined,
+): void {
+	const state = component.state;
+	component.clear();
+
+	const output = getTextOutput(result as any, showImages).trim();
+
+	if (output) {
+		const styledOutput = output
+			.split("\n")
+			.map((line) => theme.fg("toolOutput", line))
+			.join("\n");
+
+		if (options.expanded) {
+			component.addChild(new Text(`\n${styledOutput}`, 0, 0));
+		} else {
+			component.addChild({
+				render: (width: number) => {
+					if (state.cachedLines === undefined || state.cachedWidth !== width) {
+						const preview = truncateToVisualLines(styledOutput, BASH_PREVIEW_LINES, width);
+						state.cachedLines = preview.visualLines;
+						state.cachedSkipped = preview.skippedCount;
+						state.cachedWidth = width;
+					}
+					if (state.cachedSkipped && state.cachedSkipped > 0) {
+						const hint =
+							theme.fg("muted", `... (${state.cachedSkipped} earlier lines,`) +
+							` ${keyHint("app.tools.expand", "to expand")})`;
+						return ["", truncateToWidth(hint, width, "..."), ...(state.cachedLines ?? [])];
+					}
+					return ["", ...(state.cachedLines ?? [])];
+				},
+				invalidate: () => {
+					state.cachedWidth = undefined;
+					state.cachedLines = undefined;
+					state.cachedSkipped = undefined;
+				},
+			});
+		}
+	}
+
+	const truncation = result.details?.truncation;
+	const fullOutputPath = result.details?.fullOutputPath;
+	if (truncation?.truncated || fullOutputPath) {
+		const warnings: string[] = [];
+		if (fullOutputPath) {
+			warnings.push(`Full output: ${fullOutputPath}`);
+		}
+		if (truncation?.truncated) {
+			if (truncation.truncatedBy === "lines") {
+				warnings.push(`Truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines`);
+			} else {
+				warnings.push(
+					`Truncated: ${truncation.outputLines} lines shown (${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit)`,
+				);
+			}
+		}
+		component.addChild(new Text(`\n${theme.fg("warning", `[${warnings.join(". ")}]`)}`, 0, 0));
+	}
+
+	if (startedAt !== undefined) {
+		const label = options.isPartial ? "Elapsed" : "Took";
+		const endTime = endedAt ?? Date.now();
+		component.addChild(new Text(`\n${theme.fg("muted", `${label} ${formatDuration(endTime - startedAt)}`)}`, 0, 0));
+	}
+}
+
+export function createBashToolDefinition(
+	cwd: string,
+	options?: BashToolOptions,
+): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
+	const ops = options?.operations ?? createLocalBashOperations();
 	const commandPrefix = options?.commandPrefix;
 	const spawnHook = options?.spawnHook;
-	const artifactManager = options?.artifactManager;
-
-	// Pre-compile interceptor rules once at construction time
-	const interceptorInstance =
-		options?.interceptor?.enabled
-			? compileInterceptor(options.interceptor.rules ?? DEFAULT_BASH_INTERCEPTOR_RULES)
-			: null;
-
 	return {
 		name: "bash",
 		label: "bash",
 		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
 		parameters: bashSchema,
-		execute: async (
-			_toolCallId: string,
+		async execute(
+			_toolCallId,
 			{ command, timeout }: { command: string; timeout?: number },
 			signal?: AbortSignal,
 			onUpdate?,
-		) => {
-			// Check bash interceptor — block commands that duplicate dedicated tools
-			if (interceptorInstance) {
-				const toolNames =
-					typeof options!.availableToolNames === "function"
-						? options!.availableToolNames()
-						: options!.availableToolNames ?? [];
-				const interception = interceptorInstance.check(command, toolNames);
-				if (interception.block) {
-					return {
-						content: [{ type: "text" as const, text: interception.message ?? "Command blocked by interceptor" }],
-						details: undefined,
-					};
-				}
-			}
-
-			// Rewrite background commands (&) to redirect output away from the pipes.
-			// Without this, `cmd &` causes the tool to hang because the background
-			// process inherits the piped stdout/stderr and keeps them open indefinitely.
-			const bgResult = rewriteBackgroundCommand(command);
-			const effectiveCommand = bgResult.command;
-			if (bgResult.rewritten) {
-				// Surface a brief advisory so the LLM knows what happened.
-				// The rewrite is transparent for the common case; explicit detachment
-				// (nohup, start_new_session) is preferred for robustness.
-				onUpdate?.({
-					content: [{
-						type: "text" as const,
-						text: "Note: Background command output redirected to /dev/null to prevent pipe hang. Use nohup or setsid for reliable detachment.",
-					}],
-					details: undefined,
-				});
-			}
-			// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
-			const resolvedCommand = sanitizeCommand(commandPrefix ? `${commandPrefix}\n${effectiveCommand}` : effectiveCommand);
+			_ctx?,
+		) {
+			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook);
-
+			if (onUpdate) {
+				onUpdate({ content: [], details: undefined });
+			}
 			return new Promise((resolve, reject) => {
-				// We'll stream to a file if output gets large
-				let spillFilePath: string | undefined;
-				let spillArtifactId: string | undefined;
-				let spillFileStream: ReturnType<typeof createWriteStream> | undefined;
+				let tempFilePath: string | undefined;
+				let tempFileStream: ReturnType<typeof createWriteStream> | undefined;
 				let totalBytes = 0;
-
-				// Keep a rolling buffer of the last chunk for tail truncation
 				const chunks: Buffer[] = [];
 				let chunksBytes = 0;
-				// Keep more than we need so we have enough for truncation
 				const maxChunksBytes = DEFAULT_MAX_BYTES * 2;
+
+				const ensureTempFile = () => {
+					if (tempFilePath) return;
+					tempFilePath = getTempFilePath();
+					tempFileStream = createWriteStream(tempFilePath);
+					for (const chunk of chunks) tempFileStream.write(chunk);
+				};
 
 				const handleData = (data: Buffer) => {
 					totalBytes += data.length;
-
-					// Start writing to file once we exceed the threshold
-					if (totalBytes > DEFAULT_MAX_BYTES && !spillFilePath) {
-						if (artifactManager) {
-							const allocated = artifactManager.allocatePath("bash");
-							spillFilePath = allocated.path;
-							spillArtifactId = allocated.id;
-						} else {
-							spillFilePath = getTempFilePath();
-						}
-						spillFileStream = createWriteStream(spillFilePath);
-						// Write all buffered chunks to the file
-						for (const chunk of chunks) {
-							spillFileStream.write(chunk);
-						}
+					// Start writing to a temp file once output exceeds the in-memory threshold.
+					if (totalBytes > DEFAULT_MAX_BYTES) {
+						ensureTempFile();
 					}
-
-					// Write to temp file if we have one
-					if (spillFileStream) {
-						spillFileStream.write(data);
-					}
-
-					// Keep rolling buffer of recent data
+					// Write to temp file if we have one.
+					if (tempFileStream) tempFileStream.write(data);
+					// Keep a rolling buffer of recent output for tail truncation.
 					chunks.push(data);
 					chunksBytes += data.length;
-
-					// Trim old chunks if buffer is too large
+					// Trim old chunks if the rolling buffer grows too large.
 					while (chunksBytes > maxChunksBytes && chunks.length > 1) {
 						const removed = chunks.shift()!;
 						chunksBytes -= removed.length;
 					}
-
-					// Stream partial output to callback (truncated rolling buffer)
+					// Stream partial output using the rolling tail buffer.
 					if (onUpdate) {
 						const fullBuffer = Buffer.concat(chunks);
 						const fullText = fullBuffer.toString("utf-8");
 						const truncation = truncateTail(fullText);
+						if (truncation.truncated) {
+							ensureTempFile();
+						}
 						onUpdate({
 							content: [{ type: "text", text: truncation.content || "" }],
 							details: {
 								truncation: truncation.truncated ? truncation : undefined,
-								fullOutputPath: spillFilePath,
+								fullOutputPath: tempFilePath,
 							},
 						});
 					}
@@ -398,44 +340,33 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 					env: spawnContext.env,
 				})
 					.then(({ exitCode }) => {
-						// Close temp file stream
-						if (spillFileStream) {
-							spillFileStream.end();
-						}
-
-						// Combine all buffered chunks
+						// Combine the rolling buffer chunks.
 						const fullBuffer = Buffer.concat(chunks);
 						const fullOutput = fullBuffer.toString("utf-8");
-
-						// Apply tail truncation
+						// Apply tail truncation for the final display payload.
 						const truncation = truncateTail(fullOutput);
-						let outputText = truncation.content || "(no output)";
-
-						// Build details with truncation info
-						let details: BashToolDetails | undefined;
-
 						if (truncation.truncated) {
-							details = {
-								truncation,
-								fullOutputPath: spillFilePath,
-								...(spillArtifactId ? { artifactId: spillArtifactId } : {}),
-							};
-
-							// Build actionable notice
+							ensureTempFile();
+						}
+						// Close temp file stream before building the final result.
+						if (tempFileStream) tempFileStream.end();
+						let outputText = truncation.content || "(no output)";
+						let details: BashToolDetails | undefined;
+						if (truncation.truncated) {
+							// Build truncation details and an actionable notice.
+							details = { truncation, fullOutputPath: tempFilePath };
 							const startLine = truncation.totalLines - truncation.outputLines + 1;
 							const endLine = truncation.totalLines;
-							const outputRef = spillArtifactId ? `artifact://${spillArtifactId}` : spillFilePath;
-
 							if (truncation.lastLinePartial) {
+								// Edge case: the last line alone is larger than the byte limit.
 								const lastLineSize = formatSize(Buffer.byteLength(fullOutput.split("\n").pop() || "", "utf-8"));
-								outputText += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${outputRef}]`;
+								outputText += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${tempFilePath}]`;
 							} else if (truncation.truncatedBy === "lines") {
-								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${outputRef}]`;
+								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${tempFilePath}]`;
 							} else {
-								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${outputRef}]`;
+								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${tempFilePath}]`;
 							}
 						}
-
 						if (exitCode !== 0 && exitCode !== null) {
 							outputText += `\n\nCommand exited with code ${exitCode}`;
 							reject(new Error(outputText));
@@ -444,15 +375,10 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 						}
 					})
 					.catch((err: Error) => {
-						// Close temp file stream
-						if (spillFileStream) {
-							spillFileStream.end();
-						}
-
-						// Combine all buffered chunks for error output
+						// Close temp file stream and include buffered output in the error message.
+						if (tempFileStream) tempFileStream.end();
 						const fullBuffer = Buffer.concat(chunks);
 						let output = fullBuffer.toString("utf-8");
-
 						if (err.message === "aborted") {
 							if (output) output += "\n\n";
 							output += "Command aborted";
@@ -468,8 +394,48 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 					});
 			});
 		},
+		renderCall(args, _theme, context) {
+			const state = context.state;
+			if (context.executionStarted && state.startedAt === undefined) {
+				state.startedAt = Date.now();
+				state.endedAt = undefined;
+			}
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			text.setText(formatBashCall(args));
+			return text;
+		},
+		renderResult(result, options, _theme, context) {
+			const state = context.state;
+			if (state.startedAt !== undefined && options.isPartial && !state.interval) {
+				state.interval = setInterval(() => context.invalidate(), 1000);
+			}
+			if (!options.isPartial || context.isError) {
+				state.endedAt ??= Date.now();
+				if (state.interval) {
+					clearInterval(state.interval);
+					state.interval = undefined;
+				}
+			}
+			const component =
+				(context.lastComponent as BashResultRenderComponent | undefined) ?? new BashResultRenderComponent();
+			rebuildBashResultRenderComponent(
+				component,
+				result as any,
+				options,
+				context.showImages,
+				state.startedAt,
+				state.endedAt,
+			);
+			component.invalidate();
+			return component;
+		},
 	};
 }
 
-/** Default bash tool using process.cwd() - for backwards compatibility */
+export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
+	return wrapToolDefinition(createBashToolDefinition(cwd, options));
+}
+
+/** Default bash tool using process.cwd() for backwards compatibility. */
+export const bashToolDefinition = createBashToolDefinition(process.cwd());
 export const bashTool = createBashTool(process.cwd());

@@ -14,7 +14,6 @@ import {
 	type AssistantMessageEventStream,
 	type Context,
 	type ImageContent,
-	type InferenceMetrics,
 	type Message,
 	type Model,
 	type SimpleStreamOptions,
@@ -168,7 +167,7 @@ export function streamOllamaChat(
 					endBlock();
 
 					output.usage = buildUsage(chunk);
-					output.inferenceMetrics = extractMetrics(chunk);
+					// inferenceMetrics removed from AssistantMessage in pi 0.67.2
 					// Preserve "toolUse" if tool calls were processed
 					if (output.stopReason !== "toolUse") {
 						output.stopReason = mapStopReason(chunk.done_reason);
@@ -194,7 +193,8 @@ function buildRequest(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): OllamaChatRequest {
-	const ollamaOpts = (model.providerOptions ?? {}) as OllamaChatOptions;
+	// providerOptions removed from Model in pi 0.67.2; cast via unknown for extension data
+	const ollamaOpts = ((model as unknown as { providerOptions?: OllamaChatOptions }).providerOptions ?? {}) as OllamaChatOptions;
 
 	const request: OllamaChatRequest = {
 		model: model.id,
@@ -388,21 +388,9 @@ function buildUsage(chunk: OllamaChatResponse): Usage {
 	};
 }
 
-function extractMetrics(chunk: OllamaChatResponse): InferenceMetrics | undefined {
-	if (!chunk.eval_duration && !chunk.total_duration) return undefined;
-
-	const evalCount = chunk.eval_count ?? 0;
-	const evalDurationNs = chunk.eval_duration ?? 0;
-	const evalDurationMs = evalDurationNs / 1e6;
-	const tokensPerSecond = evalDurationNs > 0 ? evalCount / (evalDurationNs / 1e9) : 0;
-
-	return {
-		tokensPerSecond,
-		totalDurationMs: (chunk.total_duration ?? 0) / 1e6,
-		evalDurationMs,
-		promptEvalDurationMs: (chunk.prompt_eval_duration ?? 0) / 1e6,
-	};
-}
+// extractMetrics removed: InferenceMetrics was removed from pi-ai in pi 0.67.2
+// and inferenceMetrics was removed from AssistantMessage. Ollama perf metrics
+// (tokensPerSecond, evalDurationMs, etc.) are no longer surfaced via this path.
 
 // ─── Stream lifecycle helpers ───────────────────────────────────────────────
 // Replicated from openai-shared.ts (not exported from @gsd/pi-ai)

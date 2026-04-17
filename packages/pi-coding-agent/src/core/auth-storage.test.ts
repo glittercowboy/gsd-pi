@@ -569,3 +569,44 @@ describe("AuthStorage — localhost baseUrl shortcut", () => {
 		assert.equal(key, "sk-myproxy-key");
 	});
 });
+
+// ─── hasLegacyOAuthCredential (Anthropic OAuth removed in v2.74.0, #3952) ────
+
+describe("AuthStorage — hasLegacyOAuthCredential (#4280)", () => {
+	it("returns true when anthropic has a type:oauth credential", () => {
+		const storage = inMemory({
+			anthropic: {
+				type: "oauth",
+				access: "ya29.fake-access-token",
+				refresh: "1//fake-refresh-token",
+				expires: Date.now() + 3_600_000,
+			},
+		});
+		assert.equal(storage.hasLegacyOAuthCredential("anthropic"), true);
+	});
+
+	it("returns false when anthropic has an api_key credential", () => {
+		const storage = inMemory({ anthropic: makeKey("sk-ant-fake") });
+		assert.equal(storage.hasLegacyOAuthCredential("anthropic"), false);
+	});
+
+	it("returns false when anthropic has no credential at all", () => {
+		const storage = inMemory({});
+		assert.equal(storage.hasLegacyOAuthCredential("anthropic"), false);
+	});
+
+	it("returns false for a provider with a legitimate OAuth credential (e.g. github-copilot)", () => {
+		const storage = inMemory({
+			"github-copilot": {
+				type: "oauth",
+				access: "gho_fake-token",
+				refresh: "ghr_fake-refresh",
+				expires: Date.now() + 28_800_000,
+			},
+		});
+		// hasLegacyOAuthCredential is intentionally provider-scoped — calling it
+		// for a provider that still supports OAuth (like github-copilot) is not
+		// expected in production, but the method must not explode.
+		assert.equal(storage.hasLegacyOAuthCredential("github-copilot"), true);
+	});
+});

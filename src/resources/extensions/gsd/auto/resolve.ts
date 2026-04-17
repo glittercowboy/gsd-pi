@@ -73,7 +73,7 @@ export function isSessionSwitchInFlight(): boolean {
 /**
  * Force-resolve the pending unit promise with { status: "cancelled" }.
  *
- * Used by pauseAuto, handleAgentEnd early-return, and supervision catch
+ * Used by pauseAuto and supervision catch
  * blocks to ensure the autoLoop is never stuck awaiting a promise that
  * will never resolve. Safe to call when no resolver is pending (no-op).
  */

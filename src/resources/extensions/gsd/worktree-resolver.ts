@@ -74,7 +74,7 @@ export interface WorktreeResolverDeps {
 export interface NotifyCtx {
   notify: (
     msg: string,
-    level?: "info" | "warning" | "error" | "success",
+    level?: "info" | "warning" | "error",
   ) => void;
 }
 

@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { exec, execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { execFile, spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:net'
@@ -401,7 +401,7 @@ async function spawnDetachedProcess(
     try {
       const child = spawnCommand(command, args, options)
       let settled = false
-      const finish = (result: { ok: true; child: SpawnedChildLike } | { ok: false; error: unknown }) => {
+      const finish = (result: { ok: true; child: SpawnedChildLike } | { ok: false; error: unknown }): void => {
         if (settled) return
         settled = true
         resolve(result)
@@ -457,7 +457,7 @@ async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: Writa
   const deadline = Date.now() + timeoutMs
   const startedAt = Date.now()
   let lastError: string | null = null
-  let lastBody: string | null = null
+  let lastBody: string | null
   let hostUp = false
   let consecutive5xx = 0
   const MAX_CONSECUTIVE_5XX = 3
@@ -465,7 +465,7 @@ async function waitForBootReady(url: string, timeoutMs = 180_000, stderr?: Writa
   const TICKER_INTERVAL_MS = 5_000
   let lastTickAt = startedAt
 
-  const elapsed = () => `${Math.round((Date.now() - startedAt) / 1000)}s`
+  const elapsed = (): string => `${Math.round((Date.now() - startedAt) / 1000)}s`
 
   while (Date.now() < deadline) {
     try {

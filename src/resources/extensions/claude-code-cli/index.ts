@@ -18,10 +18,9 @@ import { streamViaClaudeCode } from "./stream-adapter.js";
 
 export default function claudeCodeCli(pi: ExtensionAPI) {
 	pi.registerProvider("claude-code", {
-		authMode: "externalCli",
+		// authMode and isReady removed from ProviderConfig in pi 0.67.2
 		api: "anthropic-messages",
 		baseUrl: "local://claude-code",
-		isReady: isClaudeCodeReady,
 		streamSimple: streamViaClaudeCode,
 		models: CLAUDE_CODE_MODELS,
 	});

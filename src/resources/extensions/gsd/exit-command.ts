@@ -1,4 +1,5 @@
-import { importExtensionModule, type ExtensionAPI, type ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import { type ExtensionAPI, type ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import { importExtensionModule } from "@gsd/agent-core";
 
 type StopAutoFn = (ctx: ExtensionCommandContext, pi: ExtensionAPI, reason?: string) => Promise<void>;
 

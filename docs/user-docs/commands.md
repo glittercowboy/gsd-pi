@@ -17,6 +17,11 @@
 | `/gsd queue` | Queue and reorder future milestones (safe during auto mode) |
 | `/gsd capture` | Fire-and-forget thought capture (works during auto mode) |
 | `/gsd triage` | Manually trigger triage of pending captures |
+| `/gsd debug` | Create and inspect persistent /gsd debug sessions |
+| `/gsd debug list` | List persisted debug sessions |
+| `/gsd debug status <slug>` | Show status for one debug session slug |
+| `/gsd debug continue <slug>` | Resume an existing debug session slug |
+| `/gsd debug --diagnose` | Inspect malformed artifacts and session health (`--diagnose [<slug> | <issue text>]`) |
 | `/gsd dispatch` | Dispatch a specific phase directly (research, plan, execute, complete, reassess, uat, replan) |
 | `/gsd history` | View execution history (supports `--cost`, `--phase`, `--model` filters) |
 | `/gsd forensics` | Full-access GSD debugger — structured anomaly detection, unit traces, and LLM-guided root-cause analysis for auto-mode failures |

@@ -202,7 +202,7 @@ export function ensureRegistryEntries(extensionsDir: string): void {
   const registry = loadRegistry();
   let changed = false;
 
-  for (const [id, manifest] of manifests) {
+  for (const [id, _manifest] of manifests) {
     if (!registry.entries[id]) {
       registry.entries[id] = {
         id,
