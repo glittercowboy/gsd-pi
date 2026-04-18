@@ -74,6 +74,21 @@ describe("normalizePythonCommand", () => {
     );
   });
 
+  test("rewrites leading python token when command has leading whitespace", () => {
+    const input = "  python3 -m pytest";
+    const result = normalizePythonCommand(input);
+    const detected = detectPythonExecutable();
+    if (detected === null) {
+      assert.equal(result, input, "expected passthrough when no interpreter is detected");
+      return;
+    }
+    assert.equal(
+      result,
+      `  ${detected} -m pytest`,
+      `Expected leading whitespace preserved and python3 rewritten in: ${result}`,
+    );
+  });
+
   test("does not duplicate '-3' when rewriting existing 'py -3' token", () => {
     const input = "py -3 -m pytest";
     const result = normalizePythonCommand(input);

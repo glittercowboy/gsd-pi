@@ -70,7 +70,7 @@ export function normalizePythonCommand(command: string): string {
   // Split on common shell separators to handle compound commands.
   // We reconstruct the string preserving the original separators.
   return command.replace(
-    /(^|(?:&&|\|\||;)\s*)(?:python3?|py(?:\s+-\d+)?)(?=\s|$)/g,
+    /(^\s*|(?:&&|\|\||;)\s*)(?:python3?|py(?:\s+-\d+)?)(?=\s|$)/g,
     (_match, pre: string) => `${pre}${executable}`,
   );
 }
