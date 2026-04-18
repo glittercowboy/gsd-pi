@@ -1287,6 +1287,111 @@ describe("checkFilePathConsistency additional edge cases", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  // Regression tests for issue #4421
+  test("backticked path with trailing prose and parens resolves to the path", () => {
+    const tempDir = join(tmpdir(), `pre-exec-test-4421-case1-${Date.now()}`);
+    const dirPath = join(tempDir, "assets");
+    mkdirSync(dirPath, { recursive: true });
+
+    try {
+      const tasks = [
+        createTask({
+          id: "T01",
+          inputs: [`\`${dirPath}/\` directory listing (shows the items that will match during the run)`],
+        }),
+      ];
+
+      const results = checkFilePathConsistency(tasks, tempDir);
+      assert.equal(results.length, 0, "Backticked dir path annotated with prose + parens should be recognized");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("backticked URL with paren annotation is skipped (not a filesystem path)", () => {
+    const tasks = [
+      createTask({
+        id: "T01",
+        inputs: ["`https://example.com` (live HTTP target)"],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, "/tmp");
+    assert.equal(results.length, 0, "Backticked URL should not be validated as a filesystem path");
+  });
+
+  test("URL embedded mid-sentence with prefix prose is skipped", () => {
+    const tasks = [
+      createTask({
+        id: "T01",
+        inputs: ["Live `https://example.com/docs` pages (reviewer WebFetches these)"],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, "/tmp");
+    assert.equal(results.length, 0, "URLs cited mid-sentence should not be validated as filesystem paths");
+  });
+
+  test("backticked path cited mid-sentence resolves to the path", () => {
+    const tempDir = join(tmpdir(), `pre-exec-test-4421-case4-${Date.now()}`);
+    mkdirSync(join(tempDir, ".gsd"), { recursive: true });
+    writeFileSync(join(tempDir, ".gsd/REQUIREMENTS.md"), "# Requirements");
+
+    try {
+      const tasks = [
+        createTask({
+          id: "T01",
+          inputs: ["R014 verbatim text from `.gsd/REQUIREMENTS.md` (the owned requirement statement)"],
+        }),
+      ];
+
+      const results = checkFilePathConsistency(tasks, tempDir);
+      assert.equal(results.length, 0, "Backticked path cited mid-sentence should be recognized");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("multi-backtick input picks the path-like token over non-path tokens", () => {
+    const tempDir = join(tmpdir(), `pre-exec-test-4421-multi-${Date.now()}`);
+    mkdirSync(join(tempDir, "src"), { recursive: true });
+    writeFileSync(join(tempDir, "src/a.ts"), "// content");
+
+    try {
+      const tasks = [
+        createTask({
+          id: "T01",
+          inputs: ["`note` use `src/a.ts` for edits"],
+        }),
+      ];
+
+      const results = checkFilePathConsistency(tasks, tempDir);
+      assert.equal(results.length, 0, "Should extract src/a.ts, not the leading `note` token");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("multi-backtick input with command-like leading token picks the path", () => {
+    const tempDir = join(tmpdir(), `pre-exec-test-4421-cmd-${Date.now()}`);
+    mkdirSync(join(tempDir, "src"), { recursive: true });
+    writeFileSync(join(tempDir, "src/a.ts"), "// content");
+
+    try {
+      const tasks = [
+        createTask({
+          id: "T01",
+          inputs: ["Run `npm test` against `src/a.ts`"],
+        }),
+      ];
+
+      const results = checkFilePathConsistency(tasks, tempDir);
+      assert.equal(results.length, 0, "Should extract src/a.ts, not the `npm test` command token");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── PreExecutionResult Type Tests ───────────────────────────────────────────

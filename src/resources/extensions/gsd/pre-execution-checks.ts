@@ -262,6 +262,18 @@ export function normalizeFilePath(filePath: string): string {
   return normalized;
 }
 
+const URL_SCHEME_PATTERN = /^(https?|ftp|file|ssh|git):\/\//i;
+const SCP_PATTERN = /^[\w.-]+@[\w.-]+:[^/]/;
+
+function looksLikePathOrUrl(token: string): boolean {
+  if (URL_SCHEME_PATTERN.test(token)) return true;
+  if (SCP_PATTERN.test(token)) return true;
+  if (/^[./~]/.test(token)) return true;
+  if (/[\\/]/.test(token)) return true;
+  if (/\.[A-Za-z0-9]{1,8}$/.test(token)) return true;
+  return false;
+}
+
 function extractPathFromAnnotation(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return trimmed;
@@ -274,6 +286,20 @@ function extractPathFromAnnotation(raw: string): string {
   const annotatedMatch = trimmed.match(/^(.+?)\s+[—–-]\s+.+$/);
   if (annotatedMatch) {
     return annotatedMatch[1].trim();
+  }
+
+  // Fallback: scan all backticked tokens and return the first one that looks
+  // like a path or URL. Handles prose-annotated bullets such as:
+  //   `path/` directory listing (...)
+  //   Prefix prose `https://...` suffix prose
+  //   Citing `.gsd/REQUIREMENTS.md` mid-sentence
+  // Skips non-path backticked tokens like `note` or `npm test`.
+  const backtickTokens = trimmed.matchAll(/`([^`]+)`/g);
+  for (const match of backtickTokens) {
+    const token = match[1].trim();
+    if (looksLikePathOrUrl(token)) {
+      return token;
+    }
   }
 
   // Fall back to the original behavior for already-plain paths.
@@ -291,12 +317,16 @@ function shouldValidateInputAsPath(raw: string): boolean {
   const trimmed = raw.trim();
   if (!trimmed) return false;
 
+  const candidate = extractPathFromAnnotation(trimmed);
+  if (!candidate) return false;
+
+  // URLs and remote repo refs are not filesystem paths.
+  if (URL_SCHEME_PATTERN.test(candidate)) return false;
+  if (SCP_PATTERN.test(candidate)) return false;
+
   if (/^`+[^`]+`+/.test(trimmed)) {
     return true;
   }
-
-  const candidate = extractPathFromAnnotation(trimmed);
-  if (!candidate) return false;
 
   if (!/\s/.test(candidate)) {
     return true;
