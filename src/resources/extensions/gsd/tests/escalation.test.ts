@@ -619,3 +619,200 @@ test("ADR-011 P3 #22: ADR-009 audit envelopes emitted across the escalation life
     assert.ok(payload["taskId"] === "T50" || payload["taskId"] === "T51");
   }
 });
+
+test("ADR-011 P3 #23: concurrent escalations across parallel slices — only the escalating branch pauses", (t) => {
+  // In parallel-slice execution each slice has its own active-task view.
+  // The scheduler calls detectPendingEscalation(tasks, base) with *that
+  // slice's* tasks only (state.ts:998). So if S01-T60 escalates and S02-T70
+  // does not, the S02 branch must remain dispatchable while S01 waits.
+  //
+  // This test pins: (a) each slice's detectPendingEscalation returns only
+  // its own pending tasks, (b) neither branch can see the other's
+  // escalation by accident, and (c) resolving one slice's escalation does
+  // not clear the other's pause signal.
+  const base = makeBase();
+  t.after(() => cleanup(base));
+
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice A" });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Slice B" });
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S02", "tasks"), { recursive: true });
+  insertTask({ id: "T60", sliceId: "S01", milestoneId: "M001", title: "Task A", status: "complete" });
+  insertTask({ id: "T70", sliceId: "S02", milestoneId: "M001", title: "Task B", status: "complete" });
+  insertTask({ id: "T71", sliceId: "S02", milestoneId: "M001", title: "Task B2", status: "complete" });
+
+  // Both slices escalate at the same time (parallel execution scenario).
+  writeEscalationArtifact(base, buildEscalationArtifact({
+    taskId: "T60", sliceId: "S01", milestoneId: "M001",
+    question: "S01 ambiguity?", options: sampleOptions,
+    recommendation: "A", recommendationRationale: "r",
+    continueWithDefault: false,
+  }));
+  writeEscalationArtifact(base, buildEscalationArtifact({
+    taskId: "T70", sliceId: "S02", milestoneId: "M001",
+    question: "S02 ambiguity?", options: sampleOptions,
+    recommendation: "B", recommendationRationale: "r",
+    continueWithDefault: false,
+  }));
+
+  // Per-slice detection: each branch sees only its own pending task.
+  const s01Tasks = [getTask("M001", "S01", "T60")!];
+  const s02Tasks = [getTask("M001", "S02", "T70")!, getTask("M001", "S02", "T71")!];
+  assert.equal(detectPendingEscalation(s01Tasks, base), "T60");
+  assert.equal(detectPendingEscalation(s02Tasks, base), "T70");
+
+  // Resolve S01's escalation — must NOT clear S02's pause signal.
+  resolveEscalation(base, "M001", "S01", "T60", "A", "pick A");
+  assert.equal(detectPendingEscalation([getTask("M001", "S01", "T60")!], base), null);
+  assert.equal(
+    detectPendingEscalation([getTask("M001", "S02", "T70")!, getTask("M001", "S02", "T71")!], base),
+    "T70",
+    "resolving one slice's escalation must leave the other slice paused",
+  );
+
+  // Resolving S02 independently clears the second pause.
+  resolveEscalation(base, "M001", "S02", "T70", "B", "pick B");
+  assert.equal(detectPendingEscalation([getTask("M001", "S02", "T70")!], base), null);
+});
+
+test("ADR-011 P3 #24: continueWithDefault timeout — late user response injects into the next task dispatched AFTER the response", (t) => {
+  // Timeline this test pins (the "timeout" is implicit — it's just the
+  // elapsed wall-clock where the loop keeps running after T80's
+  // continueWithDefault=true write):
+  //
+  //   1. T80 writes continueWithDefault=true → awaiting_review=1, loop
+  //      continues dispatching T81, T82. Neither claim fires because the
+  //      user has not responded (pins Bug 2 behavior, tested at line 244).
+  //   2. The user responds LATE (after T81/T82 already dispatched).
+  //   3. The very next prompt build (for T83) claims the override exactly
+  //      once. T81/T82 are in the past — they must not retroactively
+  //      receive the injection even though they ran during the window.
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  seedCompletedTask(base, "T80");
+  seedCompletedTask(base, "T81");
+  seedCompletedTask(base, "T82");
+  seedCompletedTask(base, "T83");
+
+  // Phase 1 — T80 escalates with continueWithDefault=true, loop continues.
+  writeEscalationArtifact(base, buildEscalationArtifact({
+    taskId: "T80", sliceId: "S01", milestoneId: "M001",
+    question: "Which cache strategy?", options: sampleOptions,
+    recommendation: "A", recommendationRationale: "A matches current telemetry",
+    continueWithDefault: true,
+  }));
+
+  // T80 is awaiting_review (not pending) — scheduler does not pause.
+  assert.equal(getTask("M001", "S01", "T80")?.escalation_awaiting_review, 1);
+  assert.equal(getTask("M001", "S01", "T80")?.escalation_pending, 0);
+  assert.equal(detectPendingEscalation([getTask("M001", "S01", "T80")!], base), null);
+
+  // T81 + T82 dispatch during the response window — neither gets the injection.
+  assert.equal(
+    claimOverrideForInjection(base, "M001", "S01"),
+    null,
+    "T81's prompt build must not claim the unresolved awaiting_review",
+  );
+  assert.equal(
+    claimOverrideForInjection(base, "M001", "S01"),
+    null,
+    "T82's prompt build must also not claim the unresolved awaiting_review",
+  );
+
+  // The response window remains open across N tasks — still no override applied.
+  assert.equal(
+    getTask("M001", "S01", "T80")?.escalation_override_applied_at,
+    null,
+    "applied_at must stay null throughout the response window",
+  );
+
+  // Phase 2 — user responds LATE with a different option than the recommendation.
+  const resolveResult = resolveEscalation(
+    base, "M001", "S01", "T80", "B", "after reviewing, B is the call",
+  );
+  assert.equal(resolveResult.status, "resolved");
+  assert.equal(resolveResult.chosenOption?.id, "B");
+
+  // Phase 3 — the very next prompt build (T83) claims the override exactly once.
+  const claimed = claimOverrideForInjection(base, "M001", "S01");
+  assert.ok(claimed, "T83's prompt build must claim the late-resolved override");
+  assert.equal(claimed!.sourceTaskId, "T80");
+  assert.match(claimed!.injectionBlock, /Escalation Override/);
+  assert.match(
+    claimed!.injectionBlock,
+    /JSON array|B/,
+    "injection must reflect the user's B choice, NOT the original A recommendation",
+  );
+
+  // Idempotent — subsequent prompts do not re-inject.
+  assert.equal(claimOverrideForInjection(base, "M001", "S01"), null);
+});
+
+test("ADR-011 P3 #25: artifact write failure surfaces, leaves DB flags clean, and retries successfully once recovered", async (t) => {
+  // Failure modes covered:
+  //   1. writeEscalationArtifact with an unresolvable slice path (no slice
+  //      dir on disk) throws synchronously — no DB flag flip, no audit.
+  //   2. After the flag still reads 0, the caller can retry once the dir
+  //      exists. Retry succeeds and atomically flips escalation_pending=1
+  //      plus emits exactly one audit envelope (not two — idempotent
+  //      recovery, not replay).
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({ id: "S09", milestoneId: "M001", title: "Unseeded slice" });
+  insertTask({ id: "T90", sliceId: "S09", milestoneId: "M001", title: "T", status: "complete" });
+
+  const artifact = buildEscalationArtifact({
+    taskId: "T90", sliceId: "S09", milestoneId: "M001",
+    question: "Q", options: sampleOptions, recommendation: "A", recommendationRationale: "r",
+    continueWithDefault: false,
+  });
+
+  // Phase 1 — slice dir does NOT exist yet; write must throw.
+  // escalationArtifactPath returns null, writeEscalationArtifact throws.
+  assert.throws(
+    () => writeEscalationArtifact(base, artifact),
+    /cannot resolve tasks dir/,
+    "missing slice dir must raise — caller is expected to run doctor before retry",
+  );
+
+  // DB flag must NOT be set — atomic failure semantics.
+  const midRow = getTask("M001", "S09", "T90");
+  assert.equal(midRow?.escalation_pending, 0, "failed write must leave escalation_pending=0");
+  assert.equal(midRow?.escalation_awaiting_review, 0);
+  assert.equal(midRow?.escalation_artifact_path, null);
+
+  // Audit log must have no escalation-created events from the failed write.
+  const logPath = join(base, ".gsd", "audit", "events.jsonl");
+  const preLines = existsSync(logPath)
+    ? readFileSync(logPath, "utf-8").split("\n").filter((l) => l.length > 0)
+    : [];
+  const preCount = preLines.filter((l) => l.includes("escalation-manual-attention-created")).length;
+  assert.equal(preCount, 0, "failed write must not emit an audit envelope");
+
+  // Phase 2 — caller recovers (creates the slice dir), retries.
+  // clearPathCache() because resolveSlicePath caches directory reads and
+  // the first failed attempt populated a miss for S09.
+  mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S09", "tasks"), { recursive: true });
+  const { clearPathCache } = await import("../paths.ts");
+  clearPathCache();
+  const path = writeEscalationArtifact(base, artifact);
+  assert.ok(existsSync(path), "retry must atomically land the artifact on disk");
+
+  // DB flag flipped on successful retry.
+  const afterRow = getTask("M001", "S09", "T90");
+  assert.equal(afterRow?.escalation_pending, 1, "successful retry must flip escalation_pending=1");
+  assert.equal(afterRow?.escalation_artifact_path, path);
+
+  // Audit log now contains exactly one escalation-created event for T90.
+  const postLines = readFileSync(logPath, "utf-8").split("\n").filter((l) => l.length > 0);
+  const t90Events = postLines
+    .map((l) => JSON.parse(l) as Record<string, unknown>)
+    .filter((e) =>
+      e["type"] === "escalation-manual-attention-created"
+      && (e["payload"] as Record<string, unknown>)?.["taskId"] === "T90",
+    );
+  assert.equal(t90Events.length, 1, "successful retry must emit exactly one audit envelope");
+});
