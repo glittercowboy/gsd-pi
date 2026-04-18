@@ -164,6 +164,33 @@ describe("prompt-budget: inlineDependencySummaries truncation", () => {
     const result = await inlineDependencySummaries("M001", "S01", base, 1000);
     assert.equal(result, "- (no dependencies)");
   });
+
+  // Regression for issue #4435: a slice with 12 declared dependencies on a
+  // small-window (32K) model should not inject the full concatenated 55-70K
+  // chars of dep summaries. Exercises the budget the builders now pass in
+  // (computeBudgets(32000).summaryBudgetChars ≈ 19_200 chars).
+  it("caps 12 cumulative dep summaries at the 32K summaryBudgetChars (#4435)", async () => {
+    const depIds = Array.from({ length: 12 }, (_, i) => `S${String(i + 1).padStart(2, "0")}`);
+    const section = (label: string) => `### ${label}\n\n${"Lorem ipsum dolor sit amet. ".repeat(200)}`;
+    const perSummary = [section("Results"), section("Key Decisions"), section("Forward Intelligence")].join("\n\n");
+    const summaries: Record<string, string> = {};
+    for (const id of depIds) summaries[id] = perSummary;
+
+    setupDependencyFixture(base, "M001", "S13", depIds, summaries);
+
+    const budget32K = computeBudgets(32_000).summaryBudgetChars;
+    const result = await inlineDependencySummaries("M001", "S13", base, budget32K);
+
+    // The total raw content would be 12 × ~17K chars ≈ 200K chars. Budget at
+    // 32K is ~19.2K chars. The result must be bounded and the overflow marker
+    // must be present.
+    assert.ok(result.length <= budget32K + 200, `result must fit within 32K summary budget, got ${result.length}`);
+    assert.ok(result.includes("[...truncated"), "must emit the truncation marker when over budget");
+
+    // Unbounded call returns the full ~200K — confirms this is the regression surface.
+    const unbounded = await inlineDependencySummaries("M001", "S13", base);
+    assert.ok(unbounded.length > budget32K * 5, "unbounded call should blow past the 32K budget (regression baseline)");
+  });
 });
 
 // ─── plan-slice template includes executor constraints placeholder ────────────
