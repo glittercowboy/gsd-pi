@@ -62,7 +62,10 @@ function createHost() {
 		defaultEditor: { onEscape: undefined },
 		editor: {},
 		session: { retryAttempt: 0, abortCompaction: () => {}, abortRetry: () => {} },
-		ui: { requestRender: () => {}, terminal: { rows: 50 } },
+		// rows:1 keeps the pinned-zone off-screen-threshold at its floor (1) so
+		// any rendered segment after a pinnable text block triggers the pin.
+		// Real terminals are larger; see chat-controller rowsRenderedAfterContentIndex.
+		ui: { requestRender: () => {}, terminal: { rows: 1, columns: 80 } },
 		footer: { invalidate: () => {} },
 		keybindings: {},
 		statusContainer: { clear: () => {}, addChild: () => {} },

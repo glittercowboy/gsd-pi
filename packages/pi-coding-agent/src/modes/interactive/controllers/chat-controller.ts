@@ -43,11 +43,12 @@ function hasAssistantToolBlocks(message: { content: Array<any> }): boolean {
 	return message.content.some((c) => c.type === "toolCall" || c.type === "serverToolUse");
 }
 
-// Pick the latest non-empty text block that appears strictly before the most
-// recent tool call. Text blocks that come after the last tool call are still
-// streaming live into the chat container, so mirroring them into the pinned
-// "Latest Output" zone would render the same tokens twice.
-export function findLatestPinnableText(contentBlocks: Array<any>): string {
+// Pinnable text candidates: non-empty text blocks that appear strictly before
+// the most recent tool call, returned newest-first. Text blocks after the last
+// tool call are still streaming live into the chat container.
+export function findLatestPinnableCandidates(
+	contentBlocks: Array<any>,
+): Array<{ text: string; contentIndex: number }> {
 	let lastToolIdx = -1;
 	for (let i = contentBlocks.length - 1; i >= 0; i--) {
 		const c = contentBlocks[i];
@@ -56,13 +57,38 @@ export function findLatestPinnableText(contentBlocks: Array<any>): string {
 			break;
 		}
 	}
+	const out: Array<{ text: string; contentIndex: number }> = [];
 	for (let i = lastToolIdx - 1; i >= 0; i--) {
 		const c = contentBlocks[i];
 		if (c?.type === "text" && typeof c.text === "string" && c.text.trim()) {
-			return c.text.trim();
+			out.push({ text: c.text.trim(), contentIndex: i });
 		}
 	}
-	return "";
+	return out;
+}
+
+export function findLatestPinnableText(contentBlocks: Array<any>): string {
+	return findLatestPinnableCandidates(contentBlocks)[0]?.text ?? "";
+}
+
+// Sum rendered line counts of segments that appear strictly after the given
+// content-block index. Used to decide whether a pinnable text block has
+// scrolled out of the viewport and therefore warrants mirroring.
+function rowsRenderedAfterContentIndex(contentIndex: number, width: number): number {
+	let rows = 0;
+	for (const seg of renderedSegments) {
+		try {
+			if (seg.kind === "text-run" && seg.startIndex > contentIndex) {
+				rows += seg.component.render(width).length;
+			} else if (seg.kind === "tool" && seg.contentIndex > contentIndex) {
+				rows += seg.component.render(width).length;
+			}
+		} catch {
+			// Defensive: a component that throws during measurement shouldn't
+			// destabilize pinned-zone logic. Skip it.
+		}
+	}
+	return rows;
 }
 
 // Tracks the latest assistant text for the pinned message zone
@@ -523,39 +549,65 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 				if (hasTools) hasToolsInTurn = true;
 
 				if (hasToolsInTurn) {
-					const latestText = findLatestPinnableText(contentBlocks);
+					const candidates = findLatestPinnableCandidates(contentBlocks);
+					const termRows = host.ui.terminal.rows;
+					const termCols = host.ui.terminal.columns;
+					const pinnedMax = Math.max(3, Math.floor(termRows * 0.4));
+					// Reserve rows for pinned zone + its border + editor + footer chrome.
+					// Anything below this row budget is still in the viewport.
+					const offscreenThreshold = Math.max(1, termRows - pinnedMax - 8);
 
-					if (latestText && latestText !== lastPinnedText) {
-						lastPinnedText = latestText;
+					// Walk candidates newest→oldest; pick the first whose following
+					// segments have pushed enough rows to scroll it off-screen.
+					let picked: { text: string; contentIndex: number } | undefined;
+					for (const c of candidates) {
+						if (rowsRenderedAfterContentIndex(c.contentIndex, termCols) >= offscreenThreshold) {
+							picked = c;
+							break;
+						}
+					}
 
-						if (!pinnedBorder) {
-							// First time: create border + text component
-							host.pinnedMessageContainer.clear();
-							pinnedBorder = new DynamicBorder(
-								(str: string) => theme.fg("dim", str),
-								"Working · Latest Output",
-							);
-							pinnedBorder.startSpinner(host.ui, (str: string) => theme.fg("accent", str));
-							host.pinnedMessageContainer.addChild(pinnedBorder);
-							pinnedTextComponent = new Markdown(latestText, 1, 0, host.getMarkdownThemeWithSettings());
-							// Cap pinned content to ~40% of terminal height so tall output
-							// doesn't exceed the viewport and cause render flashing.
-							pinnedTextComponent.maxLines = Math.max(3, Math.floor(host.ui.terminal.rows * 0.4));
-							host.pinnedMessageContainer.addChild(pinnedTextComponent);
-							// Hide the separate status loader — the pinned zone replaces it
-							if (host.loadingAnimation) {
-								host.loadingAnimation.stop();
-								host.loadingAnimation = undefined;
-							}
-							host.statusContainer.clear();
-						} else {
-							// Update existing markdown component in-place
-							pinnedTextComponent?.setText(latestText);
-							// Refresh maxLines in case terminal was resized
-							if (pinnedTextComponent) {
-								pinnedTextComponent.maxLines = Math.max(3, Math.floor(host.ui.terminal.rows * 0.4));
+					if (picked) {
+						if (picked.text !== lastPinnedText) {
+							lastPinnedText = picked.text;
+
+							if (!pinnedBorder) {
+								// First time: create border + text component
+								host.pinnedMessageContainer.clear();
+								pinnedBorder = new DynamicBorder(
+									(str: string) => theme.fg("dim", str),
+									"Working · Latest Output",
+								);
+								pinnedBorder.startSpinner(host.ui, (str: string) => theme.fg("accent", str));
+								host.pinnedMessageContainer.addChild(pinnedBorder);
+								pinnedTextComponent = new Markdown(picked.text, 1, 0, host.getMarkdownThemeWithSettings());
+								// Cap pinned content to ~40% of terminal height so tall output
+								// doesn't exceed the viewport and cause render flashing.
+								pinnedTextComponent.maxLines = pinnedMax;
+								host.pinnedMessageContainer.addChild(pinnedTextComponent);
+								// Hide the separate status loader — the pinned zone replaces it
+								if (host.loadingAnimation) {
+									host.loadingAnimation.stop();
+									host.loadingAnimation = undefined;
+								}
+								host.statusContainer.clear();
+							} else {
+								// Update existing markdown component in-place
+								pinnedTextComponent?.setText(picked.text);
+								// Refresh maxLines in case terminal was resized
+								if (pinnedTextComponent) {
+									pinnedTextComponent.maxLines = pinnedMax;
+								}
 							}
 						}
+					} else if (pinnedBorder) {
+						// Every candidate is still visible in the chat scrollback —
+						// tear down the pinned zone so we don't duplicate on-screen text.
+						pinnedBorder.stopSpinner();
+						pinnedBorder = undefined;
+						pinnedTextComponent = undefined;
+						host.pinnedMessageContainer.clear();
+						lastPinnedText = "";
 					}
 				}
 
