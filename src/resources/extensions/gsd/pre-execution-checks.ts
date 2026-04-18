@@ -16,6 +16,7 @@
 
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { TaskRow } from "./gsd-db.ts";
 import type { PreExecutionCheckJSON } from "./verification-evidence.ts";
@@ -245,21 +246,60 @@ export function normalizeFilePath(filePath: string): string {
 
   // Normalize path separators to forward slashes
   normalized = normalized.replace(/\\/g, "/");
-  
+
+  // Expand a leading ~ or ~/ so downstream resolve()/set lookups hit the real
+  // home directory instead of treating the tilde as a literal path segment.
+  if (normalized === "~") {
+    normalized = homedir();
+  } else if (normalized.startsWith("~/")) {
+    normalized = resolve(homedir(), normalized.slice(2));
+  }
+  // homedir()/resolve() can emit platform separators (e.g. "\" on Windows).
+  normalized = normalized.replace(/\\/g, "/");
+
   // Remove leading ./
   while (normalized.startsWith("./")) {
     normalized = normalized.slice(2);
   }
-  
+
   // Remove duplicate slashes
   normalized = normalized.replace(/\/+/g, "/");
-  
+
   // Remove trailing slash unless it's the root
   if (normalized.length > 1 && normalized.endsWith("/")) {
     normalized = normalized.slice(0, -1);
   }
-  
+
   return normalized;
+}
+
+/**
+ * Planning units sometimes pass a directory reference as task.inputs
+ * (e.g. `artifacts/M009-S03/`). The trailing slash is meaningful — the task
+ * reads whatever lands inside — but normalizeFilePath strips it, so call this
+ * helper against the raw input before normalization.
+ */
+function isDirectoryReference(raw: string): boolean {
+  const candidate = extractPathFromAnnotation(raw.trim());
+  if (!candidate) return false;
+  if (containsGlobPattern(candidate)) return false;
+  return candidate.endsWith("/");
+}
+
+/**
+ * True when any of `knownOutputs` lives under `normalizedDir` (i.e. the task
+ * directory input is the parent of something a prior/same task produces).
+ */
+function anyOutputUnderDirectory(
+  normalizedDir: string,
+  knownOutputs: Iterable<string>,
+): boolean {
+  const prefix = normalizedDir + "/";
+  for (const output of knownOutputs) {
+    if (output === normalizedDir) return true;
+    if (output.startsWith(prefix)) return true;
+  }
+  return false;
 }
 
 const URL_SCHEME_PATTERN = /^(https?|ftp|file|ssh|git):\/\//i;
@@ -397,7 +437,17 @@ export function checkFilePathConsistency(
       // Check if file is in prior expected outputs (priorOutputs already normalized)
       const inPriorOutputs = priorOutputs.has(normalizedFile);
 
-      if (!existsOnDisk && !inPriorOutputs) {
+      // Directory inputs are satisfied when something produces a file beneath
+      // them — either a prior task or the current task itself.
+      let directorySatisfied = false;
+      if (!existsOnDisk && !inPriorOutputs && isDirectoryReference(file)) {
+        const sameTaskOutputs = task.expected_output.map(normalizeFilePath);
+        directorySatisfied =
+          anyOutputUnderDirectory(normalizedFile, priorOutputs) ||
+          anyOutputUnderDirectory(normalizedFile, sameTaskOutputs);
+      }
+
+      if (!existsOnDisk && !inPriorOutputs && !directorySatisfied) {
         results.push({
           category: "file",
           target: file,
@@ -450,6 +500,10 @@ export function checkTaskOrdering(
 
       const normalizedFile = normalizeFilePath(file);
       if (containsGlobPattern(normalizedFile)) continue;
+      // A directory reference like `artifacts/M009-S03/` is never a concrete
+      // read-before-create dependency: the fileCreators map is keyed by leaf
+      // files, and a same-task output under the directory satisfies it.
+      if (isDirectoryReference(file)) continue;
       const creator = fileCreators.get(normalizedFile);
       const absolutePath = resolve(basePath, normalizedFile);
       const existsOnDisk = existsSync(absolutePath);

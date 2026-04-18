@@ -10,7 +10,7 @@
 
 import { describe, test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -1437,5 +1437,145 @@ describe("PreExecutionResult type", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── Regression Tests: directory inputs and tilde paths (#4446) ──────────────
+
+describe("normalizeFilePath tilde expansion (#4446)", () => {
+  test("expands standalone ~ to homedir", () => {
+    assert.equal(normalizeFilePath("~"), homedir());
+  });
+
+  test("expands ~/ prefixed paths to homedir", () => {
+    assert.equal(
+      normalizeFilePath("~/.gsd/agent/extensions/gsd/native-git-bridge.js"),
+      join(homedir(), ".gsd/agent/extensions/gsd/native-git-bridge.js"),
+    );
+  });
+});
+
+describe("checkFilePathConsistency directory inputs (#4446)", () => {
+  test("directory input is satisfied by prior task's output under it", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-dir-prior-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T01",
+        sequence: 0,
+        inputs: [],
+        expected_output: ["artifacts/M009-S03/summary.json"],
+      }),
+      createTask({
+        id: "T02",
+        sequence: 1,
+        inputs: ["artifacts/M009-S03/"],
+        expected_output: [],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.deepEqual(results, [], "Directory input with prior output beneath it should not be blocking");
+  });
+
+  test("directory input is satisfied by same task's output under it", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-dir-same-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T06",
+        sequence: 0,
+        inputs: ["artifacts/M009-S03/"],
+        expected_output: [
+          "artifacts/M009-S03/summary.json",
+          "artifacts/M009-S03/VERIFICATION.md",
+        ],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.deepEqual(
+      results,
+      [],
+      "Directory input whose children are produced by the same task should not be blocking (M009-S03/T06 case)",
+    );
+  });
+
+  test("directory input still fails when nothing creates anything under it", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-dir-missing-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T01",
+        inputs: ["artifacts/missing/"],
+        expected_output: [],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.equal(results.length, 1, "Unknown directory input must still be reported");
+    assert.equal(results[0].blocking, true);
+  });
+
+  test("tilde-prefixed input is matched against $HOME, not the project basePath", (t) => {
+    const fakeHome = join(tmpdir(), `pre-exec-tilde-home-${Date.now()}`);
+    const projectDir = join(tmpdir(), `pre-exec-tilde-proj-${Date.now()}`);
+    mkdirSync(join(fakeHome, ".gsd"), { recursive: true });
+    writeFileSync(join(fakeHome, ".gsd/tool.js"), "// present");
+    mkdirSync(projectDir, { recursive: true });
+
+    const originalHome = process.env.HOME;
+    const originalUserProfile = process.env.USERPROFILE;
+    process.env.HOME = fakeHome;
+    process.env.USERPROFILE = fakeHome;
+
+    t.after(() => {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = originalUserProfile;
+      rmSync(fakeHome, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    const tasks = [
+      createTask({
+        id: "T01",
+        inputs: ["~/.gsd/tool.js"],
+        expected_output: [],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, projectDir);
+    assert.deepEqual(results, [], "~/-prefixed input should resolve against $HOME and pass when present");
+  });
+});
+
+describe("checkTaskOrdering directory inputs (#4446)", () => {
+  test("directory input with a same-task output under it does not produce a sequence violation", () => {
+    const tasks = [
+      createTask({
+        id: "T06",
+        sequence: 0,
+        inputs: ["artifacts/M009-S03/"],
+        expected_output: [
+          "artifacts/M009-S03/summary.json",
+          "artifacts/M009-S03/VERIFICATION.md",
+        ],
+      }),
+    ];
+
+    const results = checkTaskOrdering(tasks, "/tmp");
+    assert.deepEqual(
+      results,
+      [],
+      "Directory reference should not be treated as reading a file created later",
+    );
   });
 });
