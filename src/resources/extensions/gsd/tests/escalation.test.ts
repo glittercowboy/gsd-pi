@@ -4,7 +4,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -443,4 +443,179 @@ test("ADR-011 P3: escalation write + detect latency — 20 tasks, one escalation
   const elapsed = Date.now() - start;
   assert.equal(found, "T15");
   assert.ok(elapsed < 100, `detection must complete under 100ms, took ${elapsed}ms`);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADR-011 Phase 3 — Integration: Mid-Execution Escalation
+// ═══════════════════════════════════════════════════════════════════════════
+
+test("ADR-011 P3 #20: E2E escalation lifecycle — write → pause → resolve → resume via override injection", (t) => {
+  // Exercises the full escalation loop across two tasks in one slice:
+  //   1. Executor writes ESCALATION.json on T30 with continueWithDefault=false.
+  //   2. detectPendingEscalation returns T30 (state.ts:998 is what pauses the loop).
+  //   3. User calls resolveEscalation with a specific option choice.
+  //   4. detectPendingEscalation returns null — pause condition cleared.
+  //   5. The *next* task (T31) in the slice picks up the override block via
+  //      claimOverrideForInjection exactly once (idempotent across retries).
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  seedCompletedTask(base, "T30");
+  seedCompletedTask(base, "T31");
+
+  // Step 1: executor escalates on T30 (pause-scoped).
+  writeEscalationArtifact(base, buildEscalationArtifact({
+    taskId: "T30", sliceId: "S01", milestoneId: "M001",
+    question: "Storage format for the new metrics table?",
+    options: sampleOptions, recommendation: "A", recommendationRationale: "A is simpler",
+    continueWithDefault: false,
+  }));
+
+  // Step 2: scheduler sees the pause signal.
+  let tasks = [getTask("M001", "S01", "T30")!, getTask("M001", "S01", "T31")!];
+  assert.equal(
+    detectPendingEscalation(tasks, base),
+    "T30",
+    "scheduler must pause on T30 before dispatching T31",
+  );
+
+  // Claim attempted mid-pause must fail (override not yet resolved).
+  assert.equal(
+    claimOverrideForInjection(base, "M001", "S01"),
+    null,
+    "no injection should fire while escalation is still pending",
+  );
+
+  // Step 3: user responds with option B + rationale.
+  const result = resolveEscalation(base, "M001", "S01", "T30", "B", "B fits better");
+  assert.equal(result.status, "resolved");
+  assert.equal(result.chosenOption?.id, "B");
+
+  // Step 4: pause condition clears.
+  tasks = [getTask("M001", "S01", "T30")!, getTask("M001", "S01", "T31")!];
+  assert.equal(
+    detectPendingEscalation(tasks, base),
+    null,
+    "after resolve, scheduler must not re-pause on T30",
+  );
+
+  // Step 5: next task (T31) picks up the override exactly once.
+  const injected = claimOverrideForInjection(base, "M001", "S01");
+  assert.ok(injected, "T31's prompt build must claim the resolved override");
+  assert.equal(injected!.sourceTaskId, "T30");
+  assert.match(injected!.injectionBlock, /Escalation Override/);
+  assert.match(injected!.injectionBlock, /B/, "injection must reflect user's chosen option id");
+
+  const secondClaim = claimOverrideForInjection(base, "M001", "S01");
+  assert.equal(secondClaim, null, "override must be consumed exactly once");
+});
+
+test("ADR-011 P3 #21: blocker takes priority over escalation when both flags coexist on same task", (t) => {
+  // Two invariants together give blocker-priority:
+  //   a) state.ts:977-991 checks detectBlockers BEFORE the escalation branch
+  //      at state.ts:996-1010, so a blocker flag short-circuits the escalation
+  //      pause.
+  //   b) resolveEscalation(reject-blocker) atomically clears escalation flags
+  //      AND sets blocker_discovered=1 (escalation.ts:227-230), so there is no
+  //      post-resolve window where both flags could surface simultaneously.
+  // This test pins (b): after reject-blocker, the escalation pause signal is
+  // gone and the task is exclusively in blocker-state.
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  seedCompletedTask(base, "T40");
+
+  writeEscalationArtifact(base, buildEscalationArtifact({
+    taskId: "T40", sliceId: "S01", milestoneId: "M001",
+    question: "Which storage?", options: sampleOptions,
+    recommendation: "A", recommendationRationale: "r",
+    continueWithDefault: false,
+  }));
+
+  // Pre-condition: escalation is active, blocker is not.
+  let row = getTask("M001", "S01", "T40");
+  assert.equal(row?.escalation_pending, 1);
+  assert.equal(row?.blocker_discovered, false);
+  assert.equal(detectPendingEscalation([row!], base), "T40");
+
+  // User rejects to blocker — single transition.
+  const result = resolveEscalation(
+    base, "M001", "S01", "T40", "reject-blocker", "none of these fit the observed constraints",
+  );
+  assert.equal(result.status, "rejected-to-blocker");
+
+  // Post-condition: blocker is set, escalation flags are cleared.
+  row = getTask("M001", "S01", "T40");
+  assert.equal(row?.blocker_discovered, true, "blocker_discovered must be set after reject-blocker");
+  assert.equal(row?.blocker_source, "reject-escalation", "blocker_source records provenance");
+  assert.equal(row?.escalation_pending, 0, "escalation_pending must be cleared");
+  assert.equal(row?.escalation_awaiting_review, 0, "escalation_awaiting_review must be cleared");
+
+  // detectPendingEscalation must no longer return T40 — scheduler would
+  // otherwise race the blocker branch and pick the wrong phase.
+  assert.equal(
+    detectPendingEscalation([row!], base),
+    null,
+    "after reject-blocker, escalation must not pause — blocker path owns the task",
+  );
+});
+
+test("ADR-011 P3 #22: ADR-009 audit envelopes emitted across the escalation lifecycle", (t) => {
+  // Verifies that every user-visible escalation event writes a structured
+  // audit envelope (eventId, traceId, category, type, ts, payload) to
+  // .gsd/audit/events.jsonl. ADR-009 control-plane consumers depend on this
+  // shape. Covered event types:
+  //   - escalation-manual-attention-created (on write)
+  //   - escalation-user-responded            (on resolve with option)
+  //   - escalation-rejected-to-blocker       (on reject-blocker)
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  seedCompletedTask(base, "T50");
+  seedCompletedTask(base, "T51");
+
+  // 1) write → created
+  writeEscalationArtifact(base, buildEscalationArtifact({
+    taskId: "T50", sliceId: "S01", milestoneId: "M001",
+    question: "Q50", options: sampleOptions, recommendation: "A", recommendationRationale: "r",
+    continueWithDefault: false,
+  }));
+
+  // 2) resolve(accept) → responded
+  resolveEscalation(base, "M001", "S01", "T50", "accept", "sounds right");
+
+  // 3) another write + reject-blocker → rejected
+  writeEscalationArtifact(base, buildEscalationArtifact({
+    taskId: "T51", sliceId: "S01", milestoneId: "M001",
+    question: "Q51", options: sampleOptions, recommendation: "B", recommendationRationale: "r",
+    continueWithDefault: false,
+  }));
+  resolveEscalation(base, "M001", "S01", "T51", "reject-blocker", "blocker path");
+
+  // Read audit log and parse each JSONL envelope.
+  const logPath = join(base, ".gsd", "audit", "events.jsonl");
+  assert.ok(existsSync(logPath), "audit log must exist at .gsd/audit/events.jsonl");
+  const lines = readFileSync(logPath, "utf-8").split("\n").filter((l) => l.length > 0);
+  const events = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+  const escalationEvents = events.filter((e) => typeof e["type"] === "string" && (e["type"] as string).startsWith("escalation-"));
+
+  // All four lifecycle events must be present.
+  const types = escalationEvents.map((e) => e["type"] as string).sort();
+  assert.deepEqual(types, [
+    "escalation-manual-attention-created",
+    "escalation-manual-attention-created",
+    "escalation-rejected-to-blocker",
+    "escalation-user-responded",
+  ]);
+
+  // Every envelope must carry the ADR-009 contract fields.
+  for (const env of escalationEvents) {
+    assert.equal(typeof env["eventId"], "string", "envelope must include eventId");
+    assert.equal(typeof env["traceId"], "string", "envelope must include traceId");
+    assert.match(env["traceId"] as string, /^escalation:M001:S01:T5[01]$/, "traceId must be stable and task-scoped");
+    assert.equal(env["category"], "gate", "escalation events belong to the gate control plane");
+    assert.equal(typeof env["ts"], "string");
+    assert.ok(env["payload"] && typeof env["payload"] === "object", "payload must be an object");
+    const payload = env["payload"] as Record<string, unknown>;
+    assert.equal(payload["milestoneId"], "M001");
+    assert.equal(payload["sliceId"], "S01");
+    assert.ok(payload["taskId"] === "T50" || payload["taskId"] === "T51");
+  }
 });
