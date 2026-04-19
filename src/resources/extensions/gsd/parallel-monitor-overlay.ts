@@ -223,14 +223,19 @@ function collectWorkerData(basePath: string): WorkerView[] {
         ? Date.now() - new Date(lock.startedAt).getTime()
         : 0;
 
-    // Errors from stderr (last 4KB, only new content)
+    // Errors from stderr (last 4KB, only new content).
+    // Skip error lines when the worker is alive — the stderr log may contain
+    // errors from a previous (crashed) run. Fresh errors will appear on the
+    // next refresh cycle once the new process writes them. (#3160)
     const errors: string[] = [];
-    const stderrLog = join(parallelDir, `${mid}.stderr.log`);
-    if (existsSync(stderrLog)) {
-      const content = tailRead(stderrLog, 4096);
-      for (const line of content.trim().split("\n").slice(-5)) {
-        if (line.includes("error") || line.includes("Error") || line.includes("exited")) {
-          errors.push(line.trim());
+    if (!alive) {
+      const stderrLog = join(parallelDir, `${mid}.stderr.log`);
+      if (existsSync(stderrLog)) {
+        const content = tailRead(stderrLog, 4096);
+        for (const line of content.trim().split("\n").slice(-5)) {
+          if (line.includes("error") || line.includes("Error") || line.includes("exited")) {
+            errors.push(line.trim());
+          }
         }
       }
     }
