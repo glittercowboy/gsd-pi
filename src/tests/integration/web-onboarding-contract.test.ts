@@ -309,7 +309,7 @@ test("boot and onboarding routes expose locked required state plus explicitly sk
   clearOnboardingEnv();
   const authStorage = AuthStorage.inMemory({});
   configureBridgeFixture(fixture, "sess-missing-auth");
-  onboarding.configureOnboardingServiceForTests({ authStorage, getEnvApiKey: noEnvApiKey });
+  onboarding.configureOnboardingServiceForTests({ authStorage, getEnvApiKey: noEnvApiKey, isExternalCliProvider: () => false });
 
   t.after(async () => {
     onboarding.resetOnboardingServiceForTests();
@@ -345,6 +345,7 @@ test("boot and onboarding routes expose locked required state plus explicitly sk
     "xai",
     "openrouter",
     "mistral",
+    "claude-code",
   ]);
   const anthropicProvider = bootPayload.onboarding.required.providers.find((provider: any) => provider.id === "anthropic");
   assert.equal(anthropicProvider.supports.apiKey, true);
@@ -406,6 +407,7 @@ test("failed API-key validation stays locked, redacts the error, and is reflecte
   onboarding.configureOnboardingServiceForTests({
     authStorage,
     getEnvApiKey: noEnvApiKey,
+    isExternalCliProvider: () => false,
     validateApiKey: async () => ({
       ok: false,
       message: "OpenAI rejected the provided key because Bearer invalid-demo-key is invalid",
@@ -456,7 +458,7 @@ test("direct prompt commands cannot bypass onboarding while required setup is st
   clearOnboardingEnv();
   const authStorage = AuthStorage.inMemory({});
   const harness = configureBridgeFixture(fixture, "sess-command-locked");
-  onboarding.configureOnboardingServiceForTests({ authStorage, getEnvApiKey: noEnvApiKey });
+  onboarding.configureOnboardingServiceForTests({ authStorage, getEnvApiKey: noEnvApiKey, isExternalCliProvider: () => false });
 
   t.after(async () => {
     onboarding.resetOnboardingServiceForTests();
@@ -602,7 +604,7 @@ test("logout_provider removes saved auth, refreshes the bridge, and relocks onbo
     openai: { type: "api_key", key: "sk-saved-logout" },
   } as any);
   const harness = configureBridgeFixture(fixture, "sess-logout-success");
-  onboarding.configureOnboardingServiceForTests({ authStorage, getEnvApiKey: noEnvApiKey });
+  onboarding.configureOnboardingServiceForTests({ authStorage, getEnvApiKey: noEnvApiKey, isExternalCliProvider: () => false });
 
   t.after(async () => {
     onboarding.resetOnboardingServiceForTests();
@@ -690,4 +692,117 @@ test("logout_provider fails clearly for environment-backed auth that the browser
   assert.equal(logoutPayload.onboarding.locked, false);
   assert.equal(logoutPayload.onboarding.required.satisfiedBy.providerId, "github-copilot");
   assert.equal(logoutPayload.onboarding.required.satisfiedBy.source, "environment");
+});
+
+test("claude-code ExternalCli provider is recognized as configured and unlocks onboarding", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  clearOnboardingEnv();
+  const authStorage = AuthStorage.inMemory({});
+  configureBridgeFixture(fixture, "sess-claude-code-extcli");
+  onboarding.configureOnboardingServiceForTests({
+    authStorage,
+    getEnvApiKey: noEnvApiKey,
+  });
+
+  t.after(async () => {
+    onboarding.resetOnboardingServiceForTests();
+    await bridge.resetBridgeServiceForTests();
+    restoreOnboardingEnv();
+    fixture.cleanup();
+  });
+
+  const bootResponse = await bootRoute.GET(projectRequest(fixture.projectCwd, "/api/boot"));
+  assert.equal(bootResponse.status, 200);
+  const bootPayload = (await bootResponse.json()) as any;
+
+  assert.equal(
+    bootPayload.onboardingNeeded,
+    false,
+    "onboardingNeeded must be false when only claude-code is present",
+  );
+  assert.equal(bootPayload.onboarding.locked, false);
+  assert.equal(bootPayload.onboarding.lockReason, null);
+  assert.equal(bootPayload.onboarding.required.satisfied, true);
+  assert.deepEqual(bootPayload.onboarding.required.satisfiedBy, {
+    providerId: "claude-code",
+    source: "external_cli",
+  });
+
+  const claudeCodeProvider = bootPayload.onboarding.required.providers.find(
+    (provider: any) => provider.id === "claude-code",
+  );
+  assert.ok(claudeCodeProvider, "claude-code must appear in the providers list");
+  assert.equal(claudeCodeProvider.configured, true);
+  assert.equal(claudeCodeProvider.configuredVia, "external_cli");
+  assert.equal(claudeCodeProvider.supports.externalCli, true);
+  assert.equal(claudeCodeProvider.supports.apiKey, false);
+  assert.equal(claudeCodeProvider.supports.oauth, false);
+  assert.equal(claudeCodeProvider.recommended, true);
+});
+
+test("validateAndSaveApiKey throws for claude-code because supportsApiKey is false", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  clearOnboardingEnv();
+  const authStorage = AuthStorage.inMemory({});
+  configureBridgeFixture(fixture, "sess-claude-code-validate-apikey");
+  onboarding.configureOnboardingServiceForTests({
+    authStorage,
+    getEnvApiKey: noEnvApiKey,
+    isExternalCliProvider: (id) => id === "claude-code",
+  });
+
+  t.after(async () => {
+    onboarding.resetOnboardingServiceForTests();
+    await bridge.resetBridgeServiceForTests();
+    restoreOnboardingEnv();
+    fixture.cleanup();
+  });
+
+  const response = await onboardingRoute.POST(
+    projectRequest(fixture.projectCwd, "/api/onboarding", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "save_api_key",
+        providerId: "claude-code",
+        apiKey: "somekey",
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  const payload = (await response.json()) as any;
+  assert.match(payload.error, /browser sign-in|does not support/i);
+});
+
+test("logoutProvider throws for claude-code because configuredVia is external_cli not auth_file", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  clearOnboardingEnv();
+  const authStorage = AuthStorage.inMemory({});
+  configureBridgeFixture(fixture, "sess-claude-code-logout");
+  onboarding.configureOnboardingServiceForTests({
+    authStorage,
+    getEnvApiKey: noEnvApiKey,
+    isExternalCliProvider: (id) => id === "claude-code",
+  });
+
+  t.after(async () => {
+    onboarding.resetOnboardingServiceForTests();
+    await bridge.resetBridgeServiceForTests();
+    restoreOnboardingEnv();
+    fixture.cleanup();
+  });
+
+  const response = await onboardingRoute.POST(
+    projectRequest(fixture.projectCwd, "/api/onboarding", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "logout_provider",
+        providerId: "claude-code",
+      }),
+    }),
+  );
+
+  assert.equal(response.status, 400);
+  const payload = (await response.json()) as any;
+  assert.match(payload.error, /cannot be logged out from the browser surface/i);
 });

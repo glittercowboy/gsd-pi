@@ -3,6 +3,10 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import { isToolCallEventType } from "@gsd/pi-coding-agent";
 
+import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-extension-api.js";
+import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
+import { getEcosystemReadyPromise } from "../ecosystem/loader.js";
+
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
 import { buildBeforeAgentStartResult } from "./system-context.js";
 import { handleAgentEnd } from "./agent-end-recovery.js";
@@ -14,6 +18,7 @@ import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
 import { deriveState } from "../state.js";
 import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart, recordToolInvocationError } from "../auto.js";
+import { hideFooter } from "../auto-dashboard.js";
 import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
@@ -35,7 +40,10 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
   ctx.ui.setStatus("gsd-fast", formatServiceTierFooterStatus(getEffectiveServiceTier(), ctx.model?.id));
 }
 
-export function registerHooks(pi: ExtensionAPI): void {
+export function registerHooks(
+  pi: ExtensionAPI,
+  ecosystemHandlers: GSDEcosystemBeforeAgentStartHandler[],
+): void {
   pi.on("session_start", async (_event, ctx) => {
     initNotificationStore(process.cwd());
     installNotifyInterceptor(ctx);
@@ -45,8 +53,12 @@ export function registerHooks(pi: ExtensionAPI): void {
     resetToolCallLoopGuard();
     resetAskUserQuestionsCache();
     await syncServiceTierStatus(ctx);
-    const { prepareWorkflowMcpForProject } = await import("../workflow-mcp-auto-prep.js");
-    prepareWorkflowMcpForProject(ctx, process.cwd());
+    // Skip MCP auto-prep when running inside an auto-worktree (see session_switch below).
+    const { isInAutoWorktree } = await import("../auto-worktree.js");
+    if (!isInAutoWorktree(process.cwd())) {
+      const { prepareWorkflowMcpForProject } = await import("../workflow-mcp-auto-prep.js");
+      prepareWorkflowMcpForProject(ctx, process.cwd());
+    }
 
     // Apply show_token_cost preference (#1515)
     try {
@@ -77,6 +89,9 @@ export function registerHooks(pi: ExtensionAPI): void {
       } catch { /* non-fatal */ }
     }
     loadToolApiKeys();
+    if (isAutoActive()) {
+      ctx.ui.setFooter(hideFooter);
+    }
   });
 
   pi.on("session_switch", async (_event, ctx) => {
@@ -87,13 +102,66 @@ export function registerHooks(pi: ExtensionAPI): void {
     resetAskUserQuestionsCache();
     clearDiscussionFlowState();
     await syncServiceTierStatus(ctx);
-    const { prepareWorkflowMcpForProject } = await import("../workflow-mcp-auto-prep.js");
-    prepareWorkflowMcpForProject(ctx, process.cwd());
+    // Skip MCP auto-prep when running inside an auto-worktree. The worktree
+    // already has .mcp.json from createAutoWorktree, and re-running the writer
+    // post-chdir rewrites the file mid-run (non-idempotent due to cwd-relative
+    // CLI path resolution), dirtying the tree and breaking the milestone merge.
+    const { isInAutoWorktree } = await import("../auto-worktree.js");
+    if (!isInAutoWorktree(process.cwd())) {
+      const { prepareWorkflowMcpForProject } = await import("../workflow-mcp-auto-prep.js");
+      prepareWorkflowMcpForProject(ctx, process.cwd());
+    }
     loadToolApiKeys();
+    if (isAutoActive()) {
+      ctx.ui.setFooter(hideFooter);
+    }
   });
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
-    return buildBeforeAgentStartResult(event, ctx);
+    // Wait for ecosystem loader to finish (no-op after first turn).
+    await getEcosystemReadyPromise();
+
+    // GSD's own context injection (existing behavior — unchanged).
+    const gsdResult = await buildBeforeAgentStartResult(event, ctx);
+
+    // Refresh the snapshot used by ecosystem getPhase()/getActiveUnit().
+    // deriveState has its own ~100ms cache so this is cheap on repeat calls.
+    try {
+      const state = await deriveState(process.cwd());
+      updateSnapshot(state);
+    } catch {
+      updateSnapshot(null);
+    }
+
+    // Chain ecosystem handlers using pi's runner.ts chaining protocol:
+    // each handler sees the systemPrompt mutated by prior handlers.
+    let currentSystemPrompt = gsdResult?.systemPrompt ?? event.systemPrompt;
+    // `any` because pi's BeforeAgentStartEventResult.message uses an internal
+    // CustomMessage type that's not re-exported (see ecosystem/gsd-extension-api.ts).
+    let lastMessage: any = gsdResult?.message;
+
+    for (const handler of ecosystemHandlers) {
+      try {
+        const r = await handler(
+          { ...event, systemPrompt: currentSystemPrompt },
+          ctx,
+        );
+        if (r?.systemPrompt !== undefined) currentSystemPrompt = r.systemPrompt;
+        if (r?.message) lastMessage = r.message;
+      } catch (err) {
+        safetyLogWarning(
+          "ecosystem",
+          `before_agent_start handler failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // Compose result. Return undefined if nothing changed (preserves runner contract).
+    if (currentSystemPrompt === event.systemPrompt && !lastMessage) return undefined;
+    return {
+      systemPrompt: currentSystemPrompt !== event.systemPrompt ? currentSystemPrompt : undefined,
+      message: lastMessage,
+    };
   });
 
   pi.on("agent_end", async (event, ctx: ExtensionContext) => {
@@ -125,7 +193,10 @@ export function registerHooks(pi: ExtensionAPI): void {
     await ensureDbOpen();
     const state = await deriveState(basePath);
     if (!state.activeMilestone || !state.activeSlice || !state.activeTask) return;
-    if (state.phase !== "executing") return;
+    // Write checkpoint for ALL phases, not just "executing" — discuss, research,
+    // and planning also carry in-memory state (user answers, gate verification)
+    // that would be lost on compaction (#4258).
+    // if (state.phase !== "executing") return;
 
     const sliceDir = resolveSlicePath(basePath, state.activeMilestone.id, state.activeSlice.id);
     if (!sliceDir) return;
@@ -181,14 +252,10 @@ export function registerHooks(pi: ExtensionAPI): void {
     // Only gate-shaped ask_user_questions calls should block execution.
     // The gate stays pending until the user selects the approval option.
     if (event.toolName === "ask_user_questions") {
-      const milestoneId = getDiscussionMilestoneId(discussionBasePath);
-      const inDiscussion = milestoneId !== null || isQueuePhaseActive();
-      if (inDiscussion) {
-        const questions: any[] = (event.input as any)?.questions ?? [];
-        const questionId = questions.find((question) => typeof question?.id === "string" && isGateQuestionId(question.id))?.id;
-        if (typeof questionId === "string") {
-          setPendingGate(questionId);
-        }
+      const questions: any[] = (event.input as any)?.questions ?? [];
+      const questionId = questions.find((question) => typeof question?.id === "string" && isGateQuestionId(question.id))?.id;
+      if (typeof questionId === "string") {
+        setPendingGate(questionId);
       }
     }
 
@@ -265,7 +332,8 @@ export function registerHooks(pi: ExtensionAPI): void {
   // ── Safety harness: evidence collection + destructive command warnings ──
   pi.on("tool_call", async (event, ctx) => {
     if (!isAutoActive()) return;
-    safetyRecordToolCall(event.toolName, event.input as Record<string, unknown>);
+    markToolStart(event.toolCallId, event.toolName);
+    safetyRecordToolCall(event.toolCallId, event.toolName, event.input as Record<string, unknown>);
 
     // Destructive command classification (warn only, never block)
     if (isToolCallEventType("bash", event)) {
@@ -283,10 +351,23 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_result", async (event) => {
+    if (isAutoActive() && typeof event.toolCallId === "string") {
+      markToolEnd(event.toolCallId);
+    }
+    if (isAutoActive() && event.isError && event.toolName.startsWith("gsd_")) {
+      const resultPayload = ("result" in event ? event.result : undefined) as any;
+      const errorText = typeof resultPayload === "string"
+        ? resultPayload
+        : (typeof resultPayload?.content?.[0]?.text === "string"
+            ? resultPayload.content[0].text
+            : (typeof (event as any).content === "string"
+                ? (event as any).content
+                : String(resultPayload ?? "")));
+      recordToolInvocationError(event.toolName, errorText);
+    }
     if (event.toolName !== "ask_user_questions") return;
     const milestoneId = getDiscussionMilestoneId(process.cwd());
     const queueActive = isQueuePhaseActive();
-    if (!milestoneId && !queueActive) return;
 
     const details = event.details as any;
 
@@ -319,13 +400,16 @@ export function registerHooks(pi: ExtensionAPI): void {
         // Only unlock the gate if the user selected the first option (confirmation).
         // Cross-references against the question's defined options to reject free-form "Other" text.
         const answer = details.response?.answers?.[question.id];
+        const inferredMilestoneId = extractDepthVerificationMilestoneId(question.id) ?? milestoneId;
         if (isDepthConfirmationAnswer(answer?.selected, question.options)) {
-          markDepthVerified(extractDepthVerificationMilestoneId(question.id) ?? milestoneId);
+          markDepthVerified(inferredMilestoneId);
+          clearPendingGate();
         }
         break;
       }
     }
 
+    if (!milestoneId && !queueActive) return;
     if (!milestoneId) return;
 
     const basePath = process.cwd();

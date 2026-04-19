@@ -15,6 +15,12 @@ import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 
 /**
  * GSD runtime patterns for git index cleanup.
+ *
+ * CANONICAL SOURCE OF TRUTH: This array is the authoritative list of runtime
+ * ignore patterns. Other modules (RUNTIME_EXCLUSION_PATHS in git-service.ts,
+ * SKIP_* arrays in worktree-manager.ts, criticalPatterns in doctor-runtime-checks.ts)
+ * must stay synchronized with this list.
+ *
  * With external state (symlink), these are a no-op in most cases,
  * but retained for backwards compatibility during migration.
  */
@@ -26,13 +32,13 @@ const GSD_RUNTIME_PATTERNS = [
   ".gsd/parallel/",
   ".gsd/auto.lock",
   ".gsd/metrics.json",
-  ".gsd/completed-units.json",
+  ".gsd/completed-units*.json", // covers completed-units.json and archived completed-units-{MID}.json
+  ".gsd/state-manifest.json",
   ".gsd/STATE.md",
-  ".gsd/gsd.db",
-  ".gsd/gsd.db-shm",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/gsd.db-wal",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/journal/",     // daily-rotated JSONL event journal (#2296)
-  ".gsd/doctor-history.jsonl", // doctor run history (#2296)
+  ".gsd/gsd.db*",
+  ".gsd/journal/",
+  ".gsd/doctor-history.jsonl",
+  ".gsd/event-log.jsonl",
   ".gsd/DISCUSSION-MANIFEST.json",
   ".gsd/milestones/**/*-CONTINUE.md",
   ".gsd/milestones/**/continue.md",

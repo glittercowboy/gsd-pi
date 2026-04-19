@@ -34,11 +34,34 @@ export function getOllamaHost(): string {
 	return `http://${host}`;
 }
 
+/**
+ * Get auth headers for Ollama API requests.
+ * For cloud endpoints (OLLAMA_HOST pointing to ollama.com or remote instances),
+ * OLLAMA_API_KEY is used as a Bearer token. Local Ollama ignores the header.
+ */
+function getAuthHeaders(): Record<string, string> {
+	const apiKey = process.env.OLLAMA_API_KEY;
+	if (!apiKey) return {};
+	return { Authorization: `Bearer ${apiKey}` };
+}
+
+/**
+ * Merge auth headers into request options.
+ */
+function withAuth(options: RequestInit = {}): RequestInit {
+	const authHeaders = getAuthHeaders();
+	if (Object.keys(authHeaders).length === 0) return options;
+	return {
+		...options,
+		headers: { ...authHeaders, ...(options.headers as Record<string, string> || {}) },
+	};
+}
+
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = REQUEST_TIMEOUT_MS): Promise<Response> {
 	const controller = new AbortController();
 	const timeout = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		return await fetch(url, { ...options, signal: controller.signal });
+		return await fetch(url, withAuth({ ...options, signal: controller.signal }));
 	} finally {
 		clearTimeout(timeout);
 	}
@@ -46,10 +69,16 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
 
 /**
  * Check if Ollama is running and reachable.
+ * For cloud endpoints (OLLAMA_HOST pointing to ollama.com), uses /api/tags
+ * as the probe since the root endpoint may not be available.
  */
 export async function isRunning(): Promise<boolean> {
 	try {
-		const response = await fetchWithTimeout(`${getOllamaHost()}/`, {}, PROBE_TIMEOUT_MS);
+		const host = getOllamaHost();
+		const isCloud = host.includes("ollama.com") || host.includes("cloud");
+		const probeUrl = isCloud ? `${host}/api/tags` : `${host}/`;
+		const timeout = isCloud ? REQUEST_TIMEOUT_MS : PROBE_TIMEOUT_MS;
+		const response = await fetchWithTimeout(probeUrl, isCloud ? { method: "GET" } : {}, timeout);
 		return response.ok;
 	} catch {
 		return false;
@@ -117,12 +146,12 @@ export async function pullModel(
 	onProgress?: (progress: OllamaPullProgress) => void,
 	signal?: AbortSignal,
 ): Promise<void> {
-	const response = await fetch(`${getOllamaHost()}/api/pull`, {
+	const response = await fetch(`${getOllamaHost()}/api/pull`, withAuth({
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ name, stream: true }),
 		signal,
-	});
+	}));
 
 	if (!response.ok) {
 		const text = await response.text();
@@ -146,12 +175,12 @@ export async function* chat(
 	request: OllamaChatRequest,
 	signal?: AbortSignal,
 ): AsyncGenerator<OllamaChatResponse> {
-	const response = await fetch(`${getOllamaHost()}/api/chat`, {
+	const response = await fetch(`${getOllamaHost()}/api/chat`, withAuth({
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(request),
 		signal,
-	});
+	}));
 
 	if (!response.ok) {
 		const text = await response.text();

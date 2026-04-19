@@ -68,11 +68,11 @@ export function getFilePaths(): string[] {
  * Record a tool call at dispatch time (before execution).
  * Exit codes and output are filled in by recordToolResult after execution.
  */
-export function recordToolCall(toolName: string, input: Record<string, unknown>): void {
+export function recordToolCall(toolCallId: string, toolName: string, input: Record<string, unknown>): void {
   if (toolName === "bash" || toolName === "Bash") {
     unitEvidence.push({
       kind: "bash",
-      toolCallId: "",
+      toolCallId,
       command: String(input.command ?? ""),
       exitCode: -1,
       outputSnippet: "",
@@ -81,14 +81,14 @@ export function recordToolCall(toolName: string, input: Record<string, unknown>)
   } else if (toolName === "write" || toolName === "Write") {
     unitEvidence.push({
       kind: "write",
-      toolCallId: "",
+      toolCallId,
       path: String(input.file_path ?? input.path ?? ""),
       timestamp: Date.now(),
     });
   } else if (toolName === "edit" || toolName === "Edit") {
     unitEvidence.push({
       kind: "edit",
-      toolCallId: "",
+      toolCallId,
       path: String(input.file_path ?? input.path ?? ""),
       timestamp: Date.now(),
     });
@@ -96,8 +96,9 @@ export function recordToolCall(toolName: string, input: Record<string, unknown>)
 }
 
 /**
- * Record a tool execution result. Matches the most recent unresolved entry
- * of the same kind and fills in the toolCallId, exit code, and output.
+ * Record a tool execution result. Matches the entry by toolCallId (assigned
+ * at dispatch time) and fills in exit code + output. Prior versions matched
+ * by `kind + empty-string` which corrupted parallel tool calls.
  */
 export function recordToolResult(
   toolCallId: string,
@@ -105,35 +106,18 @@ export function recordToolResult(
   result: unknown,
   isError: boolean,
 ): void {
-  const normalizedName = toolName.toLowerCase();
+  const entry = unitEvidence.find(e => e.toolCallId === toolCallId);
+  if (!entry) return;
 
-  if (normalizedName === "bash") {
-    const entry = findLastUnresolved("bash") as BashEvidence | undefined;
-    if (entry) {
-      entry.toolCallId = toolCallId;
-      const text = extractResultText(result);
-      entry.outputSnippet = text.slice(0, 500);
-      const exitMatch = text.match(/Command exited with code (\d+)/);
-      entry.exitCode = exitMatch ? Number(exitMatch[1]) : (isError ? 1 : 0);
-    }
-  } else if (normalizedName === "write" || normalizedName === "edit") {
-    const entry = findLastUnresolved(normalizedName as "write" | "edit");
-    if (entry) {
-      entry.toolCallId = toolCallId;
-    }
+  if (entry.kind === "bash") {
+    const text = extractResultText(result);
+    entry.outputSnippet = text.slice(0, 500);
+    const exitMatch = text.match(/Command exited with code (\d+)/);
+    entry.exitCode = exitMatch ? Number(exitMatch[1]) : (isError ? 1 : 0);
   }
 }
 
 // ─── Internals ──────────────────────────────────────────────────────────────
-
-function findLastUnresolved(kind: string): EvidenceEntry | undefined {
-  for (let i = unitEvidence.length - 1; i >= 0; i--) {
-    if (unitEvidence[i].kind === kind && unitEvidence[i].toolCallId === "") {
-      return unitEvidence[i];
-    }
-  }
-  return undefined;
-}
 
 function extractResultText(result: unknown): string {
   if (typeof result === "string") return result;

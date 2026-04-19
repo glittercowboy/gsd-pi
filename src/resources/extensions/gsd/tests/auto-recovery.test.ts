@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.ts";
+import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, buildLoopRemediationSteps, writeBlockerPlaceholder } from "../auto-recovery.ts";
+import { resolveMilestoneFile } from "../paths.ts";
 import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow } from "../gsd-db.ts";
 import { clearParseCache } from "../files.ts";
 import { parseRoadmap } from "../parsers-legacy.ts";
@@ -711,4 +712,125 @@ test("verifyExpectedArtifact checks pending gate-evaluate artifacts without ESM 
   const verified = verifyExpectedArtifact("gate-evaluate", "M001/S01/gates+Q3", base);
 
   assert.equal(verified, false, "pending gates should keep gate-evaluate unverified");
+});
+
+// ─── #4414 regressions ────────────────────────────────────────────────────────
+
+test("#4414: writeBlockerPlaceholder invalidates path cache so dispatch guard sees file", () => {
+  const base = makeTmpBase();
+  try {
+    // Prime the readdir cache by resolving a DIFFERENT file first — this
+    // mirrors the stuck-loop condition where the dispatch guard cached an
+    // empty directory listing before the placeholder was written.
+    invalidateAllCaches();
+    assert.equal(
+      resolveMilestoneFile(base, "M001", "RESEARCH"),
+      null,
+      "no RESEARCH file yet",
+    );
+
+    const result = writeBlockerPlaceholder(
+      "research-milestone",
+      "M001",
+      base,
+      "verification retries exhausted",
+    );
+    assert.ok(result, "placeholder path returned");
+
+    // After writeBlockerPlaceholder, the dispatch guard must see the new file
+    // immediately — otherwise the rule re-fires (#4414, 7× re-dispatch).
+    const postResolve = resolveMilestoneFile(base, "M001", "RESEARCH");
+    assert.ok(
+      postResolve,
+      "resolveMilestoneFile finds the placeholder post-write (cache invalidated)",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("#4414: parallel-research sentinel path does not collide with RESEARCH suffix", () => {
+  const base = makeTmpBase();
+  try {
+    // Write only the parallel-research blocker (sentinel).
+    const sentinel = resolveExpectedArtifactPath(
+      "research-slice",
+      "M001/parallel-research",
+      base,
+    );
+    assert.ok(sentinel, "sentinel path resolves for parallel-research");
+    writeFileSync(sentinel!, "# blocker\n", "utf-8");
+
+    // Critical: the sentinel filename must NOT be matched by the legacy regex
+    // used when callers look up milestone-level RESEARCH. Otherwise the
+    // dispatch guard for research-milestone would short-circuit falsely.
+    const milestoneResearch = resolveMilestoneFile(base, "M001", "RESEARCH");
+    assert.equal(
+      milestoneResearch,
+      null,
+      "sentinel must not be mistaken for M001-RESEARCH.md via legacy pattern match",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("#4414: verifyExpectedArtifact parallel-research succeeds when all research-ready slices have RESEARCH", () => {
+  const base = makeTmpBase();
+  try {
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S02", "tasks"), { recursive: true });
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S03", "tasks"), { recursive: true });
+
+    // Minimal roadmap with three slices
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+      [
+        "# M001: Regression",
+        "",
+        "## Slices",
+        "",
+        "- [ ] **S01: Alpha** `risk:low` `depends:[]`",
+        "- [ ] **S02: Beta** `risk:low` `depends:[]`",
+        "- [ ] **S03: Gamma** `risk:low` `depends:[]`",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    // Only 2 of 3 have RESEARCH — should fail verification
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-RESEARCH.md"),
+      "# research",
+      "utf-8",
+    );
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "slices", "S02", "S02-RESEARCH.md"),
+      "# research",
+      "utf-8",
+    );
+
+    clearParseCache();
+    invalidateAllCaches();
+    assert.equal(
+      verifyExpectedArtifact("research-slice", "M001/parallel-research", base),
+      false,
+      "missing S03 RESEARCH → verification fails",
+    );
+
+    // All three RESEARCH present → verification passes
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "slices", "S03", "S03-RESEARCH.md"),
+      "# research",
+      "utf-8",
+    );
+    clearParseCache();
+    invalidateAllCaches();
+    assert.equal(
+      verifyExpectedArtifact("research-slice", "M001/parallel-research", base),
+      true,
+      "all slices have RESEARCH → verification passes",
+    );
+  } finally {
+    cleanup(base);
+  }
 });

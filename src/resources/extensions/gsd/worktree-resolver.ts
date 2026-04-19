@@ -44,6 +44,7 @@ export interface WorktreeResolverDeps {
   ) => void;
   createAutoWorktree: (basePath: string, milestoneId: string) => string;
   enterAutoWorktree: (basePath: string, milestoneId: string) => string;
+  enterBranchModeForMilestone: (basePath: string, milestoneId: string) => void;
   getAutoWorktreePath: (basePath: string, milestoneId: string) => string | null;
   autoCommitCurrentBranch: (
     basePath: string,
@@ -162,7 +163,9 @@ export class WorktreeResolver {
       return;
     }
 
-    if (!this.deps.shouldUseWorktreeIsolation()) {
+    const mode = this.deps.getIsolationMode();
+
+    if (mode === "none") {
       debugLog("WorktreeResolver", {
         action: "enterMilestone",
         milestoneId,
@@ -183,9 +186,52 @@ export class WorktreeResolver {
     debugLog("WorktreeResolver", {
       action: "enterMilestone",
       milestoneId,
+      mode,
       basePath,
     });
 
+    // ── Branch mode: create/checkout milestone branch, stay in project root ──
+    if (mode === "branch") {
+      try {
+        this.deps.enterBranchModeForMilestone(basePath, milestoneId);
+        // basePath does not change — no worktree, no chdir.
+        // Rebuild GitService so the new HEAD is reflected, then flush any
+        // path-keyed caches that may have been populated before the checkout.
+        this.rebuildGitService();
+        this.deps.invalidateAllCaches();
+        debugLog("WorktreeResolver", {
+          action: "enterMilestone",
+          milestoneId,
+          mode: "branch",
+          result: "success",
+        });
+        emitJournalEvent(basePath, {
+          ts: new Date().toISOString(),
+          flowId: randomUUID(),
+          seq: 0,
+          eventType: "worktree-skip",
+          data: { milestoneId, reason: "branch-mode-no-worktree" },
+        });
+        ctx.notify(`Switched to branch milestone/${milestoneId}.`, "info");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        debugLog("WorktreeResolver", {
+          action: "enterMilestone",
+          milestoneId,
+          mode: "branch",
+          result: "error",
+          error: msg,
+        });
+        ctx.notify(
+          `Branch isolation setup for ${milestoneId} failed: ${msg}. Continuing on current branch.`,
+          "warning",
+        );
+        this.s.isolationDegraded = true;
+      }
+      return;
+    }
+
+    // ── Worktree mode ─────────────────────────────────────────────────────────
     try {
       const existingPath = this.deps.getAutoWorktreePath(basePath, milestoneId);
       let wtPath: string;

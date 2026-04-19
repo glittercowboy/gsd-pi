@@ -17,6 +17,11 @@
 | `/gsd queue` | Queue and reorder future milestones (safe during auto mode) |
 | `/gsd capture` | Fire-and-forget thought capture (works during auto mode) |
 | `/gsd triage` | Manually trigger triage of pending captures |
+| `/gsd debug` | Create and inspect persistent /gsd debug sessions |
+| `/gsd debug list` | List persisted debug sessions |
+| `/gsd debug status <slug>` | Show status for one debug session slug |
+| `/gsd debug continue <slug>` | Resume an existing debug session slug |
+| `/gsd debug --diagnose` | Inspect malformed artifacts and session health (`--diagnose [<slug> | <issue text>]`) |
 | `/gsd dispatch` | Dispatch a specific phase directly (research, plan, execute, complete, reassess, uat, replan) |
 | `/gsd history` | View execution history (supports `--cost`, `--phase`, `--model` filters) |
 | `/gsd forensics` | Full-access GSD debugger — structured anomaly detection, unit traces, and LLM-guided root-cause analysis for auto-mode failures |
@@ -26,6 +31,7 @@
 | `/gsd export --html --all` | Generate retrospective reports for all milestones at once |
 | `/gsd update` | Update GSD to the latest version in-session |
 | `/gsd knowledge` | Add persistent project knowledge (rule, pattern, or lesson) |
+| `/gsd extract-learnings <MID>` | Extract structured Decisions, Lessons, Patterns, and Surprises from a completed milestone — writes `<MID>-LEARNINGS.md` audit trail, appends Patterns and Lessons to `.gsd/KNOWLEDGE.md`, and persists Decisions via the DECISIONS database. Runs automatically at milestone completion. |
 | `/gsd fast` | Toggle service tier for supported models (prioritized API routing) |
 | `/gsd rate` | Rate last unit's model tier (over/ok/under) — improves adaptive routing |
 | `/gsd changelog` | Show categorized release notes |
@@ -88,16 +94,61 @@ See [Parallel Orchestration](./parallel-orchestration.md) for full documentation
 | `/gsd templates` | List available workflow templates |
 | `/gsd templates info <name>` | Show detailed template info |
 
-## Custom Workflows (v2.42)
+## Custom Workflows
+
+The unified plugin system. Every workflow — bundled, user-authored, or
+remotely installed — is discoverable via `/gsd workflow <name>` and declares
+one of four execution modes:
+
+| Mode              | What it does                                                                              |
+|-------------------|-------------------------------------------------------------------------------------------|
+| `oneshot`         | Prompt-only, no state, no branch. For reviews, triage, changelog generation.              |
+| `yaml-step`       | Full engine with GRAPH.yaml, iterate, and shell-verify. For fan-out batch work.           |
+| `markdown-phase`  | Multi-phase with STATE.json + phase-approval gates. For release, performance audit.       |
+| `auto-milestone`  | Hooks into the full `/gsd auto` pipeline. Reserved for `full-project`.                    |
+
+### Discovery order (project > global > bundled)
+
+1. `.gsd/workflows/<name>.{yaml,md}` — project-local, checked into the repo.
+2. `~/.gsd/workflows/<name>.{yaml,md}` — global, private to the machine.
+3. Bundled — ships with GSD (see the full list with `/gsd workflow`).
+
+Legacy `.gsd/workflow-defs/` YAML definitions are still picked up for
+backwards compatibility.
+
+### Commands
 
 | Command | Description |
 |---------|-------------|
-| `/gsd workflow new` | Create a new workflow definition (via skill) |
-| `/gsd workflow run <name>` | Create a run and start auto-mode |
-| `/gsd workflow list` | List workflow runs |
-| `/gsd workflow validate <name>` | Validate a workflow definition YAML |
+| `/gsd workflow` | List all discoverable plugins, grouped by mode |
+| `/gsd workflow <name> [args]` | Run a plugin directly (resolved via precedence chain) |
+| `/gsd workflow info <name>` | Show plugin metadata — source, mode, phases, path |
+| `/gsd workflow new` | Create a new workflow definition (via the `create-workflow` skill) |
+| `/gsd workflow install <source>` | Install a plugin from `https://...`, `gist:<id>`, or `gh:owner/repo/path[@ref]` |
+| `/gsd workflow uninstall <name>` | Remove an installed plugin and its provenance record |
+| `/gsd workflow run <name> [k=v]` | Explicit YAML run form (same as `/gsd workflow <name>` for yaml-step plugins) |
+| `/gsd workflow list` | List YAML workflow runs (history) |
+| `/gsd workflow validate <name>` | Validate a YAML definition |
 | `/gsd workflow pause` | Pause custom workflow auto-mode |
 | `/gsd workflow resume` | Resume paused custom workflow auto-mode |
+
+### Bundled plugins
+
+- **Phased (`markdown-phase`)**: `bugfix`, `small-feature`, `spike`, `hotfix`,
+  `refactor`, `security-audit`, `dep-upgrade`, `release`, `api-breaking-change`,
+  `performance-audit`, `observability-setup`, `ci-bootstrap`.
+- **Oneshot**: `pr-review`, `changelog-gen`, `issue-triage`, `pr-triage`,
+  `onboarding-check`, `dead-code`, `accessibility-audit`.
+- **YAML engine (`yaml-step`)**: `test-backfill`, `docs-sync`, `rename-symbol`,
+  `env-audit`.
+- **Auto-milestone**: `full-project` (reached via `/gsd start full-project` or
+  `/gsd auto`).
+
+### Authoring a custom plugin
+
+Run `/gsd workflow new <name>` to scaffold via the `create-workflow` skill.
+Plugins are plain YAML (`.yaml`) or markdown (`.md`) files. See
+`src/resources/extensions/gsd/workflow-templates/` for bundled examples.
 
 ## Extensions
 
@@ -133,6 +184,22 @@ Enable with `github.enabled: true` in preferences. Requires `gh` CLI installed a
 | Command | Description |
 |---------|-------------|
 | `/worktree` (`/wt`) | Git worktree lifecycle — create, switch, merge, remove |
+
+## Telegram Commands
+
+The following commands are sent directly in your **Telegram chat** to a configured GSD bot — they are not GSD CLI commands. Telegram command polling runs every ~5 seconds while auto-mode is active. Each response is prefixed with the project name (e.g., `📁 MyProject`).
+
+| Command | Description |
+|---------|-------------|
+| `/status` | Current milestone, active unit, and session cost |
+| `/progress` | Roadmap overview — completed and open milestones |
+| `/budget` | Token usage and cost for the current session |
+| `/pause` | Pause auto-mode after the current unit finishes |
+| `/resume` | Clear a pause directive and continue auto-mode |
+| `/log [n]` | Last `n` activity log entries (default: 5) |
+| `/help` | List all available Telegram commands |
+
+**Requirements:** Telegram must be configured as your remote channel (`remote_questions.channel: telegram`). Commands are only processed while auto-mode is running. See [Remote Questions — Telegram Commands](./remote-questions.md#telegram-commands) for setup and details.
 
 ## Session Management
 

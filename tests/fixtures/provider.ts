@@ -52,7 +52,10 @@ export function getFixtureMode(): "record" | "replay" | "off" {
  * Returns the fixture recordings directory path.
  */
 export function getFixtureDir(): string {
-  return process.env.GSD_FIXTURE_DIR || new URL("recordings", import.meta.url).pathname;
+  return (
+    process.env.GSD_FIXTURE_DIR ||
+    new URL("recordings", import.meta.url).pathname
+  );
 }
 
 /**
@@ -66,7 +69,10 @@ export function loadFixture(filePath: string): FixtureRecording {
 /**
  * Saves a fixture recording to a JSON file.
  */
-export function saveFixture(filePath: string, recording: FixtureRecording): void {
+export function saveFixture(
+  filePath: string,
+  recording: FixtureRecording,
+): void {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, JSON.stringify(recording, null, 2) + "\n");
 }
@@ -75,7 +81,9 @@ export function saveFixture(filePath: string, recording: FixtureRecording): void
  * Creates a readable stream of responses from a fixture recording,
  * returning one assistant turn at a time.
  */
-export function createReplayStream(recording: FixtureRecording): Iterator<FixtureTurn> {
+export function createReplayStream(
+  recording: FixtureRecording,
+): Iterator<FixtureTurn> {
   const assistantTurns = recording.turns.filter((t) => t.role === "assistant");
   let index = 0;
   return {

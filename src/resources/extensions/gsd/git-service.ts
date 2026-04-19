@@ -34,6 +34,7 @@ import {
   nativeAddPaths,
   nativeResetSoft,
   nativeCommitSubject,
+  _resetHasChangesCache,
 } from "./native-git-bridge.js";
 import { GSDError, GSD_MERGE_CONFLICT, GSD_GIT_ERROR } from "./errors.js";
 import { getErrorMessage } from "./error-utils.js";
@@ -91,6 +92,17 @@ export const VALID_BRANCH_NAME = /^[a-zA-Z0-9_\-\/.]+$/;
 export interface CommitOptions {
   message: string;
   allowEmpty?: boolean;
+}
+
+export type TurnGitActionMode = "commit" | "snapshot" | "status-only";
+
+export interface TurnGitActionResult {
+  action: TurnGitActionMode;
+  status: "ok" | "failed";
+  commitMessage?: string;
+  snapshotLabel?: string;
+  dirty?: boolean;
+  error?: string;
 }
 
 // ─── Meaningful Commit Message Generation ───────────────────────────────────
@@ -192,22 +204,25 @@ export interface PreMergeCheckResult {
 /**
  * GSD runtime paths that should be excluded from smart staging.
  * These are transient/generated artifacts that should never be committed.
- * Matches the union of SKIP_PATHS + SKIP_EXACT in worktree-manager.ts
- * and the first 7 entries in gitignore.ts BASELINE_PATTERNS.
+ *
+ * NOTE: GSD_RUNTIME_PATTERNS in gitignore.ts is the canonical source of truth.
+ * This array must stay synchronized with it.
  */
 export const RUNTIME_EXCLUSION_PATHS: readonly string[] = [
   ".gsd/activity/",
+  ".gsd/forensics/",
   ".gsd/runtime/",
   ".gsd/worktrees/",
+  ".gsd/parallel/",
   ".gsd/auto.lock",
   ".gsd/metrics.json",
-  ".gsd/completed-units.json",
+  ".gsd/completed-units*.json", // covers completed-units.json and archived completed-units-{MID}.json
+  ".gsd/state-manifest.json",
   ".gsd/STATE.md",
-  ".gsd/gsd.db",
-  ".gsd/gsd.db-shm",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/gsd.db-wal",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/journal/",     // daily-rotated JSONL event journal (#2296)
-  ".gsd/doctor-history.jsonl", // doctor run history (#2296)
+  ".gsd/gsd.db*",
+  ".gsd/journal/",
+  ".gsd/doctor-history.jsonl",
+  ".gsd/event-log.jsonl",
   ".gsd/DISCUSSION-MANIFEST.json",
 ];
 
@@ -745,7 +760,6 @@ export class GitServiceImpl {
    * Run pre-merge verification check. Auto-detects test runner from project
    * files, or uses custom command from prefs.pre_merge_check.
    * Gated on prefs.pre_merge_check (false = skip, string = custom command).
-   * Stub: to be implemented in T03.
    */
   runPreMergeCheck(): PreMergeCheckResult {
     if (this.prefs.pre_merge_check === false) {
@@ -817,6 +831,62 @@ export function createDraftPR(
 export function createGitService(basePath: string): GitServiceImpl {
   const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
   return new GitServiceImpl(basePath, gitPrefs);
+}
+
+function buildTurnSnapshotLabel(unitType: string, unitId: string): string {
+  const raw = `${unitType}/${unitId}`.trim();
+  if (!raw) return "turn";
+  return raw
+    .replace(/[^a-zA-Z0-9._/-]/g, "-")
+    .replace(/\/{2,}/g, "/")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-/]+|[-/]+$/g, "") || "turn";
+}
+
+export function runTurnGitAction(args: {
+  basePath: string;
+  action: TurnGitActionMode;
+  unitType: string;
+  unitId: string;
+  taskContext?: TaskCommitContext;
+}): TurnGitActionResult {
+  try {
+    // Force fresh working-tree status per turn; nativeHasChanges caches briefly.
+    _resetHasChangesCache();
+    if (args.action === "status-only") {
+      return {
+        action: args.action,
+        status: "ok",
+        dirty: nativeHasChanges(args.basePath),
+      };
+    }
+
+    const git = createGitService(args.basePath);
+    if (args.action === "snapshot") {
+      const label = buildTurnSnapshotLabel(args.unitType, args.unitId);
+      git.createSnapshot(label);
+      return {
+        action: args.action,
+        status: "ok",
+        snapshotLabel: label,
+        dirty: nativeHasChanges(args.basePath),
+      };
+    }
+
+    const commitMessage = git.autoCommit(args.unitType, args.unitId, [], args.taskContext) ?? undefined;
+    return {
+      action: args.action,
+      status: "ok",
+      commitMessage,
+      dirty: nativeHasChanges(args.basePath),
+    };
+  } catch (err) {
+    return {
+      action: args.action,
+      status: "failed",
+      error: getErrorMessage(err),
+    };
+  }
 }
 
 // ─── Commit Type Inference ─────────────────────────────────────────────────

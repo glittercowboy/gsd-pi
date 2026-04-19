@@ -109,9 +109,9 @@ console.log('\n=== complete-task: schema v5 migration ===');
 
   const adapter = _getAdapter()!;
 
-  // Verify schema version is current (v14 after indexes + slice_dependencies)
+  // Verify schema version is current (v21 — ADR-013 structured_fields column)
   const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(versionRow?.['v'], 14, 'schema version should be 14');
+  assertEq(versionRow?.['v'], 21, 'schema version should be 21');
 
   // Verify all 4 new tables exist
   const tables = adapter.prepare(

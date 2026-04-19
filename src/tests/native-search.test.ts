@@ -77,7 +77,7 @@ test("before_provider_request injects web_search for claude models", async () =>
   // Confirm Anthropic provider via model_select before request
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -220,7 +220,7 @@ test("before_provider_request DOES inject when event.model indicates Anthropic p
   const result = await pi.fire("before_provider_request", {
     type: "before_provider_request",
     payload,
-    model: { provider: "anthropic", id: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", id: "claude-sonnet-4-6", api: "anthropic-messages" },
   });
 
   const tools = ((result as any)?.tools ?? payload.tools) as any[];
@@ -236,7 +236,7 @@ test("before_provider_request does not double-inject", async () => {
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-opus-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-opus-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -262,7 +262,7 @@ test("before_provider_request creates tools array if missing", async () => {
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-haiku-4-5" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-haiku-4-5" },
     previousModel: undefined,
     source: "set",
   });
@@ -308,7 +308,7 @@ test("model_select disables Brave tools when Anthropic + no BRAVE_API_KEY", asyn
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -334,7 +334,7 @@ test("model_select disables all custom search tools when Anthropic even with BRA
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -360,7 +360,7 @@ test("model_select re-enables Brave tools when switching away from Anthropic", a
   // First: select Anthropic — disables Brave tools
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -388,7 +388,7 @@ test("model_select shows 'Native Anthropic web search active' for Anthropic prov
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -463,7 +463,7 @@ test("before_provider_request removes Brave tools from payload when no BRAVE_API
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -508,7 +508,7 @@ test("before_provider_request removes all custom search tools from payload even 
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -554,7 +554,7 @@ test("model_select re-enable does not duplicate Brave tools across toggle cycles
   // Cycle 1: Anthropic disables Brave tools
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -576,7 +576,7 @@ test("model_select re-enable does not duplicate Brave tools across toggle cycles
   // Cycle 2: Anthropic again
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: { provider: "openai", name: "gpt-4o" },
     source: "set",
   });
@@ -627,7 +627,7 @@ test("model_select suppresses 'Native search active' notification on session res
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "restore",  // session restore, not user action
   });
@@ -647,7 +647,7 @@ test("model_select DOES show notification on explicit user set", async () => {
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -666,7 +666,7 @@ test("session search budget: max_uses decreases as history accumulates search re
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -724,7 +724,7 @@ test("session search budget: reduces max_uses when close to limit", async () => 
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -766,7 +766,7 @@ test("session search budget: omits web_search tool when budget exhausted", async
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -808,7 +808,7 @@ test("session search budget: resets on session_start", async () => {
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -861,7 +861,7 @@ test("session search budget: survives context compaction (high-water mark)", asy
 
   await pi.fire("model_select", {
     type: "model_select",
-    model: { provider: "anthropic", name: "claude-sonnet-4-6" },
+    model: { provider: "anthropic", api: "anthropic-messages", name: "claude-sonnet-4-6" },
     previousModel: undefined,
     source: "set",
   });
@@ -1012,4 +1012,154 @@ test("stripThinkingFromHistory handles string content (no array)", () => {
   // Should not throw — string content is skipped
   stripThinkingFromHistory(messages);
   assert.equal(messages[1].content, "just a string");
+});
+
+// ─── #4478 session-restore edge: model_select suppressed (same model) ──────
+
+test("#4478 claude-code session restore with model_select suppressed still injects native search", async () => {
+  // Regression: when a session is restored and the restored model equals the
+  // active model, `modelsAreEqual` suppresses `model_select`. The
+  // before_provider_request handler must still detect Anthropic via the
+  // event.model object's `api` field — not fall through to the narrower
+  // `provider === "anthropic"` fallback which misses claude-code.
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  // NO model_select fired — simulates restore-with-same-model.
+  const payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6",
+    tools: [{ name: "bash", type: "custom" }],
+  };
+
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+    // Full Model object carrying `api` — matches what the runner forwards at runtime.
+    model: { provider: "claude-code", id: "claude-sonnet-4-6", api: "anthropic-messages" },
+  });
+
+  const tools = ((result as any)?.tools ?? payload.tools) as any[];
+  assert.ok(
+    tools.some((t) => t.type === "web_search_20250305"),
+    "Should inject native web_search on claude-code restore even with model_select suppressed",
+  );
+});
+
+// ─── #4478 regression: Anthropic-fronting transports inject native search ───
+
+test("#4478 claude-code OAuth provider injects native web_search", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "claude-code", api: "anthropic-messages", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  // Must NOT emit the spammy Brave warning
+  const warning = pi.notifications.find((n) => n.level === "warning");
+  assert.equal(warning, undefined, "Should not emit Brave warning for claude-code provider");
+
+  // Must disable custom search tools
+  assert.ok(!pi.getActiveTools().includes("search-the-web"), "Brave tools disabled on claude-code");
+
+  const payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6-20250514",
+    tools: [{ name: "bash", type: "custom" }],
+  };
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+    model: { provider: "claude-code", id: "claude-sonnet-4-6", api: "anthropic-messages" },
+  });
+  const tools = ((result as any)?.tools ?? payload.tools) as any[];
+  assert.ok(
+    tools.some((t) => t.type === "web_search_20250305"),
+    "Should inject native web_search for claude-code",
+  );
+});
+
+test("#4478 anthropic-vertex provider injects native web_search", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "anthropic-vertex", api: "anthropic-vertex", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  const payload: Record<string, unknown> = {
+    model: "claude-sonnet-4-6",
+    tools: [{ name: "bash", type: "custom" }],
+  };
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+    model: { provider: "anthropic-vertex", id: "claude-sonnet-4-6", api: "anthropic-vertex" },
+  });
+  const tools = ((result as any)?.tools ?? payload.tools) as any[];
+  assert.ok(
+    tools.some((t) => t.type === "web_search_20250305"),
+    "Should inject native web_search for anthropic-vertex",
+  );
+});
+
+test("#4478 vercel-ai-gateway with anthropic-messages api injects native web_search", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "vercel-ai-gateway", api: "anthropic-messages", name: "anthropic/claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  const payload: Record<string, unknown> = {
+    model: "anthropic/claude-sonnet-4-6",
+    tools: [{ name: "bash", type: "custom" }],
+  };
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+    model: { provider: "vercel-ai-gateway", id: "anthropic/claude-sonnet-4-6", api: "anthropic-messages" },
+  });
+  const tools = ((result as any)?.tools ?? payload.tools) as any[];
+  assert.ok(
+    tools.some((t) => t.type === "web_search_20250305"),
+    "Vercel-gateway Anthropic route should inject native web_search (same wire protocol)",
+  );
+});
+
+test("#4478 amazon-bedrock provider does NOT inject (different tool schema)", async () => {
+  const pi = createMockPI();
+  registerNativeSearchHooks(pi);
+
+  await pi.fire("model_select", {
+    type: "model_select",
+    model: { provider: "amazon-bedrock", api: "bedrock-converse-stream", name: "claude-sonnet-4-6" },
+    previousModel: undefined,
+    source: "set",
+  });
+
+  const payload: Record<string, unknown> = {
+    model: "anthropic.claude-sonnet-4-6",
+    tools: [{ name: "bash", type: "custom" }],
+  };
+  const result = await pi.fire("before_provider_request", {
+    type: "before_provider_request",
+    payload,
+    model: { provider: "amazon-bedrock", id: "claude-sonnet-4-6", api: "bedrock-converse-stream" },
+  });
+
+  assert.equal(result, undefined, "Should not modify payload for Bedrock (different tool schema)");
+  const tools = payload.tools as any[];
+  assert.ok(
+    !tools.some((t) => t.type === "web_search_20250305"),
+    "web_search_20250305 must NOT be injected into Bedrock requests",
+  );
 });

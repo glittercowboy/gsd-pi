@@ -23,7 +23,9 @@ if (!response.ok) {
   process.exit(1);
 }
 
-const data = (await response.json()) as { choices: Array<{ message: { content: string } }> };
+const data = (await response.json()) as {
+  choices: Array<{ message: { content: string } }>;
+};
 const text = data.choices?.[0]?.message?.content || "";
 
 if (!text.includes("LIVE_TEST_OK")) {

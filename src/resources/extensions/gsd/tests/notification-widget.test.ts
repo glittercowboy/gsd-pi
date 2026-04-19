@@ -17,7 +17,7 @@ test("buildNotificationWidgetLines shows unread count with shortcut pair", () =>
 
     const lines = buildNotificationWidgetLines();
     assert.equal(lines.length, 1);
-    assert.match(lines[0]!, /Notifications:\s+1 unread/);
+    assert.match(lines[0]!, /🔔\s+1 unread/);
     assert.match(lines[0]!, /\(.+\/.+\)/);
   } finally {
     _resetNotificationStore();

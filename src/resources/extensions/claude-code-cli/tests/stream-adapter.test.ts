@@ -10,8 +10,10 @@ import {
 	mergePendingToolCalls,
 	resolveClaudePermissionMode,
 	buildPromptFromContext,
+	buildSdkQueryPrompt,
 	buildSdkOptions,
 	createClaudeCodeElicitationHandler,
+	extractImageBlocksFromContext,
 	extractToolResultsFromSdkUserMessage,
 	getClaudeLookupCommand,
 	parseAskUserQuestionsElicitation,
@@ -167,6 +169,184 @@ describe("stream-adapter — full context prompt (#2859)", () => {
 	});
 });
 
+describe("stream-adapter — image prompt forwarding (#4183)", () => {
+	test("extractImageBlocksFromContext maps user image parts to Anthropic base64 image blocks", () => {
+		const context: Context = {
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: "look" },
+						{
+							type: "image",
+							data: "data:image/png;base64,abc123",
+							mimeType: "image/png",
+						},
+					],
+				} as Message,
+			],
+		};
+
+		const imageBlocks = extractImageBlocksFromContext(context);
+		assert.deepEqual(imageBlocks, [
+			{
+				type: "image",
+				source: {
+					type: "base64",
+					media_type: "image/png",
+					data: "abc123",
+				},
+			},
+		]);
+	});
+
+	test("buildSdkQueryPrompt returns plain string when no images exist in context", () => {
+		const context: Context = {
+			messages: [{ role: "user", content: "hello" } as Message],
+		};
+		const textPrompt = buildPromptFromContext(context);
+
+		const prompt = buildSdkQueryPrompt(context, textPrompt);
+		assert.equal(typeof prompt, "string");
+		assert.equal(prompt, textPrompt);
+	});
+
+	test("buildSdkQueryPrompt wraps images and prompt text in an SDK user message iterable", async () => {
+		const context: Context = {
+			messages: [
+				{
+					role: "user",
+					content: [
+						{ type: "image", data: "ZmFrZQ==", mimeType: "image/jpeg" },
+						{ type: "text", text: "What is in this image?" },
+					],
+				} as Message,
+			],
+		};
+		const textPrompt = buildPromptFromContext(context);
+
+		const prompt = buildSdkQueryPrompt(context, textPrompt);
+		assert.notEqual(typeof prompt, "string");
+		assert.ok(prompt && typeof (prompt as any)[Symbol.asyncIterator] === "function");
+
+		const messages: any[] = [];
+		for await (const item of prompt as AsyncIterable<any>) {
+			messages.push(item);
+		}
+		assert.equal(messages.length, 1);
+		assert.deepEqual(messages[0], {
+			type: "user",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "image",
+						source: {
+							type: "base64",
+							media_type: "image/jpeg",
+							data: "ZmFrZQ==",
+						},
+					},
+					{ type: "text", text: textPrompt },
+				],
+			},
+			parent_tool_use_id: null,
+		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Bug #4102 — transcript fabrication regression tests
+// ---------------------------------------------------------------------------
+
+describe("stream-adapter — no transcript fabrication (#4102)", () => {
+	test("buildPromptFromContext never emits forbidden [User]/[Assistant] bracket headers", () => {
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [
+				{ role: "user", content: "First" } as Message,
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "Second" }],
+					api: "anthropic-messages",
+					provider: "claude-code",
+					model: "claude-sonnet-4-20250514",
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					stopReason: "stop",
+					timestamp: Date.now(),
+				} as Message,
+				{ role: "user", content: "Third" } as Message,
+			],
+		};
+
+		const prompt = buildPromptFromContext(context);
+
+		assert.ok(!prompt.includes("[User]"), "prompt must not include literal [User] bracket header");
+		assert.ok(!prompt.includes("[Assistant]"), "prompt must not include literal [Assistant] bracket header");
+		assert.ok(!prompt.includes("[System]"), "prompt must not include literal [System] bracket header");
+	});
+
+	test("buildPromptFromContext wraps history in XML-tag structure", () => {
+		const context: Context = {
+			systemPrompt: "You are helpful.",
+			messages: [
+				{ role: "user", content: "Hello" } as Message,
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "Hi there" }],
+					api: "anthropic-messages",
+					provider: "claude-code",
+					model: "claude-sonnet-4-20250514",
+					usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					stopReason: "stop",
+					timestamp: Date.now(),
+				} as Message,
+			],
+		};
+
+		const prompt = buildPromptFromContext(context);
+
+		assert.ok(prompt.includes("<conversation_history>"), "prompt must wrap history in <conversation_history>");
+		assert.ok(prompt.includes("</conversation_history>"), "prompt must close <conversation_history>");
+		assert.ok(prompt.includes("<user_message>\nHello\n</user_message>"), "user turn must use <user_message> tags");
+		assert.ok(prompt.includes("<assistant_message>\nHi there\n</assistant_message>"), "assistant turn must use <assistant_message> tags");
+		assert.ok(prompt.includes("<prior_system_context>\nYou are helpful.\n</prior_system_context>"), "system prompt must use <prior_system_context> tags");
+	});
+
+	test("buildPromptFromContext includes a do-not-echo-tags directive as primary instruction", () => {
+		const context: Context = {
+			messages: [{ role: "user", content: "Anything" } as Message],
+		};
+
+		const prompt = buildPromptFromContext(context);
+
+		assert.ok(
+			prompt.startsWith("Respond only to the final user message"),
+			"primary directive must lead the prompt",
+		);
+		assert.ok(prompt.includes("Do not emit <user_message>"), "directive must forbid emitting user_message tag");
+		assert.ok(prompt.includes("<assistant_message>"), "directive must mention assistant_message tag");
+	});
+
+	test("buildPromptFromContext omits <conversation_history> when there are no messages but a system prompt", () => {
+		const context: Context = {
+			systemPrompt: "Seed",
+			messages: [],
+		};
+
+		const prompt = buildPromptFromContext(context);
+
+		assert.ok(prompt.includes("<prior_system_context>"), "system prompt must still render");
+		assert.ok(!prompt.includes("<conversation_history>"), "no history wrapper when messages are empty");
+	});
+
+	test("buildPromptFromContext still returns empty string when context is entirely empty", () => {
+		const context: Context = { messages: [] };
+		const prompt = buildPromptFromContext(context);
+		assert.equal(prompt, "", "empty context must not emit a bare directive");
+	});
+});
+
 describe("stream-adapter — Claude Code external tool results", () => {
 	test("extractToolResultsFromSdkUserMessage maps tool_result content to tool payloads", () => {
 		const message: SDKUserMessage = {
@@ -251,6 +431,110 @@ describe("stream-adapter — session persistence (#2859)", () => {
 		);
 	});
 
+	test("buildSdkOptions enables context-1m beta for opus-4-7 (#4348)", () => {
+		const opts = buildSdkOptions("claude-opus-4-7", "test");
+		assert.ok(
+			Array.isArray(opts.betas) && opts.betas.includes("context-1m-2025-08-07"),
+			"claude-opus-4-7 should have context-1m beta enabled for 1M token context window",
+		);
+	});
+
+	test("buildSdkOptions maps reasoning to effort for adaptive Claude Code models (#3917)", () => {
+		const options = buildSdkOptions("claude-sonnet-4-6", "test", undefined, { reasoning: "high" });
+		assert.equal(options.effort, "high");
+	});
+
+	test("buildSdkOptions upgrades xhigh reasoning to max for opus 4.6 (#3917)", () => {
+		const options = buildSdkOptions("claude-opus-4-6", "test", undefined, { reasoning: "xhigh" });
+		assert.equal(options.effort, "max");
+	});
+
+	test("buildSdkOptions maps reasoning to effort for opus-4-7 (#4348)", () => {
+		const options = buildSdkOptions("claude-opus-4-7", "test", undefined, { reasoning: "high" });
+		assert.equal(options.effort, "high");
+	});
+
+	test("buildSdkOptions passes xhigh reasoning natively for opus-4-7 (#4348)", () => {
+		const options = buildSdkOptions("claude-opus-4-7", "test", undefined, { reasoning: "xhigh" });
+		assert.equal(options.effort, "xhigh");
+	});
+
+	test("buildSdkOptions omits effort when reasoning is undefined (#3917)", () => {
+		const options = buildSdkOptions("claude-sonnet-4-6", "test");
+		assert.equal("effort" in options, false);
+	});
+
+	test("buildSdkOptions omits effort for non-adaptive Claude models (#3917)", () => {
+		const options = buildSdkOptions("claude-sonnet-4-20250514", "test", undefined, { reasoning: "high" });
+		assert.equal("effort" in options, false);
+	});
+
+	// --- Bug fixes #4392: thinking field & model coverage ---
+
+	test("buildSdkOptions sets thinking disabled when reasoning is undefined on adaptive model (#4392)", () => {
+		// Bug C: thinkingLevel="off" means reasoning===undefined; SDK needs thinking:{type:"disabled"}
+		const options = buildSdkOptions("claude-sonnet-4-6", "test", undefined, {});
+		assert.deepEqual(
+			(options as any).thinking,
+			{ type: "disabled" },
+			"thinking must be {type:'disabled'} when reasoning is undefined so SDK stops adaptive thinking",
+		);
+	});
+
+	test("buildSdkOptions omits effort when reasoning is undefined (thinking disabled) (#4392)", () => {
+		// Bug C corollary: no effort when thinking is off
+		const options = buildSdkOptions("claude-sonnet-4-6", "test", undefined, {});
+		assert.equal("effort" in options, false, "effort must not be set when reasoning is undefined");
+	});
+
+	test("buildSdkOptions sets thinking adaptive when reasoning is provided (#4392)", () => {
+		// Bug B: when effort is set, thinking:{type:"adaptive"} must also be present
+		const options = buildSdkOptions("claude-opus-4-6", "test", undefined, { reasoning: "high" });
+		assert.deepEqual(
+			(options as any).thinking,
+			{ type: "adaptive" },
+			"thinking must be {type:'adaptive'} alongside effort when reasoning is set",
+		);
+	});
+
+	test("buildSdkOptions includes both effort and thinking.type=adaptive when reasoning is set (#4392)", () => {
+		// Bug B: both fields must be present together
+		const options = buildSdkOptions("claude-opus-4-6", "test", undefined, { reasoning: "high" });
+		assert.equal(options.effort, "high", "effort must be set");
+		assert.deepEqual((options as any).thinking, { type: "adaptive" }, "thinking must be adaptive");
+	});
+
+	test("buildSdkOptions maps reasoning to effort for sonnet-4-7 (modelSupportsAdaptiveThinking #4392)", () => {
+		// Bug D: sonnet-4-7 was missing from modelSupportsAdaptiveThinking
+		const options = buildSdkOptions("claude-sonnet-4-7", "test", undefined, { reasoning: "high" });
+		assert.equal(options.effort, "high", "sonnet-4-7 must support adaptive thinking and map effort");
+	});
+
+	test("buildSdkOptions maps reasoning to effort for haiku-4-5 (modelSupportsAdaptiveThinking #4392)", () => {
+		// Bug D: haiku-4-5 was missing from modelSupportsAdaptiveThinking
+		const options = buildSdkOptions("claude-haiku-4-5", "test", undefined, { reasoning: "high" });
+		assert.equal(options.effort, "high", "haiku-4-5 must support adaptive thinking and map effort");
+	});
+
+	test("buildSdkOptions maps reasoning to effort for sonnet-4.7 dot-form (modelSupportsAdaptiveThinking #4392)", () => {
+		// Dot-form aliases (e.g. claude-sonnet-4.7) must also be recognised
+		const options = buildSdkOptions("claude-sonnet-4.7", "test", undefined, { reasoning: "high" });
+		assert.equal(options.effort, "high", "claude-sonnet-4.7 must support adaptive thinking and map effort");
+	});
+
+	test("buildSdkOptions maps reasoning to effort for haiku-4.5 dot-form (modelSupportsAdaptiveThinking #4392)", () => {
+		// Dot-form aliases (e.g. claude-haiku-4.5) must also be recognised
+		const options = buildSdkOptions("claude-haiku-4.5", "test", undefined, { reasoning: "high" });
+		assert.equal(options.effort, "high", "claude-haiku-4.5 must support adaptive thinking and map effort");
+	});
+
+	test("buildSdkOptions does not set thinking field for non-adaptive model when reasoning is undefined (#4392)", () => {
+		// Non-adaptive models (e.g. claude-sonnet-4-20250514) don't use the thinking API at all;
+		// no thinking field should be set when reasoning is undefined
+		const options = buildSdkOptions("claude-sonnet-4-20250514", "test", undefined, {});
+		assert.equal("thinking" in options, false, "non-adaptive models must not receive a thinking field");
+	});
+
 	test("buildSdkOptions includes workflow MCP server config when env is set", () => {
 		const prev = {
 			GSD_WORKFLOW_MCP_COMMAND: process.env.GSD_WORKFLOW_MCP_COMMAND,
@@ -277,6 +561,16 @@ describe("stream-adapter — session persistence (#2859)", () => {
 			assert.equal(srv.env.GSD_PERSIST_WRITE_GATE_STATE, "1");
 			assert.equal(srv.env.GSD_WORKFLOW_PROJECT_ROOT, "/tmp/project");
 			assert.deepEqual(options.disallowedTools, ["AskUserQuestion"]);
+			assert.deepEqual(options.allowedTools, [
+				"Read",
+				"Write",
+				"Edit",
+				"Glob",
+				"Grep",
+				"Bash(ls:*)",
+				"Bash(pwd)",
+				"mcp__gsd-workflow__*",
+			]);
 		} finally {
 			process.env.GSD_WORKFLOW_MCP_COMMAND = prev.GSD_WORKFLOW_MCP_COMMAND;
 			process.env.GSD_WORKFLOW_MCP_NAME = prev.GSD_WORKFLOW_MCP_NAME;
@@ -305,6 +599,16 @@ describe("stream-adapter — session persistence (#2859)", () => {
 			const mcpServers = options.mcpServers as Record<string, any>;
 			assert.ok(mcpServers?.["custom-workflow"], "expected custom workflow server config");
 			assert.deepEqual(options.disallowedTools, ["AskUserQuestion"]);
+			assert.deepEqual(options.allowedTools, [
+				"Read",
+				"Write",
+				"Edit",
+				"Glob",
+				"Grep",
+				"Bash(ls:*)",
+				"Bash(pwd)",
+				"mcp__custom-workflow__*",
+			]);
 		} finally {
 			process.env.GSD_WORKFLOW_MCP_COMMAND = prev.GSD_WORKFLOW_MCP_COMMAND;
 			process.env.GSD_WORKFLOW_MCP_NAME = prev.GSD_WORKFLOW_MCP_NAME;
@@ -662,11 +966,12 @@ describe("stream-adapter — MCP elicitation bridge", () => {
 			},
 		};
 
+		const secureValue = "ui-collected-value";
 		const inputCalls: Array<{ opts?: { secure?: boolean } }> = [];
 		const handler = createClaudeCodeElicitationHandler({
 			input: async (_title: string, _placeholder?: string, opts?: { secure?: boolean }) => {
 				inputCalls.push({ opts });
-				return "example-secure-input";
+				return secureValue;
 			},
 		} as any);
 		assert.ok(handler);
@@ -675,7 +980,7 @@ describe("stream-adapter — MCP elicitation bridge", () => {
 		assert.deepEqual(result, {
 			action: "accept",
 			content: {
-				TEST_SECURE_FIELD: "example-secure-input",
+				TEST_SECURE_FIELD: secureValue,
 			},
 		});
 		assert.equal(inputCalls.length, 1);

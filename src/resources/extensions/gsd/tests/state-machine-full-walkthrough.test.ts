@@ -811,9 +811,9 @@ describe("state-machine-full-walkthrough", () => {
       assert.ok(state.blockers.length > 0, "should have blockers");
     });
 
-    test("no eligible slice (all deps unmet) → blocked at slice level", async () => {
+    test("no eligible slice (all deps unmet) → fallback picks slice with most deps satisfied", async () => {
       const base = createFixtureBase();
-      // S01 depends on S00 which doesn't exist
+      // S01 depends on S00 which doesn't exist — fallback picks S01 anyway
       writeRoadmap(base, "M001", [
         "# M001: Test Milestone",
         "",
@@ -827,11 +827,9 @@ describe("state-machine-full-walkthrough", () => {
       invalidateStateCache();
       const state = await deriveState(base);
 
-      assert.equal(state.phase, "blocked");
-      assert.ok(
-        state.blockers.some(b => b.includes("dependency") || b.includes("eligible")),
-        "blockers should mention dependency or eligibility",
-      );
+      // With partial-dep fallback, S01 is picked despite unmet dep on S00
+      assert.equal(state.phase, "planning");
+      assert.equal(state.activeSlice?.id, "S01");
     });
   });
 

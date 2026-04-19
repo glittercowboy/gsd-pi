@@ -52,6 +52,18 @@ export interface SessionLockStatus {
   recovered?: boolean;
 }
 
+interface ProperLockfileApi {
+  lockSync(
+    path: string,
+    options?: {
+      realpath?: boolean;
+      stale?: number;
+      update?: number;
+      onCompromised?: () => void;
+    },
+  ): () => void;
+}
+
 // ─── Module State ───────────────────────────────────────────────────────────
 
 /** Release function from proper-lockfile — calling it releases the OS lock. */
@@ -277,9 +289,9 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
     unitStartedAt: new Date().toISOString(),
   };
 
-  let lockfile: typeof import("proper-lockfile");
+  let lockfile: ProperLockfileApi;
   try {
-    lockfile = _require("proper-lockfile") as typeof import("proper-lockfile");
+    lockfile = _require("proper-lockfile") as ProperLockfileApi;
   } catch {
     // proper-lockfile not available — fall back to PID-based check
     return acquireFallbackLock(basePath, lp, lockData);

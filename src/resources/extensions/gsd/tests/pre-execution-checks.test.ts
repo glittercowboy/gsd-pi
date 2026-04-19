@@ -10,7 +10,7 @@
 
 import { describe, test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
@@ -57,6 +57,11 @@ function createTask(overrides: Partial<TaskRow> = {}): TaskRow {
     observability_impact: "",
     full_plan_md: "",
     sequence: overrides.sequence ?? 0,
+    blocker_source: "",
+    escalation_pending: 0,
+    escalation_awaiting_review: 0,
+    escalation_artifact_path: null,
+    escalation_override_applied_at: null,
     ...overrides,
   };
 }
@@ -1139,6 +1144,28 @@ describe("checkTaskOrdering false positive regression (#3677)", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("glob-like inputs do not trigger ordering violations against later concrete outputs", () => {
+    const tasks = [
+      createTask({
+        id: "T01",
+        sequence: 0,
+        files: [],
+        inputs: ["Artifacts/pruned_networks/cell_line=*/"],
+        expected_output: [],
+      }),
+      createTask({
+        id: "T02",
+        sequence: 1,
+        files: [],
+        inputs: [],
+        expected_output: ["Artifacts/pruned_networks/cell_line=HT-29/"],
+      }),
+    ];
+
+    const results = checkTaskOrdering(tasks, "/tmp");
+    assert.equal(results.length, 0, "Glob-pattern inputs should not be treated as literal read-before-create dependencies");
+  });
 });
 
 // ─── checkFilePathConsistency additional edge cases ──────────────────────────
@@ -1186,9 +1213,7 @@ describe("checkFilePathConsistency additional edge cases", () => {
     assert.equal(results.length, 0, "Prior annotated expected_output entries should satisfy later plain inputs");
   });
 
-  test("inputs referencing glob-like patterns should not crash", () => {
-    // A glob pattern in inputs is unusual but should be handled gracefully.
-    // The file won't exist on disk, so it should produce a blocking result.
+  test("inputs referencing glob-like patterns are skipped by path consistency checks", () => {
     const tasks = [
       createTask({
         id: "T01",
@@ -1203,8 +1228,7 @@ describe("checkFilePathConsistency additional edge cases", () => {
     assert.doesNotThrow(() => {
       results = checkFilePathConsistency(tasks, "/tmp");
     });
-    assert.equal(results!.length, 1, "Glob-pattern input that doesn't exist should produce a blocking result");
-    assert.equal(results![0].blocking, true);
+    assert.equal(results!.length, 0, "Glob-pattern inputs should not produce false blocking failures");
   });
 
   test("multi-word prose inputs are ignored by path consistency checks", () => {
@@ -1263,6 +1287,111 @@ describe("checkFilePathConsistency additional edge cases", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  // Regression tests for issue #4421
+  test("backticked path with trailing prose and parens resolves to the path", () => {
+    const tempDir = join(tmpdir(), `pre-exec-test-4421-case1-${Date.now()}`);
+    const dirPath = join(tempDir, "assets");
+    mkdirSync(dirPath, { recursive: true });
+
+    try {
+      const tasks = [
+        createTask({
+          id: "T01",
+          inputs: [`\`${dirPath}/\` directory listing (shows the items that will match during the run)`],
+        }),
+      ];
+
+      const results = checkFilePathConsistency(tasks, tempDir);
+      assert.equal(results.length, 0, "Backticked dir path annotated with prose + parens should be recognized");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("backticked URL with paren annotation is skipped (not a filesystem path)", () => {
+    const tasks = [
+      createTask({
+        id: "T01",
+        inputs: ["`https://example.com` (live HTTP target)"],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, "/tmp");
+    assert.equal(results.length, 0, "Backticked URL should not be validated as a filesystem path");
+  });
+
+  test("URL embedded mid-sentence with prefix prose is skipped", () => {
+    const tasks = [
+      createTask({
+        id: "T01",
+        inputs: ["Live `https://example.com/docs` pages (reviewer WebFetches these)"],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, "/tmp");
+    assert.equal(results.length, 0, "URLs cited mid-sentence should not be validated as filesystem paths");
+  });
+
+  test("backticked path cited mid-sentence resolves to the path", () => {
+    const tempDir = join(tmpdir(), `pre-exec-test-4421-case4-${Date.now()}`);
+    mkdirSync(join(tempDir, ".gsd"), { recursive: true });
+    writeFileSync(join(tempDir, ".gsd/REQUIREMENTS.md"), "# Requirements");
+
+    try {
+      const tasks = [
+        createTask({
+          id: "T01",
+          inputs: ["R014 verbatim text from `.gsd/REQUIREMENTS.md` (the owned requirement statement)"],
+        }),
+      ];
+
+      const results = checkFilePathConsistency(tasks, tempDir);
+      assert.equal(results.length, 0, "Backticked path cited mid-sentence should be recognized");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("multi-backtick input picks the path-like token over non-path tokens", () => {
+    const tempDir = join(tmpdir(), `pre-exec-test-4421-multi-${Date.now()}`);
+    mkdirSync(join(tempDir, "src"), { recursive: true });
+    writeFileSync(join(tempDir, "src/a.ts"), "// content");
+
+    try {
+      const tasks = [
+        createTask({
+          id: "T01",
+          inputs: ["`note` use `src/a.ts` for edits"],
+        }),
+      ];
+
+      const results = checkFilePathConsistency(tasks, tempDir);
+      assert.equal(results.length, 0, "Should extract src/a.ts, not the leading `note` token");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("multi-backtick input with command-like leading token picks the path", () => {
+    const tempDir = join(tmpdir(), `pre-exec-test-4421-cmd-${Date.now()}`);
+    mkdirSync(join(tempDir, "src"), { recursive: true });
+    writeFileSync(join(tempDir, "src/a.ts"), "// content");
+
+    try {
+      const tasks = [
+        createTask({
+          id: "T01",
+          inputs: ["Run `npm test` against `src/a.ts`"],
+        }),
+      ];
+
+      const results = checkFilePathConsistency(tasks, tempDir);
+      assert.equal(results.length, 0, "Should extract src/a.ts, not the `npm test` command token");
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── PreExecutionResult Type Tests ───────────────────────────────────────────
@@ -1308,5 +1437,211 @@ describe("PreExecutionResult type", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ─── Regression Tests: directory inputs and tilde paths (#4446) ──────────────
+
+describe("normalizeFilePath tilde expansion (#4446)", () => {
+  test("expands standalone ~ to homedir", () => {
+    assert.equal(normalizeFilePath("~"), homedir());
+  });
+
+  test("expands ~/ prefixed paths to homedir", () => {
+    assert.equal(
+      normalizeFilePath("~/.gsd/agent/extensions/gsd/native-git-bridge.js"),
+      join(homedir(), ".gsd/agent/extensions/gsd/native-git-bridge.js"),
+    );
+  });
+});
+
+describe("checkFilePathConsistency directory inputs (#4446)", () => {
+  test("directory input is satisfied by prior task's output under it", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-dir-prior-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T01",
+        sequence: 0,
+        inputs: [],
+        expected_output: ["artifacts/M009-S03/summary.json"],
+      }),
+      createTask({
+        id: "T02",
+        sequence: 1,
+        inputs: ["artifacts/M009-S03/"],
+        expected_output: [],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.deepEqual(results, [], "Directory input with prior output beneath it should not be blocking");
+  });
+
+  test("directory input is satisfied by same task's output under it", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-dir-same-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T06",
+        sequence: 0,
+        inputs: ["artifacts/M009-S03/"],
+        expected_output: [
+          "artifacts/M009-S03/summary.json",
+          "artifacts/M009-S03/VERIFICATION.md",
+        ],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.deepEqual(
+      results,
+      [],
+      "Directory input whose children are produced by the same task should not be blocking (M009-S03/T06 case)",
+    );
+  });
+
+  test("directory input still fails when nothing creates anything under it", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-dir-missing-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T01",
+        inputs: ["artifacts/missing/"],
+        expected_output: [],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.equal(results.length, 1, "Unknown directory input must still be reported");
+    assert.equal(results[0].blocking, true);
+  });
+
+  test("tilde-prefixed input is matched against $HOME, not the project basePath", (t) => {
+    const fakeHome = join(tmpdir(), `pre-exec-tilde-home-${Date.now()}`);
+    const projectDir = join(tmpdir(), `pre-exec-tilde-proj-${Date.now()}`);
+    mkdirSync(join(fakeHome, ".gsd"), { recursive: true });
+    writeFileSync(join(fakeHome, ".gsd/tool.js"), "// present");
+    mkdirSync(projectDir, { recursive: true });
+
+    const originalHome = process.env.HOME;
+    const originalUserProfile = process.env.USERPROFILE;
+    process.env.HOME = fakeHome;
+    process.env.USERPROFILE = fakeHome;
+
+    t.after(() => {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+      else process.env.USERPROFILE = originalUserProfile;
+      rmSync(fakeHome, { recursive: true, force: true });
+      rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    const tasks = [
+      createTask({
+        id: "T01",
+        inputs: ["~/.gsd/tool.js"],
+        expected_output: [],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, projectDir);
+    assert.deepEqual(results, [], "~/-prefixed input should resolve against $HOME and pass when present");
+  });
+});
+
+describe("checkTaskOrdering directory inputs (#4446)", () => {
+  test("directory input with a same-task output under it does not produce a sequence violation", () => {
+    const tasks = [
+      createTask({
+        id: "T06",
+        sequence: 0,
+        inputs: ["artifacts/M009-S03/"],
+        expected_output: [
+          "artifacts/M009-S03/summary.json",
+          "artifacts/M009-S03/VERIFICATION.md",
+        ],
+      }),
+    ];
+
+    const results = checkTaskOrdering(tasks, "/tmp");
+    assert.deepEqual(
+      results,
+      [],
+      "Directory reference should not be treated as reading a file created later",
+    );
+  });
+});
+
+describe("checkFilePathConsistency self-referential inputs (#4459)", () => {
+  test("input that is also in the same task's expected_output is not blocking when missing on disk", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-self-output-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T02",
+        sequence: 0,
+        inputs: ["src/components/email/SnoozePopover.jsx"],
+        expected_output: ["src/components/email/SnoozePopover.jsx"],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.deepEqual(
+      results,
+      [],
+      "File declared as both input and expected_output of the same task should not block — the task itself produces it",
+    );
+  });
+
+  test("input missing from disk, missing from prior outputs, and missing from own expected_output still blocks", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-self-output-missing-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T02",
+        sequence: 0,
+        inputs: ["src/components/email/SnoozePopover.jsx"],
+        expected_output: ["src/other/unrelated.jsx"],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.equal(results.length, 1, "Genuinely missing input should still be reported");
+    assert.equal(results[0].blocking, true);
+    assert.equal(results[0].target, "src/components/email/SnoozePopover.jsx");
+  });
+
+  test("self-output exemption matches across path normalization (./ prefix)", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-self-output-norm-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T02",
+        sequence: 0,
+        inputs: ["./src/generated.ts"],
+        expected_output: ["src/generated.ts"],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.deepEqual(
+      results,
+      [],
+      "./src/generated.ts and src/generated.ts should compare equal after normalization",
+    );
   });
 });

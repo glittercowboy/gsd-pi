@@ -441,13 +441,13 @@ test("usesWorkflowMcpTransport matches local externalCli providers", () => {
   assert.equal(usesWorkflowMcpTransport("oauth", "local://custom"), false);
 });
 
-test("supportsStructuredQuestions disables structured ask flow on workflow MCP transports", () => {
+test("supportsStructuredQuestions stays enabled on workflow MCP transports when ask_user_questions is available", () => {
   assert.equal(
     supportsStructuredQuestions(["ask_user_questions"], {
       authMode: "externalCli",
       baseUrl: "local://claude-code",
     }),
-    false,
+    true,
   );
   assert.equal(
     supportsStructuredQuestions(["ask_user_questions"], {

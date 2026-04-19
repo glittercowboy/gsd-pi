@@ -129,12 +129,16 @@ export function initHealthWidget(ctx: ExtensionContext): void {
       void refresh();
     }, REFRESH_INTERVAL_MS);
 
+    let cachedWidth: number | undefined;
     return {
-      render(_width: number): string[] {
-        if (!cachedLines) cachedLines = buildHealthLines(data);
+      render(width: number): string[] {
+        if (!cachedLines || cachedWidth !== width) {
+          cachedLines = buildHealthLines(data, width);
+          cachedWidth = width;
+        }
         return cachedLines;
       },
-      invalidate(): void { cachedLines = undefined; },
+      invalidate(): void { cachedLines = undefined; cachedWidth = undefined; },
       dispose(): void {
         clearInterval(refreshTimer);
       },

@@ -5,6 +5,7 @@ import { execFileSync } from "node:child_process";
 import type { NotificationPreferences } from "./types.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { CmuxClient, emitOsc777Notification, resolveCmuxConfig } from "../cmux/index.js";
+import { sendRemoteNotification } from "../remote-questions/notify.js";
 
 export type NotifyLevel = "info" | "success" | "warning" | "error";
 export type NotificationKind = "complete" | "error" | "budget" | "milestone" | "attention";
@@ -31,6 +32,11 @@ export function sendDesktopNotification(
     title = formatNotificationTitle(projectName);
   }
   const loaded = loadEffectiveGSDPreferences()?.preferences;
+
+  // Remote notifications fire independently of desktop preferences.
+  // sendRemoteNotification handles "not configured" gracefully (early return).
+  void sendRemoteNotification(title, message).catch(() => {});
+
   if (!shouldSendDesktopNotification(kind, loaded?.notifications)) return;
 
   const cmux = resolveCmuxConfig(loaded);

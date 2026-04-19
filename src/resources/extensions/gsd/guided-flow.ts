@@ -7,6 +7,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import type { GSDState } from "./types.js";
 import { showNextAction } from "../shared/tui.js";
 import { loadFile, saveFile } from "./files.js";
 import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
@@ -36,6 +37,8 @@ import { nativeIsRepo, nativeInit } from "./native-git-bridge.js";
 import { isInheritedRepo } from "./repo-identity.js";
 import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitignore.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { resolveUokFlags } from "./uok/flags.js";
+import { ensurePlanV2Graph } from "./uok/plan-v2.js";
 import { detectProjectState } from "./detection.js";
 import { showProjectInit, offerMigration } from "./init-wizard.js";
 import { validateDirectory } from "./validate-directory.js";
@@ -81,6 +84,33 @@ function nextMilestoneIdReserved(existingIds: string[], uniqueEnabled: boolean):
   const id = nextMilestoneId(allIds, uniqueEnabled);
   reserveMilestoneId(id);
   return id;
+}
+
+function needsPlanV2Gate(state: GSDState): boolean {
+  return state.phase === "executing"
+    || state.phase === "summarizing"
+    || state.phase === "validating-milestone"
+    || state.phase === "completing-milestone";
+}
+
+function runPlanV2Gate(
+  ctx: ExtensionContext,
+  basePath: string,
+  state: GSDState,
+): boolean {
+  const prefs = loadEffectiveGSDPreferences()?.preferences;
+  const uokFlags = resolveUokFlags(prefs);
+  if (!uokFlags.planV2 || !needsPlanV2Gate(state)) return true;
+  const compiled = ensurePlanV2Graph(basePath, state);
+  if (!compiled.ok) {
+    const reason = compiled.reason ?? "plan-v2 compilation failed";
+    ctx.ui.notify(
+      `Plan gate failed-closed: ${reason}. Complete plan/discuss artifacts before execution.`,
+      "error",
+    );
+    return false;
+  }
+  return true;
 }
 
 // ─── Commit Instruction Helpers ──────────────────────────────────────────────
@@ -239,10 +269,12 @@ export function checkAutoStartAfterDiscuss(): boolean {
   } catch (e) { logWarning("guided", `CONTEXT-DRAFT.md unlink failed: ${(e as Error).message}`); }
 
   // Cleanup: remove discussion manifest after auto-start (only needed during discussion)
-  try { unlinkSync(manifestPath); } catch (e) { logWarning("guided", `manifest unlink failed: ${(e as Error).message}`); }
+  if (existsSync(manifestPath)) {
+    try { unlinkSync(manifestPath); } catch (e) { logWarning("guided", `manifest unlink failed: ${(e as Error).message}`); }
+  }
 
   pendingAutoStartMap.delete(basePath);
-  ctx.ui.notify(`Milestone ${milestoneId} ready.`, "info");
+  ctx.ui.notify(`Milestone ${milestoneId} ready.`, "success");
   startAutoDetached(ctx, pi, basePath, false, { step });
   return true;
 }
@@ -1319,6 +1351,8 @@ export async function showSmartEntry(
   } catch (err) {
     logWarning("guided", `STATE.md rebuild failed: ${(err as Error).message}`);
   }
+
+  if (!runPlanV2Gate(ctx, basePath, state)) return;
 
   if (!state.activeMilestone?.id) {
     // Guard: if a discuss session is already in flight, don't re-inject the prompt.

@@ -427,3 +427,66 @@ test("formatDoctorFindings shows findings with appropriate icons", () => {
   assert.ok(output.includes("1 warning"));
   assert.ok(output.includes("1 fixed"));
 });
+
+// ─── Regression #3891 — alibaba-coding-plan missing from PROVIDER_REGISTRY ───────
+//
+// Before this fix, `alibaba-coding-plan` was not in PROVIDER_REGISTRY, causing
+// `/gsd keys add alibaba-coding-plan` to silently fail (provider not found).
+// alibaba-dashscope is the new standalone provider added in the same PR.
+
+test("regression #3891 — alibaba-coding-plan is in PROVIDER_REGISTRY", () => {
+  const provider = findProvider("alibaba-coding-plan");
+  assert.ok(provider, "alibaba-coding-plan must be in PROVIDER_REGISTRY for /gsd keys add to work");
+  assert.equal(provider.id, "alibaba-coding-plan");
+  assert.equal(provider.category, "llm");
+  assert.equal(provider.envVar, "ALIBABA_API_KEY");
+});
+
+test("alibaba-dashscope is in PROVIDER_REGISTRY", () => {
+  const provider = findProvider("alibaba-dashscope");
+  assert.ok(provider, "alibaba-dashscope must be in PROVIDER_REGISTRY for /gsd keys add to work");
+  assert.equal(provider.id, "alibaba-dashscope");
+  assert.equal(provider.category, "llm");
+  assert.equal(provider.envVar, "DASHSCOPE_API_KEY");
+});
+
+test("alibaba-coding-plan and alibaba-dashscope are separate providers (different env vars)", () => {
+  const codingPlan = findProvider("alibaba-coding-plan");
+  const dashscope = findProvider("alibaba-dashscope");
+  assert.ok(codingPlan, "alibaba-coding-plan must exist");
+  assert.ok(dashscope, "alibaba-dashscope must exist");
+  assert.notEqual(
+    codingPlan.envVar,
+    dashscope.envVar,
+    "alibaba-coding-plan and alibaba-dashscope must use different env vars",
+  );
+});
+
+test("getAllKeyStatuses includes alibaba-coding-plan", () => {
+  const auth = makeAuth();
+  const statuses = getAllKeyStatuses(auth);
+  const found = statuses.find((s) => s.provider.id === "alibaba-coding-plan");
+  assert.ok(found, "getAllKeyStatuses must include alibaba-coding-plan");
+});
+
+test("getAllKeyStatuses includes alibaba-dashscope", () => {
+  const auth = makeAuth();
+  const statuses = getAllKeyStatuses(auth);
+  const found = statuses.find((s) => s.provider.id === "alibaba-dashscope");
+  assert.ok(found, "getAllKeyStatuses must include alibaba-dashscope");
+});
+
+test("getAllKeyStatuses detects DASHSCOPE_API_KEY for alibaba-dashscope (failure path: missing key shows not configured)", () => {
+  const saved = process.env.DASHSCOPE_API_KEY;
+  delete process.env.DASHSCOPE_API_KEY;
+  try {
+    const auth = makeAuth();
+    const statuses = getAllKeyStatuses(auth);
+    const found = statuses.find((s) => s.provider.id === "alibaba-dashscope");
+    assert.ok(found);
+    assert.equal(found.configured, false);
+    assert.equal(found.source, "none");
+  } finally {
+    if (saved !== undefined) process.env.DASHSCOPE_API_KEY = saved;
+  }
+});

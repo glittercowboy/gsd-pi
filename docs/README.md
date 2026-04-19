@@ -6,6 +6,8 @@ Welcome to the GSD documentation. This covers everything from getting started to
 
 Guides for installing, configuring, and using GSD day-to-day. Located in [`user-docs/`](./user-docs/).
 
+Simplified Chinese translation: [`zh-CN/`](./zh-CN/).
+
 | Guide | Description |
 |-------|-------------|
 | [Getting Started](./user-docs/getting-started.md) | Installation, first run, and basic usage |

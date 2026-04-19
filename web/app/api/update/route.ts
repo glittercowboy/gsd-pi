@@ -3,11 +3,15 @@ import {
   getUpdateStatus,
   triggerUpdate,
 } from "../../../../src/web/update-service.ts"
+import { verifyAuthToken } from "../../../lib/auth-guard";
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-export async function GET(): Promise<Response> {
+export async function GET(request: Request): Promise<Response> {
+  // Defense-in-depth: verify auth token even though middleware should catch it.
+  const authError = verifyAuthToken(request);
+  if (authError) return authError;
   try {
     const versionInfo = await checkForUpdate()
     const { status, error, targetVersion } = getUpdateStatus()
@@ -37,7 +41,10 @@ export async function GET(): Promise<Response> {
   }
 }
 
-export async function POST(): Promise<Response> {
+export async function POST(request: Request): Promise<Response> {
+  // Defense-in-depth: verify auth token even though middleware should catch it.
+  const authError = verifyAuthToken(request);
+  if (authError) return authError;
   try {
     const versionInfo = await checkForUpdate()
     const started = triggerUpdate(versionInfo.latestVersion)

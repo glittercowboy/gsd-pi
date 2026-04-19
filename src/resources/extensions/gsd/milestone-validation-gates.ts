@@ -11,7 +11,7 @@
  * dispatch rules, and state derivation. See gate-registry.ts.
  */
 
-import { _getAdapter } from "./gsd-db.js";
+import { isDbAvailable, upsertQualityGate } from "./gsd-db.js";
 import { getGatesForTurn } from "./gate-registry.js";
 
 /**
@@ -31,24 +31,23 @@ export function insertMilestoneValidationGates(
   verdict: string,
   evaluatedAt: string,
 ): void {
-  const db = _getAdapter();
-  if (!db) return;
+  if (!isDbAvailable()) return;
 
   const gateVerdict = verdict === "pass" ? "pass" : "flag";
   const milestoneGates = getGatesForTurn("validate-milestone");
 
   for (const def of milestoneGates) {
-    db.prepare(
-      `INSERT OR REPLACE INTO quality_gates
-       (milestone_id, slice_id, gate_id, scope, task_id, status, verdict, rationale, findings, evaluated_at)
-       VALUES (:mid, :sid, :gid, 'milestone', '', 'complete', :verdict, :rationale, '', :evaluated_at)`,
-    ).run({
-      ":mid": milestoneId,
-      ":sid": sliceId,
-      ":gid": def.id,
-      ":verdict": gateVerdict,
-      ":rationale": `${def.promptSection} — milestone validation verdict: ${verdict}`,
-      ":evaluated_at": evaluatedAt,
+    upsertQualityGate({
+      milestoneId,
+      sliceId,
+      gateId: def.id,
+      scope: "milestone",
+      taskId: "",
+      status: "complete",
+      verdict: gateVerdict,
+      rationale: `${def.promptSection} — milestone validation verdict: ${verdict}`,
+      findings: "",
+      evaluatedAt,
     });
   }
 }

@@ -121,12 +121,17 @@ class TestableSessionManager extends SessionManager {
 
     const resolvedDir = resolve(projectDir);
 
-    // Check duplicate via getSessionByDir
+    // Mirror the real SessionManager (#4476): only block when a genuinely
+    // active session is running. Terminal states are evicted.
     const existing = this.getSessionByDir(resolvedDir);
     if (existing) {
-      throw new Error(
-        `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
-      );
+      if (existing.status === 'starting' || existing.status === 'running' || existing.status === 'blocked') {
+        throw new Error(
+          `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
+        );
+      }
+      existing.unsubscribe?.();
+      (this as any).sessions.delete(resolvedDir);
     }
 
     const client = new MockRpcClient({ cwd: resolvedDir, args: [] });
@@ -258,6 +263,37 @@ describe('SessionManager', () => {
       },
     );
   });
+
+  // #4476: terminal-state sessions (completed/error/cancelled) are evicted so
+  // the same projectDir can host a fresh session — only starting/running/blocked
+  // sessions block re-entry.
+  for (const terminalStatus of ['completed', 'error', 'cancelled'] as const) {
+    it(`startSession evicts a prior '${terminalStatus}' session for the same projectDir`, async () => {
+      const dir = `/tmp/evict-${terminalStatus}`;
+      const firstSessionId = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
+      const first = sm.getSession(firstSessionId)!;
+      first.status = terminalStatus;
+
+      // Should not throw — terminal session is evicted, fresh one starts.
+      const secondSessionId = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
+      assert.notEqual(secondSessionId, firstSessionId);
+      const second = sm.getSession(secondSessionId)!;
+      assert.equal(second.status, 'running');
+      assert.equal(sm.getSessionByDir(dir)!.sessionId, secondSessionId);
+    });
+  }
+
+  for (const activeStatus of ['starting', 'running', 'blocked'] as const) {
+    it(`startSession still rejects a prior '${activeStatus}' session`, async () => {
+      const dir = `/tmp/keep-${activeStatus}`;
+      const sid = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
+      sm.getSession(sid)!.status = activeStatus;
+      await assert.rejects(
+        () => sm.startSession(dir, { cliPath: '/usr/bin/gsd' }),
+        /Session already active/,
+      );
+    });
+  }
 
   it('startSession rejects empty projectDir', async () => {
     await assert.rejects(

@@ -8,6 +8,7 @@ import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { snapshotUnitMetrics } from "./metrics.js";
 import { saveActivityLog } from "./activity-log.js";
 import { logWarning } from "./workflow-logger.js";
+import { writeTurnGitTransaction } from "./uok/gitops.js";
 
 export interface CloseoutOptions {
   promptCharCount?: number;
@@ -15,6 +16,12 @@ export interface CloseoutOptions {
   tier?: string;
   modelDowngraded?: boolean;
   continueHereFired?: boolean;
+  traceId?: string;
+  turnId?: string;
+  gitAction?: "commit" | "snapshot" | "status-only";
+  gitPush?: boolean;
+  gitStatus?: "ok" | "failed";
+  gitError?: string;
 }
 
 /**
@@ -47,6 +54,23 @@ export async function closeoutUnit(
     }
   }
 
+  if (opts?.traceId && opts.turnId && opts.gitAction && opts.gitStatus) {
+    writeTurnGitTransaction({
+      basePath,
+      traceId: opts.traceId,
+      turnId: opts.turnId,
+      unitType,
+      unitId,
+      stage: "record",
+      action: opts.gitAction,
+      push: opts.gitPush === true,
+      status: opts.gitStatus,
+      error: opts.gitError,
+      metadata: {
+        activityFile,
+      },
+    });
+  }
+
   return activityFile ?? undefined;
 }
-

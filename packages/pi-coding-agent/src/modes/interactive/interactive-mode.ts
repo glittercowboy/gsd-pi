@@ -127,6 +127,45 @@ function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
 }
 
+export type AssistantReplaySegment =
+	| { kind: "assistant"; startIndex: number; endIndex: number }
+	| { kind: "tool"; contentIndex: number };
+
+/**
+ * Build replay segments for historical assistant messages so rebuild paths
+ * preserve the original content[] ordering between assistant prose and tools.
+ */
+export function buildAssistantReplaySegments(contentBlocks: Array<any>): AssistantReplaySegment[] {
+	const segments: AssistantReplaySegment[] = [];
+	let runStart = -1;
+
+	for (let i = 0; i < contentBlocks.length; i++) {
+		const block = contentBlocks[i];
+		const isAssistantText = block?.type === "text" || block?.type === "thinking";
+		const isTool = block?.type === "toolCall" || block?.type === "serverToolUse";
+
+		if (isAssistantText) {
+			if (runStart === -1) runStart = i;
+			continue;
+		}
+
+		if (runStart !== -1) {
+			segments.push({ kind: "assistant", startIndex: runStart, endIndex: i - 1 });
+			runStart = -1;
+		}
+
+		if (isTool) {
+			segments.push({ kind: "tool", contentIndex: i });
+		}
+	}
+
+	if (runStart !== -1) {
+		segments.push({ kind: "assistant", startIndex: runStart, endIndex: contentBlocks.length - 1 });
+	}
+
+	return segments;
+}
+
 type CompactionQueuedMessage = {
 	text: string;
 	mode: "steer" | "followUp";
@@ -1402,7 +1441,9 @@ export class InteractiveMode {
 
 		// widgetContainerAbove: spacer collapses when pinned content is visible
 		// so there's no extra blank line between pinned output and the editor border.
-		this.widgetContainerAbove.clear();
+		// Use detachChildren() (not clear()) — the extensionWidgetsAbove map owns
+		// disposal; clear() would dispose every mounted widget on every re-render.
+		this.widgetContainerAbove.detachChildren();
 		const pinned = this.pinnedMessageContainer;
 		this.widgetContainerAbove.addChild({
 			render: () => pinned.children.length > 0 ? [] : [""],
@@ -1422,7 +1463,9 @@ export class InteractiveMode {
 		spacerWhenEmpty: boolean,
 		leadingSpacer: boolean,
 	): void {
-		container.clear();
+		// Detach without disposing — the widgets map owns lifecycle; disposing
+		// here would kill refresh timers and subscriptions on every re-render.
+		container.detachChildren();
 
 		if (widgets.size === 0) {
 			if (spacerWhenEmpty) {
@@ -1784,6 +1827,8 @@ export class InteractiveMode {
 			this.showError(message);
 		} else if (type === "warning") {
 			this.showWarning(message);
+		} else if (type === "success") {
+			this.showSuccess(message);
 		} else {
 			this.showStatus(message, { append: true });
 		}
@@ -2074,6 +2119,7 @@ export class InteractiveMode {
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+		const timestampFormat = this.settingsManager.getTimestampFormat();
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
@@ -2131,12 +2177,12 @@ export class InteractiveMode {
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
 								message.timestamp,
-								this.settingsManager.getTimestampFormat(),
+								timestampFormat,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
-						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings(), message.timestamp, this.settingsManager.getTimestampFormat());
+						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings(), message.timestamp, timestampFormat);
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
@@ -2150,7 +2196,7 @@ export class InteractiveMode {
 					message,
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
-					this.settingsManager.getTimestampFormat(),
+					timestampFormat,
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;
@@ -2188,6 +2234,7 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.pendingTools.clear();
+		const timestampFormat = this.settingsManager.getTimestampFormat();
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
@@ -2197,9 +2244,30 @@ export class InteractiveMode {
 		for (const message of sessionContext.messages) {
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
-				this.addMessageToChat(message);
-				// Render tool call components
-				for (const content of message.content) {
+				const hasToolBlocks = message.content.some((c) => c.type === "toolCall" || c.type === "serverToolUse");
+				if (!hasToolBlocks) {
+					this.addMessageToChat(message);
+					continue;
+				}
+
+				const assistantSegments: AssistantMessageComponent[] = [];
+				const replaySegments = buildAssistantReplaySegments(message.content);
+
+				for (const segment of replaySegments) {
+					if (segment.kind === "assistant") {
+						const assistantComponent = new AssistantMessageComponent(
+							message,
+							this.hideThinkingBlock,
+							this.getMarkdownThemeWithSettings(),
+							timestampFormat,
+							{ startIndex: segment.startIndex, endIndex: segment.endIndex },
+						);
+						this.chatContainer.addChild(assistantComponent);
+						assistantSegments.push(assistantComponent);
+						continue;
+					}
+
+					const content = message.content[segment.contentIndex];
 					if (content.type === "toolCall") {
 						const component = new ToolExecutionComponent(
 							content.name,
@@ -2255,6 +2323,11 @@ export class InteractiveMode {
 						}
 					}
 				}
+
+				// Match streaming-mode behavior: show metadata once on the final
+				// assistant prose segment for this message.
+				const lastAssistantSegment = assistantSegments[assistantSegments.length - 1];
+				lastAssistantSegment?.setShowMetadata(true);
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
 				const component = this.pendingTools.get(message.toolCallId);
@@ -2268,6 +2341,12 @@ export class InteractiveMode {
 			}
 		}
 
+		// Any pendingTools entries left over after replay are historical tool
+		// calls whose results were squashed out of session context (commonly by
+		// compaction). Mark them finished so the frame stops showing "Running".
+		for (const component of this.pendingTools.values()) {
+			component.markHistoricalNoResult();
+		}
 		this.pendingTools.clear();
 		this.trimChatHistory();
 		this.ui.requestRender();
@@ -2302,9 +2381,13 @@ export class InteractiveMode {
 
 	private rebuildChatFromMessages(): void {
 		this.chatContainer.clear();
+		this.pinnedMessageContainer.clear();
 		const context = this.sessionManager.buildSessionContext();
 		this.renderSessionContext(context);
-		this.populatePinnedFromMessages(context.messages);
+		// Pinned content NOT re-populated here — the streaming lifecycle in
+		// chat-controller.ts manages the pinned zone during active work.
+		// populatePinnedFromMessages() remains in renderInitialMessages()
+		// for the session-resume case at startup.
 	}
 
 	/**
@@ -2659,6 +2742,17 @@ export class InteractiveMode {
 	showWarning(warningMessage: string): void {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warningMessage}`), 1, 0));
+		this.ui.requestRender();
+	}
+
+	showSuccess(successMessage: string): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("success", text)));
+		this.chatContainer.addChild(
+			new Text(theme.fg("success", successMessage), 1, 0),
+		);
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("success", text)));
+		this.chatContainer.addChild(new Spacer(1));
 		this.ui.requestRender();
 	}
 

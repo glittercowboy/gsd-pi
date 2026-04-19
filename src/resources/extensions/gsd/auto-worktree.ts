@@ -60,6 +60,7 @@ import {
   nativeAddPaths,
   nativeRmForce,
   nativeBranchDelete,
+  nativeBranchForceReset,
   nativeBranchExists,
   nativeDiffNumstat,
   nativeUpdateRef,
@@ -102,6 +103,7 @@ function isSamePath(a: string, b: string): boolean {
   try {
     return realpathSync(a) === realpathSync(b);
   } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
     logWarning("worktree", `isSamePath failed: ${(e as Error).message}`);
     return false;
   }
@@ -233,6 +235,14 @@ function clearProjectRootStateFiles(basePath: string, milestoneId: string): void
       /* non-fatal — git command may fail if not in repo */
       logWarning("worktree", `untracked file cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  }
+}
+
+function isProjectGsdSymlink(basePath: string): boolean {
+  try {
+    return lstatSyncFn(join(basePath, ".gsd")).isSymbolicLink();
+  } catch {
+    return false;
   }
 }
 
@@ -920,8 +930,72 @@ export function runWorktreePostCreateHook(
 
 // ─── Auto-Worktree Branch Naming ───────────────────────────────────────────
 
+/** Returns the git branch name for a milestone worktree (`milestone/<MID>`). */
 export function autoWorktreeBranch(milestoneId: string): string {
   return `milestone/${milestoneId}`;
+}
+
+// ─── Branch-mode Entry ─────────────────────────────────────────────────────
+
+/**
+ * Enter branch isolation mode for a milestone.
+ *
+ * Creates `milestone/<MID>` from the integration branch (if it doesn't
+ * exist yet) and checks out to it.  No worktree directory is created — the
+ * project root is the working copy; only HEAD changes.
+ *
+ * Uses the same 3-tier integration-branch fallback as createAutoWorktree:
+ *   1. META.json recorded integration branch
+ *   2. git.main_branch preference
+ *   3. nativeDetectMainBranch (origin/HEAD auto-detection)
+ */
+export function enterBranchModeForMilestone(
+  basePath: string,
+  milestoneId: string,
+): void {
+  const branch = autoWorktreeBranch(milestoneId);
+  const branchExists = nativeBranchExists(basePath, branch);
+
+  if (!branchExists) {
+    // Create the milestone branch from the integration branch start-point.
+    const integrationBranch =
+      readIntegrationBranch(basePath, milestoneId) ?? undefined;
+    const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git;
+    // Validate main_branch preference exists in the repo before using it —
+    // a stale preference (e.g. "master" when repo uses "main") would cause
+    // nativeBranchForceReset to fail with a bad start-point reference.
+    const validatedPrefBranch =
+      gitPrefs?.main_branch &&
+      typeof gitPrefs.main_branch === "string" &&
+      gitPrefs.main_branch.length > 0 &&
+      nativeBranchExists(basePath, gitPrefs.main_branch)
+        ? gitPrefs.main_branch
+        : undefined;
+    const startPoint =
+      integrationBranch ??
+      validatedPrefBranch ??
+      nativeDetectMainBranch(basePath);
+
+    // nativeBranchForceReset creates (or resets) branch at startPoint,
+    // then checkout switches HEAD to it.
+    nativeBranchForceReset(basePath, branch, startPoint);
+    debugLog("auto-worktree", {
+      action: "enterBranchMode",
+      milestoneId,
+      branch,
+      startPoint,
+      created: true,
+    });
+  } else {
+    debugLog("auto-worktree", {
+      action: "enterBranchMode",
+      milestoneId,
+      branch,
+      reused: true,
+    });
+  }
+
+  nativeCheckoutBranch(basePath, branch);
 }
 
 // ─── Public API ────────────────────────────────────────────────────────────
@@ -1609,12 +1683,19 @@ export function mergeMilestoneToMain(
       // CONTEXT files into the stash. If stash pop later fails, those files
       // are permanently trapped in the stash entry and lost on the next
       // stash push or drop.
+      //
+      // When `.gsd` itself is a symlink, Git rejects pathspecs below it
+      // ("beyond a symbolic link"). In that layout, exclude the whole symlink
+      // and keep stashing real project files that could block the merge.
+      const stashPathspecs = isProjectGsdSymlink(originalBasePath_)
+        ? [".", ":(exclude).gsd"]
+        : [":(exclude).gsd/milestones"];
       execFileSync(
         "git",
         [
           "stash", "push", "--include-untracked",
           "-m", `gsd: pre-merge stash for ${milestoneId}`,
-          "--", ":(exclude).gsd/milestones",
+          "--", ...stashPathspecs,
         ],
         { cwd: originalBasePath_, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
       );

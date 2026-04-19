@@ -59,16 +59,19 @@ export function validateConfiguredModel(
   if (!configuredModel || !configuredExists) {
     // Model not configured at all, or removed from registry — pick a fallback.
     // Only fires when the model is genuinely unknown (not just temporarily unavailable).
+    //
+    // Model-agnostic selection order:
+    //   1. Pi migration default (preserves migration from ~/.pi install)
+    //   2. Any model from the user's previously-chosen provider (provider stickiness)
+    //   3. First available model in registry order (user-controlled via models.json)
     const piDefault = getPiDefaultModelAndProvider()
     const preferred =
       (piDefault
         ? availableModels.find((m) => m.provider === piDefault.provider && m.id === piDefault.model)
         : undefined) ||
-      availableModels.find((m) => m.provider === 'openai' && m.id === 'gpt-5.4') ||
-      availableModels.find((m) => m.provider === 'openai') ||
-      availableModels.find((m) => m.provider === 'anthropic' && m.id === 'claude-opus-4-6') ||
-      availableModels.find((m) => m.provider === 'anthropic' && m.id.includes('opus')) ||
-      availableModels.find((m) => m.provider === 'anthropic') ||
+      (configuredProvider
+        ? availableModels.find((m) => m.provider === configuredProvider)
+        : undefined) ||
       availableModels[0]
     if (preferred) {
       settingsManager.setDefaultModelAndProvider(preferred.provider, preferred.id)

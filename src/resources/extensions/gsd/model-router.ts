@@ -23,6 +23,14 @@ export interface DynamicRoutingConfig {
   budget_pressure?: boolean;       // default: true
   cross_provider?: boolean;        // default: true
   hooks?: boolean;                 // default: true
+  /**
+   * Opt into dynamic routing for flat-rate providers (e.g. claude-code,
+   * GitHub Copilot). Default false preserves the #3453 bypass that skips
+   * routing when the subscription makes per-request cost identical.
+   * Enable only when you want per-task model selection across a flat-rate
+   * subscription (e.g. haiku for research, opus for architecture). (#4386)
+   */
+  allow_flat_rate_providers?: boolean;
 }
 
 export interface RoutingDecision {
@@ -73,6 +81,7 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "gpt-4.1-nano": "light",
   "gpt-5-mini": "light",
   "gpt-5-nano": "light",
+  "gpt-5.4-mini": "light",
   "gpt-5.1-codex-mini": "light",
   "gpt-5.3-codex-spark": "light",
   "gemini-2.0-flash": "light",
@@ -90,6 +99,7 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
 
   // Heavy-tier models (most capable)
   "claude-opus-4-6": "heavy",
+  "claude-opus-4-7": "heavy",
   "claude-3-opus-latest": "heavy",
   "gpt-4-turbo": "heavy",
   "gpt-5": "heavy",
@@ -114,7 +124,8 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "claude-3-5-haiku-latest": 0.0008,
   "claude-sonnet-4-6": 0.003,
   "claude-sonnet-4-5-20250514": 0.003,
-  "claude-opus-4-6": 0.015,
+  "claude-opus-4-6": 0.005,
+  "claude-opus-4-7": 0.005,
   "gpt-4o-mini": 0.00015,
   "gpt-4o": 0.0025,
   "gpt-4.1": 0.002,
@@ -123,6 +134,7 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "gpt-5": 0.01,
   "gpt-5-mini": 0.0003,
   "gpt-5-nano": 0.0001,
+  "gpt-5.4-mini": 0.00075,
   "gpt-5-pro": 0.015,
   "gpt-5.1": 0.005,
   "gpt-5.1-codex-max": 0.003,
@@ -146,6 +158,7 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
 export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   // ── Anthropic ──────────────────────────────────────────────────────────────
   "claude-opus-4-6":              { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
+  "claude-opus-4-7":              { coding: 95, debugging: 90, research: 85, reasoning: 95, speed: 30, longContext: 80, instruction: 90 },
   "claude-sonnet-4-6":            { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
   "claude-sonnet-4-5-20250514":   { coding: 85, debugging: 80, research: 75, reasoning: 80, speed: 60, longContext: 75, instruction: 85 },
   "claude-3-5-sonnet-latest":     { coding: 82, debugging: 78, research: 72, reasoning: 78, speed: 62, longContext: 70, instruction: 82 },
@@ -164,6 +177,7 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   "gpt-5":                        { coding: 92, debugging: 88, research: 85, reasoning: 92, speed: 40, longContext: 85, instruction: 90 },
   "gpt-5-mini":                   { coding: 62, debugging: 52, research: 48, reasoning: 52, speed: 88, longContext: 52, instruction: 74 },
   "gpt-5-nano":                   { coding: 42, debugging: 32, research: 28, reasoning: 32, speed: 95, longContext: 32, instruction: 62 },
+  "gpt-5.4-mini":                 { coding: 70, debugging: 60, research: 55, reasoning: 60, speed: 84, longContext: 60, instruction: 78 },
   "gpt-5-pro":                    { coding: 94, debugging: 90, research: 88, reasoning: 94, speed: 35, longContext: 88, instruction: 92 },
   "gpt-5.1":                      { coding: 93, debugging: 89, research: 86, reasoning: 93, speed: 42, longContext: 86, instruction: 91 },
   "gpt-5.1-codex-max":            { coding: 90, debugging: 85, research: 70, reasoning: 85, speed: 55, longContext: 75, instruction: 85 },
@@ -265,8 +279,9 @@ export function scoreEligibleModels(
   capabilityOverrides?: Record<string, Partial<ModelCapabilities>>,
 ): Array<{ modelId: string; score: number }> {
   const scored = eligibleModelIds.map(modelId => {
-    const builtin = MODEL_CAPABILITY_PROFILES[modelId];
-    const override = capabilityOverrides?.[modelId];
+    const bareId = bareModelId(modelId);
+    const builtin = MODEL_CAPABILITY_PROFILES[bareId];
+    const override = capabilityOverrides?.[modelId] ?? capabilityOverrides?.[bareId];
     const profile: ModelCapabilities = builtin
       ? override ? { ...builtin, ...override } : builtin
       : { coding: 50, debugging: 50, research: 50, reasoning: 50, speed: 50, longContext: 50, instruction: 50 };
@@ -502,7 +517,7 @@ export function defaultRoutingConfig(): DynamicRoutingConfig {
 
 function getModelTier(modelId: string): ComplexityTier {
   // Strip provider prefix if present
-  const bareId = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+  const bareId = bareModelId(modelId);
 
   // Check exact match first
   if (MODEL_CAPABILITY_TIER[bareId]) return MODEL_CAPABILITY_TIER[bareId];
@@ -518,7 +533,7 @@ function getModelTier(modelId: string): ComplexityTier {
 
 /** Check if a model ID has a known capability tier mapping. (#2192) */
 function isKnownModel(modelId: string): boolean {
-  const bareId = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+  const bareId = bareModelId(modelId);
   if (MODEL_CAPABILITY_TIER[bareId]) return true;
   for (const knownId of Object.keys(MODEL_CAPABILITY_TIER)) {
     if (bareId.includes(knownId) || knownId.includes(bareId)) return true;
@@ -527,7 +542,7 @@ function isKnownModel(modelId: string): boolean {
 }
 
 function getModelCost(modelId: string): number {
-  const bareId = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+  const bareId = bareModelId(modelId);
 
   if (MODEL_COST_PER_1K_INPUT[bareId] !== undefined) {
     return MODEL_COST_PER_1K_INPUT[bareId];
@@ -540,6 +555,10 @@ function getModelCost(modelId: string): number {
 
   // Unknown cost — assume expensive to avoid routing to unknown cheap models
   return 999;
+}
+
+function bareModelId(modelId: string): string {
+  return modelId.includes("/") ? modelId.split("/").pop()! : modelId;
 }
 
 // ─── Tool Compatibility Filter (ADR-005 Phase 3) ───────────────────────────

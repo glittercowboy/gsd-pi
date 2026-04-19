@@ -177,16 +177,22 @@ test("deriveState returns completing-milestone when VALIDATION exists with termi
   }
 });
 
-test("deriveState treats needs-remediation as non-terminal — re-enters validating-milestone (#832)", async () => {
+test("deriveState returns blocked when needs-remediation has no incomplete slices (#4506)", async () => {
   const base = makeTmpBase();
   try {
     writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
     writeValidation(base, "M001", "---\nverdict: needs-remediation\nremediation_round: 0\n---\n\n# Validation\nNeeds fixes.");
 
     const state = await deriveState(base);
-    // needs-remediation routes back to validating-milestone for re-validation
-    assert.equal(state.phase, "validating-milestone");
+    // All slices done + needs-remediation → blocked (prevents infinite
+    // validate-milestone dispatch loop). Previously returned
+    // validating-milestone, which caused #4506.
+    assert.equal(state.phase, "blocked");
     assert.equal(state.activeMilestone?.id, "M001");
+    assert.ok(
+      state.blockers.some(b => b.includes("needs-remediation") && b.includes("M001")),
+      "blocker message should mention milestone and verdict",
+    );
   } finally {
     cleanup(base);
   }

@@ -40,7 +40,9 @@ if (mode !== "record") {
   console.log("");
   console.log("Usage:");
   console.log("  npm run test:fixtures:record    # Start recording");
-  console.log("  npm run test:fixtures            # Replay and verify recordings");
+  console.log(
+    "  npm run test:fixtures            # Replay and verify recordings",
+  );
   console.log("");
   console.log(`Recordings directory: ${dir}`);
   process.exit(0);

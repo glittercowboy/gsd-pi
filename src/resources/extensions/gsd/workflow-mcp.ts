@@ -30,6 +30,7 @@ const MCP_WORKFLOW_TOOL_SURFACE = new Set([
   "gsd_journal_query",
   "gsd_milestone_complete",
   "gsd_milestone_generate_id",
+  "gsd_checkpoint_db",
   "gsd_milestone_status",
   "gsd_milestone_validate",
   "gsd_plan_task",
@@ -353,12 +354,6 @@ export function supportsStructuredQuestions(
   options: Pick<WorkflowCapabilityOptions, "authMode" | "baseUrl"> = {},
 ): boolean {
   if (!activeTools.includes("ask_user_questions")) return false;
-
-  // Workflow MCP currently exposes ask_user_questions via MCP form elicitation.
-  // Local external CLI transports such as Claude Code can invoke the tool, but
-  // do not reliably complete that elicitation round-trip yet, so guided discuss
-  // prompts must fall back to plain-text questioning.
-  if (usesWorkflowMcpTransport(options.authMode, options.baseUrl)) return false;
 
   return true;
 }

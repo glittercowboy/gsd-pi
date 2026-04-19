@@ -61,9 +61,10 @@ function truncateMessage(msg: string, maxLen: number): string {
 
 /**
  * Build compact health lines for the widget.
- * Returns a string array suitable for setWidget().
+ * When `width` is provided, system + budget render left and last-commit
+ * right-aligned. Without width, all parts are joined inline (RPC fallback).
  */
-export function buildHealthLines(data: HealthWidgetData): string[] {
+export function buildHealthLines(data: HealthWidgetData, width?: number): string[] {
   if (data.projectState === "none") {
     return ["  GSD  No project loaded — run /gsd to start"];
   }
@@ -72,40 +73,68 @@ export function buildHealthLines(data: HealthWidgetData): string[] {
     return ["  GSD  Project initialized — run /gsd to continue setup"];
   }
 
-  const parts: string[] = [];
+  const leftParts: string[] = [];
 
   const totalIssues = data.environmentErrorCount + data.environmentWarningCount + (data.providerIssue ? 1 : 0);
   if (totalIssues === 0) {
-    parts.push("● System OK");
+    leftParts.push("● System OK");
   } else if (data.environmentErrorCount > 0 || data.providerIssue?.includes("✗")) {
-    parts.push(`✗ ${totalIssues} issue${totalIssues > 1 ? "s" : ""}`);
+    leftParts.push(`✗ ${totalIssues} issue${totalIssues > 1 ? "s" : ""}`);
   } else {
-    parts.push(`⚠ ${totalIssues} warning${totalIssues > 1 ? "s" : ""}`);
+    leftParts.push(`⚠ ${totalIssues} warning${totalIssues > 1 ? "s" : ""}`);
   }
 
   if (data.budgetCeiling !== undefined && data.budgetCeiling > 0) {
     const pct = Math.min(100, (data.budgetSpent / data.budgetCeiling) * 100);
-    parts.push(`Budget: ${formatCost(data.budgetSpent)}/${formatCost(data.budgetCeiling)} (${pct.toFixed(0)}%)`);
+    leftParts.push(`Budget: ${formatCost(data.budgetSpent)}/${formatCost(data.budgetCeiling)} (${pct.toFixed(0)}%)`);
   } else if (data.budgetSpent > 0) {
-    parts.push(`Spent: ${formatCost(data.budgetSpent)}`);
+    leftParts.push(`Spent: ${formatCost(data.budgetSpent)}`);
   }
 
   if (data.providerIssue) {
-    parts.push(data.providerIssue);
+    leftParts.push(data.providerIssue);
   }
 
   if (data.environmentErrorCount > 0) {
-    parts.push(`Env: ${data.environmentErrorCount} error${data.environmentErrorCount > 1 ? "s" : ""}`);
+    leftParts.push(`Env: ${data.environmentErrorCount} error${data.environmentErrorCount > 1 ? "s" : ""}`);
   } else if (data.environmentWarningCount > 0) {
-    parts.push(`Env: ${data.environmentWarningCount} warning${data.environmentWarningCount > 1 ? "s" : ""}`);
+    leftParts.push(`Env: ${data.environmentWarningCount} warning${data.environmentWarningCount > 1 ? "s" : ""}`);
   }
 
-  // Always-on last commit display — shows relative time + truncated message
+  // Last commit goes on the right-hand side when width is known.
+  let rightText = "";
   if (data.lastCommitEpoch !== null && data.lastCommitEpoch > 0) {
     const relTime = formatRelativeTime(data.lastCommitEpoch);
     const msg = data.lastCommitMessage ? ` — ${truncateMessage(data.lastCommitMessage, 50)}` : "";
-    parts.push(`Last commit: ${relTime}${msg}`);
+    rightText = `Last commit: ${relTime}${msg}`;
   }
 
-  return [`  ${parts.join("  │  ")}`];
+  const leftText = leftParts.join("  │  ");
+
+  if (width === undefined) {
+    const inline = rightText ? `${leftText}  │  ${rightText}` : leftText;
+    return [`  ${inline}`];
+  }
+
+  const prefix = "  ";
+  const innerWidth = Math.max(0, width - prefix.length);
+  const leftVis = leftText.length;
+  const rightVis = rightText.length;
+
+  if (!rightText) return [`${prefix}${truncateMessage(leftText, innerWidth)}`];
+  const MIN_GAP = 2;
+  if (leftVis + MIN_GAP + rightVis > innerWidth) {
+    // Preserve the left (status + budget) and truncate the right side
+    // (last commit) with an ellipsis so the combined line never exceeds
+    // innerWidth. If even the left alone overflows, clamp it too.
+    const leftRoom = Math.max(1, Math.min(leftVis, innerWidth - MIN_GAP - 1));
+    const clampedLeft = truncateMessage(leftText, leftRoom);
+    const rightRoom = Math.max(0, innerWidth - clampedLeft.length - MIN_GAP);
+    const clampedRight = rightRoom > 0 ? truncateMessage(rightText, rightRoom) : "";
+    if (!clampedRight) return [`${prefix}${clampedLeft}`];
+    const pad = " ".repeat(Math.max(MIN_GAP, innerWidth - clampedLeft.length - clampedRight.length));
+    return [`${prefix}${clampedLeft}${pad}${clampedRight}`];
+  }
+  const padding = " ".repeat(innerWidth - leftVis - rightVis);
+  return [`${prefix}${leftText}${padding}${rightText}`];
 }

@@ -27,85 +27,140 @@ One command. Walk away. Come back to a built project with clean git history.
 
 ---
 
-## What's New in v2.71
+## What's New in v2.76
 
-### MCP Secure Env Collect
+### Memory System
 
-- **Secure credential collection over MCP** — the new `secure_env_collect` tool uses MCP form elicitation to collect secrets (API keys, tokens) from external clients without exposing values in tool output. Masks input in interactive mode.
-- **Hardened elicitation schema** — MCP elicitation schema handling is stricter, with proper validation and fallback for providers that don't support forms.
+- **Persistent agent memory** — new `capture_thought`, `memory_query`, and `gsd_graph` tools let GSD store, retrieve, and relate thoughts across sessions (Phase 1).
+- **Ingestion + scopes/tags** — memories can be scoped (project, milestone, slice) and tagged for filtering (Phase 2).
+- **Hybrid retrieval** — keyword + semantic search over stored memory for higher-recall lookup (Phase 3).
+- **Knowledge graph relationships** — memories link into a queryable graph, feeding planning and dispatch context (Phase 4).
+- **Maintenance & observability** — cap cascade, decay metrics, and export/import for memory stores (Phase 5).
 
-### MCP Reliability
+### Progressive Planning (ADR-011)
 
-- **Stream ordering preserved** — MCP tool output now renders in the correct order, fixing interleaved output in Claude Code and other MCP clients.
-- **isError flag propagation** — workflow tool execution failures now correctly return `isError: true`, so MCP clients can distinguish success from failure.
-- **Multi-round discuss questions** — new-project discuss phase supports multi-round questioning with structured question gates.
+- **Sketch-then-refine planning** — Phase 1 introduces progressive plan elaboration so GSD drafts a lightweight sketch before locking a full plan (#3789).
+- **Mid-execution escalation** — Phase 2 lets tasks escalate complexity mid-run with compensating rollback on write failure (#3789).
 
-### Model Selection Hardening
+### Workflow & Onboarding
 
-- **Unconfigured models blocked** — models without a configured provider are filtered from selection surfaces, preventing dispatch failures.
-- **Provider readiness required** — saved default model selection now verifies the provider is ready before accepting it.
-- **Session override honored** — `/gsd model` selection persists as a session override across all dispatch phases.
-- **Minimal context guard** — model override logic is skipped in minimal command contexts where it doesn't apply.
+- **Unified workflow plugin system** — new plugin architecture with modes and remote install. Manage via `/gsd workflow list|run|install|info|validate`.
+- **`/gsd onboarding` re-entry** — revisit setup without restarting the TUI; setup hub disambiguation prevents duplicate banners.
+- **`/gsd scan`** — new lightweight command for rapid codebase assessment, writing to `.gsd/codebase/`.
 
-### Auto-Mode Resilience
+### Remote Control & TUI
 
-- **Credential cooldown recovery** — auto-mode survives transient 429 rate-limit responses with structured cooldown errors and a bounded retry budget.
-- **Fire-and-forget auto start** — auto start is detached from active turns to prevent blocking.
-- **Scoped forensics** — stuck-loop forensics are now scoped to auto sessions only, preventing false positives in interactive use.
+- **Telegram command interface** — control auto-mode remotely via Telegram alongside existing Slack/Discord routes.
+- **Chat, footer, and welcome refresh** — TUI visuals updated; onboarding no longer hangs on re-entry.
+- **New themes** — `tui-classic` and web `classic`/`vivid` palettes added (#4301).
 
-### TUI Improvements
+### Models & Providers
 
-- **Overlay subscription fix** — resolved overlay subscription lifecycle and `Ctrl+Shift+P` shortcut conflict.
-- **Improved overlays and shortcuts** — GSD overlays, keyboard shortcuts, and notification flows redesigned for consistency.
-- **Pinned output restored** — pinned output bar displays above the editor during tool execution again.
-- **Turn completion cleanup** — pinned latest output is cleared on turn completion, preventing stale output from persisting.
-- **Secure input masking** — extension input values are masked in interactive mode when collecting secrets.
+- **Claude Opus 4.7** — added across Anthropic, Bedrock, Antigravity, and OpenRouter (#4348).
+- **GPT-5.4-mini** — added to the OpenAI Codex model list (#1215).
+- **Anthropic proxy support** — `ANTHROPIC_BASE_URL` env var honored for custom proxy endpoints (#4140).
+- **Flat-rate provider opt-in** — `allow_flat_rate_providers` routing toggle (#4386).
+- **Ask User Questions** — optional markdown preview panel with side-by-side layout.
 
-### Provider Fixes
+### Auto-Mode & Reliability
 
-- **Full OAuth login URLs** — OAuth login URLs are now displayed in full instead of being truncated.
-- **MiniMax bearer auth** — MiniMax Anthropic API requests use proper bearer authentication.
-- **Case-insensitive tool rendering** — renderable tool matching is now case-insensitive, fixing missed tool output.
-- **Headless idle timeout** — idle timeout is kept off during interactive tool execution in headless mode.
-
-### Reliability & Internals
-
-- **TOCTOU file locking** — race conditions in event log and custom workflow graph file locking are fixed with proper atomic lock acquisition.
-- **State derive refactor** — `deriveStateFromDb` god function extracted into composable, testable helpers.
-- **Windows portability** — hardened cross-platform portability across runtime, tooling, and CI.
-- **Model routing transparency** — dynamic routing is skipped for interactive dispatches; model changes are always shown in the banner.
-- **Capability-aware routing (ADR-004)** — full implementation of capability scoring, `before_model_select` hook, and task metadata extraction.
-- **Multi-model provider strategy (ADR-005)** — infrastructure for multi-provider model selection wired into live paths.
-- **Anti-fabrication guardrails** — discuss prompts enforce turn-taking to prevent fabricated user responses.
-- **Milestone worktree cleanup** — merged worktree cleanup uses the milestone branch instead of generic lookups.
-- **Tool cache control** — `cache_control` breakpoints added to tool definitions for improved prompt caching.
+- **Stuck-loop hardening** — repeated units detected across the stuck window; research-dispatch stuck loop fixed (#4414).
+- **Branch isolation** — milestone branch is created on entry in `isolation: branch` mode with `main_branch` validation (#4389).
+- **Model fallback on limits** — auto-mode limit errors now trigger model fallback (#4373).
+- **Python/Windows verification** — python invocations normalized on Windows in the verification gate (#4416).
+- **Self-healing `.gsd/`** — symlinked `.gsd` staging self-heals to prevent silent data loss (#4423); `.gsd.migrating` healed on resume.
+- **Stale OAuth recovery** — stale Anthropic OAuth credentials self-heal (#4399).
 
 See the full [Changelog](./CHANGELOG.md) for details on every release.
 
 <details>
-<summary>Previous highlights (v2.70 and earlier)</summary>
+<summary>v2.75 highlights</summary>
+
+- **Knowledge graph system** — structured knowledge graph built from project artifacts
+- **`/gsd extract-learnings`** — extracts decisions, lessons, patterns, and surprises into `LEARNINGS.md`
+- **Unified Orchestration Kernel (UOK)** — now the default execution path with plan-v2 compile gates and reactive/parallel scheduling
+- **GSD Extension API** — third-party extensions loadable from `.gsd/extensions/` (#3338)
+- **v1 command parity** — 12 missing commands added, closing the migration gap
+- **Chat frame redesign** — unified styling for compaction notices, tool cards, and chat frame with timestamps and model headers
+- **Single-writer DB invariant** — engine database enforces single-writer to prevent corruption
+- **MCP worktree routing** — tool writes routed to active worktree; worktree paths accepted in project root guard
+- **Alibaba DashScope** — added as a standalone provider (#3891)
+- **Persistent language preference** — `/gsd language`
+
+</details>
+
+<details>
+<summary>v2.74 highlights</summary>
+
+- **DB-authoritative milestone completeness** — milestone completion state is derived from the database, not file markers (#4179)
+- **Flat-rate provider detection** — extended to custom and externalCli providers
+- **Thinking level as effort** — Claude Code passes thinking level as an effort parameter
+- **False milestone merge prevention** — auto-mode no longer falsely merges after a `complete-milestone` failure (#4175)
+- **Premature auto-stop fix** — prevents auto-mode from stopping early on blocked phase + missing reassessment
+- **Inline tool call rendering** — assistant tool calls render inline with text instead of grouped at the end
+- **Custom model preservation** — custom model selection preserved on `/gsd auto` bootstrap (#4122)
+
+</details>
+
+<details>
+<summary>v2.73 highlights</summary>
+
+- **Alibaba DashScope provider** — added as a standalone provider (#3891)
+- **Layered depth enforcement** — discuss phase enforces depth gates for thorough requirements gathering (#4079)
+- **Memory pressure watchdog** — stuck detection state persisted across sessions (#3708)
+- **Ollama cloud auth** — cloud auth support and real context window resolution via `/api/show` (#4017)
+- **DB corruption prevention** — direct writes to `gsd.db` blocked via hooks (#3674)
+- **Circular dependency cleanup** — 3 circular dependencies broken in extension modules (#3730)
+- **Subagent permissions** — GSD subagents default to `bypassPermissions` with safe built-ins pre-authorized
+- **Security hardening** — auth middleware activated, shutdown/update routes hardened (#4023)
+- **Stale slice reconciliation** — stale slice rows reconciled and STATE.md rebuilt before DB close (#3658)
+- **Subagent model preference** — `subagent_model` preference wired through to dispatch prompt builders
+- **Pipeline integrity** — 5 pipeline issues addressed from release audit, package-lock.json regenerated during bumps
+
+</details>
+
+<details>
+<summary>v2.72 highlights</summary>
+
+- **8 specialist subagents** — new specialist subagents and slim pro agents with GSD phase guard to prevent conflicts
+- **Model selection hardening** — unconfigured models blocked from selection, provider readiness required, session override honored
+- **Auto-mode resilience** — credential cooldown recovery with bounded retry budget, fire-and-forget auto start, scoped forensics
+- **TUI overhaul** — overlays, keyboard shortcuts, and notification flows redesigned for consistency
+- **Capability-aware routing (ADR-004)** — full implementation of capability scoring, `before_model_select` hook, and task metadata extraction
+- **Multi-model provider strategy (ADR-005)** — infrastructure for multi-provider model selection wired into live paths
+- **Anti-fabrication guardrails** — discuss prompts enforce turn-taking to prevent fabricated user responses
+- **Windows portability** — hardened cross-platform portability across runtime, tooling, and CI
+- **MCP reliability** — every registered tool exposed, SDK subpath resolution fixed, abort signals threaded through
+- **Tool cache control** — `cache_control` breakpoints added to tool definitions for improved prompt caching
+
+</details>
+
+<details>
+<summary>v2.71 highlights</summary>
+
+- **Secure credential collection over MCP** — `secure_env_collect` tool uses MCP form elicitation to collect secrets without exposing values in tool output
+- **MCP stream ordering** — tool output renders in correct order, fixing interleaved output in Claude Code and other MCP clients
+- **isError flag propagation** — workflow tool execution failures correctly return `isError: true`
+- **Multi-round discuss questions** — new-project discuss phase supports multi-round questioning with structured question gates
+- **TOCTOU file locking** — race conditions in event log and custom workflow graph file locking fixed with atomic lock acquisition
+- **State derive refactor** — `deriveStateFromDb` god function extracted into composable, testable helpers
+- **Pinned output fixes** — restored above editor during tool execution, cleared on turn completion
+
+</details>
+
+<details>
+<summary>v2.70 and earlier</summary>
 
 - **Full workflow over MCP (v2.68)** — slice replanning, milestone management, slice completion, task completion, and core planning tools exposed over MCP
 - **Transport-gated MCP (v2.68)** — workflow tool availability adapts to provider transport capabilities automatically
 - **Contextual tips system (v2.68)** — TUI and web terminal surface contextual tips based on workflow state
 - **Ask user questions over MCP (v2.70)** — interactive questions exposed via elicitation for external integrations
 - **Tiered Context Injection (M005)** — relevance-scoped context with 65%+ token reduction
-- **Resilient transient error recovery** — defers to Core RetryHandler and fixes cmdCtx race conditions
-- **Anthropic subscription routing** — auto-routed through Claude Code CLI provider with proper display names
 - **5-wave state machine hardening** — critical data integrity fixes across atomic writes, event log reconciliation, session recovery
-- **Discussion gate enforcement** — mechanical enforcement with fail-closed behavior
 - **Slice-level parallelism** — dependency-aware parallel dispatch within a milestone
-- **Persistent notification panel** — TUI overlay, widget, and web API for real-time notifications
 - **MCP server** — 6 read-only project state tools for external integrations, auto-wrapup guard, and question dedup
 - **Ollama extension** — first-class local LLM support via Ollama, with dynamic routing enabled by default
-- **Discord bot & daemon** — dedicated daemon package, Discord bot, and headless text mode with tool calls
-- **Capability-aware model routing (ADR-004)** — capability scoring, `before_model_select` hook, and task metadata extraction
 - **VS Code sidebar redesign** — SCM provider, checkpoints, diagnostics panel, activity feed, workflow controls, session forking
-- **`/gsd parallel watch`** — native TUI overlay for real-time worker monitoring
-- **Codebase map** — automatic codebase map injection for fresh agent contexts
-- **`--resume` flag** — resume previous sessions from the CLI
-- **Concurrent invocation guard** — prevents overlapping auto-mode runs
-- **VS Code integration** — status bar, file decorations, bash terminal, session tree, conversation history, and code lens
 - **Skills overhaul** — 30+ skill packs covering major frameworks, databases, and cloud platforms
 - **Single-writer state engine** — disciplined state transitions with machine guards and TOCTOU hardening
 - **DB-backed planning tools** — atomic SQLite tool calls for state transitions
@@ -175,8 +230,8 @@ GSD v2 solves all of these because it's not a prompt framework anymore — it's 
 | Roadmap reassessment | Manual                       | Automatic after each slice completes                    |
 | Skill discovery      | None                         | Auto-detect and install relevant skills during research |
 | Verification         | Manual                       | Automated verification commands with auto-fix retries   |
-| Reporting            | None                         | Self-contained HTML reports with metrics and dep graphs  |
-| Parallel execution   | None                         | Multi-worker parallel milestone orchestration            |
+| Reporting            | None                         | Self-contained HTML reports with metrics and dep graphs |
+| Parallel execution   | None                         | Multi-worker parallel milestone orchestration           |
 
 ### Migrating from v1
 
@@ -372,45 +427,47 @@ On first run, GSD launches a branded setup wizard that walks you through LLM pro
 
 ### Commands
 
-| Command                 | What it does                                                    |
-| ----------------------- | --------------------------------------------------------------- |
-| `/gsd`                  | Step mode — executes one unit at a time, pauses between each    |
-| `/gsd next`             | Explicit step mode (same as bare `/gsd`)                        |
-| `/gsd auto`             | Autonomous mode — researches, plans, executes, commits, repeats |
-| `/gsd quick`            | Execute a quick task with GSD guarantees, skip planning overhead |
-| `/gsd stop`             | Stop auto mode gracefully                                       |
-| `/gsd steer`            | Hard-steer plan documents during execution                      |
-| `/gsd discuss`          | Discuss architecture and decisions (works alongside auto mode)  |
-| `/gsd rethink`          | Conversational project reorganization                           |
-| `/gsd mcp`              | MCP server status and connectivity                              |
-| `/gsd status`           | Progress dashboard                                              |
-| `/gsd queue`            | Queue future milestones (safe during auto mode)                 |
-| `/gsd prefs`            | Model selection, timeouts, budget ceiling                       |
-| `/gsd migrate`          | Migrate a v1 `.planning` directory to `.gsd` format             |
-| `/gsd help`             | Categorized command reference for all GSD subcommands           |
-| `/gsd mode`             | Switch workflow mode (solo/team) with coordinated defaults      |
-| `/gsd forensics`        | Full-access GSD debugger for auto-mode failure investigation    |
-| `/gsd cleanup`          | Archive phase directories from completed milestones             |
+| Command                 | What it does                                                                  |
+| ----------------------- | ----------------------------------------------------------------------------- |
+| `/gsd`                  | Step mode — executes one unit at a time, pauses between each                  |
+| `/gsd next`             | Explicit step mode (same as bare `/gsd`)                                      |
+| `/gsd auto`             | Autonomous mode — researches, plans, executes, commits, repeats               |
+| `/gsd quick`            | Execute a quick task with GSD guarantees, skip planning overhead              |
+| `/gsd stop`             | Stop auto mode gracefully                                                     |
+| `/gsd steer`            | Hard-steer plan documents during execution                                    |
+| `/gsd discuss`          | Discuss architecture and decisions (works alongside auto mode)                |
+| `/gsd rethink`          | Conversational project reorganization                                         |
+| `/gsd mcp`              | MCP server status and connectivity                                            |
+| `/gsd status`           | Progress dashboard                                                            |
+| `/gsd queue`            | Queue future milestones (safe during auto mode)                               |
+| `/gsd prefs`            | Model selection, timeouts, budget ceiling                                     |
+| `/gsd migrate`          | Migrate a v1 `.planning` directory to `.gsd` format                           |
+| `/gsd help`             | Categorized command reference for all GSD subcommands                         |
+| `/gsd mode`             | Switch workflow mode (solo/team) with coordinated defaults                    |
+| `/gsd workflow`         | Unified workflow plugins — list, run `<name>`, install, info, validate        |
+| `/gsd start <template>` | Launch a bundled or custom workflow template (bugfix, release, etc.)          |
+| `/gsd forensics`        | Full-access GSD debugger for auto-mode failure investigation                  |
+| `/gsd cleanup`          | Archive phase directories from completed milestones                           |
 | `/gsd doctor`           | Runtime health checks — issues surface across widget, visualizer, and reports |
-| `/gsd keys`             | API key manager — list, add, remove, test, rotate, doctor       |
-| `/gsd logs`             | Browse activity, debug, and metrics logs                        |
-| `/gsd export --html`    | Generate HTML report for current or completed milestone         |
-| `/worktree` (`/wt`)     | Git worktree lifecycle — create, switch, merge, remove          |
-| `/voice`                | Toggle real-time speech-to-text (macOS, Linux)                  |
-| `/exit`                 | Graceful shutdown — saves session state before exiting          |
-| `/kill`                 | Kill GSD process immediately                                    |
-| `/clear`                | Start a new session (alias for `/new`)                          |
-| `Ctrl+Alt+G`            | Toggle dashboard overlay                                        |
-| `Ctrl+Alt+V`            | Toggle voice transcription                                      |
-| `Ctrl+Alt+B`            | Show background shell processes                                 |
-| `Alt+V`                 | Paste clipboard image (macOS)                                   |
-| `gsd config`            | Re-run the setup wizard (LLM provider + tool keys)              |
-| `gsd update`            | Update GSD to the latest version                                |
-| `gsd headless [cmd]`    | Run `/gsd` commands without TUI (CI, cron, scripts)             |
-| `gsd headless query`    | Instant JSON snapshot — state, next dispatch, costs (no LLM)    |
-| `gsd --continue` (`-c`) | Resume the most recent session for the current directory        |
-| `gsd --worktree` (`-w`) | Launch an isolated worktree session for the active milestone    |
-| `gsd sessions`          | Interactive session picker — browse and resume any saved session |
+| `/gsd keys`             | API key manager — list, add, remove, test, rotate, doctor                     |
+| `/gsd logs`             | Browse activity, debug, and metrics logs                                      |
+| `/gsd export --html`    | Generate HTML report for current or completed milestone                       |
+| `/worktree` (`/wt`)     | Git worktree lifecycle — create, switch, merge, remove                        |
+| `/voice`                | Toggle real-time speech-to-text (macOS, Linux)                                |
+| `/exit`                 | Graceful shutdown — saves session state before exiting                        |
+| `/kill`                 | Kill GSD process immediately                                                  |
+| `/clear`                | Start a new session (alias for `/new`)                                        |
+| `Ctrl+Alt+G`            | Toggle dashboard overlay                                                      |
+| `Ctrl+Alt+V`            | Toggle voice transcription                                                    |
+| `Ctrl+Alt+B`            | Show background shell processes                                               |
+| `Alt+V`                 | Paste clipboard image (macOS)                                                 |
+| `gsd config`            | Re-run the setup wizard (LLM provider + tool keys)                            |
+| `gsd update`            | Update GSD to the latest version                                              |
+| `gsd headless [cmd]`    | Run `/gsd` commands without TUI (CI, cron, scripts)                           |
+| `gsd headless query`    | Instant JSON snapshot — state, next dispatch, costs (no LLM)                  |
+| `gsd --continue` (`-c`) | Resume the most recent session for the current directory                      |
+| `gsd --worktree` (`-w`) | Launch an isolated worktree session for the active milestone                  |
+| `gsd sessions`          | Interactive session picker — browse and resume any saved session              |
 
 ---
 
@@ -497,7 +554,7 @@ version: 1
 models:
   research: claude-sonnet-4-6
   planning:
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     fallbacks:
       - openrouter/z-ai/glm-5
       - openrouter/minimax/minimax-m2.5
@@ -519,24 +576,24 @@ auto_report: true
 
 **Key settings:**
 
-| Setting                | What it controls                                                                                      |
-| ---------------------- | ----------------------------------------------------------------------------------------------------- |
-| `models.*`             | Per-phase model selection — string for a single model, or `{model, fallbacks}` for automatic failover |
-| `skill_discovery`      | `auto` / `suggest` / `off` — how GSD finds and applies skills                                         |
-| `auto_supervisor.*`    | Timeout thresholds for auto mode supervision                                                          |
-| `budget_ceiling`       | USD ceiling — auto mode pauses when reached                                                           |
-| `uat_dispatch`         | Enable automatic UAT runs after slice completion                                                      |
-| `always_use_skills`    | Skills to always load when relevant                                                                   |
-| `skill_rules`          | Situational rules for skill routing                                                                   |
-| `skill_staleness_days` | Skills unused for N days get deprioritized (default: 60, 0 = disabled)                                |
-| `unique_milestone_ids` | Uses unique milestone names to avoid clashes when working in teams of people                          |
-| `git.isolation`        | `none` (default), `worktree`, or `branch` — enable worktree or branch isolation for milestone work               |
-| `git.manage_gitignore` | Set `false` to prevent GSD from modifying `.gitignore`                                                           |
-| `verification_commands`| Array of shell commands to run after task execution (e.g., `["npm run lint", "npm run test"]`)        |
-| `verification_auto_fix`| Auto-retry on verification failures (default: true)                                                   |
-| `verification_max_retries` | Max retries for verification failures (default: 2)                                               |
-| `phases.require_slice_discussion` | Pause auto-mode before each slice for human discussion review                                    |
-| `auto_report`          | Auto-generate HTML reports after milestone completion (default: true)                                 |
+| Setting                           | What it controls                                                                                      |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `models.*`                        | Per-phase model selection — string for a single model, or `{model, fallbacks}` for automatic failover |
+| `skill_discovery`                 | `auto` / `suggest` / `off` — how GSD finds and applies skills                                         |
+| `auto_supervisor.*`               | Timeout thresholds for auto mode supervision                                                          |
+| `budget_ceiling`                  | USD ceiling — auto mode pauses when reached                                                           |
+| `uat_dispatch`                    | Enable automatic UAT runs after slice completion                                                      |
+| `always_use_skills`               | Skills to always load when relevant                                                                   |
+| `skill_rules`                     | Situational rules for skill routing                                                                   |
+| `skill_staleness_days`            | Skills unused for N days get deprioritized (default: 60, 0 = disabled)                                |
+| `unique_milestone_ids`            | Uses unique milestone names to avoid clashes when working in teams of people                          |
+| `git.isolation`                   | `none` (default), `worktree`, or `branch` — enable worktree or branch isolation for milestone work    |
+| `git.manage_gitignore`            | Set `false` to prevent GSD from modifying `.gitignore`                                                |
+| `verification_commands`           | Array of shell commands to run after task execution (e.g., `["npm run lint", "npm run test"]`)        |
+| `verification_auto_fix`           | Auto-retry on verification failures (default: true)                                                   |
+| `verification_max_retries`        | Max retries for verification failures (default: 2)                                                    |
+| `phases.require_slice_discussion` | Pause auto-mode before each slice for human discussion review                                         |
+| `auto_report`                     | Auto-generate HTML reports after milestone completion (default: true)                                 |
 
 ### Agent Instructions
 
@@ -553,14 +610,14 @@ Start GSD with `gsd --debug` to enable structured JSONL diagnostic logging. Debu
 GSD includes a coordinated token optimization system that reduces usage by 40-60% on cost-sensitive workloads. Set a single preference to coordinate model selection, phase skipping, and context compression:
 
 ```yaml
-token_profile: budget      # or balanced (default), quality
+token_profile: budget # or balanced (default), quality
 ```
 
-| Profile | Savings | What It Does |
-|---------|---------|-------------|
-| `budget` | 40-60% | Cheap models, skip research/reassess, minimal context inlining |
-| `balanced` | 10-20% | Default models, skip slice research, standard context |
-| `quality` | 0% | All phases, all context, full model power |
+| Profile    | Savings | What It Does                                                   |
+| ---------- | ------- | -------------------------------------------------------------- |
+| `budget`   | 40-60%  | Cheap models, skip research/reassess, minimal context inlining |
+| `balanced` | 10-20%  | Default models, skip slice research, standard context          |
+| `quality`  | 0%      | All phases, all context, full model power                      |
 
 **Complexity-based routing** automatically classifies tasks as simple/standard/complex and routes to appropriate models. Simple docs tasks get Haiku; complex architectural work gets Opus. The classification is heuristic (sub-millisecond, no LLM calls) and learns from outcomes via a persistent routing history.
 
@@ -572,44 +629,44 @@ See the full [Token Optimization Guide](./docs/user-docs/token-optimization.md) 
 
 GSD ships with 24 extensions, all loaded automatically:
 
-| Extension              | What it provides                                                                                                       |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **GSD**                | Core workflow engine, auto mode, commands, dashboard                                                                   |
+| Extension              | What it provides                                                                                                                                                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **GSD**                | Core workflow engine, auto mode, commands, dashboard                                                                                                                                                                                                                                 |
 | **Browser Tools**      | Playwright-based browser with form intelligence, intent-ranked element finding, semantic actions, PDF export, session state persistence, network mocking, device emulation, structured extraction, visual diffing, region zoom, test code generation, and prompt injection detection |
-| **Search the Web**     | Brave Search, Tavily, or Jina page extraction                                                                          |
-| **Google Search**      | Gemini-powered web search with AI-synthesized answers                                                                  |
-| **Context7**           | Up-to-date library/framework documentation                                                                             |
-| **Background Shell**   | Long-running process management with readiness detection                                                               |
-| **Async Jobs**         | Background bash commands with job tracking and cancellation                                                            |
-| **Subagent**           | Delegated tasks with isolated context windows                                                                          |
-| **GitHub**             | Full-suite GitHub issues and PR management via `/gh` command                                                           |
-| **Mac Tools**          | macOS native app automation via Accessibility APIs                                                                     |
-| **MCP Client**         | Native MCP server integration via @modelcontextprotocol/sdk                                                            |
-| **Voice**              | Real-time speech-to-text transcription (macOS, Linux — Ubuntu 22.04+)                                                  |
-| **Slash Commands**     | Custom command creation                                                                                                |
-| **Ask User Questions** | Structured user input with single/multi-select                                                                         |
-| **Secure Env Collect** | Masked secret collection without manual .env editing                                                                   |
-| **Remote Questions**   | Route decisions to Slack/Discord when human input is needed in headless/CI mode                                         |
-| **Universal Config**   | Discover and import MCP servers and rules from other AI coding tools                                                    |
-| **AWS Auth**           | Automatic Bedrock credential refresh for AWS-hosted models                                                              |
-| **Ollama**             | First-class local LLM support via Ollama                                                                                |
-| **Claude Code CLI**    | External provider extension for Claude Code CLI                                                                         |
-| **cmux**               | Claude multiplexer integration — desktop notifications, sidebar metadata, visual subagent splits                        |
-| **GitHub Sync**        | Auto-sync milestones to GitHub Issues, PRs, and Milestones                                                              |
-| **LSP**                | Language Server Protocol — diagnostics, definitions, references, hover, rename                                          |
-| **TTSR**               | Tool-triggered system rules — conditional context injection based on tool usage                                         |
+| **Search the Web**     | Brave Search, Tavily, or Jina page extraction                                                                                                                                                                                                                                        |
+| **Google Search**      | Gemini-powered web search with AI-synthesized answers                                                                                                                                                                                                                                |
+| **Context7**           | Up-to-date library/framework documentation                                                                                                                                                                                                                                           |
+| **Background Shell**   | Long-running process management with readiness detection                                                                                                                                                                                                                             |
+| **Async Jobs**         | Background bash commands with job tracking and cancellation                                                                                                                                                                                                                          |
+| **Subagent**           | Delegated tasks with isolated context windows                                                                                                                                                                                                                                        |
+| **GitHub**             | Full-suite GitHub issues and PR management via `/gh` command                                                                                                                                                                                                                         |
+| **Mac Tools**          | macOS native app automation via Accessibility APIs                                                                                                                                                                                                                                   |
+| **MCP Client**         | Native MCP server integration via @modelcontextprotocol/sdk                                                                                                                                                                                                                          |
+| **Voice**              | Real-time speech-to-text transcription (macOS, Linux — Ubuntu 22.04+)                                                                                                                                                                                                                |
+| **Slash Commands**     | Custom command creation                                                                                                                                                                                                                                                              |
+| **Ask User Questions** | Structured user input with single/multi-select                                                                                                                                                                                                                                       |
+| **Secure Env Collect** | Masked secret collection without manual .env editing                                                                                                                                                                                                                                 |
+| **Remote Questions**   | Route decisions to Slack/Discord when human input is needed in headless/CI mode                                                                                                                                                                                                      |
+| **Universal Config**   | Discover and import MCP servers and rules from other AI coding tools                                                                                                                                                                                                                 |
+| **AWS Auth**           | Automatic Bedrock credential refresh for AWS-hosted models                                                                                                                                                                                                                           |
+| **Ollama**             | First-class local LLM support via Ollama                                                                                                                                                                                                                                             |
+| **Claude Code CLI**    | External provider extension for Claude Code CLI                                                                                                                                                                                                                                      |
+| **cmux**               | Claude multiplexer integration — desktop notifications, sidebar metadata, visual subagent splits                                                                                                                                                                                     |
+| **GitHub Sync**        | Auto-sync milestones to GitHub Issues, PRs, and Milestones                                                                                                                                                                                                                           |
+| **LSP**                | Language Server Protocol — diagnostics, definitions, references, hover, rename                                                                                                                                                                                                       |
+| **TTSR**               | Tool-triggered system rules — conditional context injection based on tool usage                                                                                                                                                                                                      |
 
 ### Bundled Agents
 
 Five specialized subagents for delegated work:
 
-| Agent               | Role                                                         |
-| ------------------- | ------------------------------------------------------------ |
-| **Scout**           | Fast codebase recon — returns compressed context for handoff |
-| **Researcher**      | Web research — finds and synthesizes current information     |
-| **Worker**          | General-purpose execution in an isolated context window      |
-| **JavaScript Pro**  | JavaScript-specialized execution and debugging               |
-| **TypeScript Pro**  | TypeScript-specialized execution and debugging               |
+| Agent              | Role                                                         |
+| ------------------ | ------------------------------------------------------------ |
+| **Scout**          | Fast codebase recon — returns compressed context for handoff |
+| **Researcher**     | Web research — finds and synthesizes current information     |
+| **Worker**         | General-purpose execution in an isolated context window      |
+| **JavaScript Pro** | JavaScript-specialized execution and debugging               |
+| **TypeScript Pro** | TypeScript-specialized execution and debugging               |
 
 ---
 
@@ -623,8 +680,10 @@ The best practice for working in teams is to ensure unique milestone names acros
 # ── GSD: Runtime / Ephemeral (per-developer, per-session) ──────────────────
 # Crash detection sentinel — PID lock, written per auto-mode session
 .gsd/auto.lock
-# Auto-mode dispatch tracker — prevents re-running completed units
-.gsd/completed-units.json
+# Auto-mode dispatch tracker — prevents re-running completed units (includes archived per-milestone files)
+.gsd/completed-units*.json
+# State manifest — workflow state for recovery
+.gsd/state-manifest.json
 # Derived state cache — regenerated from plan/roadmap files on disk
 .gsd/STATE.md
 # Per-developer token/cost accumulator
@@ -637,6 +696,14 @@ The best practice for working in teams is to ensure unique milestone names acros
 .gsd/worktrees/
 # Parallel orchestration IPC and worker status
 .gsd/parallel/
+# SQLite database and WAL sidecars — checkpoint state, forensics data
+.gsd/gsd.db*
+# Daily-rotated event journal — structured event log for forensics
+.gsd/journal/
+# Doctor run history — diagnostic check results
+.gsd/doctor-history.jsonl
+# Workflow event log — structured event stream
+.gsd/event-log.jsonl
 # Generated HTML reports (regenerable via /gsd export --html)
 .gsd/reports/
 # Session-specific interrupted-work markers
@@ -746,7 +813,7 @@ In your preferences (`/gsd prefs`), assign different models to different phases:
 models:
   research: openrouter/deepseek/deepseek-r1
   planning:
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     fallbacks:
       - openrouter/z-ai/glm-5
   execution: claude-sonnet-4-6
@@ -759,8 +826,8 @@ Use expensive models where quality matters (planning, complex execution) and che
 
 ## Ecosystem
 
-| Project | Description |
-| ------- | ----------- |
+| Project                                                         | Description                                                                         |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | [GSD2 Config Utility](https://github.com/jeremymcs/gsd2-config) | Standalone configuration tool for managing GSD preferences, providers, and API keys |
 
 ---

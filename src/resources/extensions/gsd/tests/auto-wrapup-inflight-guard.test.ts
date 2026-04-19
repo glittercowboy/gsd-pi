@@ -15,6 +15,9 @@ const autoSrc = readFileSync(autoPath, "utf-8");
 const runUnitPath = join(import.meta.dirname, "..", "auto", "run-unit.ts");
 const runUnitSrc = readFileSync(runUnitPath, "utf-8");
 
+const registerHooksPath = join(import.meta.dirname, "..", "bootstrap", "register-hooks.ts");
+const registerHooksSrc = readFileSync(registerHooksPath, "utf-8");
+
 describe("#3512: gsd-auto-wrapup must not interrupt in-flight tool calls", () => {
   test("soft timeout wrapup gates triggerTurn on getInFlightToolCount() === 0", () => {
     // The soft timeout sendMessage must NOT use a hardcoded `triggerTurn: true`.
@@ -66,6 +69,42 @@ describe("#3512: gsd-auto-wrapup must not interrupt in-flight tool calls", () =>
     assert.ok(
       !contextSection.includes("triggerTurn: true"),
       "Context budget wrapup must not use hardcoded triggerTurn: true",
+    );
+  });
+});
+
+describe("#4276: pending/skipped tools stay visible to auto-mode hooks", () => {
+  test("tool_call handler marks GSD tools in-flight before execution_start", () => {
+    const startMarker = 'pi.on("tool_call", async (event, ctx) => {';
+    const endMarker = 'pi.on("tool_result", async (event) => {';
+    const toolCallSection = registerHooksSrc.slice(
+      registerHooksSrc.indexOf(startMarker),
+      registerHooksSrc.indexOf(endMarker),
+    );
+
+    assert.ok(toolCallSection.length > 0, "Could not locate tool_call handler section");
+    assert.ok(
+      toolCallSection.includes("markToolStart(event.toolCallId, event.toolName)"),
+      "tool_call handler must mark tools pending before tool_execution_start fires",
+    );
+  });
+
+  test("tool_result handler clears pending tools and records queued-skip errors", () => {
+    const startMarker = 'pi.on("tool_result", async (event) => {';
+    const endMarker = 'pi.on("tool_execution_start", async (event) => {';
+    const toolResultSection = registerHooksSrc.slice(
+      registerHooksSrc.indexOf(startMarker),
+      registerHooksSrc.indexOf(endMarker),
+    );
+
+    assert.ok(toolResultSection.length > 0, "Could not locate tool_result handler section");
+    assert.ok(
+      toolResultSection.includes("markToolEnd(event.toolCallId)"),
+      "tool_result handler must clear pending tool tracking even when execution hooks never fire",
+    );
+    assert.ok(
+      toolResultSection.includes("recordToolInvocationError(event.toolName, errorText)"),
+      "tool_result handler must surface queued-skip errors for GSD tools",
     );
   });
 });

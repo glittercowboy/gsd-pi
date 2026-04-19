@@ -5,6 +5,7 @@
  * the heavy tool-registration modules.
  */
 
+import { isAnthropicApi } from "@gsd/pi-ai";
 import { resolveSearchProviderFromPreferences } from "../gsd/preferences.js";
 
 /** Tool names for the Brave-backed custom search tools */
@@ -94,7 +95,10 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
   pi.on("model_select", async (event: any, ctx: any) => {
     modelSelectFired = true;
     const wasAnthropic = isAnthropicProvider;
-    isAnthropicProvider = event.model.provider === "anthropic";
+    // Gate on `api` not `provider` (#4478 / ADR-012): covers claude-code OAuth,
+    // anthropic-vertex, and Vercel-gateway-hosted Anthropic — all serve the
+    // Messages API and accept the native web_search tool.
+    isAnthropicProvider = isAnthropicApi(event.model);
 
     const hasBrave = !!process.env.BRAVE_API_KEY;
 
@@ -139,9 +143,15 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     // the model_select flag, then to the model name heuristic (last resort).
     // The model name heuristic is needed for session restores where
     // modelsAreEqual suppresses model_select AND the SDK doesn't pass model.
-    const eventModel = event.model as { provider: string } | undefined;
+    const eventModel = event.model as { provider?: string; api?: string } | undefined;
     let isAnthropic: boolean;
-    if (eventModel?.provider) {
+    if (eventModel?.api) {
+      // Preferred path: gate on wire protocol (#4478 / ADR-012).
+      isAnthropic = isAnthropicApi(eventModel);
+    } else if (eventModel?.provider) {
+      // Fallback for event shapes that carry provider but not api — only plain
+      // `anthropic` maps unambiguously without the api field. Other Anthropic
+      // transports will arrive via the modelSelectFired or model-name branch.
       isAnthropic = eventModel.provider === "anthropic";
     } else if (modelSelectFired) {
       isAnthropic = isAnthropicProvider;

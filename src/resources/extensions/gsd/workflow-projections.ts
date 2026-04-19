@@ -19,6 +19,7 @@ import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
+import { renderRoadmapFromDb } from "./markdown-renderer.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -180,6 +181,14 @@ export function renderSummaryContent(
   milestoneId: string,
   evidence?: Array<{ command: string; exitCode?: number; exit_code?: number; verdict: string; durationMs?: number; duration_ms?: number }>,
 ): string {
+  // If the task already has a fully rendered summary (written by handleCompleteTask's
+  // renderSummaryMarkdown), use it as-is. That content already includes frontmatter,
+  // heading, and all sections. Re-wrapping it inside a second frontmatter/heading
+  // envelope produces double frontmatter and duplicate sections.
+  if (taskRow.full_summary_md && taskRow.full_summary_md.trimStart().startsWith("---")) {
+    return taskRow.full_summary_md;
+  }
+
   // ── Frontmatter (YAML list format, matches parseSummary() expectations) ──
   const keyFilesYaml = taskRow.key_files && taskRow.key_files.length > 0
     ? taskRow.key_files.map(f => `  - ${f}`).join("\n")
@@ -342,7 +351,14 @@ export async function renderStateProjection(basePath: string): Promise<void> {
     // Probe DB handle — adapter may be set but underlying handle closed
     const adapter = _getAdapter();
     if (!adapter) return;
-    try { adapter.prepare("SELECT 1").get(); } catch { return; }
+    try {
+      adapter.prepare("SELECT 1").get();
+    } catch (err) {
+      logWarning("projection", "renderStateProjection: DB handle probe failed, skipping render", {
+        error: (err as Error).message,
+      });
+      return;
+    }
     const state = await deriveState(basePath);
     const content = renderStateContent(state);
     const dir = join(basePath, ".gsd");
@@ -360,11 +376,13 @@ export async function renderStateProjection(basePath: string): Promise<void> {
  * All calls are wrapped in try/catch — projection failure is non-fatal per D-02.
  */
 export async function renderAllProjections(basePath: string, milestoneId: string): Promise<void> {
-  // Render ROADMAP.md for the milestone
+  // Delegate to the authoritative roadmap renderer — the reduced
+  // renderRoadmapProjection omits sections like ## Boundary Map and would
+  // clobber the output written by plan-milestone / reassess-roadmap.
   try {
-    renderRoadmapProjection(basePath, milestoneId);
+    await renderRoadmapFromDb(basePath, milestoneId);
   } catch (err) {
-    logWarning("projection", `renderRoadmapProjection failed for ${milestoneId}: ${(err as Error).message}`);
+    logWarning("projection", `renderRoadmapFromDb failed for ${milestoneId}: ${(err as Error).message}`);
   }
 
   // Query all slices for this milestone
@@ -401,15 +419,16 @@ export async function renderAllProjections(basePath: string, milestoneId: string
 
 /**
  * Check if a projection file exists on disk. If missing, regenerate it from DB.
- * Returns true if the file was regenerated, false if it already existed.
+ * Returns true if the file was regenerated, false if it already existed or
+ * regeneration failed.
  * Satisfies PROJ-05 (corrupted/deleted projections regenerate on demand).
  */
-export function regenerateIfMissing(
+export async function regenerateIfMissing(
   basePath: string,
   milestoneId: string,
   sliceId: string,
   fileType: "PLAN" | "ROADMAP" | "SUMMARY" | "STATE",
-): boolean {
+): Promise<boolean> {
   let filePath: string;
 
   switch (fileType) {
@@ -451,23 +470,21 @@ export function regenerateIfMissing(
     return false;
   }
 
-  // Regenerate the missing file
+  // Regenerate the missing file. Each renderer may swallow its own errors
+  // (e.g. renderStateProjection), so confirm the file actually exists on
+  // disk before reporting success — true must mean "file is there now".
   try {
     switch (fileType) {
       case "PLAN":
         renderPlanProjection(basePath, milestoneId, sliceId);
-        break;
+        return existsSync(filePath);
       case "ROADMAP":
-        renderRoadmapProjection(basePath, milestoneId);
-        break;
+        await renderRoadmapFromDb(basePath, milestoneId);
+        return existsSync(filePath);
       case "STATE":
-        // renderStateProjection is async — fire-and-forget.
-        // Return false since the file isn't written yet; it will appear
-        // on the next post-mutation hook cycle.
-        void renderStateProjection(basePath);
-        return false;
+        await renderStateProjection(basePath);
+        return existsSync(filePath);
     }
-    return true;
   } catch (err) {
     logWarning("projection", `regenerateIfMissing ${fileType} failed: ${(err as Error).message}`);
     return false;

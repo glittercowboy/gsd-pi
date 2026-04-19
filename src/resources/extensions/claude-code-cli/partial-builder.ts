@@ -20,6 +20,49 @@ import { hasXmlParameterTags, repairToolJson } from "@gsd/pi-ai";
 import type { BetaContentBlock, BetaRawMessageStreamEvent, NonNullableUsage } from "./sdk-types.js";
 
 // ---------------------------------------------------------------------------
+// MCP tool name parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Split a Claude Code MCP tool name (`mcp__<server>__<tool>`) into its parts.
+ * Returns null for non-prefixed names so callers can fall through unchanged.
+ *
+ * Server names may contain hyphens (`gsd-workflow`); the SDK uses the literal
+ * `__` delimiter between the server name and the tool name.
+ */
+export function parseMcpToolName(name: string): { server: string; tool: string } | null {
+	if (!name.startsWith("mcp__")) return null;
+	const rest = name.slice("mcp__".length);
+	const delim = rest.indexOf("__");
+	if (delim <= 0 || delim === rest.length - 2) return null;
+	return { server: rest.slice(0, delim), tool: rest.slice(delim + 2) };
+}
+
+/**
+ * Build a GSD ToolCall block from a Claude Code SDK tool_use block, stripping
+ * the `mcp__<server>__` prefix from the name so registered extension renderers
+ * (which use the unprefixed canonical names) can match. The original server
+ * name is preserved on the block for diagnostics and rendering.
+ */
+function toolCallFromBlock(
+	id: string,
+	rawName: string,
+	input: Record<string, unknown>,
+): ToolCall {
+	const parsed = parseMcpToolName(rawName);
+	const toolCall: ToolCall = {
+		type: "toolCall",
+		id,
+		name: parsed ? parsed.tool : rawName,
+		arguments: input,
+	};
+	if (parsed) {
+		(toolCall as ToolCall & { mcpServer?: string }).mcpServer = parsed.server;
+	}
+	return toolCall;
+}
+
+// ---------------------------------------------------------------------------
 // Content-block mapping helpers
 // ---------------------------------------------------------------------------
 
@@ -41,12 +84,7 @@ export function mapContentBlock(
 			} satisfies ThinkingContent;
 
 		case "tool_use":
-			return {
-				type: "toolCall",
-				id: block.id,
-				name: block.name,
-				arguments: block.input,
-			} satisfies ToolCall;
+			return toolCallFromBlock(block.id, block.name, block.input);
 
 		case "server_tool_use":
 			return {
@@ -183,12 +221,7 @@ export class PartialMessageBuilder {
 				}
 				if (block.type === "tool_use") {
 					this.toolJsonAccum.set(streamIndex, "");
-					this.partial.content.push({
-						type: "toolCall",
-						id: block.id,
-						name: block.name,
-						arguments: {},
-					});
+					this.partial.content.push(toolCallFromBlock(block.id, block.name, {}));
 					return { type: "toolcall_start", contentIndex, partial: this.partial };
 				}
 				if (block.type === "server_tool_use") {

@@ -43,4 +43,22 @@ describe("Input", () => {
 		assert.ok(!line.includes("secret123"), "rendered line must not expose raw secret text");
 		assert.ok(line.includes("*********"), "rendered line should include masked characters");
 	});
+
+	it("maps kitty keypad digits to text instead of inserting private-use glyphs", () => {
+		const input = new Input();
+		input.focused = true;
+
+		input.handleInput("\x1b[57400;129u");
+
+		assert.equal(input.getValue(), "1");
+	});
+
+	it("ignores kitty keypad navigation keys in text input", () => {
+		const input = new Input();
+		input.focused = true;
+
+		input.handleInput("\x1b[57417u");
+
+		assert.equal(input.getValue(), "");
+	});
 });

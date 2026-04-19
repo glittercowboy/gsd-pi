@@ -112,4 +112,43 @@ describe("handleValidateMilestone write ordering (#2725)", () => {
     ).get();
     assert.equal(row, undefined, "assessment row should be deleted after disk-write rollback");
   });
+
+  it("persists milestone validation gate_runs rows when UOK gates are enabled", async () => {
+    base = makeTmpBase();
+    const dbPath = join(base, ".gsd", "gsd.db");
+    openDatabase(dbPath);
+    insertMilestone({ id: "M001" });
+    insertSlice({ id: "S01", milestoneId: "M001" });
+
+    const result = await handleValidateMilestone(VALID_PARAMS, base, {
+      uokGatesEnabled: true,
+      traceId: "trace-val-1",
+      turnId: "turn-val-1",
+    });
+    assert.ok(!("error" in result), `unexpected error: ${"error" in result ? result.error : ""}`);
+
+    const adapter = _getAdapter()!;
+    const row = adapter.prepare(
+      `SELECT gate_id, outcome, failure_class, trace_id, turn_id
+       FROM gate_runs
+       WHERE gate_id = 'milestone-validation-gates'
+       ORDER BY id DESC
+       LIMIT 1`,
+    ).get() as
+      | {
+          gate_id: string;
+          outcome: string;
+          failure_class: string;
+          trace_id: string;
+          turn_id: string;
+        }
+      | undefined;
+
+    assert.ok(row, "milestone validation gate row should be persisted");
+    assert.equal(row?.gate_id, "milestone-validation-gates");
+    assert.equal(row?.outcome, "pass");
+    assert.equal(row?.failure_class, "none");
+    assert.equal(row?.trace_id, "trace-val-1");
+    assert.equal(row?.turn_id, "turn-val-1");
+  });
 });

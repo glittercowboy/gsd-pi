@@ -25,6 +25,24 @@ import {
 export type { AnthropicEffort, AnthropicOptions };
 export { extractRetryAfterMs };
 
+/**
+ * Resolve the base URL for Anthropic API requests.
+ *
+ * Resolution order:
+ * 1. ANTHROPIC_BASE_URL environment variable (if set and non-empty after trim)
+ * 2. model.baseUrl (from the model definition)
+ *
+ * This allows routing traffic through custom proxy endpoints (e.g. OpusMax,
+ * local mirrors, corporate gateways) without modifying model definitions.
+ */
+export function resolveAnthropicBaseUrl(model: Model<"anthropic-messages">): string {
+	const envBaseUrl = process.env.ANTHROPIC_BASE_URL?.trim();
+	if (envBaseUrl) {
+		return envBaseUrl;
+	}
+	return model.baseUrl;
+}
+
 let _AnthropicClass: typeof Anthropic | undefined;
 async function getAnthropicClass(): Promise<typeof Anthropic> {
 	if (!_AnthropicClass) {
@@ -70,7 +88,7 @@ async function createClient(
 		const client = new AnthropicClass({
 			apiKey: null,
 			authToken: apiKey,
-			baseURL: model.baseUrl,
+			baseURL: resolveAnthropicBaseUrl(model),
 			dangerouslyAllowBrowser: true,
 			defaultHeaders: mergeHeaders(
 				{

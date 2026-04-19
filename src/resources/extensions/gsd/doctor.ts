@@ -172,8 +172,14 @@ function auditRequirements(content: string | null): DoctorIssue[] {
     const notes = block.match(/^-\s+Notes:\s+(.+)$/m)?.[1]?.trim().toLowerCase() ?? "";
 
     if (status === "active" && (!owner || owner === "none" || owner === "none yet")) {
+      // #4414: Downgrade to warning. A newly-created requirement has
+      // primary_owner='' by default until the planning agent wires it to
+      // a slice via gsd_requirement_update. Flagging this as an error
+      // during normal planning is noisy — the real failure mode is when
+      // it persists past milestone completion, which is covered by other
+      // audits. Keep the signal but don't treat it as a blocker.
       issues.push({
-        severity: "error",
+        severity: "warning",
         code: "active_requirement_missing_owner",
         scope: "project",
         unitId: requirementId,

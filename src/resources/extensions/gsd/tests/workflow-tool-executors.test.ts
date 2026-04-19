@@ -11,6 +11,7 @@ import {
   _getAdapter,
   insertGateRow,
 } from "../gsd-db.ts";
+import { markDepthVerified, clearDiscussionFlowState } from "../bootstrap/write-gate.ts";
 import {
   executeCompleteMilestone,
   executePlanMilestone,
@@ -640,6 +641,102 @@ test("executeReplanSlice rewrites pending tasks and renders replan artifacts", a
     ).get("M006", "S06", "T08") as Record<string, unknown> | undefined;
     assert.equal(updatedTask?.title, "Pending task (updated)");
     assert.equal(insertedTask?.title, "Remediation task");
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSummarySave removes sibling CONTEXT-DRAFT when writing milestone CONTEXT (#4442)", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    markDepthVerified("M001", base);
+
+    const milestoneDir = join(base, ".gsd", "milestones", "M001");
+    mkdirSync(milestoneDir, { recursive: true });
+    const draftPath = join(milestoneDir, "M001-CONTEXT-DRAFT.md");
+    writeFileSync(draftPath, "# Draft\n\nincremental notes");
+    assert.ok(existsSync(draftPath), "precondition: draft exists");
+
+    const result = await inProjectDir(base, () => executeSummarySave({
+      milestone_id: "M001",
+      artifact_type: "CONTEXT",
+      content: "# Context\n\nfinal discussion output",
+    }, base));
+
+    assert.equal(result.details.operation, "save_summary");
+    assert.equal(result.details.artifact_type, "CONTEXT");
+
+    const contextPath = join(milestoneDir, "M001-CONTEXT.md");
+    assert.ok(existsSync(contextPath), "CONTEXT.md should be written");
+    assert.equal(
+      existsSync(draftPath),
+      false,
+      "CONTEXT-DRAFT.md should be removed after final CONTEXT.md is written",
+    );
+  } finally {
+    clearDiscussionFlowState();
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSummarySave removes sibling CONTEXT-DRAFT when writing slice CONTEXT (#4442)", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    mkdirSync(sliceDir, { recursive: true });
+    const draftPath = join(sliceDir, "S01-CONTEXT-DRAFT.md");
+    writeFileSync(draftPath, "# Slice Draft\n\nincremental slice notes");
+    assert.ok(existsSync(draftPath), "precondition: slice draft exists");
+
+    const result = await inProjectDir(base, () => executeSummarySave({
+      milestone_id: "M001",
+      slice_id: "S01",
+      artifact_type: "CONTEXT",
+      content: "# Slice Context\n\nfinal slice output",
+    }, base));
+
+    assert.equal(result.details.operation, "save_summary");
+    assert.equal(result.details.artifact_type, "CONTEXT");
+
+    const contextPath = join(sliceDir, "S01-CONTEXT.md");
+    assert.ok(existsSync(contextPath), "slice CONTEXT.md should be written");
+    assert.equal(
+      existsSync(draftPath),
+      false,
+      "slice CONTEXT-DRAFT.md should be removed after final CONTEXT.md is written",
+    );
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSummarySave leaves sibling CONTEXT-DRAFT intact for non-CONTEXT artifacts (#4442)", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+
+    const milestoneDir = join(base, ".gsd", "milestones", "M001");
+    mkdirSync(milestoneDir, { recursive: true });
+    const draftPath = join(milestoneDir, "M001-CONTEXT-DRAFT.md");
+    writeFileSync(draftPath, "# Draft\n\nstill in progress");
+
+    const result = await inProjectDir(base, () => executeSummarySave({
+      milestone_id: "M001",
+      artifact_type: "RESEARCH",
+      content: "# Research\n\nresearch notes",
+    }, base));
+
+    assert.equal(result.details.artifact_type, "RESEARCH");
+    assert.ok(
+      existsSync(draftPath),
+      "CONTEXT-DRAFT.md must survive RESEARCH/SUMMARY/ASSESSMENT writes",
+    );
   } finally {
     closeDatabase();
     cleanup(base);

@@ -82,10 +82,20 @@ export async function runUnit(
   if (s.currentUnitModel && typeof pi.setModel === "function") {
     const restored = await pi.setModel(s.currentUnitModel, { persist: false });
     if (!restored) {
+      const message =
+        `Failed to restore configured model ${s.currentUnitModel.provider}/${s.currentUnitModel.id} after session creation`;
       ctx.ui.notify(
-        `Failed to restore ${s.currentUnitModel.provider}/${s.currentUnitModel.id} after session creation. Using session default.`,
+        `${message}. Cancelling unit before dispatch.`,
         "warning",
       );
+      return {
+        status: "cancelled",
+        errorContext: {
+          message,
+          category: "session-failed",
+          isTransient: false,
+        },
+      };
     }
   }
 

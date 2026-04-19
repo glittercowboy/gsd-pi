@@ -1,4 +1,16 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+
+/**
+ * Lightweight PATH scan for the `claude` binary — no subprocess, no network.
+ * Mirrors the check in src/resources/extensions/gsd/doctor-providers.ts so the
+ * legacy Anthropic OAuth self-heal path can only trigger when the user has a
+ * working Claude Code CLI to fall back to.
+ */
+function isClaudeCodeBinaryInPath(): boolean {
+	const pathDirs = (process.env.PATH ?? "").split(":");
+	return pathDirs.some((dir) => dir && existsSync(join(dir, "claude")));
+}
 
 /**
  * Structured error thrown when all credentials for a provider are in a
@@ -86,6 +98,16 @@ export interface CreateAgentSessionOptions {
 	tools?: Tool[];
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
+	/**
+	 * Additional tool names to activate after extensions/MCP servers register.
+	 * Names that are not registered by any extension are silently ignored
+	 * by AgentSession.setActiveToolsByName.
+	 *
+	 * Used by --tools to forward names that don't match a built-in (likely
+	 * extension- or MCP-provided), so subagents whose frontmatter declares
+	 * extension tools don't end up with an empty tool list.
+	 */
+	extraActiveToolNames?: string[];
 
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
 	resourceLoader?: ResourceLoader;
@@ -219,6 +241,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		time("resourceLoader.reload");
 	}
 
+	// Flush provider registrations queued during extension loading so that
+	// extension models (e.g. pi-claude-cli) are visible in the registry before
+	// findInitialModel() runs. bindCore() repeats this flush as a safety net
+	// for any late-arriving registrations.
+	const { runtime: extensionRuntime } = resourceLoader.getExtensions();
+	for (const { name, config } of extensionRuntime.pendingProviderRegistrations) {
+		modelRegistry.registerProvider(name, config);
+	}
+	extensionRuntime.pendingProviderRegistrations = [];
+
 	// Check if session has existing data to restore
 	const existingSession = sessionManager.buildSessionContext();
 	const hasExistingSession = existingSession.messages.length > 0;
@@ -289,9 +321,15 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const defaultActiveToolNames: ToolName[] = editMode === "hashline"
 		? ["hashline_read", "bash", "hashline_edit", "write", "lsp"]
 		: ["read", "bash", "edit", "write", "lsp"];
-	const initialActiveToolNames: ToolName[] = options.tools
+	const builtinActiveToolNames: ToolName[] = options.tools
 		? options.tools.map((t) => t.name).filter((n): n is ToolName => n in allTools)
 		: defaultActiveToolNames;
+	// Merge in extension/MCP tool names from --tools that didn't match a built-in.
+	// AgentSession.setActiveToolsByName silently drops names that aren't in the
+	// registry, so unknown names are harmless here.
+	const initialActiveToolNames: string[] = options.extraActiveToolNames
+		? [...builtinActiveToolNames, ...options.extraActiveToolNames]
+		: builtinActiveToolNames;
 
 	let agent: Agent;
 
@@ -428,6 +466,35 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			// the retry handler and creating cascading error entries (#3429).
 			const hasAuth = modelRegistry.authStorage.hasAuth(resolvedProvider);
 			if (hasAuth) {
+				// Anthropic OAuth was removed in v2.74.0 for TOS compliance (#3952).
+				// Users who upgraded from an older version may still have OAuth
+				// credentials in auth.json that will never resolve to a valid API key.
+				if (
+					resolvedProvider === "anthropic" &&
+					modelRegistry.authStorage.hasLegacyOAuthCredential(resolvedProvider)
+				) {
+					// Self-heal: strip the stale oauth entry so hasAuth() stops lying
+					// about anthropic being configured. This preserves any api_key
+					// credentials alongside it.
+					const removed = modelRegistry.authStorage.removeLegacyOAuthCredential(resolvedProvider);
+					if (removed) {
+						console.warn(
+							`[auth] Removed unsupported Anthropic OAuth credential from auth.json (#3952).`,
+						);
+					}
+					if (isClaudeCodeBinaryInPath()) {
+						throw new Error(
+							`Removed stale Anthropic OAuth credential (OAuth support removed in v2.74.0). ` +
+								`Your current model's provider is set to "anthropic" but the local Claude Code CLI ` +
+								`is available — switch the model's provider to "claude-code" in your preferences ` +
+								`to use it, or set ANTHROPIC_API_KEY to continue with the Anthropic API directly.`,
+						);
+					}
+					throw new Error(
+						`Removed stale Anthropic OAuth credential (OAuth support removed in v2.74.0). ` +
+							`Set ANTHROPIC_API_KEY, run '/login' and paste an API key, or switch to a different provider.`,
+					);
+				}
 				const expiry = modelRegistry.authStorage.getEarliestBackoffExpiry(resolvedProvider);
 				const retryAfterMs = expiry !== undefined ? Math.max(0, expiry - Date.now()) : undefined;
 				throw new CredentialCooldownError(resolvedProvider, retryAfterMs);

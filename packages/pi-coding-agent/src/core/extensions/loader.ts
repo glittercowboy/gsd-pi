@@ -432,6 +432,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		// Stubs replaced by ExtensionRunner at construction time via bindEmitMethods().
 		emitBeforeModelSelect: async () => undefined,
 		emitAdjustToolSet: async () => undefined,
+		emitExtensionEvent: async () => undefined,
 	};
 
 	return runtime;
@@ -593,6 +594,10 @@ function createExtensionAPI(
 
 		async emitAdjustToolSet(event: Omit<import("./types.js").AdjustToolSetEvent, "type">): Promise<import("./types.js").AdjustToolSetResult | undefined> {
 			return runtime.emitAdjustToolSet(event);
+		},
+
+		async emitExtensionEvent(event: import("./types.js").ExtensionEvent): Promise<unknown> {
+			return runtime.emitExtensionEvent(event);
 		},
 
 		events: eventBus,

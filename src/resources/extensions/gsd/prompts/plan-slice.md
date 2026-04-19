@@ -44,6 +44,7 @@ Narrate your decomposition reasoning — why you're grouping work this way, what
 
 Then:
 0. If `REQUIREMENTS.md` was preloaded above, identify which Active requirements the roadmap says this slice owns or supports. These are the requirements this plan must deliver — every owned requirement needs at least one task that directly advances it, and verification must prove the requirement is met.
+0a. Call `memory_query` with keywords from the slice title and the source files listed below. Prior architectural decisions, conventions, and gotchas in this area should inform task decomposition — not be re-derived during execution.
 1. Read the templates:
    - `~/.gsd/agent/extensions/gsd/templates/plan.md`
    - `~/.gsd/agent/extensions/gsd/templates/task-plan.md`
@@ -53,6 +54,7 @@ Then:
    - For simple slices: executable commands or script assertions are fine.
    - If the project is non-trivial and has no test framework, the first task should set one up.
    - If this slice establishes a boundary contract, verification must exercise that contract.
+   - Planned test files must only read from or import paths that are tracked in git. Do NOT plan tests whose inputs or fixtures are paths listed in `.gitignore` (e.g. `.gsd/`, `.planning/`, `.audits/`). If the scenario seems to require such a file, plan an inline fixture or a tracked sample instead.
 4. **For non-trivial slices only** — plan observability, proof level, and integration closure:
    - Include `Observability / Diagnostics` for backend, integration, async, stateful, or UI slices where failure diagnosis matters.
    - Fill `Proof Level` and `Integration Closure` when the slice crosses runtime boundaries or has meaningful integration concerns.

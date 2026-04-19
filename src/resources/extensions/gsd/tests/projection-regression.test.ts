@@ -5,7 +5,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderPlanContent, renderRoadmapContent } from '../workflow-projections.ts';
+import { renderPlanContent, renderRoadmapContent, renderSummaryContent } from '../workflow-projections.ts';
 import type { SliceRow, TaskRow } from '../gsd-db.ts';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -30,6 +30,8 @@ function makeSliceRow(overrides?: Partial<SliceRow>): SliceRow {
     observability_impact: '',
     sequence: 0,
     replan_triggered_at: null,
+    is_sketch: 0,
+    sketch_scope: '',
     ...overrides,
   };
 }
@@ -61,6 +63,11 @@ function makeTaskRow(overrides?: Partial<TaskRow>): TaskRow {
     expected_output: [],
     observability_impact: '',
     sequence: 0,
+    blocker_source: '',
+    escalation_pending: 0,
+    escalation_awaiting_review: 0,
+    escalation_artifact_path: null,
+    escalation_override_applied_at: null,
     ...overrides,
   };
 }
@@ -171,4 +178,99 @@ test('renderRoadmapContent: slice with status "pending" shows ⬜', () => {
   const content = renderRoadmapContent(milestone, slices);
 
   assert.ok(content.includes('⬜'), 'pending slice should show ⬜');
+});
+
+// ─── renderSummaryContent: double-frontmatter regression ─────────────────
+
+test('renderSummaryContent: uses full_summary_md as-is when it contains frontmatter', () => {
+  const existingSummary = [
+    '---',
+    'id: T01',
+    'parent: S01',
+    'milestone: M001',
+    'key_files:',
+    '  - src/thing.ts',
+    'verification_result: passed',
+    'completed_at: 2026-01-01T00:00:00Z',
+    'blocker_discovered: false',
+    '---',
+    '',
+    '# T01: Did the thing',
+    '',
+    '**One-liner summary**',
+    '',
+    '## What Happened',
+    '',
+    'Narrative content here.',
+    '',
+    '## Deviations',
+    '',
+    'None.',
+    '',
+  ].join('\n');
+
+  const task = makeTaskRow({
+    id: 'T01',
+    status: 'complete',
+    title: 'Did the thing',
+    one_liner: 'One-liner summary',
+    narrative: 'Narrative content here.',
+    full_summary_md: existingSummary,
+  });
+
+  const result = renderSummaryContent(task, 'S01', 'M001');
+
+  // Must NOT produce double frontmatter
+  const frontmatterCount = (result.match(/^---$/gm) || []).length;
+  assert.equal(frontmatterCount, 2, `Expected exactly 2 frontmatter delimiters (one block), got ${frontmatterCount}`);
+
+  // Must NOT produce double H1 heading
+  const h1Count = (result.match(/^# T01:/gm) || []).length;
+  assert.equal(h1Count, 1, `Expected exactly 1 H1 heading, got ${h1Count}`);
+
+  // Content should match the full_summary_md exactly
+  assert.equal(result, existingSummary);
+});
+
+test('renderSummaryContent: synthesizes from DB columns when full_summary_md is empty', () => {
+  const task = makeTaskRow({
+    id: 'T01',
+    status: 'complete',
+    title: 'Did the thing',
+    one_liner: 'One-liner summary',
+    narrative: 'Built the feature.',
+    full_summary_md: '',
+    deviations: 'Deviated slightly.',
+    known_issues: 'None.',
+  });
+
+  const result = renderSummaryContent(task, 'S01', 'M001');
+
+  // Should have exactly one frontmatter block
+  const frontmatterCount = (result.match(/^---$/gm) || []).length;
+  assert.equal(frontmatterCount, 2, 'Should have one frontmatter block (2 delimiters)');
+
+  // Should contain synthesized sections
+  assert.ok(result.includes('## What Happened'), 'Should have What Happened section');
+  assert.ok(result.includes('Built the feature.'), 'Should use narrative for content');
+  assert.ok(result.includes('## Deviations'), 'Should have Deviations section');
+  assert.ok(result.includes('Deviated slightly.'), 'Should include deviation text');
+});
+
+test('renderSummaryContent: synthesizes when full_summary_md has no frontmatter', () => {
+  const task = makeTaskRow({
+    id: 'T02',
+    status: 'complete',
+    title: 'Partial summary',
+    narrative: 'Did some work.',
+    full_summary_md: 'Just a plain text summary with no frontmatter.',
+  });
+
+  const result = renderSummaryContent(task, 'S01', 'M001');
+
+  // Should synthesize with proper frontmatter since the stored md lacks it
+  assert.ok(result.startsWith('---'), 'Should start with frontmatter');
+  assert.ok(result.includes('id: T02'), 'Should have task ID in frontmatter');
+  assert.ok(result.includes('## What Happened'), 'Should have What Happened section');
+  assert.ok(result.includes('Did some work.'), 'Should use narrative');
 });

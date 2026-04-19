@@ -46,8 +46,8 @@ let loadAttempted = false;
 
 function suppressSqliteWarning(): void {
   const origEmit = process.emit;
-  // @ts-expect-error overriding process.emit for warning filter
-  process.emit = function (event: string, ...args: unknown[]): boolean {
+  // Override via loose cast: Node's overloaded emit signature is not directly assignable.
+  (process as any).emit = function (event: string, ...args: unknown[]): boolean {
     if (
       event === "warning" &&
       args[0] &&

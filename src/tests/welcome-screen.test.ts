@@ -40,10 +40,15 @@ test('renders version', () => {
   assert.ok(out.includes('Get Shit Done'), 'brand name missing')
 })
 
-test('renders model and provider', () => {
+test('renders GSD project state or fallback hint', () => {
+  // Model/provider intentionally removed from the welcome screen — they live
+  // in the persistent footer. Without .gsd/STATE.md present the welcome
+  // should surface the "No active GSD project" fallback instead.
   const out = strip(capture({ version: '1.0.0', modelName: 'claude-opus-4-6', provider: 'Anthropic' }))
-  assert.ok(out.includes('claude-opus-4-6'), 'model name missing')
-  assert.ok(out.includes('Anthropic'), 'provider missing')
+  assert.ok(
+    out.includes('No active GSD project') || /Active\s+M\d+/.test(out),
+    'welcome should show GSD state lines or the no-project fallback',
+  )
 })
 
 test('renders cwd hint', () => {

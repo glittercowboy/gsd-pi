@@ -26,14 +26,16 @@
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { type Theme } from "@gsd/pi-coding-agent";
+import { getMarkdownTheme, type Theme } from "@gsd/pi-coding-agent";
 import {
 	Editor,
 	Key,
+	Markdown,
 	matchesKey,
 	truncateToWidth,
 	type TUI,
 } from "@gsd/pi-tui";
+import { mergeSideBySide } from "./layout-utils.js";
 import { makeUI, INDENT } from "./ui.js";
 
 // ─── Exported types ───────────────────────────────────────────────────────────
@@ -41,6 +43,8 @@ import { makeUI, INDENT } from "./ui.js";
 export interface QuestionOption {
 	label: string;
 	description: string;
+	/** Optional markdown content shown in a side-by-side preview panel when this option is highlighted. */
+	preview?: string;
 }
 
 export interface Question {
@@ -112,6 +116,14 @@ export interface WrapUpOptions {
 
 const OTHER_OPTION_LABEL = "None of the above";
 const OTHER_OPTION_DESCRIPTION = "Select to type your own answer.";
+
+// Preview layout constants
+const MIN_PREVIEW_WIDTH = 30;
+const MIN_OPTIONS_WIDTH = 30;
+const PREVIEW_RATIO = 0.60;       // preview gets the majority of the width
+const DIVIDER_CHARS = " │ ";
+const DIVIDER_WIDTH = 3;
+const PREVIEW_MAX_LINES = 20;     // hard cap — keeps total ≤ 24 rows for single-question
 
 // ─── Wrap-up screen ───────────────────────────────────────────────────────────
 
@@ -520,6 +532,99 @@ export async function showInterviewRound(
 			return lines;
 		}
 
+		// ── Preview helpers ──────────────────────────────────────────────
+
+		let mdThemeCache: ReturnType<typeof getMarkdownTheme> | null = null;
+		let previewCache: { markdown: string; width: number; lines: string[] } | null = null;
+
+		function questionHasAnyPreview(): boolean {
+			return questions[currentIdx].options.some(
+				(o) => o.preview != null && o.preview.trim().length > 0,
+			);
+		}
+
+		function getCurrentPreview(): string | null {
+			const q = questions[currentIdx];
+			const idx = states[currentIdx].cursorIndex;
+			if (idx < q.options.length) {
+				const preview = q.options[idx].preview;
+				return preview && preview.trim().length > 0 ? preview : null;
+			}
+			return null;
+		}
+
+		function renderOptionsColumn(optWidth: number): string[] {
+			const ui = makeUI(theme, optWidth);
+			const col: string[] = [];
+			const push = (...rows: string[][]) => { for (const r of rows) col.push(...r); };
+
+			const q = questions[currentIdx];
+			const st = states[currentIdx];
+			const multiSel = isMultiSelect(currentIdx);
+
+			push(ui.question(` ${q.question}`));
+			if (multiSel) push(ui.meta("  (Select all that apply)"));
+			push(ui.blank());
+
+			for (let i = 0; i < q.options.length; i++) {
+				const opt = q.options[i];
+				const isCursor = i === st.cursorIndex;
+				if (multiSel) {
+					const isChecked = st.checkedIndices.has(i);
+					if (isCursor && !focusNotes) push(ui.checkboxSelected(opt.label, opt.description, isChecked));
+					else push(ui.checkboxUnselected(opt.label, opt.description, isChecked, focusNotes));
+				} else {
+					const isCommitted = i === st.committedIndex;
+					if (isCursor && !focusNotes) {
+						push(ui.optionSelected(i + 1, opt.label, opt.description, isCommitted));
+					} else {
+						push(ui.optionUnselected(i + 1, opt.label, opt.description, { isCommitted, isFocusDimmed: focusNotes }));
+					}
+				}
+			}
+
+			const ndIdx = noneOrDoneIdx(currentIdx);
+			const ndCursor = ndIdx === st.cursorIndex;
+			if (multiSel) {
+				push(ui.blank());
+				if (ndCursor && !focusNotes) push(ui.doneSelected());
+				else push(ui.doneUnselected());
+			} else {
+				const ndCommitted = ndIdx === st.committedIndex;
+				if (ndCursor && !focusNotes) {
+					push(ui.slotSelected(OTHER_OPTION_LABEL, OTHER_OPTION_DESCRIPTION, ndCommitted));
+				} else {
+					push(ui.slotUnselected(OTHER_OPTION_LABEL, OTHER_OPTION_DESCRIPTION, { isCommitted: ndCommitted, isFocusDimmed: focusNotes }));
+				}
+			}
+
+			if (st.notesVisible || focusNotes) {
+				push(ui.blank(), ui.notesLabel(focusNotes));
+				if (focusNotes) {
+					for (const line of getEditor().render(optWidth - 2)) col.push(truncateToWidth(` ${line}`, optWidth));
+				} else if (st.notes) {
+					push(ui.notesText(st.notes));
+				}
+			}
+
+			return col;
+		}
+
+		function renderPreviewColumn(markdown: string, previewWidth: number): string[] {
+			if (previewCache && previewCache.markdown === markdown && previewCache.width === previewWidth) {
+				return previewCache.lines;
+			}
+			if (!mdThemeCache) mdThemeCache = getMarkdownTheme();
+			const header = [
+				truncateToWidth(theme.fg("accent", theme.bold(" Preview")), previewWidth),
+				truncateToWidth(theme.fg("dim", " " + "─".repeat(Math.max(0, previewWidth - 2))), previewWidth),
+			];
+			const md = new Markdown(markdown, 1, 0, mdThemeCache);
+			const lines = [...header, ...md.render(previewWidth)];
+			previewCache = { markdown, width: previewWidth, lines };
+			return lines;
+		}
+
 		// ── Main render ──────────────────────────────────────────────────
 
 		function render(width: number): string[] {
@@ -527,6 +632,95 @@ export async function showInterviewRound(
 
 			if (showingExitConfirm) { cachedLines = renderExitConfirm(width); return cachedLines; }
 			if (showingReview) { cachedLines = renderReviewScreen(width); return cachedLines; }
+
+			const useSideBySide = questionHasAnyPreview()
+				&& width >= (MIN_OPTIONS_WIDTH + MIN_PREVIEW_WIDTH + DIVIDER_WIDTH);
+
+			if (useSideBySide) {
+				// ── Preview path ──────────────────────────────────────
+				const ui = makeUI(theme, width);
+				const lines: string[] = [];
+				const push = (...rows: string[][]) => { for (const r of rows) lines.push(...r); };
+
+				push(ui.bar());
+
+				if (isMultiQuestion) {
+					const unanswered = questions.filter((_, i) => !isQuestionAnswered(i)).length;
+					const answeredSet = new Set(questions.map((_, i) => i).filter(i => isQuestionAnswered(i)));
+					push(ui.questionTabs(questions.map(q => q.header), currentIdx, answeredSet));
+					push(ui.blank());
+					const progressParts = [
+						opts.progress,
+						`Question ${currentIdx + 1}/${questions.length}`,
+						unanswered > 0 ? `${unanswered} unanswered` : null,
+					].filter(Boolean).join("  •  ");
+					if (progressParts) push(ui.meta(`  ${progressParts}`));
+					push(ui.blank());
+				} else {
+					if (opts.progress) push(ui.meta(`  ${opts.progress}`), ui.blank());
+				}
+
+				// Side-by-side body — fixed height per render, capped to terminal.
+				// tuiChrome accounts for elements rendered outside the interview
+				// component: spinner/loader (1-2), status line (1), tool header (1),
+				// plus a safety margin for future additions.
+				const termRows = (typeof process !== "undefined" && process.stdout?.rows) || 24;
+				const footerLines = 3; // blank + hints + bar
+				const tuiChrome = 5;
+				const maxBody = Math.min(PREVIEW_MAX_LINES, Math.max(6, termRows - lines.length - footerLines - tuiChrome));
+
+				const previewWidth = Math.max(MIN_PREVIEW_WIDTH, Math.floor(width * PREVIEW_RATIO));
+				const leftWidth = Math.max(MIN_OPTIONS_WIDTH, width - previewWidth - DIVIDER_WIDTH);
+
+				const fullLeft = renderOptionsColumn(leftWidth);
+				const leftLines = fullLeft.slice(0, maxBody);
+				if (fullLeft.length > maxBody) {
+					const n = fullLeft.length - maxBody + 1;
+					const lbl = `+${n} lines hidden`;
+					const d = "─".repeat(Math.max(0, Math.floor((leftWidth - lbl.length - 2) / 2)));
+					leftLines[maxBody - 1] = truncateToWidth(theme.fg("dim", ` ${d} ${lbl} ${d}`), leftWidth);
+				}
+
+				const preview = getCurrentPreview();
+				const fullRight = preview ? renderPreviewColumn(preview, previewWidth) : [];
+				const rightLines = fullRight.slice(0, maxBody);
+				if (fullRight.length > maxBody) {
+					const n = fullRight.length - maxBody + 1;
+					const lbl = `+${n} lines hidden`;
+					const d = "─".repeat(Math.max(0, Math.floor((previewWidth - lbl.length - 2) / 2)));
+					rightLines[maxBody - 1] = truncateToWidth(theme.fg("dim", ` ${d} ${lbl} ${d}`), previewWidth);
+				}
+
+				while (leftLines.length < maxBody) leftLines.push("");
+				while (rightLines.length < maxBody) rightLines.push("");
+				const divider = theme.fg("dim", DIVIDER_CHARS);
+				lines.push(...mergeSideBySide(leftLines, rightLines, leftWidth, divider, width));
+
+				// Footer
+				push(ui.blank());
+				const isLast = !isMultiQuestion || currentIdx === questions.length - 1;
+				const hints: string[] = [];
+				if (focusNotes) {
+					hints.push("enter to confirm");
+					hints.push("tab or esc to close notes");
+				} else if (isMultiSelect(currentIdx)) {
+					hints.push("space to toggle");
+					if (isMultiQuestion) hints.push("←/→ navigate questions");
+					hints.push("tab to add notes");
+					hints.push(isLast && allAnswered() ? "enter to review" : "enter to next");
+				} else {
+					hints.push("tab to add notes");
+					if (isMultiQuestion) hints.push("←/→ navigate");
+					hints.push(isLast && allAnswered() ? "enter to review" : "enter to next");
+				}
+				hints.push("esc to exit");
+				push(ui.hints(hints), ui.bar());
+
+				cachedLines = lines;
+				return lines;
+			}
+
+			// ── Original path — no preview, untouched ────────────────
 
 			const ui = makeUI(theme, width);
 			const lines: string[] = [];

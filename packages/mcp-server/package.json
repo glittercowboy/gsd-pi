@@ -1,6 +1,6 @@
 {
   "name": "@gsd-build/mcp-server",
-  "version": "2.52.0",
+  "version": "2.76.0",
   "description": "MCP server exposing GSD orchestration tools for Claude Code, Cursor, and other MCP clients",
   "license": "MIT",
   "repository": {
@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@gsd-build/rpc-client": "^2.52.0",
+    "@gsd-build/rpc-client": "^2.76.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {

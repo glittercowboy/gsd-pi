@@ -531,3 +531,124 @@ describe("AuthStorage — getEarliestBackoffExpiry", () => {
 		assert.equal(expiry, nearExpiry, "should return the nearest (smallest) expiry");
 	});
 });
+
+// ─── localhost baseUrl shortcut ────────────────────────────────────────────────
+
+describe("AuthStorage — localhost baseUrl shortcut", () => {
+	it("returns 'local-no-key-needed' for localhost provider with no configured key", async () => {
+		const storage = inMemory({});
+		const key = await storage.getApiKey("ollama", undefined, { baseUrl: "http://localhost:11434" });
+		assert.equal(key, "local-no-key-needed");
+	});
+
+	it("returns 'local-no-key-needed' for 127.0.0.1 provider with no configured key", async () => {
+		const storage = inMemory({});
+		const key = await storage.getApiKey("custom", undefined, { baseUrl: "http://127.0.0.1:8080/v1" });
+		assert.equal(key, "local-no-key-needed");
+	});
+
+	it("returns configured key from fallback resolver for localhost custom provider (#4106)", async () => {
+		// Regression test: compaction called getApiKey(model) where model.baseUrl is localhost.
+		// The localhost shortcut must NOT override an explicitly configured apiKey from models.json.
+		const storage = inMemory({});
+		storage.setFallbackResolver((provider) =>
+			provider === "cliproxy" ? "sk-real-proxy-key" : undefined,
+		);
+
+		const key = await storage.getApiKey("cliproxy", undefined, { baseUrl: "http://localhost:8317/v1" });
+		assert.equal(key, "sk-real-proxy-key");
+	});
+
+	it("returns configured key from fallback resolver when baseUrl uses 127.0.0.1 (#4106)", async () => {
+		const storage = inMemory({});
+		storage.setFallbackResolver((provider) =>
+			provider === "myproxy" ? "sk-myproxy-key" : undefined,
+		);
+
+		const key = await storage.getApiKey("myproxy", undefined, { baseUrl: "http://127.0.0.1:9000/v1" });
+		assert.equal(key, "sk-myproxy-key");
+	});
+});
+
+// ─── hasLegacyOAuthCredential (Anthropic OAuth removed in v2.74.0, #3952) ────
+
+describe("AuthStorage — hasLegacyOAuthCredential (#4280)", () => {
+	it("returns true when anthropic has a type:oauth credential", () => {
+		const storage = inMemory({
+			anthropic: {
+				type: "oauth",
+				access: "ya29.fake-access-token",
+				refresh: "1//fake-refresh-token",
+				expires: Date.now() + 3_600_000,
+			},
+		});
+		assert.equal(storage.hasLegacyOAuthCredential("anthropic"), true);
+	});
+
+	it("returns false when anthropic has an api_key credential", () => {
+		const storage = inMemory({ anthropic: makeKey("sk-ant-fake") });
+		assert.equal(storage.hasLegacyOAuthCredential("anthropic"), false);
+	});
+
+	it("returns false when anthropic has no credential at all", () => {
+		const storage = inMemory({});
+		assert.equal(storage.hasLegacyOAuthCredential("anthropic"), false);
+	});
+
+	it("returns false for a provider with a legitimate OAuth credential (e.g. github-copilot)", () => {
+		const storage = inMemory({
+			"github-copilot": {
+				type: "oauth",
+				access: "gho_fake-token",
+				refresh: "ghr_fake-refresh",
+				expires: Date.now() + 28_800_000,
+			},
+		});
+		// hasLegacyOAuthCredential is intentionally provider-scoped — calling it
+		// for a provider that still supports OAuth (like github-copilot) is not
+		// expected in production, but the method must not explode.
+		assert.equal(storage.hasLegacyOAuthCredential("github-copilot"), true);
+	});
+});
+
+// ─── removeLegacyOAuthCredential (self-heal for #3952 / #4368) ───────────────
+
+describe("AuthStorage — removeLegacyOAuthCredential (#4368)", () => {
+	it("removes oauth entry and returns true when present", () => {
+		const storage = inMemory({
+			anthropic: {
+				type: "oauth",
+				access: "fake",
+				refresh: "fake",
+				expires: Date.now() + 3_600_000,
+			},
+		});
+		assert.equal(storage.removeLegacyOAuthCredential("anthropic"), true);
+		assert.equal(storage.hasLegacyOAuthCredential("anthropic"), false);
+		assert.equal(storage.has("anthropic"), false);
+	});
+
+	it("returns false when no oauth entry exists", () => {
+		const storage = inMemory({ anthropic: makeKey("sk-ant-fake") });
+		assert.equal(storage.removeLegacyOAuthCredential("anthropic"), false);
+		assert.equal(storage.get("anthropic")?.type, "api_key");
+	});
+
+	it("preserves api_key credentials alongside oauth entry", () => {
+		const storage = inMemory({
+			anthropic: [
+				makeKey("sk-ant-keep"),
+				{
+					type: "oauth",
+					access: "fake",
+					refresh: "fake",
+					expires: Date.now() + 3_600_000,
+				},
+			],
+		});
+		assert.equal(storage.removeLegacyOAuthCredential("anthropic"), true);
+		const remaining = storage.getCredentialsForProvider("anthropic");
+		assert.equal(remaining.length, 1);
+		assert.equal(remaining[0].type, "api_key");
+	});
+});

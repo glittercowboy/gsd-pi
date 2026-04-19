@@ -15,7 +15,7 @@ export function hasDirectAnthropicApiKey(
     return true
   }
 
-  return authStorage.getCredentialsForProvider("anthropic").some((credential: any) =>
+  return authStorage.getCredentialsForProvider("anthropic").some((credential: { type?: string; key?: string }) =>
     credential?.type === "api_key" && typeof credential?.key === "string" && credential.key.trim().length > 0,
   )
 }

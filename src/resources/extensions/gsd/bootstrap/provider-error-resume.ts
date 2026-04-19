@@ -6,6 +6,7 @@ import type {
 
 import { getAutoDashboardData, startAuto, type AutoDashboardData } from "../auto.js";
 import { resetTransientRetryState } from "./agent-end-recovery.js";
+import { resetSessionTimeoutState } from "../auto/phases.js";
 
 type AutoResumeSnapshot = Pick<AutoDashboardData, "active" | "paused" | "stepMode" | "basePath">;
 
@@ -43,10 +44,11 @@ export async function resumeAutoAfterProviderDelay(
     return "missing-base";
   }
 
-  // Reset the transient retry counter before restarting — without this,
-  // consecutiveTransientCount accumulates across pause/resume cycles and
-  // permanently locks out auto-resume after MAX_TRANSIENT_AUTO_RESUMES errors.
+  // Reset retry counters before restarting — without this, counters
+  // accumulate across pause/resume cycles and permanently lock out
+  // auto-resume after their respective MAX thresholds.
   resetTransientRetryState();
+  resetSessionTimeoutState();
 
   await deps.startAuto(
     ctx as ExtensionCommandContext,

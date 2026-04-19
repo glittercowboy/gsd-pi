@@ -2,8 +2,7 @@
  * agent-end-retry.test.ts — Regression checks for the agent_end model.
  *
  * The per-unit one-shot resolve function lives at module level in auto-loop.ts
- * (_currentResolve). handleAgentEnd is a thin compatibility wrapper around
- * resolveAgentEnd().
+ * (_currentResolve). agent_end is handled via resolveAgentEnd().
  */
 
 import test from "node:test";
@@ -59,38 +58,6 @@ test("legacy pendingAgentEndRetry state is gone", () => {
   assert.ok(
     !source.includes("pendingAgentEndRetry"),
     "AutoSession should no longer use legacy pendingAgentEndRetry state",
-  );
-});
-
-test("handleAgentEnd is a thin compatibility wrapper", () => {
-  const source = getAutoTsSource();
-  const fnIdx = source.indexOf("export async function handleAgentEnd");
-  assert.ok(fnIdx > -1, "handleAgentEnd must exist in auto.ts");
-  const fnBlock = source.slice(fnIdx, source.indexOf("\n// ─── ", fnIdx + 100));
-
-  assert.ok(
-    fnBlock.includes("resolveAgentEnd("),
-    "handleAgentEnd must delegate to resolveAgentEnd",
-  );
-  assert.ok(
-    !fnBlock.includes("pendingAgentEndRetry"),
-    "handleAgentEnd must not use legacy retry state",
-  );
-  assert.ok(
-    !fnBlock.includes("dispatchNextUnit"),
-    "handleAgentEnd must not dispatch recursively",
-  );
-});
-
-test("handleAgentEnd early return calls resolveAgentEndCancelled", () => {
-  const source = getAutoTsSource();
-  const fnIdx = source.indexOf("export async function handleAgentEnd");
-  assert.ok(fnIdx > -1, "handleAgentEnd must exist in auto.ts");
-  const fnBlock = source.slice(fnIdx, source.indexOf("\n// ─── ", fnIdx + 100));
-
-  assert.ok(
-    fnBlock.includes("resolveAgentEndCancelled()"),
-    "handleAgentEnd must call resolveAgentEndCancelled on early return to prevent orphaned promises",
   );
 });
 

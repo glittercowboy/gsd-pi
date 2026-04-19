@@ -71,9 +71,16 @@ export class SessionManager {
 
     const existing = this.sessions.get(resolvedDir);
     if (existing) {
-      throw new Error(
-        `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
-      );
+      // Only block when a genuinely active session is running. Terminal
+      // states (error, completed, cancelled) are evicted so the caller can
+      // start a fresh session for the same projectDir.
+      if (existing.status === 'starting' || existing.status === 'running' || existing.status === 'blocked') {
+        throw new Error(
+          `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
+        );
+      }
+      existing.unsubscribe?.();
+      this.sessions.delete(resolvedDir);
     }
 
     const cliPath = options.cliPath ?? SessionManager.resolveCLIPath();

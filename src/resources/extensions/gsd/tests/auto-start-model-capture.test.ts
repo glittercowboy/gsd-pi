@@ -33,8 +33,12 @@ test("bootstrapAutoSession checks manual session override before preferences", (
   assert.ok(manualIdx > -1, "auto-start.ts should read session model override first");
 
   // resolveDefaultSessionModel() should still be called for fallback behavior
-  const preferredIdx = source.indexOf("const preferredModel = resolveDefaultSessionModel(");
-  assert.ok(preferredIdx > -1, "auto-start.ts should call resolveDefaultSessionModel()");
+  const preferredIdx = source.indexOf("const preferredModel = ");
+  assert.ok(preferredIdx > -1, "auto-start.ts should build preferredModel");
+  assert.ok(
+    source.indexOf("resolveDefaultSessionModel(") > -1,
+    "auto-start.ts should call resolveDefaultSessionModel()",
+  );
 
   // Session provider should be passed for bare model ID resolution
   const withProviderIdx = source.indexOf("resolveDefaultSessionModel(ctx.model?.provider)");
@@ -46,6 +50,51 @@ test("bootstrapAutoSession checks manual session override before preferences", (
   assert.ok(
     manualIdx < snapshotIdx && preferredIdx < snapshotIdx,
     "manual override and preference fallback must be resolved before building startModelSnapshot",
+  );
+
+  // The validated preferred model must still appear as one of the snapshot
+  // sources so PREFERENCES.md continues to win over a stale settings.json
+  // default for built-in providers.
+  const snapshotBlock = source.slice(snapshotIdx, snapshotIdx + 400);
+  assert.ok(
+    snapshotBlock.includes("validatedPreferredModel") || snapshotBlock.includes("preferredModel"),
+    "startModelSnapshot must still consider preferredModel for built-in providers",
+  );
+});
+
+test("bootstrapAutoSession prefers session model over PREFERENCES.md when provider is custom (#4122)", () => {
+  // Custom providers (Ollama, vLLM, OpenAI-compatible proxies) live in
+  // ~/.gsd/agent/models.json, not PREFERENCES.md.  When the user picks one
+  // via /gsd model, that selection must win over any preferredModel from
+  // PREFERENCES.md, otherwise auto-mode tries to start a built-in provider
+  // the user is not logged into and pauses with "Not logged in".
+  const customCheckIdx = source.indexOf("isCustomProvider(ctx.model?.provider)");
+  assert.ok(
+    customCheckIdx > -1,
+    "auto-start.ts should call isCustomProvider() to detect custom-model sessions",
+  );
+
+  // sessionProviderIsCustom must gate preferredModel resolution so that when the
+  // session provider is custom, preferredModel is null and PREFERENCES.md is
+  // skipped entirely — the snapshot then falls through to ctx.model.
+  const gateIdx = source.indexOf("sessionProviderIsCustom");
+  assert.ok(gateIdx > -1, "auto-start.ts should bind sessionProviderIsCustom");
+
+  const preferredIdx = source.indexOf("const preferredModel = ");
+  assert.ok(preferredIdx > -1, "auto-start.ts should build preferredModel");
+
+  const preferredBlock = source.slice(preferredIdx, preferredIdx + 200);
+  assert.ok(
+    preferredBlock.includes("sessionProviderIsCustom"),
+    "preferredModel must be gated on sessionProviderIsCustom so PREFERENCES.md is skipped for custom providers",
+  );
+
+  const snapshotIdx = source.indexOf("const startModelSnapshot = ");
+  assert.ok(snapshotIdx > -1, "auto-start.ts should build startModelSnapshot");
+
+  assert.ok(
+    customCheckIdx < preferredIdx && preferredIdx < snapshotIdx,
+    "isCustomProvider() must be evaluated before preferredModel, which must be resolved before startModelSnapshot",
   );
 });
 

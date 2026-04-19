@@ -15,7 +15,7 @@ import { SettingsManager } from "./settings-manager.js";
 let testDir: string;
 
 function writeSkill(cwd: string, name: string, description: string, body = `# ${name}\n`): string {
-	const skillDir = join(cwd, ".pi", "skills", name);
+	const skillDir = join(cwd, ".agents", "skills", name);
 	mkdirSync(skillDir, { recursive: true });
 	const skillPath = join(skillDir, "SKILL.md");
 	writeFileSync(skillPath, `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}`);
@@ -71,7 +71,7 @@ describe("Skill tool", () => {
 		const result = await tool.execute("call-1", { skill: "swift-testing" });
 		assert.equal(
 			result.content[0]?.type === "text" ? result.content[0].text : "",
-			`<skill name="swift-testing" location="${skillPath}">\nReferences are relative to ${join(testDir, ".pi", "skills", "swift-testing")}.\n\n# Swift Testing\nUse this skill.\n</skill>`,
+			`<skill name="swift-testing" location="${skillPath}">\nReferences are relative to ${join(testDir, ".agents", "skills", "swift-testing")}.\n\n# Swift Testing\nUse this skill.\n</skill>`,
 		);
 	});
 

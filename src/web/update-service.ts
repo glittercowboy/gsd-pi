@@ -75,7 +75,8 @@ export function triggerUpdate(targetVersion?: string): boolean {
     // Detach so the child process is not killed if the parent exits
     detached: false,
     windowsHide: true,
-    shell: process.platform === "win32",
+    // Avoid shell: true — npm.cmd is directly executable on Windows via spawn.
+    // Using shell expands the command injection surface unnecessarily.
   })
 
   let stderr = ""

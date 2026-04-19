@@ -42,6 +42,8 @@ import {
 } from "./parallel-eligibility.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning } from "./workflow-logger.js";
+import { resolveUokFlags } from "./uok/flags.js";
+import { selectConflictFreeBatch } from "./uok/execution-graph.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -68,6 +70,10 @@ export interface OrchestratorState {
 // ─── Module State ──────────────────────────────────────────────────────────
 
 let state: OrchestratorState | null = null;
+
+function overlapKey(a: string, b: string): string {
+  return a < b ? `${a}::${b}` : `${b}::${a}`;
+}
 
 // ─── Persistence ──────────────────────────────────────────────────────────
 
@@ -365,6 +371,7 @@ export async function startParallel(
   }
 
   const config = resolveParallelConfig(prefs);
+  const uokFlags = resolveUokFlags(prefs);
 
   // Release any leftover state from a previous session before reassigning
   if (state) {
@@ -418,8 +425,40 @@ export async function startParallel(
   const started: string[] = [];
   const errors: Array<{ mid: string; error: string }> = [];
 
+  let filteredMilestoneIds = milestoneIds;
+  if (uokFlags.executionGraph && milestoneIds.length > 1) {
+    try {
+      const requestedIds = new Set(milestoneIds);
+      const candidates = await analyzeParallelEligibility(basePath);
+      const overlapPairs = new Set<string>();
+      for (const overlap of candidates.fileOverlaps) {
+        if (!requestedIds.has(overlap.mid1) || !requestedIds.has(overlap.mid2)) continue;
+        overlapPairs.add(overlapKey(overlap.mid1, overlap.mid2));
+      }
+      filteredMilestoneIds = selectConflictFreeBatch({
+        orderedIds: milestoneIds,
+        maxParallel: milestoneIds.length,
+        hasConflict: (candidate, existing) =>
+          overlapPairs.has(overlapKey(candidate, existing)),
+      });
+      if (filteredMilestoneIds.length < milestoneIds.length) {
+        const skipped = milestoneIds.filter((mid) => !filteredMilestoneIds.includes(mid));
+        logWarning(
+          "parallel",
+          `uok execution graph filtered ${skipped.length} conflicting milestone(s): ${skipped.join(", ")}`,
+        );
+      }
+    } catch (e) {
+      logWarning(
+        "parallel",
+        `uok execution graph overlap analysis failed; using legacy milestone selection: ${(e as Error).message}`,
+      );
+      filteredMilestoneIds = milestoneIds;
+    }
+  }
+
   // Cap to max_workers
-  const toStart = milestoneIds.slice(0, config.max_workers);
+  const toStart = filteredMilestoneIds.slice(0, config.max_workers);
 
   for (const mid of toStart) {
     // Check budget ceiling before each spawn

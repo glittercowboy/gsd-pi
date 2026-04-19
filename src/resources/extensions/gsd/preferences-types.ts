@@ -83,6 +83,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "post_unit_hooks",
   "pre_dispatch_hooks",
   "dynamic_routing",
+  "uok",
   "token_profile",
   "phases",
   "auto_visualize",
@@ -113,11 +114,14 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "discuss_preparation",
   "discuss_web_research",
   "discuss_depth",
+  "flat_rate_providers",
+  "language",
+  "context_window_override",
 ]);
 
 /** Canonical list of all dispatch unit types. */
 export const KNOWN_UNIT_TYPES = [
-  "research-milestone", "plan-milestone", "research-slice", "plan-slice",
+  "research-milestone", "plan-milestone", "research-slice", "plan-slice", "refine-slice",
   "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
   "run-uat", "complete-milestone", "validate-milestone", "rewrite-docs",
   "discuss-milestone", "discuss-slice", "worktree-merge",
@@ -208,6 +212,35 @@ export interface CmuxPreferences {
   browser?: boolean;
 }
 
+export type UokTurnActionMode = "commit" | "snapshot" | "status-only";
+
+export interface UokPreferences {
+  enabled?: boolean;
+  legacy_fallback?: {
+    enabled?: boolean;
+  };
+  gates?: {
+    enabled?: boolean;
+  };
+  model_policy?: {
+    enabled?: boolean;
+  };
+  execution_graph?: {
+    enabled?: boolean;
+  };
+  gitops?: {
+    enabled?: boolean;
+    turn_action?: UokTurnActionMode;
+    turn_push?: boolean;
+  };
+  audit_unified?: {
+    enabled?: boolean;
+  };
+  plan_v2?: {
+    enabled?: boolean;
+  };
+}
+
 /**
  * Opt-in experimental features. All features in this block are disabled by
  * default and must be explicitly enabled. They may change or be removed without
@@ -256,8 +289,17 @@ export interface GSDPreferences {
   post_unit_hooks?: PostUnitHookConfig[];
   pre_dispatch_hooks?: PreDispatchHookConfig[];
   dynamic_routing?: DynamicRoutingConfig;
+  /** Unified Orchestration Kernel controls (default-on, with opt-out and emergency legacy fallback). */
+  uok?: UokPreferences;
   /** Per-model capability overrides. Deep-merged with built-in profiles for capability-aware routing (ADR-004). */
   modelOverrides?: Record<string, { capabilities?: Partial<ModelCapabilities> }>;
+  /**
+   * Override executor context window (in tokens) for prompt budget sizing.
+   * Useful when the configured model registry can't resolve the runtime limit
+   * — e.g. local llama.cpp/lemonade servers where the server-side n_ctx is
+   * smaller than the model's advertised window. Issue #4435.
+   */
+  context_window_override?: number;
   context_management?: ContextManagementConfig;
   token_profile?: TokenProfile;
   phases?: PhaseSkipPreferences;
@@ -360,6 +402,22 @@ export interface GSDPreferences {
    * Default: "standard".
    */
   discuss_depth?: "quick" | "standard" | "thorough";
+  /**
+   * Extra provider IDs to treat as flat-rate (no cost benefit from dynamic
+   * routing).  Dynamic routing is suppressed for any provider listed here,
+   * in addition to the built-in list (github-copilot, copilot, claude-code)
+   * and any provider auto-detected via `authMode: "externalCli"`.
+   *
+   * Intended for private subscription-backed proxies, enterprise-gated
+   * deployments, and custom CLI wrappers where every request costs the
+   * same regardless of model.  Case-insensitive.
+   */
+  flat_rate_providers?: string[];
+  /**
+   * Language preference for GSD responses. Accepts any language name or code
+   * (e.g. "Chinese", "zh", "German", "de", "日本語"). Persists across /clear.
+   */
+  language?: string;
 }
 
 export interface LoadedGSDPreferences {
@@ -384,4 +442,20 @@ export interface SkillResolutionReport {
   resolutions: Map<string, SkillResolution>;
   /** References that could not be resolved. */
   warnings: string[];
+}
+
+/**
+ * Format a skill reference for the system prompt.
+ * If resolved, shows the path so the agent knows exactly where to read.
+ * If unresolved, marks it clearly.
+ */
+export function formatSkillRef(ref: string, resolutions: Map<string, SkillResolution>): string {
+  const resolution = resolutions.get(ref);
+  if (!resolution || resolution.method === "unresolved") {
+    return `${ref} (⚠ not found — check skill name or path)`;
+  }
+  if (resolution.method === "absolute-path" || resolution.method === "absolute-dir") {
+    return ref;
+  }
+  return `${ref} → \`${resolution.resolvedPath}\``;
 }

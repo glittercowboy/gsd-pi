@@ -588,7 +588,31 @@ function gatherActivityLogMeta(basePath: string, activeMilestone?: string | null
   }
 }
 
-// ─── Completed Keys Loader ────────────────────────────────────────────────────
+// ─── Completed Keys Helpers ───────────────────────────────────────────────────
+
+/**
+ * Parse a completed-unit key into { unitType, unitId }.
+ *
+ * Most unit types are a single segment ("execute-task", "complete-slice", …)
+ * so the key format is simply "unitType/unitId". Hook units are the exception:
+ * their type is compound ("hook/<hookName>"), making the key look like
+ * "hook/telegram-progress/M007/S01". Splitting naïvely on the first slash
+ * yields unitType="hook" which bypasses verifyExpectedArtifact()'s
+ * startsWith("hook/") guard and produces false-positive missing-artifact
+ * errors (#2826).
+ *
+ * Returns null for malformed keys (no slash, or hook/ with no second slash).
+ */
+export function splitCompletedKey(key: string): { unitType: string; unitId: string } | null {
+  if (key.startsWith("hook/")) {
+    const secondSlash = key.indexOf("/", 5); // skip past "hook/"
+    if (secondSlash === -1) return null;      // malformed — "hook/" with no hook name
+    return { unitType: key.slice(0, secondSlash), unitId: key.slice(secondSlash + 1) };
+  }
+  const slashIdx = key.indexOf("/");
+  if (slashIdx === -1) return null;
+  return { unitType: key.slice(0, slashIdx), unitId: key.slice(slashIdx + 1) };
+}
 
 function loadCompletedKeys(basePath: string): string[] {
   const file = join(gsdRoot(basePath), "completed-units.json");
@@ -732,34 +756,6 @@ function detectTimeouts(traces: UnitTrace[], anomalies: ForensicAnomaly[]): void
       });
     }
   }
-}
-
-/**
- * Parse a completed-unit key into its unitType and unitId.
- *
- * Hook units use a compound slash-delimited type ("hook/<hookName>"), so a
- * naive `key.indexOf("/")` would split "hook/telegram-progress/M007/S01" into
- * unitType="hook" (wrong) instead of "hook/telegram-progress".
- *
- * Returns `null` for malformed keys that cannot be split.
- */
-export function splitCompletedKey(key: string): { unitType: string; unitId: string } | null {
-  if (key.startsWith("hook/")) {
-    // Hook unit types are two segments: "hook/<hookName>/<unitId...>"
-    const secondSlash = key.indexOf("/", 5); // skip past "hook/"
-    if (secondSlash === -1) return null;     // malformed — no unitId after hook name
-    return {
-      unitType: key.slice(0, secondSlash),
-      unitId: key.slice(secondSlash + 1),
-    };
-  }
-
-  const slashIdx = key.indexOf("/");
-  if (slashIdx === -1) return null;
-  return {
-    unitType: key.slice(0, slashIdx),
-    unitId: key.slice(slashIdx + 1),
-  };
 }
 
 function detectMissingArtifacts(completedKeys: string[], basePath: string, activeMilestone: string | null, anomalies: ForensicAnomaly[]): void {

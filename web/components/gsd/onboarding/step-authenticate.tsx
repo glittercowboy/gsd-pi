@@ -111,9 +111,11 @@ export function StepAuthenticate({
 
   const isBusy = requestState !== "idle"
   const isThisProviderBusy = requestProviderId === provider.id && isBusy
+  const isExternalCli = provider.supports.externalCli
   const isValidated = lastValidation?.status === "succeeded" && lastValidation.providerId === provider.id
   const isBridgeDone = bridgeRefreshPhase === "succeeded" || bridgeRefreshPhase === "idle"
-  const canProceed = isValidated && isBridgeDone
+  // ExternalCli providers are always configured — no key validation step.
+  const canProceed = (isExternalCli && provider.configured) || (isValidated && isBridgeDone)
   const validationFailed = lastValidation?.status === "failed" && lastValidation.providerId === provider.id
   const parsedError = validationFailed ? parseValidationError(lastValidation.message) : null
 
@@ -163,11 +165,13 @@ export function StepAuthenticate({
         <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
           {canProceed
             ? "Authenticated and ready to go."
-            : hasApiKey && hasOAuth
-              ? "Paste an API key or sign in through your browser."
-              : hasApiKey
-                ? "Paste your API key to authenticate."
-                : "Sign in through your browser to authenticate."}
+            : isExternalCli
+              ? "Authentication is handled by the Claude CLI. Make sure it is installed and signed in."
+              : hasApiKey && hasOAuth
+                ? "Paste an API key or sign in through your browser."
+                : hasApiKey
+                  ? "Paste your API key to authenticate."
+                  : "Sign in through your browser to authenticate."}
         </p>
       </motion.div>
 

@@ -38,7 +38,9 @@ async function loadExtensionModules() {
   const dispatchModule = await jiti.import(gsdExtensionPath('auto-dispatch.ts'), {}) as any
   const sessionModule = await jiti.import(gsdExtensionPath('session-status-io.ts'), {}) as any
   const prefsModule = await jiti.import(gsdExtensionPath('preferences.ts'), {}) as any
+  const autoStartModule = await jiti.import(gsdExtensionPath('auto-start.ts'), {}) as any
   return {
+    openProjectDbIfPresent: autoStartModule.openProjectDbIfPresent as (basePath: string) => Promise<void>,
     deriveState: stateModule.deriveState as (basePath: string) => Promise<GSDState>,
     resolveDispatch: dispatchModule.resolveDispatch as (opts: any) => Promise<any>,
     readAllSessionStatuses: sessionModule.readAllSessionStatuses as (basePath: string) => any[],
@@ -76,7 +78,14 @@ export interface QueryResult {
 // ─── Implementation ─────────────────────────────────────────────────────────
 
 export async function handleQuery(basePath: string): Promise<QueryResult> {
-  const { deriveState, resolveDispatch, readAllSessionStatuses, loadEffectiveGSDPreferences } = await loadExtensionModules()
+  const {
+    openProjectDbIfPresent,
+    deriveState,
+    resolveDispatch,
+    readAllSessionStatuses,
+    loadEffectiveGSDPreferences,
+  } = await loadExtensionModules()
+  await openProjectDbIfPresent(basePath)
   const state = await deriveState(basePath)
 
   // Derive next dispatch action

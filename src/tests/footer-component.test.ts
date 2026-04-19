@@ -8,10 +8,12 @@ const footerSource = readFileSync(
   "utf-8",
 );
 
-test("FooterComponent dims extension status lines to match the rest of the footer", () => {
+test("FooterComponent dims the pwd row including right-aligned extension statuses", () => {
+  // Extension statuses now render on the right side of the pwd line instead
+  // of a dedicated row. The whole line is wrapped in a single dim() call.
   assert.match(
     footerSource,
-    /theme\.fg\("dim", statusLine\)/,
-    "extension status line should be wrapped in the dim footer color",
+    /theme\.fg\("dim", pwd \+ padding \+ extStatusText\)/,
+    "pwd row with merged extension statuses should be wrapped in the dim footer color",
   );
 });

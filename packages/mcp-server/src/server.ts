@@ -20,8 +20,10 @@ import { readRoadmap } from './readers/roadmap.js';
 import { readHistory } from './readers/metrics.js';
 import { readCaptures } from './readers/captures.js';
 import { readKnowledge } from './readers/knowledge.js';
+import { buildGraph, writeGraph, writeSnapshot, graphStatus, graphQuery, graphDiff } from './readers/graph.js';
+import { resolveGsdRoot } from './readers/paths.js';
 import { runDoctorLite } from './readers/doctor-lite.js';
-import { registerWorkflowTools } from './workflow-tools.js';
+import { registerWorkflowTools, validateProjectDir } from './workflow-tools.js';
 import { applySecrets, checkExistingEnvKeys, detectDestination } from './env-writer.js';
 
 // ---------------------------------------------------------------------------
@@ -495,7 +497,8 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
     async (args: Record<string, unknown>) => {
       const { projectDir, query } = args as { projectDir: string; query?: string };
       try {
-        const state = await readProjectState(projectDir, query);
+        const validated = validateProjectDir(projectDir);
+        const state = await readProjectState(validated, query);
         return jsonContent(state);
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
@@ -587,7 +590,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       };
 
       try {
-        const resolvedProjectDir = resolve(projectDir);
+        const resolvedProjectDir = validateProjectDir(projectDir);
         const resolvedEnvPath = resolve(resolvedProjectDir, envFilePath ?? '.env');
 
         // (1) Check which keys already exist
@@ -694,7 +697,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
     async (args: Record<string, unknown>) => {
       const { projectDir } = args as { projectDir: string };
       try {
-        return jsonContent(readProgress(projectDir));
+        return jsonContent(readProgress(validateProjectDir(projectDir)));
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
       }
@@ -714,7 +717,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
     async (args: Record<string, unknown>) => {
       const { projectDir, milestoneId } = args as { projectDir: string; milestoneId?: string };
       try {
-        return jsonContent(readRoadmap(projectDir, milestoneId));
+        return jsonContent(readRoadmap(validateProjectDir(projectDir), milestoneId));
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
       }
@@ -734,7 +737,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
     async (args: Record<string, unknown>) => {
       const { projectDir, limit } = args as { projectDir: string; limit?: number };
       try {
-        return jsonContent(readHistory(projectDir, limit));
+        return jsonContent(readHistory(validateProjectDir(projectDir), limit));
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
       }
@@ -754,7 +757,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
     async (args: Record<string, unknown>) => {
       const { projectDir, scope } = args as { projectDir: string; scope?: string };
       try {
-        return jsonContent(runDoctorLite(projectDir, scope));
+        return jsonContent(runDoctorLite(validateProjectDir(projectDir), scope));
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
       }
@@ -774,7 +777,7 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
     async (args: Record<string, unknown>) => {
       const { projectDir, filter } = args as { projectDir: string; filter?: 'all' | 'pending' | 'actionable' };
       try {
-        return jsonContent(readCaptures(projectDir, filter ?? 'all'));
+        return jsonContent(readCaptures(validateProjectDir(projectDir), filter ?? 'all'));
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
       }
@@ -793,7 +796,89 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
     async (args: Record<string, unknown>) => {
       const { projectDir } = args as { projectDir: string };
       try {
-        return jsonContent(readKnowledge(projectDir));
+        return jsonContent(readKnowledge(validateProjectDir(projectDir)));
+      } catch (err) {
+        return errorContent(err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // gsd_graph — knowledge graph for GSD projects
+  //
+  // Modes:
+  //   build   Parse .gsd/ artifacts and write graph.json atomically.
+  //   query   Search the graph for nodes matching a term (BFS, budget-trimmed).
+  //   status  Check whether graph.json exists and whether it is stale (>24h).
+  //   diff    Compare graph.json with the last build snapshot.
+  // -----------------------------------------------------------------------
+  server.tool(
+    'gsd_graph',
+    [
+      'Manage the GSD project knowledge graph. No session required.',
+      '',
+      'Modes:',
+      '  build   Parse .gsd/ artifacts (STATE.md, milestone ROADMAPs, slice PLANs,',
+      '          KNOWLEDGE.md) and write .gsd/graphs/graph.json atomically.',
+      '  query   Search graph nodes by term (BFS from seed matches, budget-trimmed).',
+      '          Returns matching nodes and reachable edges within the token budget.',
+      '  status  Show whether graph.json exists, its age, node/edge counts, and',
+      '          whether it is stale (built more than 24 hours ago).',
+      '  diff    Compare current graph.json with .last-build-snapshot.json.',
+      '          Returns added, removed, and changed nodes and edges.',
+    ].join('\n'),
+    {
+      projectDir: z.string().describe('Absolute path to the project directory'),
+      mode: z.enum(['build', 'query', 'status', 'diff']).describe(
+        'Operation: build | query | status | diff',
+      ),
+      term: z.string().optional().describe('Search term for query mode (case-insensitive)'),
+      budget: z.number().optional().describe('Token budget for query mode (default: 4000)'),
+      snapshot: z.boolean().optional().describe('Write snapshot before build (for future diff)'),
+    },
+    async (args: Record<string, unknown>) => {
+      const { projectDir: rawProjectDir, mode, term, budget, snapshot } = args as {
+        projectDir: string;
+        mode: 'build' | 'query' | 'status' | 'diff';
+        term?: string;
+        budget?: number;
+        snapshot?: boolean;
+      };
+
+      try {
+        const projectDir = validateProjectDir(rawProjectDir);
+        const gsdRoot = resolveGsdRoot(projectDir);
+
+        switch (mode) {
+          case 'build': {
+            if (snapshot) {
+              await writeSnapshot(gsdRoot).catch(() => { /* best-effort */ });
+            }
+            const graph = await buildGraph(projectDir);
+            await writeGraph(gsdRoot, graph);
+            return jsonContent({
+              built: true,
+              nodeCount: graph.nodes.length,
+              edgeCount: graph.edges.length,
+              builtAt: graph.builtAt,
+            });
+          }
+
+          case 'query': {
+            const result = await graphQuery(projectDir, term ?? '', budget);
+            return jsonContent(result);
+          }
+
+          case 'status': {
+            const result = await graphStatus(projectDir);
+            return jsonContent(result);
+          }
+
+          case 'diff': {
+            const result = await graphDiff(projectDir);
+            return jsonContent(result);
+          }
+        }
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));
       }

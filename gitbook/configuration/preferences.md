@@ -31,7 +31,7 @@ version: 1
 # Model selection
 models:
   research: claude-sonnet-4-6
-  planning: claude-opus-4-6
+  planning: claude-opus-4-7
   execution: claude-sonnet-4-6
   completion: claude-sonnet-4-6
 
@@ -75,7 +75,7 @@ Per-phase model selection. See [Choosing a Model](../getting-started/choosing-a-
 models:
   research: claude-sonnet-4-6
   planning:
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     fallbacks:
       - openrouter/z-ai/glm-5
   execution: claude-sonnet-4-6

@@ -17,15 +17,15 @@ Always work on a dedicated branch. Never push directly to `main`.
 
 **Branch naming:** `<type>/<short-description>`
 
-| Type | When to use |
-|------|-------------|
-| `feat/` | New functionality |
-| `fix/` | Bug or defect correction |
+| Type        | When to use                            |
+| ----------- | -------------------------------------- |
+| `feat/`     | New functionality                      |
+| `fix/`      | Bug or defect correction               |
 | `refactor/` | Code restructuring, no behavior change |
-| `test/` | Adding or updating tests |
-| `docs/` | Documentation only |
-| `chore/` | Dependencies, tooling, housekeeping |
-| `ci/` | CI/CD configuration |
+| `test/`     | Adding or updating tests               |
+| `docs/`     | Documentation only                     |
+| `chore/`    | Dependencies, tooling, housekeeping    |
+| `ci/`       | CI/CD configuration                    |
 
 **Commit messages** must follow [Conventional Commits](https://www.conventionalcommits.org/). The commit-msg hook enforces this locally; CI enforces it on push.
 
@@ -140,20 +140,20 @@ See [VISION.md](VISION.md) for the full list of what we won't accept.
 
 The codebase is organized into these areas. All are open to contributions:
 
-| Area | Path | Notes |
-|------|------|-------|
-| Terminal UI | `packages/pi-tui` | Components, themes, rendering |
-| AI/LLM layer | `packages/pi-ai` | Provider integrations, model handling |
-| Agent core | `packages/pi-agent-core` | Agent orchestration — RFC required for changes |
-| Coding agent | `packages/pi-coding-agent` | The main coding agent |
-| MCP server | `packages/mcp-server` | Project state tools and MCP protocol |
-| GSD extension | `src/resources/extensions/gsd/` | GSD workflow — RFC required for auto-mode |
-| Other extensions | `src/resources/extensions/` | Browser, search, voice, MCP client, etc. |
-| Native engine | `native/` | Rust N-API modules (grep, git, AST, etc.) |
-| VS Code extension | `vscode-extension/` | Chat participant, sidebar, RPC integration |
-| Web interface | `web/` | Browser-based dashboard |
-| CI/Build | `.github/`, `scripts/` | Workflows, build scripts |
-| Documentation | `docs/` | User guides, ADRs, SDK docs |
+| Area              | Path                            | Notes                                          |
+| ----------------- | ------------------------------- | ---------------------------------------------- |
+| Terminal UI       | `packages/pi-tui`               | Components, themes, rendering                  |
+| AI/LLM layer      | `packages/pi-ai`                | Provider integrations, model handling          |
+| Agent core        | `packages/pi-agent-core`        | Agent orchestration — RFC required for changes |
+| Coding agent      | `packages/pi-coding-agent`      | The main coding agent                          |
+| MCP server        | `packages/mcp-server`           | Project state tools and MCP protocol           |
+| GSD extension     | `src/resources/extensions/gsd/` | GSD workflow — RFC required for auto-mode      |
+| Other extensions  | `src/resources/extensions/`     | Browser, search, voice, MCP client, etc.       |
+| Native engine     | `native/`                       | Rust N-API modules (grep, git, AST, etc.)      |
+| VS Code extension | `vscode-extension/`             | Chat participant, sidebar, RPC integration     |
+| Web interface     | `web/`                          | Browser-based dashboard                        |
+| CI/Build          | `.github/`, `scripts/`          | Workflows, build scripts                       |
+| Documentation     | `docs/`                         | User guides, ADRs, SDK docs                    |
 
 ## Review process
 
@@ -208,16 +208,24 @@ Do not use `createTestContext()` from `test-helpers.ts` (legacy, being removed).
 // ✅ CORRECT — shared fixture with beforeEach/afterEach
 describe("feature", () => {
   let tmp: string;
-  beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), "test-")); });
-  afterEach(() => { rmSync(tmp, { recursive: true, force: true }); });
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "test-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
 
-  test("case", () => { /* clean test body */ });
+  test("case", () => {
+    /* clean test body */
+  });
 });
 
 // ✅ CORRECT — per-test cleanup with t.after()
 test("case", (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "test-"));
-  t.after(() => { rmSync(tmp, { recursive: true, force: true }); });
+  t.after(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
   // test body
 });
 
@@ -233,6 +241,7 @@ test("case", () => {
 ```
 
 **When to use which:**
+
 - `beforeEach`/`afterEach` — when all tests in a `describe` block share the same setup/teardown pattern
 - `t.after()` — when each test has unique cleanup (different fixtures, env vars, etc.)
 - `try`/`finally` — only inside standalone helper functions that don't have access to the test context `t` (e.g., `withEnv()`, `capture()`)
@@ -281,6 +290,7 @@ npx tsc --noEmit
 ```
 
 Run `npm run secret-scan:install-hook` once after cloning. It installs two hooks:
+
 - **pre-commit** — blocks commits containing hardcoded secrets or credentials
 - **commit-msg** — validates Conventional Commits format before the commit lands
 

@@ -31,18 +31,30 @@ describe("slice CONTEXT.md injection into prompt builders (#3452)", () => {
       const fnStart = source.indexOf(`export async function ${builder}`);
       assert.ok(fnStart !== -1, `${builder} should exist in auto-prompts.ts`);
 
-      // Get a reasonable chunk after the function start (enough to cover the inlining section)
+      // Get a reasonable chunk after the function start
       const chunk = source.slice(fnStart, fnStart + 3000);
+
+      // ADR-011: buildPlanSlicePrompt / buildRefineSlicePrompt now delegate to
+      // a shared helper (renderSlicePrompt) that performs the slice CONTEXT
+      // resolve. When a builder delegates, scan the helper's body instead.
+      const delegatesToHelper = chunk.includes("renderSlicePrompt(");
+      const bodyToCheck = delegatesToHelper
+        ? (() => {
+            const helperStart = source.indexOf("async function renderSlicePrompt");
+            assert.ok(helperStart !== -1, "renderSlicePrompt helper must exist");
+            return source.slice(helperStart, helperStart + 3000);
+          })()
+        : chunk;
 
       // Must resolve the slice CONTEXT path
       assert.ok(
-        chunk.includes('resolveSliceFile(base, mid,') && chunk.includes('"CONTEXT"'),
-        `${builder} should call resolveSliceFile with "CONTEXT"`,
+        bodyToCheck.includes('resolveSliceFile(base, mid,') && bodyToCheck.includes('"CONTEXT"'),
+        `${builder} should call resolveSliceFile with "CONTEXT" (directly or via renderSlicePrompt)`,
       );
 
       // Must inline it with inlineFileOptional
       assert.ok(
-        chunk.includes('Slice Context'),
+        bodyToCheck.includes("Slice Context"),
         `${builder} should inline slice CONTEXT with a "Slice Context" label`,
       );
     });

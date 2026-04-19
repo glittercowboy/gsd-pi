@@ -538,7 +538,10 @@ export class RetryHandler {
 		if (!currentModel) return false;
 
 		// Only attempt claude-code fallback when the current provider is anthropic.
-		// Other providers may produce similar error text but should not be rerouted.
+		// Transport-specific (ADR-012): intentionally keys on provider, not api —
+		// the fallback specifically reroutes the plain `anthropic` transport to
+		// the `claude-code` transport. Other Anthropic-fronting transports
+		// (anthropic-vertex, amazon-bedrock) must not be rerouted.
 		if (currentModel.provider !== "anthropic") return false;
 
 		// Find the same model ID under the claude-code provider

@@ -1,0 +1,99 @@
+# Rename Symbol workflow — mode: yaml-step
+#
+# Rename a symbol across the codebase. Inventories call sites, renames each
+# file atomically, and verifies the project still builds and tests pass.
+#
+# Run with: /gsd workflow rename-symbol old_name=foo new_name=bar
+
+version: 1
+name: rename-symbol
+mode: yaml-step
+description: >-
+  Find all occurrences of a symbol and rename it across the codebase,
+  verifying the build and tests stay green.
+
+params:
+  old_name: "OLD_SYMBOL_HERE"
+  new_name: "NEW_SYMBOL_HERE"
+  src_glob: "src/**/*.ts"
+  build_command: "npm run build"
+  test_command: "npm test"
+
+steps:
+  - id: inventory
+    name: Find files that reference the symbol
+    prompt: >-
+      Search {{src_glob}} for files that reference the symbol `{{old_name}}`.
+      Include callers, imports, and any string references that look like
+      identifier usage (but skip unrelated word matches in comments/docs).
+
+      Write one file path per line:
+
+        - <relative file path>
+
+      Save to `rename-targets.md`. If there are zero matches, write
+      "no matches" and no items.
+    requires: []
+    produces:
+      - rename-targets.md
+    verify:
+      policy: content-heuristic
+
+  - id: rename-file
+    name: Rename in one file
+    prompt: >-
+      In the file indicated by {{_iter_capture_1}}, rename every
+      identifier-style occurrence of `{{old_name}}` to `{{new_name}}`.
+
+      - Only replace actual code references (identifiers, imports).
+      - Leave unrelated substrings (e.g. comments that happen to contain
+        the word but aren't referring to the symbol) alone.
+      - Preserve surrounding formatting.
+      - If the file defines `{{old_name}}` directly, rename the definition too.
+
+      Append a log line to `rename-log.md`:
+      `- <file> — <count> replacement(s)`.
+    requires:
+      - inventory
+    context_from:
+      - inventory
+    produces:
+      - rename-log.md
+    iterate:
+      source: rename-targets.md
+      pattern: "^- (.+)$"
+    verify:
+      policy: content-heuristic
+
+  - id: verify-build
+    name: Verify the build
+    prompt: >-
+      Run the build: `{{build_command}}`. If it fails, examine the failure
+      and report the root cause in `rename-build.md` — the rename may have
+      broken something that needs a manual fix before proceeding.
+    requires:
+      - rename-file
+    context_from:
+      - rename-file
+    produces:
+      - rename-build.md
+    verify:
+      policy: shell-command
+      command: "{{build_command}}"
+
+  - id: verify-tests
+    name: Verify the test suite
+    prompt: >-
+      Run the tests: `{{test_command}}`. If any fail, report which tests
+      failed and why in `rename-tests.md`. Tests that reference the old
+      name in string literals (e.g. snapshot tests, API contracts) may
+      need intentional updates.
+    requires:
+      - verify-build
+    context_from:
+      - verify-build
+    produces:
+      - rename-tests.md
+    verify:
+      policy: shell-command
+      command: "{{test_command}}"

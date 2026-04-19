@@ -7,7 +7,8 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { existsSync, readFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve as resolvePath, sep } from "node:path";
+import { homedir } from "node:os";
 import { deriveState } from "./state.js";
 import { gsdRoot } from "./paths.js";
 import { appendCapture, hasPendingCaptures, loadPendingCaptures } from "./captures.js";
@@ -27,6 +28,27 @@ import { loadPrompt } from "./prompt-loader.js";
 
 const UPDATE_REGISTRY_URL = "https://registry.npmjs.org/gsd-pi/latest";
 const UPDATE_FETCH_TIMEOUT_MS = 5000;
+
+// Detects a bun-installed gsd via `process.argv[1]`. Mirrors isBunInstall in
+// src/update-check.ts — duplicated because tsconfig.resources.json rootDir
+// prevents importing from src/. See #4145 for why the runtime-only check
+// (process.versions.bun) is insufficient: bun's global bin shims are plain
+// symlinks, so the target's #!/usr/bin/env node shebang runs the script under
+// Node even when it was installed by bun.
+function isBunInstall(argv1: string | undefined = process.argv[1]): boolean {
+  if ('bun' in process.versions) return true;
+  if (!argv1) return false;
+  const bunBinDirs: string[] = [];
+  if (process.env.BUN_INSTALL) bunBinDirs.push(join(process.env.BUN_INSTALL, "bin"));
+  bunBinDirs.push(join(homedir(), ".bun", "bin"));
+  const resolved = resolvePath(argv1);
+  return bunBinDirs.some((dir) => resolved.startsWith(resolvePath(dir) + sep));
+}
+
+function resolveInstallCommand(pkg: string): string {
+  if (isBunInstall()) return `bun add -g ${pkg}`;
+  return `npm install -g ${pkg}`;
+}
 
 async function fetchLatestVersionForCommand(): Promise<string | null> {
   const controller = new AbortController();
@@ -78,6 +100,10 @@ export function parseDoctorArgs(args: string) {
   return { jsonMode, dryRun, fixFlag, includeBuild, includeTests, mode, requestedScope };
 }
 
+export function isDoctorHealActionable(issue: { fixable: boolean; severity: string }): boolean {
+  return issue.fixable && issue.severity !== "info";
+}
+
 export async function handleDoctor(args: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<void> {
   const { jsonMode, dryRun, fixFlag, includeBuild, includeTests, mode, requestedScope } = parseDoctorArgs(args);
   const scope = await selectDoctorScope(projectRoot(), requestedScope);
@@ -109,7 +135,7 @@ export async function handleDoctor(args: string, ctx: ExtensionCommandContext, p
       scope: effectiveScope,
       includeWarnings: true,
     });
-    const actionable = unresolved.filter(issue => issue.severity === "error");
+    const actionable = unresolved.filter(isDoctorHealActionable);
     if (actionable.length === 0) {
       ctx.ui.notify("Doctor heal found nothing actionable to hand off to the LLM.", "info");
       return;
@@ -427,8 +453,9 @@ export async function handleUpdate(ctx: ExtensionCommandContext): Promise<void> 
 
   ctx.ui.notify(`Updating: v${current} → v${latest}...`, "info");
 
+  const installCmd = resolveInstallCommand(`${NPM_PACKAGE}@latest`);
   try {
-    execSync(`npm install -g ${NPM_PACKAGE}@latest`, {
+    execSync(installCmd, {
       stdio: ["ignore", "pipe", "ignore"],
     });
     ctx.ui.notify(
@@ -437,7 +464,7 @@ export async function handleUpdate(ctx: ExtensionCommandContext): Promise<void> 
     );
   } catch {
     ctx.ui.notify(
-      `Update failed. Try manually: npm install -g ${NPM_PACKAGE}@latest`,
+      `Update failed. Try manually: ${installCmd}`,
       "error",
     );
   }

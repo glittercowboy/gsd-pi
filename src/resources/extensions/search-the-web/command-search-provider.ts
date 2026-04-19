@@ -8,6 +8,7 @@
  * All provider logic lives in provider.ts (S01) — this is pure UI wiring.
  */
 
+import { isAnthropicApi } from '@gsd/pi-ai'
 import type { ExtensionAPI } from '@gsd/pi-coding-agent'
 import type { AutocompleteItem } from '@gsd/pi-tui'
 import {
@@ -90,7 +91,9 @@ export function registerSearchProviderCommand(pi: ExtensionAPI): void {
 
       setSearchProviderPreference(chosen)
       const effective = resolveSearchProvider()
-      const isAnthropic = ctx.model?.provider === 'anthropic'
+      // Gate on api (#4478 / ADR-012): covers claude-code, anthropic-vertex, and
+      // other Anthropic-fronting transports — not just the plain `anthropic` provider.
+      const isAnthropic = isAnthropicApi(ctx.model)
       const nativeNote = isAnthropic ? '\nNote: Native Anthropic web search is also active (automatic, no API key needed).' : ''
       ctx.ui.notify(
         `Search provider set to ${chosen}. Effective provider: ${effective ?? 'none (no API keys)'}${nativeNote}`,

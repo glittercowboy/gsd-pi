@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Api, Model, SimpleStreamOptions, Context, AssistantMessageEventStream } from "@gsd/pi-ai";
 import { getApiProvider } from "@gsd/pi-ai";
-import type { AuthStorage } from "./auth-storage.js";
+import { AuthStorage, type AuthStorageData } from "./auth-storage.js";
 import { ModelRegistry } from "./model-registry.js";
 
 function createRegistry(hasAuthFn?: (provider: string) => boolean): ModelRegistry {
@@ -16,6 +16,10 @@ function createRegistry(hasAuthFn?: (provider: string) => boolean): ModelRegistr
 	} as unknown as AuthStorage;
 
 	return new ModelRegistry(authStorage, undefined);
+}
+
+function createInMemoryRegistry(data: AuthStorageData = {}): ModelRegistry {
+	return new ModelRegistry(AuthStorage.inMemory(data), undefined);
 }
 
 function createProviderModel(id: string, api?: string): NonNullable<Parameters<ModelRegistry["registerProvider"]>[1]["models"]>[number] {
@@ -388,6 +392,38 @@ describe("ModelRegistry authMode — getAvailable", () => {
 		const registry = createRegistry(() => false);
 		const available = registry.getAvailable();
 		assert.equal(available.length, 0);
+	});
+
+	it("prunes Codex models removed from ChatGPT-backed openai-codex OAuth", () => {
+		const registry = createInMemoryRegistry({
+			"openai-codex": {
+				type: "oauth",
+				access: "oauth-access",
+				refresh: "oauth-refresh",
+				expires: Date.now() + 60_000,
+				accountId: "acct_123",
+			},
+		});
+
+		assert.equal(registry.find("openai-codex", "gpt-5.1-codex-max"), undefined);
+		assert.equal(registry.find("openai-codex", "gpt-5.1"), undefined);
+		assert.equal(findModel(registry, "openai-codex", "gpt-5.2-codex"), undefined);
+		assert.ok(registry.find("openai-codex", "gpt-5.4"));
+		assert.ok(findModel(registry, "openai-codex", "gpt-5.4"));
+		assert.ok(registry.find("openai-codex", "gpt-5.4-mini"));
+		assert.ok(findModel(registry, "openai-codex", "gpt-5.4-mini"));
+	});
+
+	it("keeps API-backed OpenAI Codex-capable models available", () => {
+		const registry = createInMemoryRegistry({
+			openai: {
+				type: "api_key",
+				key: "sk-test",
+			},
+		});
+
+		assert.ok(registry.find("openai", "gpt-5.2-codex"));
+		assert.ok(findModel(registry, "openai", "gpt-5.2-codex"));
 	});
 });
 

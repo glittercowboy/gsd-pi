@@ -143,10 +143,15 @@ export function loadPrompt(name: string, vars: Record<string, string> = {}): str
   }
 
   for (const [key, value] of Object.entries(effectiveVars)) {
+    const safeValue =
+      key === "workingDirectory" && typeof value === "string"
+        ? value.replaceAll("\\", "/")
+        : value;
+
     // Use split/join instead of replaceAll to avoid JavaScript's special
     // replacement patterns ($', $`, $&) being interpreted in the value.
     // See: https://github.com/gsd-build/gsd-2/issues/2968
-    content = content.split(`{{${key}}}`).join(value);
+    content = content.split(`{{${key}}}`).join(safeValue);
   }
 
   return content.trim();

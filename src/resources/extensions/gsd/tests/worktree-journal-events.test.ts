@@ -49,6 +49,7 @@ function makeDeps(
     loadEffectiveGSDPreferences: () => ({ preferences: { git: {} } }),
     invalidateAllCaches: () => {},
     captureIntegrationBranch: () => {},
+    enterBranchModeForMilestone: () => {},
     ...overrides,
   };
   return deps;
@@ -127,7 +128,7 @@ describe("worktree journal events", () => {
 
   test("enterMilestone emits worktree-skip when isolation disabled", () => {
     const s = makeSession({ basePath: tmp, originalBasePath: tmp });
-    const deps = makeDeps({ shouldUseWorktreeIsolation: () => false });
+    const deps = makeDeps({ shouldUseWorktreeIsolation: () => false, getIsolationMode: () => "none" });
     const resolver = new WorktreeResolver(s, deps);
 
     resolver.enterMilestone("M001", makeNotifyCtx());

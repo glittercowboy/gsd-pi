@@ -18,6 +18,7 @@ import { getCurrentBranch } from "./worktree.js";
 import { getActiveHook } from "./post-unit-hooks.js";
 import { getLedger, getProjectTotals } from "./metrics.js";
 import { getErrorMessage } from "./error-utils.js";
+import { nativeIsRepo } from "./native-git-bridge.js";
 import {
   resolveMilestoneFile,
   resolveSliceFile,
@@ -96,6 +97,7 @@ export function unitVerb(unitType: string): string {
     case "research-slice": return "researching";
     case "plan-milestone":
     case "plan-slice": return "planning";
+    case "refine-slice": return "refining";
     case "execute-task": return "executing";
     case "complete-slice": return "completing";
     case "replan-slice": return "replanning";
@@ -116,6 +118,7 @@ export function unitPhaseLabel(unitType: string): string {
     case "research-slice": return "RESEARCH";
     case "plan-milestone": return "PLAN";
     case "plan-slice": return "PLAN";
+    case "refine-slice": return "REFINE";
     case "execute-task": return "EXECUTE";
     case "complete-slice": return "COMPLETE";
     case "replan-slice": return "REPLAN";
@@ -143,6 +146,7 @@ function peekNext(unitType: string, state: GSDState): string {
     case "plan-milestone": return "plan or execute first slice";
     case "research-slice": return `plan ${sid}`;
     case "plan-slice": return "execute first task";
+    case "refine-slice": return "execute first task";
     case "execute-task": return `continue ${sid}`;
     case "complete-slice": return "reassess roadmap";
     case "replan-slice": return `re-execute ${sid}`;
@@ -333,6 +337,10 @@ let lastCommitFetchedAt = 0;
 
 function refreshLastCommit(basePath: string): void {
   try {
+    if (!nativeIsRepo(basePath)) {
+      cachedLastCommit = null;
+      return;
+    }
     const raw = execFileSync("git", ["log", "-1", "--format=%cr|%s"], {
       cwd: basePath,
       encoding: "utf-8",
@@ -346,10 +354,12 @@ function refreshLastCommit(basePath: string): void {
         message: raw.slice(sep + 1),
       };
     }
-    lastCommitFetchedAt = Date.now();
   } catch (err) {
     // Non-fatal — just skip last commit display
+    cachedLastCommit = null;
     logWarning("dashboard", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+  } finally {
+    lastCommitFetchedAt = Date.now();
   }
 }
 
@@ -359,6 +369,23 @@ function getLastCommit(basePath: string): { timeAgo: string; message: string } |
     refreshLastCommit(basePath);
   }
   return cachedLastCommit;
+}
+
+export function _resetLastCommitCacheForTests(): void {
+  cachedLastCommit = null;
+  lastCommitFetchedAt = 0;
+}
+
+export function _refreshLastCommitForTests(basePath: string): void {
+  refreshLastCommit(basePath);
+}
+
+export function _getLastCommitForTests(basePath: string): { timeAgo: string; message: string } | null {
+  return getLastCommit(basePath);
+}
+
+export function _getLastCommitFetchedAtForTests(): number {
+  return lastCommitFetchedAt;
 }
 
 // ─── Footer Factory ───────────────────────────────────────────────────────────
@@ -901,10 +928,24 @@ export function updateProgressWidget(
           }
           if (cumulativeCost) sp.push(theme.fg("warning", `$${cumulativeCost.toFixed(2)}`));
 
-          const cxDisplay = `${cxPct}%/${formatWidgetTokens(cxWindow)}`;
-          if (cxPctVal > 90) sp.push(theme.fg("error", cxDisplay));
-          else if (cxPctVal > 70) sp.push(theme.fg("warning", cxDisplay));
-          else sp.push(cxDisplay);
+          const CX_BAR_WIDTH = 8;
+          const cxBarFilled = Math.min(
+            CX_BAR_WIDTH,
+            Math.max(0, Math.round((cxPctVal / 100) * CX_BAR_WIDTH)),
+          );
+          const cxBarColor: "error" | "warning" | "success" =
+            cxPctVal > 90 ? "error" : cxPctVal > 70 ? "warning" : "success";
+          const cxBar =
+            theme.fg(cxBarColor, "━".repeat(cxBarFilled)) +
+            theme.fg("dim", "─".repeat(CX_BAR_WIDTH - cxBarFilled));
+          const cxPctText = `${cxPct}%/${formatWidgetTokens(cxWindow)}`;
+          const cxColorized =
+            cxPctVal > 90
+              ? theme.fg("error", cxPctText)
+              : cxPctVal > 70
+                ? theme.fg("warning", cxPctText)
+                : cxPctText;
+          sp.push(`${cxBar} ${cxColorized}`);
 
           const statsLine = sp.map(p => p.includes("\x1b[") ? p : theme.fg("dim", p))
             .join(theme.fg("dim", "  "));

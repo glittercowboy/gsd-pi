@@ -28,6 +28,8 @@ function makeSlice(overrides: Partial<SliceRow> = {}): SliceRow {
     completed_at: null,
     sequence: 1,
     replan_triggered_at: null,
+    is_sketch: 0,
+    sketch_scope: '',
     ...overrides,
   };
 }
@@ -59,6 +61,11 @@ function makeTask(overrides: Partial<TaskRow> = {}): TaskRow {
     expected_output: [],
     observability_impact: '',
     sequence: 1,
+    blocker_source: '',
+    escalation_pending: 0,
+    escalation_awaiting_review: 0,
+    escalation_artifact_path: null,
+    escalation_override_applied_at: null,
     ...overrides,
   };
 }

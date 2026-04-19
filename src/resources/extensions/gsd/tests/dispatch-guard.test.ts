@@ -172,6 +172,32 @@ test("dispatch guard ignores positionally-earlier reverse dependents for zero-de
   );
 });
 
+test("dispatch guard treats zero-dependency slices as independent when a milestone uses explicit deps (#3998)", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+
+  mkdirSync(join(repo, ".gsd", "milestones", "M022"), { recursive: true });
+
+  insertMilestone({ id: "M022", title: "Mixed dependency milestone" });
+  insertSlice({ id: "S02", milestoneId: "M022", title: "Core A", status: "complete", depends: [], sequence: 2 });
+  insertSlice({ id: "S03", milestoneId: "M022", title: "Core B", status: "complete", depends: [], sequence: 3 });
+  insertSlice({ id: "S05", milestoneId: "M022", title: "Blocked integration", status: "pending", depends: ["S02", "S03", "S07"], sequence: 5 });
+  insertSlice({ id: "S06", milestoneId: "M022", title: "Independent zero-dep slice", status: "pending", depends: [], sequence: 6 });
+  insertSlice({ id: "S07", milestoneId: "M022", title: "Late prerequisite", status: "pending", depends: ["S02"], sequence: 7 });
+
+  writeFileSync(join(repo, ".gsd", "milestones", "M022", "M022-ROADMAP.md"), "# M022\n");
+
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M022/S06/T02"),
+    null,
+  );
+
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M022/S05/T01"),
+    "Cannot dispatch execute-task M022/S05/T01: dependency slice M022/S07 is not complete.",
+  );
+});
+
 test("dispatch guard allows slice with all declared dependencies complete", (t) => {
   const repo = setupRepo();
   t.after(() => teardownRepo(repo));

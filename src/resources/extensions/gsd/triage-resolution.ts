@@ -111,14 +111,9 @@ export function executeReplan(
     // Also write replan_triggered_at column for DB-backed detection
     try {
       const req = createRequire(import.meta.url);
-      const { isDbAvailable, _getAdapter } = req("./gsd-db.js");
+      const { isDbAvailable, setSliceReplanTriggeredAt } = req("./gsd-db.js");
       if (isDbAvailable()) {
-        const adapter = _getAdapter();
-        if (adapter) {
-          adapter.prepare(
-            "UPDATE slices SET replan_triggered_at = :ts WHERE milestone_id = :mid AND id = :sid",
-          ).run({ ":ts": ts, ":mid": mid, ":sid": sid });
-        }
+        setSliceReplanTriggeredAt(mid, sid, ts);
       }
     } catch {
       // DB write is best-effort — disk file is the primary trigger for fallback path

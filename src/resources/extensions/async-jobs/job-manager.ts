@@ -24,6 +24,12 @@ export interface Job {
 	errorText?: string;
 	/** Set by await_job when results are consumed. Suppresses follow-up delivery. */
 	awaited?: boolean;
+	/**
+	 * Handle for the pending follow-up delivery timer (set by deliverResult).
+	 * Stored so suppressFollowUp() can cancel it before the notification fires,
+	 * even when await_job is called after the job has already completed (#3787).
+	 */
+	deliveryTimer?: ReturnType<typeof setTimeout>;
 }
 
 export interface JobManagerOptions {
@@ -170,12 +176,36 @@ export class AsyncJobManager {
 
 	// ── Private ────────────────────────────────────────────────────────────
 
+	/**
+	 * Suppress follow-up notification for a job — cancels any pending delivery
+	 * timer and marks the job as awaited. Safe to call at any time, including
+	 * before or after the job completes (#3787).
+	 */
+	suppressFollowUp(id: string): void {
+		const job = this.jobs.get(id);
+		if (!job) return;
+		job.awaited = true;
+		if (job.deliveryTimer !== undefined) {
+			clearTimeout(job.deliveryTimer);
+			job.deliveryTimer = undefined;
+		}
+	}
+
 	private deliverResult(job: Job): void {
 		if (!this.onJobComplete) return;
-		// Defer delivery by one microtask so await_job's .then() chain runs first
-		// and can set job.awaited = true before onJobComplete checks it (#2762).
+		// Use setTimeout(0) instead of queueMicrotask so the handle is cancellable.
+		// suppressFollowUp() can clear this timer even when await_job is called in
+		// a later LLM turn (after the job already completed). queueMicrotask ran
+		// immediately and could not be cancelled (#2762, #3787).
 		const cb = this.onJobComplete;
-		queueMicrotask(() => cb(job));
+		job.deliveryTimer = setTimeout(() => {
+			job.deliveryTimer = undefined;
+			if (!job.awaited) cb(job);
+		}, 0);
+		// Allow process to exit even if timer is pending
+		if (typeof job.deliveryTimer === "object" && "unref" in job.deliveryTimer) {
+			(job.deliveryTimer as NodeJS.Timeout).unref();
+		}
 	}
 
 	private scheduleEviction(id: string): void {

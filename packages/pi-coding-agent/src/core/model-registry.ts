@@ -8,6 +8,7 @@ import {
 	type AssistantMessageEventStream,
 	type Context,
 	getApiProvider,
+	getEnvApiKey,
 	getModels,
 	getProviders,
 	type KnownProvider,
@@ -245,7 +246,7 @@ export class ModelRegistry {
 			if (keyConfig) {
 				return resolveConfigValue(keyConfig);
 			}
-			return undefined;
+			return getEnvApiKey(provider);
 		});
 
 		// Refresh models when credentials change (e.g., OAuth token refresh with new model limits)

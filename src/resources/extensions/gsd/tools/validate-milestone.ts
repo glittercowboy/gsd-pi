@@ -23,6 +23,9 @@ import { invalidateStateCache } from "../state.js";
 import { VALIDATION_VERDICTS, isValidMilestoneVerdict } from "../verdict-parser.js";
 import { insertMilestoneValidationGates } from "../milestone-validation-gates.js";
 import { logWarning } from "../workflow-logger.js";
+import { UokGateRunner } from "../uok/gate-runner.js";
+import { loadEffectiveGSDPreferences } from "../preferences.js";
+import { resolveUokFlags } from "../uok/flags.js";
 
 export interface ValidateMilestoneParams {
   milestoneId: string;
@@ -41,6 +44,12 @@ export interface ValidateMilestoneResult {
   milestoneId: string;
   verdict: string;
   validationPath: string;
+}
+
+export interface ValidateMilestoneOptions {
+  uokGatesEnabled?: boolean;
+  traceId?: string;
+  turnId?: string;
 }
 
 function renderValidationMarkdown(params: ValidateMilestoneParams): string {
@@ -81,6 +90,7 @@ ${params.verdictRationale}
 export async function handleValidateMilestone(
   params: ValidateMilestoneParams,
   basePath: string,
+  opts?: ValidateMilestoneOptions,
 ): Promise<ValidateMilestoneResult | { error: string }> {
   if (!params.milestoneId || typeof params.milestoneId !== "string" || params.milestoneId.trim() === "") {
     return { error: "milestoneId is required and must be a non-empty string" };
@@ -108,6 +118,8 @@ export async function handleValidateMilestone(
   // rendering can regenerate. The inverse (file exists, no DB row) is
   // harder to detect and recover from (#2725).
   const validatedAt = new Date().toISOString();
+  const slices = getMilestoneSlices(params.milestoneId);
+  const gateSliceId = slices.length > 0 ? slices[0].id : "_milestone";
 
   transaction(() => {
     insertAssessment({
@@ -123,11 +135,9 @@ export async function handleValidateMilestone(
     // #2945 Bug 4: persist quality_gates records alongside the assessment.
     // Previously only the assessment was written, leaving M002+ milestones
     // with zero quality_gate records despite passing validation.
-    const slices = getMilestoneSlices(params.milestoneId);
-    const sliceId = slices.length > 0 ? slices[0].id : "_milestone";
     insertMilestoneValidationGates(
       params.milestoneId,
-      sliceId,
+      gateSliceId,
       params.verdict,
       validatedAt,
     );
@@ -146,6 +156,41 @@ export async function handleValidateMilestone(
   invalidateStateCache();
   clearPathCache();
   clearParseCache();
+
+  const prefs = loadEffectiveGSDPreferences()?.preferences;
+  const gatesEnabled = opts?.uokGatesEnabled ?? resolveUokFlags(prefs).gates;
+  if (gatesEnabled) {
+    try {
+      const gateRunner = new UokGateRunner();
+      const nonPassVerdict = params.verdict !== "pass";
+      gateRunner.register({
+        id: "milestone-validation-gates",
+        type: "verification",
+        execute: async () => ({
+          outcome: nonPassVerdict ? "manual-attention" : "pass",
+          failureClass: nonPassVerdict ? "manual-attention" : "none",
+          rationale: `milestone validation verdict: ${params.verdict}`,
+          findings: nonPassVerdict
+            ? [params.verdictRationale, params.remediationPlan ?? ""].filter(Boolean).join("\n")
+            : "",
+        }),
+      });
+      await gateRunner.run("milestone-validation-gates", {
+        basePath,
+        traceId: opts?.traceId ?? `validate-milestone:${params.milestoneId}`,
+        turnId: opts?.turnId ?? `${params.milestoneId}:validate`,
+        milestoneId: params.milestoneId,
+        sliceId: gateSliceId,
+        unitType: "validate-milestone",
+        unitId: params.milestoneId,
+      });
+    } catch (err) {
+      logWarning(
+        "tool",
+        `validate_milestone — failed to persist UOK gate result: ${(err as Error).message}`,
+      );
+    }
+  }
 
   return {
     milestoneId: params.milestoneId,

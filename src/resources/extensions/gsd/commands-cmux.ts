@@ -15,7 +15,7 @@ import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./comm
  * Returns true if preferences were written, false if skipped.
  */
 export function autoEnableCmuxPreferences(): boolean {
-  const path = getProjectGSDPreferencesPath();
+  const path = resolveProjectPreferencesWritePath();
   if (!existsSync(path)) return false;
 
   const existing = loadProjectGSDPreferences();
@@ -53,7 +53,7 @@ async function writeProjectCmuxPreferences(
   ctx: ExtensionCommandContext,
   updater: (prefs: Record<string, unknown>) => void,
 ): Promise<void> {
-  const path = getProjectGSDPreferencesPath();
+  const path = resolveProjectPreferencesWritePath();
   await ensurePreferencesFile(path, ctx, "project");
 
   const existing = loadProjectGSDPreferences();
@@ -71,6 +71,10 @@ async function writeProjectCmuxPreferences(
   await saveFile(path, `---\n${frontmatter}---${body}`);
   await ctx.waitForIdle();
   await ctx.reload();
+}
+
+function resolveProjectPreferencesWritePath(): string {
+  return loadProjectGSDPreferences()?.path ?? getProjectGSDPreferencesPath();
 }
 
 function formatCmuxStatus(): string {

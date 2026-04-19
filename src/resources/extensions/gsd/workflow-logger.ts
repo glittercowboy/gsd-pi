@@ -20,6 +20,8 @@ import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { appendNotification } from "./notification-store.js";
+import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
+import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -51,7 +53,11 @@ export type LogComponent =
   | "guided"        // Guided flow (discuss, plan wizards)
   | "registry"      // Rule registry hook state
   | "renderer"      // Markdown renderer and projections
-  | "safety";       // LLM safety harness
+  | "safety"        // LLM safety harness
+  | "ecosystem"     // GSD ecosystem extension loader and dispatch
+  | "memory-embeddings" // Memory layer embedding generation
+  | "memory-ingest"     // Memory layer ingestion pipeline
+  | "memory-backfill";  // ADR-013: decisions->memories backfill
 
 export interface LogEntry {
   ts: string;
@@ -273,6 +279,29 @@ function _push(
   _buffer.push(entry);
   if (_buffer.length > MAX_BUFFER) {
     _buffer.shift();
+  }
+
+  if (_auditBasePath && isUnifiedAuditEnabled()) {
+    try {
+      emitUokAuditEvent(
+        _auditBasePath,
+        buildAuditEnvelope({
+          traceId: `workflow-log:${component}`,
+          turnId: context?.id,
+          causedBy: context?.fn ?? context?.tool,
+          category: "orchestration",
+          type: severity === "error" ? "workflow-log-error" : "workflow-log-warn",
+          payload: {
+            component,
+            message,
+            context: context ?? {},
+          },
+        }),
+      );
+    } catch (auditEmitErr) {
+      // Best-effort: unified audit projection must never block workflow logger.
+      _writeStderr(`[gsd:workflow-logger] unified-audit emit failed: ${(auditEmitErr as Error).message}\n`);
+    }
   }
 
   // Persist errors to .gsd/audit-log.jsonl so they survive context resets.

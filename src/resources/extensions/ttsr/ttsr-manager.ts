@@ -9,8 +9,13 @@
  * available, testing all patterns in a single DFA pass. Falls back to
  * per-rule JS RegExp iteration when the native module is not loaded.
  */
-import picomatch from "picomatch";
+import { createRequire } from "node:module";
 import { debugTime, debugCount, debugPeak } from "../gsd/debug-logger.js";
+
+const _require = createRequire(import.meta.url);
+type PicomatchMatcher = (input: string) => boolean;
+type PicomatchFn = (pattern: string) => PicomatchMatcher;
+const picomatch = _require("picomatch") as PicomatchFn;
 
 // ── Native TTSR engine (optional) ─────────────────────────────────────
 let nativeTtsr: {
@@ -65,7 +70,7 @@ export interface TtsrSettings {
 
 interface ToolScope {
 	toolName?: string;
-	pathMatcher?: picomatch.Matcher;
+	pathMatcher?: PicomatchMatcher;
 	pathPattern?: string;
 }
 
@@ -80,7 +85,7 @@ interface TtsrEntry {
 	rule: Rule;
 	conditions: RegExp[];
 	scope: TtsrScope;
-	globalPathMatchers?: picomatch.Matcher[];
+	globalPathMatchers?: PicomatchMatcher[];
 }
 
 /** Tracks when a rule was last injected (for repeat gating). */
@@ -147,7 +152,7 @@ export class TtsrManager {
 		return compiled;
 	}
 
-	#compileGlobalPathMatchers(globs: Rule["globs"]): picomatch.Matcher[] | undefined {
+	#compileGlobalPathMatchers(globs: Rule["globs"]): PicomatchMatcher[] | undefined {
 		if (!globs || globs.length === 0) return undefined;
 		const matchers = globs
 			.map((g) => g.trim())
@@ -239,7 +244,7 @@ export class TtsrManager {
 		return pathValue.replaceAll("\\", "/");
 	}
 
-	#matchesGlob(matcher: picomatch.Matcher, filePaths: string[] | undefined): boolean {
+	#matchesGlob(matcher: PicomatchMatcher, filePaths: string[] | undefined): boolean {
 		if (!filePaths || filePaths.length === 0) return false;
 		for (const filePath of filePaths) {
 			const normalized = this.#normalizePath(filePath);

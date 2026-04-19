@@ -44,6 +44,7 @@ export type KnownProvider =
 	| "opencode-go"
 	| "kimi-coding"
 	| "alibaba-coding-plan"
+	| "alibaba-dashscope"
 	| "ollama"
 	| "ollama-cloud";
 export type Provider = KnownProvider | string;

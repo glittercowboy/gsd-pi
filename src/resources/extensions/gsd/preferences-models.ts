@@ -7,6 +7,8 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { DynamicRoutingConfig } from "./model-router.js";
 import { defaultRoutingConfig } from "./model-router.js";
 import type { TokenProfile, InlineLevel } from "./types.js";
@@ -53,6 +55,7 @@ export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedMode
       break;
     case "plan-milestone":
     case "plan-slice":
+    case "refine-slice":
     case "replan-slice":
       phaseConfig = m.planning;
       break;
@@ -186,6 +189,45 @@ export function resolveDefaultSessionModel(
 }
 
 /**
+ * Returns true if `provider` is defined as a custom provider in the user's
+ * `~/.gsd/agent/models.json` (Ollama, vLLM, LM Studio, OpenAI-compatible
+ * proxies, etc.).
+ *
+ * Used by auto-mode bootstrap to decide whether the session model
+ * (set via `/gsd model`) should override `PREFERENCES.md`.  Custom providers
+ * are never reachable from `PREFERENCES.md` (which only knows built-in
+ * providers), so when the user has explicitly selected one, it must take
+ * priority — otherwise auto-mode tries to start the built-in provider from
+ * PREFERENCES.md and fails with "Not logged in · Please run /login" (#4122).
+ *
+ * Reads models.json directly with a lightweight JSON parse to avoid
+ * pulling in the full model-registry at this call site.  Falls back to
+ * `~/.pi/agent/models.json` for parity with `resolveModelsJsonPath()`.
+ * Any read or parse error yields `false` (treat as not-custom) so a
+ * malformed models.json never breaks the session bootstrap.
+ */
+export function isCustomProvider(provider: string | undefined): boolean {
+  if (!provider) return false;
+  const candidates = [
+    join(homedir(), ".gsd", "agent", "models.json"),
+    join(homedir(), ".pi", "agent", "models.json"),
+  ];
+  for (const path of candidates) {
+    if (!existsSync(path)) continue;
+    try {
+      const raw = readFileSync(path, "utf-8");
+      const parsed = JSON.parse(raw) as { providers?: Record<string, unknown> };
+      if (parsed?.providers && Object.prototype.hasOwnProperty.call(parsed.providers, provider)) {
+        return true;
+      }
+    } catch {
+      // Ignore — malformed models.json must not break bootstrap.
+    }
+  }
+  return false;
+}
+
+/**
  * Determines the next fallback model to try when the current model fails.
  * If the current model is not in the configured list, returns the primary model.
  * If the current model is the last in the list, returns undefined (exhausted).
@@ -314,7 +356,7 @@ export function resolveAutoSupervisorConfig(): AutoSupervisorConfig {
 
 // ─── Token Profile Resolution ─────────────────────────────────────────────
 
-const VALID_TOKEN_PROFILES = new Set<TokenProfile>(["budget", "balanced", "quality"]);
+const VALID_TOKEN_PROFILES = new Set<TokenProfile>(["budget", "balanced", "quality", "burn-max"]);
 
 /**
  * Resolve profile defaults for a given token profile tier.
@@ -359,6 +401,22 @@ export function resolveProfileDefaults(profile: TokenProfile): Partial<GSDPrefer
           skip_reassess: true,
         },
       };
+    case "burn-max":
+      return {
+        // Quality-first profile: keep user-selected models, disable downgrade routing.
+        // Policy constraints still apply at dispatch time.
+        dynamic_routing: {
+          enabled: false,
+        },
+        context_selection: "full",
+        phases: {
+          skip_research: false,
+          skip_slice_research: false,
+          skip_reassess: false,
+          skip_milestone_validation: false,
+          reassess_after_slice: true,
+        },
+      };
   }
 }
 
@@ -375,7 +433,7 @@ export function resolveEffectiveProfile(): TokenProfile {
 
 /**
  * Resolve the inline level from the active token profile.
- * budget -> minimal, balanced -> standard, quality -> full.
+ * budget -> minimal, balanced -> standard, quality/burn-max -> full.
  */
 export function resolveInlineLevel(): InlineLevel {
   const profile = resolveEffectiveProfile();
@@ -383,12 +441,13 @@ export function resolveInlineLevel(): InlineLevel {
     case "budget": return "minimal";
     case "balanced": return "standard";
     case "quality": return "full";
+    case "burn-max": return "full";
   }
 }
 
 /**
  * Resolve the context selection mode from the active token profile.
- * budget -> "smart", balanced/quality -> "full".
+ * budget -> "smart", balanced/quality/burn-max -> "full".
  * Explicit preference always wins.
  */
 export function resolveContextSelection(): import("./types.js").ContextSelectionMode {

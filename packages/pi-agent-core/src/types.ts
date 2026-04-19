@@ -203,6 +203,40 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * but skips tool.execute() and does not add tool results to context.
 	 */
 	externalToolExecution?: boolean;
+
+	/**
+	 * Called when the agent is about to retry after a recoverable provider error.
+	 *
+	 * Fires after each transient failure (rate limit, connection reset, etc.)
+	 * before the retry backoff sleep. Useful for surfacing retry telemetry to
+	 * the host app without instrumenting the provider layer directly.
+	 */
+	onRetry?: (context: RetryContext, signal?: AbortSignal) => Promise<void> | void;
+
+	/**
+	 * Called when the LLM stream fails mid-response.
+	 *
+	 * Fires once per failed stream — `onRetry` may still fire separately if the
+	 * loop elects to retry. Use this for logging or flushing partial state.
+	 */
+	onStreamError?: (context: StreamErrorContext, signal?: AbortSignal) => Promise<void> | void;
+}
+
+/** Context passed to `onRetry`. */
+export interface RetryContext {
+	attempt: number;
+	maxRetries: number;
+	delayMs: number;
+	error: Error;
+}
+
+/** Context passed to `onStreamError`. */
+export interface StreamErrorContext {
+	error: Error;
+	/** The text already emitted by the stream before it failed (may be empty). */
+	partialText: string;
+	/** Whether the loop will attempt to retry after this failure. */
+	willRetry: boolean;
 }
 
 /**

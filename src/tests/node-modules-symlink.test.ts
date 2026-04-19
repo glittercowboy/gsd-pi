@@ -5,8 +5,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 
 // --- Integration tests via initResources (source/monorepo path) ---
 
@@ -283,4 +284,20 @@ test("merged node_modules marker uses fingerprint including directory entries", 
   const h2 = readdirSync(hoisted).sort().join(",");
   const fingerprint2 = `${fakePackageRoot}\n${h2}\n${i}`;
   assert.notEqual(fingerprint, fingerprint2, "fingerprint should change when deps change");
+});
+
+test("reconcileMergedNodeModules uses junction symlinks for Windows compatibility", () => {
+  const testDir = dirname(fileURLToPath(import.meta.url));
+  const source = readFileSync(join(testDir, "..", "resource-loader.ts"), "utf-8");
+
+  assert.match(
+    source,
+    /symlinkSync\(join\(hoisted,\s*entry\.name\),\s*join\(agentNodeModules,\s*entry\.name\),\s*'junction'\)/,
+    "hoisted merged symlink must use 'junction'",
+  );
+  assert.match(
+    source,
+    /symlinkSync\(join\(internal,\s*entry\.name\),\s*link,\s*'junction'\)/,
+    "internal merged symlink must use 'junction'",
+  );
 });

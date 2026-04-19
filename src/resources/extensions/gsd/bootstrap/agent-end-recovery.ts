@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
 import { logWarning } from "../workflow-logger.js";
 import { checkAutoStartAfterDiscuss } from "../guided-flow.js";
-import { getAutoDashboardData, getAutoModeStartModel, isAutoActive, pauseAuto } from "../auto.js";
+import { getAutoDashboardData, getAutoModeStartModel, isAutoActive, pauseAuto, setCurrentDispatchedModelId } from "../auto.js";
 import { getNextFallbackModel, resolveModelWithFallbacksForUnit } from "../preferences.js";
 import { pauseAutoForProviderError } from "../provider-error-pause.js";
 import { isSessionSwitchInFlight, resolveAgentEnd } from "../auto-loop.js";
@@ -124,26 +124,11 @@ export async function handleAgentEnd(
     // ── 1. Classify using rawErrorMsg to avoid prose false-positives ────
     const cls = classifyError(rawErrorMsg, explicitRetryAfterMs);
 
-    // ── 1b. Defer to Core RetryHandler for transient errors ─────────────
-    // The Core RetryHandler (agent-session.ts) processes retryable errors
-    // AFTER this extension handler, in the same _processAgentEvent() call.
-    // For transient errors (overloaded, rate limit, server), the Core will
-    // retry in-context — same session, same conversation — which is strictly
-    // better than our Layer 2 pause+resume (which creates a new session).
-    //
-    // If we react here AND the Core also retries, we race: pauseAuto tears
-    // down the session while agent.continue() starts a new turn.
-    //
-    // Solution: Do nothing for transient errors. The Core RetryHandler
-    // runs next in _processAgentEvent and will either:
-    //   a) Retry successfully → new agent_end (success) → we see it next time
-    //   b) Exhaust retries → the agent stays idle, autoLoop's unit timeout
-    //      or stuck detection handles it
-    //
-    // We do NOT call resolveAgentEnd here — that would unblock autoLoop
-    // prematurely while the Core is still retrying in the same session.
-    // We do NOT call pauseAuto — that would tear down the session.
-    if (isTransient(cls)) {
+    // ── 1b. Defer to Core RetryHandler for most transient errors ────────
+    // Core retries transient failures in-session after this handler.
+    // Keep that behavior for non-rate-limit classes to avoid pause/retry races,
+    // but let rate-limit continue into model fallback logic below (#4373).
+    if (isTransient(cls) && cls.kind !== "rate-limit") {
       return;
     }
 
@@ -202,6 +187,7 @@ export async function handleAgentEnd(
             if (modelToSet) {
               const ok = await pi.setModel(modelToSet, { persist: false });
               if (ok) {
+                setCurrentDispatchedModelId({ provider: modelToSet.provider, id: modelToSet.id });
                 ctx.ui.notify(`Model error${errorDetail}. Switched to fallback: ${nextModelId} and resuming.`, "warning");
                 pi.sendMessage({ customType: "gsd-auto-timeout-recovery", content: "Continue execution.", display: false }, { triggerTurn: true });
                 return;
@@ -219,6 +205,7 @@ export async function handleAgentEnd(
           if (startModel) {
             const ok = await pi.setModel(startModel, { persist: false });
             if (ok) {
+              setCurrentDispatchedModelId({ provider: startModel.provider, id: startModel.id });
               retryState.networkRetryCount = 0;
               retryState.currentRetryModelId = undefined;
               ctx.ui.notify(`Model error${errorDetail}. Restored session model: ${sessionModel.provider}/${sessionModel.id} and resuming.`, "warning");

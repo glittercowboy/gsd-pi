@@ -1,14 +1,14 @@
 /**
- * Post-unit processing for handleAgentEnd — auto-commit, doctor run,
+ * Post-unit processing for auto-loop — auto-commit, doctor run,
  * state rebuild, worktree sync, DB dual-write, hooks, triage, and
  * quick-task dispatch.
  *
- * Split into two functions called sequentially by handleAgentEnd with
+ * Split into two functions called sequentially by auto-loop with
  * the verification gate between them:
  *   1. postUnitPreVerification() — commit, doctor, state rebuild, worktree sync, artifact verification
  *   2. postUnitPostVerification() — DB dual-write, hooks, triage, quick-tasks
  *
- * Extracted from handleAgentEnd() in auto.ts.
+ * Extracted from the pre-loop agent_end handler in auto.ts.
  */
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
@@ -25,12 +25,14 @@ import {
   buildTaskFileName,
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
+import { rebuildState } from "./doctor.js";
 import { parseUnitId } from "./unit-id.js";
 import { closeoutUnit, type CloseoutOptions } from "./auto-unit-closeout.js";
 import {
-  autoCommitCurrentBranch,
+  runTurnGitAction,
   type TaskCommitContext,
-} from "./worktree.js";
+  type TurnGitActionMode,
+} from "./git-service.js";
 import {
   verifyExpectedArtifact,
   resolveExpectedArtifactPath,
@@ -65,6 +67,9 @@ import { getSliceTasks } from "./gsd-db.js";
 import { runPreExecutionChecks, type PreExecutionResult } from "./pre-execution-checks.js";
 import { writePreExecutionEvidence } from "./verification-evidence.js";
 import { ensureCodebaseMapFresh } from "./codebase-generator.js";
+import { resolveUokFlags } from "./uok/flags.js";
+import { UokGateRunner } from "./uok/gate-runner.js";
+import { writeTurnGitTransaction } from "./uok/gitops.js";
 
 /** Maximum verification retry attempts before escalating to blocker placeholder (#2653). */
 const MAX_VERIFICATION_RETRIES = 3;
@@ -94,7 +99,7 @@ function enqueueSidecar(
  *  next actual task commit via `smartStage()`. */
 const LIFECYCLE_ONLY_UNITS = new Set([
   "research-milestone", "discuss-milestone", "discuss-slice", "plan-milestone",
-  "validate-milestone", "research-slice", "plan-slice",
+  "validate-milestone", "research-slice", "plan-slice", "refine-slice",
   "replan-slice", "complete-slice", "run-uat",
   "reassess-roadmap", "rewrite-docs",
 ]);
@@ -103,10 +108,12 @@ import {
   updateSliceProgressCache,
   unitVerb,
   hideFooter,
+  describeNextUnit,
 } from "./auto-dashboard.js";
 import { existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { _resetHasChangesCache } from "./native-git-bridge.js";
+import { autoCommitCurrentBranch } from "./worktree.js";
 
 // ─── Rogue File Detection ──────────────────────────────────────────────────
 
@@ -183,7 +190,7 @@ export function detectRogueFileWrites(
     if (!hasPlanningState) {
       rogues.push({ path: roadmapPath, unitType, unitId });
     }
-  } else if (unitType === "plan-slice" || unitType === "replan-slice") {
+  } else if (unitType === "plan-slice" || unitType === "refine-slice" || unitType === "replan-slice") {
     if (!mid || !sid) return [];
 
     const planPath = resolveSliceFile(basePath, mid, sid, "PLAN");
@@ -232,6 +239,18 @@ export function detectRogueFileWrites(
   return rogues;
 }
 
+export const STEP_COMPLETE_FALLBACK_MESSAGE =
+  "Step complete. Run /clear, then /gsd to continue (or /gsd auto to run continuously).";
+
+export function buildStepCompleteMessage(nextState: import("./types.js").GSDState): string {
+  if (nextState.phase === "complete") {
+    return "Step complete — milestone finished. Run /gsd status to review, or start the next milestone.";
+  }
+  const next = describeNextUnit(nextState);
+  return `Step complete. Next: ${next.label}\n`
+    + `Run /clear, then /gsd to continue (or /gsd auto to run continuously).`;
+}
+
 export interface PreVerificationOpts {
   skipSettleDelay?: boolean;
   skipWorktreeSync?: boolean;
@@ -246,6 +265,65 @@ export interface PostUnitContext {
   stopAuto: (ctx?: ExtensionContext, pi?: ExtensionAPI, reason?: string) => Promise<void>;
   pauseAuto: (ctx?: ExtensionContext, pi?: ExtensionAPI) => Promise<void>;
   updateProgressWidget: (ctx: ExtensionContext, unitType: string, unitId: string, state: import("./types.js").GSDState) => void;
+}
+
+export async function autoCommitUnit(
+  basePath: string,
+  unitType: string,
+  unitId: string,
+  ctx?: ExtensionContext,
+): Promise<string | null> {
+  try {
+    let taskContext: TaskCommitContext | undefined;
+
+    if (unitType === "execute-task") {
+      const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
+      if (mid && sid && tid) {
+        const summaryPath = resolveTaskFile(basePath, mid, sid, tid, "SUMMARY");
+        if (summaryPath) {
+          try {
+            const summaryContent = await loadFile(summaryPath);
+            if (summaryContent) {
+              const summary = parseSummary(summaryContent);
+              let ghIssueNumber: number | undefined;
+              try {
+                const { getTaskIssueNumberForCommit } = await import("../github-sync/sync.js");
+                ghIssueNumber = getTaskIssueNumberForCommit(basePath, mid, sid, tid) ?? undefined;
+              } catch (err) {
+                logWarning("engine", `GitHub issue lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+              }
+
+              taskContext = {
+                taskId: `${sid}/${tid}`,
+                taskTitle: summary.title?.replace(/^T\d+:\s*/, "") || tid,
+                oneLiner: summary.oneLiner || undefined,
+                keyFiles: summary.frontmatter.key_files?.filter(f => !f.includes("{{")) || undefined,
+                issueNumber: ghIssueNumber,
+              };
+            }
+          } catch (e) {
+            debugLog("postUnit", { phase: "task-summary-parse", error: String(e) });
+          }
+        }
+      }
+    }
+
+    _resetHasChangesCache();
+
+    if (LIFECYCLE_ONLY_UNITS.has(unitType)) {
+      return null;
+    }
+
+    const commitMsg = autoCommitCurrentBranch(basePath, unitType, unitId, taskContext);
+    if (commitMsg) {
+      ctx?.ui.notify(`Committed: ${commitMsg.split("\n")[0]}`, "info");
+    }
+    return commitMsg;
+  } catch (e) {
+    debugLog("postUnit", { phase: "auto-commit", error: String(e) });
+    ctx?.ui.notify(`Auto-commit failed: ${String(e).split("\n")[0]}`, "warning");
+    return null;
+  }
 }
 
 /**
@@ -284,13 +362,21 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
     await new Promise(r => setTimeout(r, 100));
   }
 
-  // Auto-commit
+  const prefs = loadEffectiveGSDPreferences()?.preferences;
+  const uokFlags = resolveUokFlags(prefs);
+
+  // Turn-level git action (commit | snapshot | status-only)
   if (s.currentUnit) {
     const unit = s.currentUnit;
+    const turnAction: TurnGitActionMode = uokFlags.gitops ? uokFlags.gitopsTurnAction : "commit";
+    const traceId = s.currentTraceId ?? `turn:${unit.startedAt}`;
+    const turnId = s.currentTurnId ?? `${unit.type}/${unit.id}/${unit.startedAt}`;
+    s.lastGitActionFailure = null;
+    s.lastGitActionStatus = null;
     try {
       let taskContext: TaskCommitContext | undefined;
 
-      if (s.currentUnit.type === "execute-task") {
+      if (turnAction === "commit" && s.currentUnit.type === "execute-task") {
         const { milestone: mid, slice: sid, task: tid } = parseUnitId(s.currentUnit.id);
         if (mid && sid && tid) {
           const summaryPath = resolveTaskFile(s.basePath, mid, sid, tid, "SUMMARY");
@@ -331,18 +417,105 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       // `git worktree remove --force` during teardown.
       _resetHasChangesCache();
 
-      // Skip auto-commit for lifecycle-only units (#2553) — they only touch
-      // `.gsd/` internal state files. Those files are picked up by the next
-      // actual task commit via smartStage().
-      if (!LIFECYCLE_ONLY_UNITS.has(s.currentUnit.type)) {
-        const commitMsg = autoCommitCurrentBranch(s.basePath, s.currentUnit.type, s.currentUnit.id, taskContext);
-        if (commitMsg) {
-          ctx.ui.notify(`Committed: ${commitMsg.split("\n")[0]}`, "info");
+      const skipLifecycleCommit =
+        turnAction === "commit" && LIFECYCLE_ONLY_UNITS.has(s.currentUnit.type);
+
+      if (skipLifecycleCommit) {
+        debugLog("postUnit", {
+          phase: "git-action-skipped",
+          reason: "lifecycle-only-unit",
+          unitType: s.currentUnit.type,
+          unitId: s.currentUnit.id,
+        });
+      } else {
+        const gitResult = runTurnGitAction({
+          basePath: s.basePath,
+          action: turnAction,
+          unitType: s.currentUnit.type,
+          unitId: s.currentUnit.id,
+          taskContext,
+        });
+
+        if (uokFlags.gitops) {
+          writeTurnGitTransaction({
+            basePath: s.basePath,
+            traceId,
+            turnId,
+            unitType: unit.type,
+            unitId: unit.id,
+            stage: "publish",
+            action: turnAction,
+            push: uokFlags.gitopsTurnPush,
+            status: gitResult.status,
+            error: gitResult.error,
+            metadata: {
+              dirty: gitResult.dirty,
+              commitMessage: gitResult.commitMessage,
+              snapshotLabel: gitResult.snapshotLabel,
+            },
+          });
+        }
+
+        if (gitResult.status === "failed") {
+          s.lastGitActionFailure = gitResult.error ?? `git ${turnAction} failed`;
+          s.lastGitActionStatus = "failed";
+          if (uokFlags.gitops && uokFlags.gates) {
+            const parsed = parseUnitId(unit.id);
+            const gateRunner = new UokGateRunner();
+            gateRunner.register({
+              id: "closeout-git-action",
+              type: "closeout",
+              execute: async () => ({
+                outcome: "fail",
+                failureClass: "git",
+                rationale: `turn git action "${turnAction}" failed`,
+                findings: gitResult.error ?? "unknown git failure",
+              }),
+            });
+            await gateRunner.run("closeout-git-action", {
+              basePath: s.basePath,
+              traceId,
+              turnId,
+              milestoneId: parsed.milestone ?? undefined,
+              sliceId: parsed.slice ?? undefined,
+              taskId: parsed.task ?? undefined,
+              unitType: unit.type,
+              unitId: unit.id,
+            });
+          }
+
+          const failureMsg = `Git ${turnAction} failed: ${(gitResult.error ?? "unknown error").split("\n")[0]}`;
+          if (uokFlags.gitops) {
+            ctx.ui.notify(failureMsg, "error");
+            await pauseAuto(ctx, pi);
+            return "dispatched";
+          }
+          ctx.ui.notify(failureMsg, "warning");
+          debugLog("postUnit", {
+            phase: "git-action-failed-nonblocking",
+            action: turnAction,
+            error: gitResult.error ?? "unknown error",
+          });
+        }
+
+        s.lastGitActionStatus = "ok";
+
+        if (turnAction === "commit" && gitResult.commitMessage) {
+          ctx.ui.notify(`Committed: ${gitResult.commitMessage.split("\n")[0]}`, "info");
+        } else if (turnAction === "snapshot" && gitResult.snapshotLabel) {
+          ctx.ui.notify(`Snapshot recorded: ${gitResult.snapshotLabel}`, "info");
         }
       }
     } catch (e) {
-      debugLog("postUnit", { phase: "auto-commit", error: String(e) });
-      ctx.ui.notify(`Auto-commit failed: ${String(e).split("\n")[0]}`, "warning");
+      const message = e instanceof Error ? e.message : String(e);
+      s.lastGitActionFailure = message;
+      s.lastGitActionStatus = "failed";
+      debugLog("postUnit", { phase: "git-action", error: message, action: turnAction });
+      ctx.ui.notify(`Git ${turnAction} failed: ${message.split("\n")[0]}`, uokFlags.gitops ? "error" : "warning");
+      if (uokFlags.gitops) {
+        await pauseAuto(ctx, pi);
+        return "dispatched";
+      }
     }
 
     // GitHub sync (non-blocking, opt-in)
@@ -365,6 +538,12 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         await closeBrowser();
         debugLog("postUnit", { phase: "browser-teardown", status: "closed" });
       }
+    });
+
+    // Keep the on-disk STATE.md aligned with the live derived state after
+    // ordinary unit completion, before any worktree state is synced back.
+    await runSafely("postUnit", "state-rebuild", async () => {
+      await rebuildState(s.basePath);
     });
 
     // Sync worktree state back to project root (skipped for lightweight sidecars)
@@ -556,7 +735,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         try {
           const { milestone: mid, slice: sid } = parseUnitId(s.currentUnit.id);
           if (mid && sid) {
-            const regenerated = regenerateIfMissing(s.basePath, mid, sid, "PLAN");
+            const regenerated = await regenerateIfMissing(s.basePath, mid, sid, "PLAN");
             if (regenerated) {
               // Re-check after regeneration
               triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);
@@ -612,6 +791,30 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           s.verificationRetryCount.set(retryKey, attempt);
 
           if (attempt > MAX_VERIFICATION_RETRIES) {
+            // #4175: For complete-milestone, a blocker placeholder is harmful —
+            // the stub SUMMARY has no recovery value (milestone is terminal),
+            // it does not update DB status (so deriveState never advances),
+            // and it fools stopAuto's presence check into merging a milestone
+            // that was never legitimately completed. Pause auto-mode with a
+            // clear single failure signal and preserve the worktree branch.
+            if (s.currentUnit.type === "complete-milestone") {
+              debugLog("postUnit", {
+                phase: "artifact-verify-pause-complete-milestone",
+                unitType: s.currentUnit.type,
+                unitId: s.currentUnit.id,
+                attempt,
+                maxRetries: MAX_VERIFICATION_RETRIES,
+              });
+              s.verificationRetryCount.delete(retryKey);
+              s.pendingVerificationRetry = null;
+              ctx.ui.notify(
+                `Milestone ${s.currentUnit.id} verification failed after ${MAX_VERIFICATION_RETRIES} retries — worktree branch preserved. Re-run /gsd auto once blockers are resolved.`,
+                "error",
+              );
+              await pauseAuto(ctx, pi);
+              return "dispatched";
+            }
+
             // Retries exhausted — write a blocker placeholder so the pipeline
             // can advance past this stuck unit (#2653).
             debugLog("postUnit", {
@@ -817,16 +1020,20 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
     }
   }
 
-  // ── Pre-execution checks (after plan-slice completes) ──
+  // ── Pre-execution checks (after plan-slice or ADR-011 refine-slice completes) ──
+  // Both emit the same PLAN.md + task artifacts via gsd_plan_slice, so the
+  // same structural validation applies to both.
   if (
     s.currentUnit &&
-    s.currentUnit.type === "plan-slice"
+    (s.currentUnit.type === "plan-slice" || s.currentUnit.type === "refine-slice")
   ) {
+    const currentUnit = s.currentUnit;
     let preExecPauseNeeded = false;
     await runSafely("postUnitPostVerification", "pre-execution-checks", async () => {
+      const prefs = loadEffectiveGSDPreferences()?.preferences;
+      const uokFlags = resolveUokFlags(prefs);
       try {
         // Check preferences — respect enhanced_verification and enhanced_verification_pre
-        const prefs = loadEffectiveGSDPreferences()?.preferences;
         const enhancedEnabled = prefs?.enhanced_verification !== false; // default true
         const preEnabled = prefs?.enhanced_verification_pre !== false;  // default true
 
@@ -840,7 +1047,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
         }
 
         // Parse the unit ID to get milestone/slice IDs
-        const { milestone: mid, slice: sid } = parseUnitId(s.currentUnit!.id);
+        const { milestone: mid, slice: sid } = parseUnitId(currentUnit.id);
         if (!mid || !sid) {
           debugLog("postUnitPostVerification", {
             phase: "pre-execution-checks",
@@ -860,6 +1067,8 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           });
           return;
         }
+
+        const strictMode = prefs?.enhanced_verification_strict === true;
 
         // Run pre-execution checks
         const result: PreExecutionResult = await runPreExecutionChecks(tasks, s.basePath);
@@ -884,11 +1093,45 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           writePreExecutionEvidence(result, slicePath, mid, sid);
         }
 
-        // Notify UI
+        if (uokFlags.gates) {
+          const failedChecks = result.checks
+            .filter((check) => !check.passed)
+            .map((check) => `[${check.category}] ${check.target}: ${check.message}`);
+          const warnEscalated = result.status === "warn" && strictMode;
+          const blockingFailure = result.status === "fail" || warnEscalated;
+          const gateRunner = new UokGateRunner();
+          gateRunner.register({
+            id: "pre-execution-checks",
+            type: "input",
+            execute: async () => ({
+              outcome: blockingFailure ? "fail" : "pass",
+              failureClass: result.status === "fail" ? "input" : warnEscalated ? "policy" : "none",
+              rationale: blockingFailure
+                ? `pre-execution checks ${result.status}${warnEscalated ? " (strict)" : ""}`
+                : "pre-execution checks passed",
+              findings: failedChecks.join("\n"),
+            }),
+          });
+          await gateRunner.run("pre-execution-checks", {
+            basePath: s.basePath,
+            traceId: `pre-execution:${currentUnit.id}`,
+            turnId: currentUnit.id,
+            milestoneId: mid,
+            sliceId: sid,
+            unitType: currentUnit.type,
+            unitId: currentUnit.id,
+          });
+        }
+
+        // Notify UI — surface actionable details (#4259)
         if (result.status === "fail") {
-          const blockingCount = result.checks.filter(c => !c.passed && c.blocking).length;
+          const blockingChecks = result.checks.filter(c => !c.passed && c.blocking);
+          const blockingCount = blockingChecks.length;
+          const details = blockingChecks.slice(0, 3).map(c => `  \u2022 ${c.message}`).join("\n");
+          const suffix = blockingChecks.length > 3 ? `\n  \u2022 ...and ${blockingChecks.length - 3} more` : "";
+          const evidenceNote = `\nSee ${sid}-PRE-EXEC-VERIFY.json for full details.`;
           ctx.ui.notify(
-            `Pre-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found`,
+            `Pre-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found\n${details}${suffix}${evidenceNote}`,
             "error",
           );
           preExecPauseNeeded = true;
@@ -922,6 +1165,29 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           `Pre-execution checks error: ${errorMessage} — pausing for human review`,
           "error",
         );
+        if (uokFlags.gates && s.currentUnit) {
+          const { milestone: mid, slice: sid } = parseUnitId(s.currentUnit.id);
+          const gateRunner = new UokGateRunner();
+          gateRunner.register({
+            id: "pre-execution-checks",
+            type: "input",
+            execute: async () => ({
+              outcome: "manual-attention",
+              failureClass: "manual-attention",
+              rationale: "pre-execution checks threw before completion",
+              findings: errorMessage,
+            }),
+          });
+          await gateRunner.run("pre-execution-checks", {
+            basePath: s.basePath,
+            traceId: `pre-execution:${s.currentUnit.id}`,
+            turnId: s.currentUnit.id,
+            milestoneId: mid ?? undefined,
+            sliceId: sid ?? undefined,
+            unitType: s.currentUnit.type,
+            unitId: s.currentUnit.id,
+          });
+        }
         preExecPauseNeeded = true;
       }
     });
@@ -1018,8 +1284,17 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
     }
   }
 
-  // Step mode → show wizard instead of dispatch
+  // Step mode → show wizard instead of dispatch.
+  // Without this notify(), /gsd in step mode finishes a unit and silently
+  // exits the loop, leaving the user with no hint to /clear and /gsd again.
   if (s.stepMode) {
+    try {
+      const nextState = await deriveState(s.basePath);
+      ctx.ui.notify(buildStepCompleteMessage(nextState), "info");
+    } catch (e) {
+      debugLog("postUnit", { phase: "step-wizard-notify", error: String(e) });
+      ctx.ui.notify(STEP_COMPLETE_FALLBACK_MESSAGE, "info");
+    }
     return "step-wizard";
   }
 

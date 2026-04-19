@@ -393,7 +393,7 @@ function reconcileMergedNodeModules(
       // Skip the gsd-pi package itself and dotfiles
       if (entry.name === basename(packageRoot)) continue
       if (entry.name.startsWith('.')) continue
-      try { symlinkSync(join(hoisted, entry.name), join(agentNodeModules, entry.name)); linkedCount++ } catch { /* skip individual */ }
+      try { symlinkSync(join(hoisted, entry.name), join(agentNodeModules, entry.name), 'junction'); linkedCount++ } catch { /* skip individual */ }
     }
   } catch (err) {
     console.error(`[gsd] WARN: Failed to read hoisted node_modules at ${hoisted}: ${err instanceof Error ? err.message : err}`)
@@ -408,7 +408,7 @@ function reconcileMergedNodeModules(
       const link = join(agentNodeModules, entry.name)
       // Replace hoisted symlink with internal version (internal takes precedence)
       try { lstatSync(link); unlinkSync(link) } catch { /* didn't exist — will create below */ }
-      try { symlinkSync(join(internal, entry.name), link); linkedCount++ } catch { /* skip individual */ }
+      try { symlinkSync(join(internal, entry.name), link, 'junction'); linkedCount++ } catch { /* skip individual */ }
     }
   } catch (err) {
     console.error(`[gsd] WARN: Failed to read internal node_modules at ${internal}: ${err instanceof Error ? err.message : err}`)

@@ -31,12 +31,16 @@ for (const file of files) {
 
     // Replay through FixtureReplayer and verify responses
     const replayer = new FixtureReplayer(recording);
-    const assistantTurns = recording.turns.filter((t) => t.role === "assistant");
+    const assistantTurns = recording.turns.filter(
+      (t) => t.role === "assistant",
+    );
 
     for (let i = 0; i < assistantTurns.length; i++) {
       const response = replayer.nextResponse();
       if (!response) {
-        throw new Error(`Replayer exhausted at turn ${i}, expected ${assistantTurns.length} assistant turns`);
+        throw new Error(
+          `Replayer exhausted at turn ${i}, expected ${assistantTurns.length} assistant turns`,
+        );
       }
       assertTurnShape(response, `${label} turn ${i}`);
 
@@ -51,7 +55,9 @@ for (const file of files) {
     // Verify replayer is exhausted
     const extra = replayer.nextResponse();
     if (extra !== null) {
-      throw new Error("Replayer returned extra responses beyond expected count");
+      throw new Error(
+        "Replayer returned extra responses beyond expected count",
+      );
     }
 
     console.log(`  PASS  ${label}`);
@@ -65,7 +71,10 @@ for (const file of files) {
 console.log(`\nFixture tests: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);
 
-function assertRecordingShape(recording: FixtureRecording, label: string): void {
+function assertRecordingShape(
+  recording: FixtureRecording,
+  label: string,
+): void {
   if (!recording.name || typeof recording.name !== "string") {
     throw new Error(`${label}: missing or invalid 'name'`);
   }

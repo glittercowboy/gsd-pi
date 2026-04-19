@@ -488,7 +488,7 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
  * Prints counts of recovered items and the resulting project phase.
  */
 export async function handleRecover(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
-  const { isDbAvailable: dbAvailable, _getAdapter, transaction: dbTransaction } = await import("./gsd-db.js");
+  const { isDbAvailable: dbAvailable, clearEngineHierarchy, transaction: dbTransaction } = await import("./gsd-db.js");
   const { migrateHierarchyToDb } = await import("./md-importer.js");
   const { invalidateStateCache } = await import("./state.js");
 
@@ -498,12 +498,12 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
   }
 
   try {
-    // 1. Delete + re-populate inside a single transaction for atomicity
-    const db = _getAdapter()!;
+    // 1. Delete + re-populate inside a single transaction for atomicity.
+    //    clearEngineHierarchy() uses transaction() internally but transaction()
+    //    is re-entrant, so wrapping in dbTransaction() keeps the whole
+    //    clear+repopulate atomic.
     const counts = dbTransaction(() => {
-      db.exec("DELETE FROM tasks");
-      db.exec("DELETE FROM slices");
-      db.exec("DELETE FROM milestones");
+      clearEngineHierarchy();
       return migrateHierarchyToDb(basePath);
     });
 

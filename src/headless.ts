@@ -717,7 +717,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     }
 
     // Quick commands: resolve on first agent_end
-    if (eventObj.type === 'agent_end' && isQuickCommand(options.command) && !completed) {
+    if (eventObj.type === 'agent_end' && isQuickCommand(options.command, options.commandArgs) && !completed) {
       completed = true
       resolveCompletion()
       return
@@ -735,7 +735,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     // Kill child process — don't await, just fire and exit.
     // The main flow may be awaiting a promise that resolves when the child dies,
     // which would race with this handler. Exit synchronously to ensure correct exit code.
-    try { client.stop().catch(() => {}) } catch {}
+    void client.stop().catch((error: unknown) => {
+      process.stderr.write(`[headless] Warning: failed to stop child process: ${error instanceof Error ? error.message : String(error)}\n`)
+    })
     if (timeoutTimer) clearTimeout(timeoutTimer)
     if (idleTimer) clearTimeout(idleTimer)
     // Emit batch JSON result if in json mode before exiting
@@ -816,9 +818,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   }
 
   // Detect child process crash (read-only exit event subscription — not stdin access)
-  const internalProcess = (client as any).process as ChildProcess
+  const internalProcess = Reflect.get(client as object, 'process') as ChildProcess | undefined
   if (internalProcess) {
-    internalProcess.on('exit', (code) => {
+    internalProcess.on('exit', (code: number | null) => {
       if (!completed) {
         const msg = `[headless] Child process exited unexpectedly with code ${code ?? 'null'}\n`
         process.stderr.write(msg)

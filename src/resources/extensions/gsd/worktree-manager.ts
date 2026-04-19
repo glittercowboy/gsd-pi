@@ -548,13 +548,39 @@ export function removeWorktree(
   }
 }
 
-/** Paths to skip in all worktree diffs (internal/runtime artifacts). */
-const SKIP_PATHS = [".gsd/worktrees/", ".gsd/runtime/", ".gsd/activity/"];
-const SKIP_EXACT = [".gsd/STATE.md", ".gsd/auto.lock", ".gsd/metrics.json"];
+/**
+ * Paths to skip in all worktree diffs (internal/runtime artifacts).
+ *
+ * NOTE: These arrays must stay synchronized with GSD_RUNTIME_PATTERNS in gitignore.ts.
+ * That file is the canonical source of truth for runtime ignore patterns.
+ * This module uses a split representation (paths/exact/prefixes) for efficient matching.
+ */
+const SKIP_PATHS = [
+  ".gsd/worktrees/",
+  ".gsd/runtime/",
+  ".gsd/activity/",
+  ".gsd/forensics/",
+  ".gsd/parallel/",
+  ".gsd/journal/",
+];
+const SKIP_EXACT = [
+  ".gsd/STATE.md",
+  ".gsd/auto.lock",
+  ".gsd/metrics.json",
+  ".gsd/state-manifest.json",
+  ".gsd/doctor-history.jsonl",
+  ".gsd/event-log.jsonl",
+];
+/** File prefixes to skip (for wildcard patterns like completed-units*.json, gsd.db*). */
+const SKIP_PREFIXES = [
+  ".gsd/completed-units",
+  ".gsd/gsd.db",
+];
 
 function shouldSkipPath(filePath: string): boolean {
   if (SKIP_PATHS.some(p => filePath.startsWith(p))) return true;
   if (SKIP_EXACT.includes(filePath)) return true;
+  if (SKIP_PREFIXES.some(p => filePath.startsWith(p))) return true;
   return false;
 }
 

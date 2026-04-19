@@ -8,7 +8,7 @@
  * Returns models in the format expected by pi.registerProvider().
  */
 
-import { listModels } from "./ollama-client.js";
+import { listModels, showModel } from "./ollama-client.js";
 import {
 	estimateContextFromParams,
 	formatModelSize,
@@ -16,6 +16,24 @@ import {
 	humanizeModelName,
 } from "./model-capabilities.js";
 import type { OllamaChatOptions, OllamaModelInfo } from "./types.js";
+
+/**
+ * Extract context window from /api/show model_info.
+ * Keys follow the pattern "{architecture}.context_length" (e.g. "llama.context_length").
+ */
+function extractContextFromModelInfo(modelInfo: Record<string, unknown>): number | undefined {
+	for (const [key, value] of Object.entries(modelInfo)) {
+		if (key.endsWith(".context_length") && typeof value === "number" && value > 0) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+type ClientDeps = {
+	listModels: typeof listModels;
+	showModel: typeof showModel;
+};
 
 export interface DiscoveredOllamaModel {
 	id: string;
@@ -35,13 +53,26 @@ export interface DiscoveredOllamaModel {
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 
-function enrichModel(info: OllamaModelInfo): DiscoveredOllamaModel {
+async function enrichModel(info: OllamaModelInfo, deps: ClientDeps): Promise<DiscoveredOllamaModel> {
 	const caps = getModelCapabilities(info.name);
 	const parameterSize = info.details?.parameter_size ?? "";
 
-	// Determine context window: known table > estimate from param size > default
+	// /api/tags doesn't include context length; /api/show does via "{arch}.context_length" in model_info.
+	let showContextWindow: number | undefined;
+	if (caps.contextWindow === undefined) {
+		try {
+			const showData = await deps.showModel(info.name);
+			showContextWindow = extractContextFromModelInfo(showData.model_info);
+		} catch (err) {
+			// non-fatal: fall through to estimate
+			if (process.env.GSD_DEBUG) console.warn(`[ollama] /api/show failed for ${info.name}:`, err instanceof Error ? err.message : String(err));
+		}
+	}
+
+	// Determine context window: known table > /api/show > estimate from param size > default
 	const contextWindow =
 		caps.contextWindow ??
+		showContextWindow ??
 		(parameterSize ? estimateContextFromParams(parameterSize) : 8192);
 
 	// Determine max tokens: known table > fraction of context > default
@@ -73,11 +104,11 @@ function enrichModel(info: OllamaModelInfo): DiscoveredOllamaModel {
 /**
  * Discover all locally available Ollama models with enriched capabilities.
  */
-export async function discoverModels(): Promise<DiscoveredOllamaModel[]> {
-	const tags = await listModels();
+export async function discoverModels(deps: ClientDeps = { listModels, showModel }): Promise<DiscoveredOllamaModel[]> {
+	const tags = await deps.listModels();
 	if (!tags.models || tags.models.length === 0) return [];
 
-	return tags.models.map(enrichModel);
+	return Promise.all(tags.models.map((m) => enrichModel(m, deps)));
 }
 
 /**

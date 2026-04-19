@@ -19,6 +19,8 @@ import { gsdRoot } from "./paths.js";
 import { getAndClearSkills } from "./skill-telemetry.js";
 import { loadJsonFile, loadJsonFileOrNull, saveJsonFile } from "./json-persistence.js";
 import { parseUnitId } from "./unit-id.js";
+import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
+import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
 
 // Re-export from shared — import directly from format-utils to avoid pulling
 // in the full barrel (mod.js → ui.js → @gsd/pi-tui) which breaks when loaded
@@ -88,6 +90,7 @@ export function classifyUnitPhase(unitType: string): MetricsPhase {
       return "discussion";
     case "plan-milestone":
     case "plan-slice":
+    case "refine-slice":
       return "planning";
     case "execute-task":
       return "execution";
@@ -143,6 +146,9 @@ export function snapshotUnitMetrics(
     promptCharCount?: number;
     baselineCharCount?: number;
     autoSessionKey?: string;
+    traceId?: string;
+    turnId?: string;
+    causedBy?: string;
   },
 ): UnitMetrics | null {
   if (!ledger) return null;
@@ -234,6 +240,27 @@ export function snapshotUnitMetrics(
     ledger.units.push(unit);
   }
   saveLedger(basePath, ledger);
+
+  if (isUnifiedAuditEnabled()) {
+    emitUokAuditEvent(
+      basePath,
+      buildAuditEnvelope({
+        traceId: opts?.traceId ?? `metrics:${unitType}:${unitId}`,
+        turnId: opts?.turnId,
+        causedBy: opts?.causedBy,
+        category: "metrics",
+        type: "unit-metrics-snapshot",
+        payload: {
+          unitType,
+          unitId,
+          model,
+          tokens: unit.tokens,
+          cost: unit.cost,
+          toolCalls: unit.toolCalls,
+        },
+      }),
+    );
+  }
 
   return unit;
 }

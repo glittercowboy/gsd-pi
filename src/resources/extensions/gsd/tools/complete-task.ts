@@ -37,6 +37,8 @@ import { renderAllProjections, renderSummaryContent } from "../workflow-projecti
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning, logError } from "../workflow-logger.js";
+import { loadEffectiveGSDPreferences } from "../preferences.js";
+import { buildEscalationArtifact, writeEscalationArtifact } from "../escalation.js";
 
 export interface CompleteTaskResult {
   taskId: string;
@@ -111,6 +113,11 @@ function paramsToTaskRow(params: CompleteTaskParams, completedAt: string): TaskR
     observability_impact: "",
     full_plan_md: "",
     sequence: 0,
+    blocker_source: "",
+    escalation_pending: 0,
+    escalation_awaiting_review: 0,
+    escalation_artifact_path: null,
+    escalation_override_applied_at: null,
   };
 }
 
@@ -152,6 +159,39 @@ export async function handleCompleteTask(
   // ── Guards + DB writes inside a single transaction (prevents TOCTOU) ───
   const completedAt = new Date().toISOString();
   let guardError: string | null = null;
+
+  // ── ADR-011 Phase 2: validate escalation payload BEFORE any side effects ─
+  // Building the artifact runs the full shape validation (2-4 options, unique
+  // ids, recommendation references a real id). If the payload is malformed
+  // we must reject the call before marking the task complete, writing
+  // SUMMARY.md, flipping the plan checkbox, or closing execute-task gates —
+  // otherwise a rejected payload would leave the task marked complete with
+  // no escalation recorded, and the loop would silently advance past it.
+  // The filesystem write happens later (after side effects) because that's
+  // the cheapest ordering and validation is where 99% of failures live.
+  let validatedEscalationArtifact: ReturnType<typeof buildEscalationArtifact> | null = null;
+  let escalationWriteEnabled = false;
+  if (params.escalation) {
+    escalationWriteEnabled = loadEffectiveGSDPreferences()?.preferences?.phases?.mid_execution_escalation === true;
+    if (escalationWriteEnabled) {
+      try {
+        validatedEscalationArtifact = buildEscalationArtifact({
+          taskId: params.taskId,
+          sliceId: params.sliceId,
+          milestoneId: params.milestoneId,
+          question: params.escalation.question,
+          options: params.escalation.options,
+          recommendation: params.escalation.recommendation,
+          recommendationRationale: params.escalation.recommendationRationale,
+          continueWithDefault: params.escalation.continueWithDefault,
+        });
+      } catch (validationErr) {
+        return {
+          error: `complete-task escalation payload invalid for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(validationErr as Error).message}`,
+        };
+      }
+    }
+  }
 
   transaction(() => {
     // State machine preconditions (inside txn for atomicity).
@@ -296,6 +336,53 @@ export async function handleCompleteTask(
     logWarning(
       "tool",
       `complete-task gate close warning for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(gateErr as Error).message}`,
+    );
+  }
+
+  // ── ADR-011 Phase 2: write escalation artifact (opt-in) ────────────────
+  // Validation already happened BEFORE side effects — this block only
+  // performs the disk write for a pre-validated artifact. For
+  // continueWithDefault=false, a write failure here would otherwise leave
+  // the task marked complete with SUMMARY.md + closed gates but no
+  // escalation, which silently advances the loop past a pause the user
+  // asked for. We compensate by reverting the DB-level completion: set
+  // status back to 'pending' and delete the verification_evidence rows
+  // (same shape as the disk-render-failure rollback above). SUMMARY.md
+  // on disk is left in place because the next complete-task retry will
+  // overwrite it; gate rows are UPSERT-keyed per task and will also be
+  // overwritten. This restores the invariant that deriveState() sees a
+  // consistent "task not done" view so the loop re-dispatches the task.
+  if (validatedEscalationArtifact) {
+    try {
+      writeEscalationArtifact(basePath, validatedEscalationArtifact);
+    } catch (escalationErr) {
+      const msg = `complete-task escalation write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(escalationErr as Error).message}`;
+      logWarning("tool", msg);
+      if (validatedEscalationArtifact.continueWithDefault === false) {
+        // Compensating rollback: revert DB completion so the loop pauses on
+        // re-dispatch instead of silently advancing. Mirror the existing
+        // renderErr rollback (line ~261).
+        try {
+          deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
+          updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, 'pending');
+          invalidateStateCache();
+          logWarning(
+            "tool",
+            `complete-task rolled back DB completion for ${params.milestoneId}/${params.sliceId}/${params.taskId} after escalation write failure; SUMMARY.md left on disk for retry.`,
+          );
+        } catch (rollbackErr) {
+          logWarning(
+            "tool",
+            `complete-task rollback failed after escalation write failure for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(rollbackErr as Error).message}`,
+          );
+        }
+        return { error: msg };
+      }
+    }
+  } else if (params.escalation && !escalationWriteEnabled) {
+    logWarning(
+      "tool",
+      `complete-task received escalation payload but phases.mid_execution_escalation is not enabled; ignoring (${params.milestoneId}/${params.sliceId}/${params.taskId})`,
     );
   }
 

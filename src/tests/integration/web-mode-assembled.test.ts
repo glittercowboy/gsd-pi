@@ -352,6 +352,7 @@ test("assembled lifecycle: boot → onboard → prompt → streaming text → to
     authStorage,
     getEnvApiKey: () => undefined,
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
+    isExternalCliProvider: () => false,
   });
 
   t.after(async () => {

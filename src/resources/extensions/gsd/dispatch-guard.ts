@@ -107,6 +107,11 @@ export function getPriorSliceCompletionBlocker(
         // it may be a cross-milestone reference handled elsewhere.
       }
     } else {
+      const milestoneUsesExplicitDeps = slices.some((slice) => slice.depends.length > 0);
+      if (milestoneUsesExplicitDeps) {
+        return null;
+      }
+
       // Positional fallback is only a heuristic for legacy slices with no
       // declared dependencies. Skip any earlier slice that depends on the
       // target, directly or transitively, or we can deadlock a valid zero-dep

@@ -145,6 +145,9 @@ function makeDeps(
         args: [basePath, mid],
       });
     },
+    enterBranchModeForMilestone: (basePath: string, milestoneId: string) => {
+      calls.push({ fn: "enterBranchModeForMilestone", args: [basePath, milestoneId] });
+    },
     ...overrides,
   };
 
@@ -252,10 +255,10 @@ test("enterMilestone enters existing worktree instead of creating", () => {
   assert.equal(findCalls(deps.calls, "createAutoWorktree").length, 0);
 });
 
-test("enterMilestone is no-op when shouldUseWorktreeIsolation is false", () => {
+test("enterMilestone is no-op when isolation mode is none", () => {
   const s = makeSession();
   const deps = makeDeps({
-    shouldUseWorktreeIsolation: () => false,
+    getIsolationMode: () => "none",
   });
   const ctx = makeNotifyCtx();
   const resolver = new WorktreeResolver(s, deps);
@@ -265,6 +268,7 @@ test("enterMilestone is no-op when shouldUseWorktreeIsolation is false", () => {
   assert.equal(s.basePath, "/project"); // unchanged
   assert.equal(findCalls(deps.calls, "createAutoWorktree").length, 0);
   assert.equal(findCalls(deps.calls, "enterAutoWorktree").length, 0);
+  assert.equal(findCalls(deps.calls, "enterBranchModeForMilestone").length, 0);
 });
 
 test("enterMilestone does NOT update basePath on creation failure", () => {
@@ -307,6 +311,77 @@ test("enterMilestone uses originalBasePath as base for worktree ops", () => {
   resolver.enterMilestone("M002", ctx);
 
   assert.equal(createdFrom, "/project"); // uses originalBasePath, not current basePath
+});
+
+// ─── enterMilestone Tests (branch mode) ──────────────────────────────────────
+
+test("enterMilestone in branch mode calls enterBranchModeForMilestone and rebuilds GitService", () => {
+  const s = makeSession();
+  const deps = makeDeps({
+    getIsolationMode: () => "branch",
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  // Branch mode: no worktree created, basePath unchanged
+  assert.equal(s.basePath, "/project");
+  assert.equal(findCalls(deps.calls, "enterBranchModeForMilestone").length, 1);
+  assert.equal(findCalls(deps.calls, "createAutoWorktree").length, 0);
+  assert.equal(findCalls(deps.calls, "enterAutoWorktree").length, 0);
+  assert.equal(findCalls(deps.calls, "GitServiceImpl").length, 1);
+  assert.ok(ctx.messages.some((m) => m.level === "info" && m.msg.includes("milestone/M001")));
+});
+
+test("enterMilestone in branch mode uses originalBasePath as base", () => {
+  const s = makeSession({ basePath: "/project", originalBasePath: "/project" });
+  let calledWith = "";
+  const deps = makeDeps({
+    getIsolationMode: () => "branch",
+    enterBranchModeForMilestone: (basePath: string, _mid: string) => {
+      calledWith = basePath;
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  assert.equal(calledWith, "/project");
+});
+
+test("enterMilestone in branch mode degrades isolation on failure", () => {
+  const s = makeSession();
+  const deps = makeDeps({
+    getIsolationMode: () => "branch",
+    enterBranchModeForMilestone: () => {
+      throw new Error("checkout failed");
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  assert.equal(s.basePath, "/project"); // unchanged
+  assert.ok(s.isolationDegraded);
+  assert.ok(ctx.messages.some((m) => m.level === "warning" && m.msg.includes("checkout failed")));
+});
+
+test("enterMilestone branch mode is skipped when isolationDegraded", () => {
+  const s = makeSession();
+  s.isolationDegraded = true;
+  const deps = makeDeps({
+    getIsolationMode: () => "branch",
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  assert.equal(findCalls(deps.calls, "enterBranchModeForMilestone").length, 0);
+  assert.equal(findCalls(deps.calls, "createAutoWorktree").length, 0);
 });
 
 // ─── exitMilestone Tests ─────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 {
   "name": "gsd-pi",
-  "version": "2.72.0",
+  "version": "2.76.0",
   "description": "GSD — Get Shit Done coding agent",
   "license": "MIT",
   "repository": {
@@ -49,7 +49,8 @@
     "build:rpc-client": "npm run build -w @gsd-build/rpc-client",
     "build:pi": "npm run build:native-pkg && npm run build:pi-tui && npm run build:pi-ai && npm run build:pi-agent-core && npm run build:pi-coding-agent",
     "build:mcp-server": "npm run build -w @gsd-build/mcp-server",
-    "build": "npm run build:pi && npm run build:rpc-client && npm run build:mcp-server && tsc && npm run copy-resources && npm run copy-themes && npm run copy-export-html && node scripts/build-web-if-stale.cjs",
+    "build:core": "npm run build:pi && npm run build:rpc-client && npm run build:mcp-server && tsc && npm run copy-resources && npm run copy-themes && npm run copy-export-html",
+    "build": "npm run build:core && node scripts/build-web-if-stale.cjs",
     "stage:web-host": "node scripts/stage-web-standalone.cjs",
     "build:web-host": "npm --prefix web run build && npm run stage:web-host",
     "copy-resources": "node scripts/copy-resources.cjs",
@@ -96,7 +97,7 @@
     "test:live-regression": "node --experimental-strip-types tests/live-regression/run.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.73.0",
+    "@anthropic-ai/sdk": "^0.90.0",
     "@anthropic-ai/vertex-sdk": "^0.14.4",
     "@aws-sdk/client-bedrock-runtime": "^3.983.0",
     "@clack/prompts": "^1.1.0",
@@ -123,7 +124,6 @@
     "mime-types": "^3.0.1",
     "minimatch": "^10.2.3",
     "openai": "^6.26.0",
-    "picocolors": "^1.1.1",
     "picomatch": "^4.0.3",
     "playwright": "^1.58.2",
     "proper-lockfile": "^4.1.2",

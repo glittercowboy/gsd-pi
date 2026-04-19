@@ -91,6 +91,29 @@ const SUBCOMMAND_HELP: Record<string, string> = {
     '  gsd worktree remove old-branch --force  Remove even with unmerged changes',
   ].join('\n'),
 
+  graph: [
+    'Usage: gsd graph <subcommand> [options]',
+    '',
+    'Manage the GSD project knowledge graph. Reads .gsd/ artifacts and builds',
+    'a queryable graph of milestones, slices, tasks, rules, patterns, and lessons.',
+    '',
+    'Subcommands:',
+    '  build   Parse .gsd/ artifacts (STATE.md, milestone ROADMAPs, slice PLANs,',
+    '          KNOWLEDGE.md) and write .gsd/graphs/graph.json atomically.',
+    '  query   Search graph nodes by term (BFS from seed matches, budget-trimmed).',
+    '          Returns matching nodes and reachable edges within the token budget.',
+    '  status  Show whether graph.json exists, its age, node/edge counts, and',
+    '          whether it is stale (built more than 24 hours ago).',
+    '  diff    Compare current graph.json with .last-build-snapshot.json.',
+    '          Returns added, removed, and changed nodes and edges.',
+    '',
+    'Examples:',
+    '  gsd graph build                        Build the graph from .gsd/ artifacts',
+    '  gsd graph status                       Check graph age and node/edge counts',
+    '  gsd graph query auth                   Find nodes related to "auth"',
+    '  gsd graph diff                         Show changes since last snapshot',
+  ].join('\n'),
+
   headless: [
     'Usage: gsd headless [flags] [command] [args...]',
     '',
@@ -157,7 +180,7 @@ export function printHelp(version: string): void {
   process.stdout.write('  --print, -p              Single-shot print mode\n')
   process.stdout.write('  --continue, -c           Resume the most recent session\n')
   process.stdout.write('  --worktree, -w [name]    Start in an isolated worktree (auto-named if omitted)\n')
-  process.stdout.write('  --model <id>             Override model (e.g. claude-opus-4-6)\n')
+  process.stdout.write('  --model <id>             Override model (e.g. provider/model-id)\n')
   process.stdout.write('  --no-session             Disable session persistence\n')
   process.stdout.write('  --extension <path>       Load additional extension\n')
   process.stdout.write('  --tools <a,b,c>          Restrict available tools\n')
@@ -174,6 +197,7 @@ export function printHelp(version: string): void {
   process.stdout.write('  worktree <cmd>           Manage worktrees (list, merge, clean, remove)\n')
   process.stdout.write('  auto [args]              Run auto-mode without TUI (pipeable)\n')
   process.stdout.write('  headless [cmd] [args]    Run /gsd commands without TUI (default: auto)\n')
+  process.stdout.write('  graph <subcommand>       Manage knowledge graph (build, query, status, diff)\n')
   process.stdout.write('\nRun gsd <subcommand> --help for subcommand-specific help.\n')
 }
 

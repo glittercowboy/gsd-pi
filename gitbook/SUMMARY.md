@@ -30,6 +30,7 @@
 * [Dynamic Model Routing](features/dynamic-model-routing.md)
 * [Skills](features/skills.md)
 * [Captures & Triage](features/captures.md)
+* [Debug Sessions](features/debug.md)
 * [Workflow Visualizer](features/visualizer.md)
 * [Workflow Templates](features/workflow-templates.md)
 * [Web Interface](features/web-interface.md)
