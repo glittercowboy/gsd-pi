@@ -268,6 +268,12 @@ export async function bootstrapAutoSession(
     return false;
   }
 
+  // Custom engines manage their own state — skip dev-engine bootstrap gates.
+  if (s.activeEngineId !== null && s.activeEngineId !== "dev") {
+    releaseSessionLock(base);
+    return true;
+  }
+
   // Capture the user's session model before guided-flow dispatch can apply a
   // phase-specific planning model for a discuss turn (#2829).
   //
