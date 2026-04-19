@@ -735,7 +735,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
         try {
           const { milestone: mid, slice: sid } = parseUnitId(s.currentUnit.id);
           if (mid && sid) {
-            const regenerated = regenerateIfMissing(s.basePath, mid, sid, "PLAN");
+            const regenerated = await regenerateIfMissing(s.basePath, mid, sid, "PLAN");
             if (regenerated) {
               // Re-check after regeneration
               triggerArtifactVerified = verifyExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);

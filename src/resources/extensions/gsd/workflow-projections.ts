@@ -19,6 +19,7 @@ import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";
 import { deriveState } from "./state.js";
 import type { GSDState } from "./types.js";
+import { renderRoadmapFromDb } from "./markdown-renderer.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -375,11 +376,13 @@ export async function renderStateProjection(basePath: string): Promise<void> {
  * All calls are wrapped in try/catch — projection failure is non-fatal per D-02.
  */
 export async function renderAllProjections(basePath: string, milestoneId: string): Promise<void> {
-  // Render ROADMAP.md for the milestone
+  // Delegate to the authoritative roadmap renderer — the reduced
+  // renderRoadmapProjection omits sections like ## Boundary Map and would
+  // clobber the output written by plan-milestone / reassess-roadmap.
   try {
-    renderRoadmapProjection(basePath, milestoneId);
+    await renderRoadmapFromDb(basePath, milestoneId);
   } catch (err) {
-    logWarning("projection", `renderRoadmapProjection failed for ${milestoneId}: ${(err as Error).message}`);
+    logWarning("projection", `renderRoadmapFromDb failed for ${milestoneId}: ${(err as Error).message}`);
   }
 
   // Query all slices for this milestone
@@ -416,15 +419,16 @@ export async function renderAllProjections(basePath: string, milestoneId: string
 
 /**
  * Check if a projection file exists on disk. If missing, regenerate it from DB.
- * Returns true if the file was regenerated, false if it already existed.
+ * Returns true if the file was regenerated, false if it already existed or
+ * regeneration failed.
  * Satisfies PROJ-05 (corrupted/deleted projections regenerate on demand).
  */
-export function regenerateIfMissing(
+export async function regenerateIfMissing(
   basePath: string,
   milestoneId: string,
   sliceId: string,
   fileType: "PLAN" | "ROADMAP" | "SUMMARY" | "STATE",
-): boolean {
+): Promise<boolean> {
   let filePath: string;
 
   switch (fileType) {
@@ -466,23 +470,21 @@ export function regenerateIfMissing(
     return false;
   }
 
-  // Regenerate the missing file
+  // Regenerate the missing file. Each renderer may swallow its own errors
+  // (e.g. renderStateProjection), so confirm the file actually exists on
+  // disk before reporting success — true must mean "file is there now".
   try {
     switch (fileType) {
       case "PLAN":
         renderPlanProjection(basePath, milestoneId, sliceId);
-        break;
+        return existsSync(filePath);
       case "ROADMAP":
-        renderRoadmapProjection(basePath, milestoneId);
-        break;
+        await renderRoadmapFromDb(basePath, milestoneId);
+        return existsSync(filePath);
       case "STATE":
-        // renderStateProjection is async — fire-and-forget.
-        // Return false since the file isn't written yet; it will appear
-        // on the next post-mutation hook cycle.
-        void renderStateProjection(basePath);
-        return false;
+        await renderStateProjection(basePath);
+        return existsSync(filePath);
     }
-    return true;
   } catch (err) {
     logWarning("projection", `regenerateIfMissing ${fileType} failed: ${(err as Error).message}`);
     return false;
