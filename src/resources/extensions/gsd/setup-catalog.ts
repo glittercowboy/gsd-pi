@@ -52,7 +52,8 @@ export const ONBOARDING_STEPS: readonly OnboardingStepDef[] = [
 const STEP_INDEX = new Map(ONBOARDING_STEPS.map((s, i) => [s.id, i]))
 
 export function getStep(id: string): OnboardingStepDef | undefined {
-  return ONBOARDING_STEPS.find(s => s.id === id)
+  const idx = STEP_INDEX.get(id as OnboardingStepId)
+  return idx === undefined ? undefined : ONBOARDING_STEPS[idx]
 }
 
 export function isValidStepId(id: string): id is OnboardingStepId {
@@ -100,5 +101,5 @@ export function getRemoteProviders(): ProviderInfo[] {
 
 /** Provider IDs that count as "the user has an LLM configured" for shouldRunOnboarding. */
 export function getLlmProviderIds(): string[] {
-  return getLlmProviders().map(p => p.id).concat(["claude-code"])
+  return Array.from(new Set([...getLlmProviders().map(p => p.id), "claude-code"]))
 }

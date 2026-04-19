@@ -179,7 +179,7 @@ export async function handleVisualize(ctx: ExtensionCommandContext): Promise<voi
   }
 }
 
-export async function handleSetup(args: string, ctx: ExtensionCommandContext): Promise<void> {
+export async function handleSetup(args: string, ctx: ExtensionCommandContext, pi?: ExtensionAPI): Promise<void> {
   const { detectProjectState, hasGlobalSetup } = await import("../../detection.js");
   const { isOnboardingComplete, readOnboardingRecord } = await import("../../onboarding-state.js");
 
@@ -207,9 +207,7 @@ export async function handleSetup(args: string, ctx: ExtensionCommandContext): P
     return;
   }
   if (args === "model") {
-    // pi (ExtensionAPI) isn't threaded into handleSetup today — handleModel
-    // accepts undefined and falls back to the no-pi code path.
-    await handleModel("", ctx, undefined);
+    await handleModel("", ctx, pi);
     return;
   }
   if (args === "keys") {
@@ -462,7 +460,7 @@ export async function handleCoreCommand(
     return true;
   }
   if (trimmed === "setup" || trimmed.startsWith("setup ")) {
-    await handleSetup(trimmed.replace(/^setup\s*/, "").trim(), ctx);
+    await handleSetup(trimmed.replace(/^setup\s*/, "").trim(), ctx, pi);
     return true;
   }
   if (trimmed === "onboarding" || trimmed.startsWith("onboarding ")) {
