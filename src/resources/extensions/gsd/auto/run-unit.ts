@@ -12,11 +12,18 @@ import type { UnitResult } from "./types.js";
 import { _setCurrentResolve, _setSessionSwitchInFlight } from "./resolve.js";
 import { debugLog } from "../debug-logger.js";
 import { logWarning, logError } from "../workflow-logger.js";
-import { resolveAutoSupervisorConfig } from "../preferences.js";
 
 // Tracks the latest session-switch attempt so a late timeout settlement from an
 // older runUnit() call cannot clear the guard for a newer one.
 let sessionSwitchGeneration = 0;
+
+/**
+ * Maximum time (ms) to wait for a unit (LLM turn) to complete.
+ * Overridable via GSD_UNIT_TIMEOUT_MS env var for testing or custom deployments.
+ * Default: 30 minutes.
+ */
+export const UNIT_EXECUTION_TIMEOUT_MS =
+  parseInt(process.env.GSD_UNIT_TIMEOUT_MS ?? "", 10) || 30 * 60 * 1000;
 
 /**
  * Execute a single unit: create a new session, send the prompt, and await
@@ -126,23 +133,37 @@ export async function runUnit(
     { triggerTurn: true },
   );
 
-  // ── Await agent_end with absolute timeout (H4 fix) ──
-  // If supervision fails to resolve unitPromise within 30s, treat as cancelled.
-  // Without this, a crashed agent that never emits agent_end hangs the loop (#3161).
+  // ── Await agent_end with execution timeout ──
   debugLog("runUnit", { phase: "awaiting-agent-end", unitType, unitId });
-  const supervisor = resolveAutoSupervisorConfig();
-  const UNIT_HARD_TIMEOUT_MS = Math.max(
-    30_000,
-    ((supervisor.hard_timeout_minutes ?? 30) * 60 * 1000) + 30_000,
-  );
+
   let unitTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
-  const timeoutResult = new Promise<UnitResult>((resolve) => {
-    unitTimeoutHandle = setTimeout(() => {
-      resolve({ status: "cancelled", errorContext: { message: "Unit hard timeout — supervision may have failed", category: "timeout", isTransient: true } });
-    }, UNIT_HARD_TIMEOUT_MS);
+  const unitTimeoutPromise = new Promise<{ timedOut: true }>((resolve) => {
+    unitTimeoutHandle = setTimeout(
+      () => resolve({ timedOut: true }),
+      UNIT_EXECUTION_TIMEOUT_MS,
+    );
   });
-  const result = await Promise.race([unitPromise, timeoutResult]);
+
+  const raceResult = await Promise.race([unitPromise, unitTimeoutPromise]);
   if (unitTimeoutHandle) clearTimeout(unitTimeoutHandle);
+
+  if ("timedOut" in raceResult) {
+    logWarning("engine", "runUnit timed out waiting for agent_end — unit may have stalled", {
+      unitType,
+      unitId,
+      timeoutMs: String(UNIT_EXECUTION_TIMEOUT_MS),
+    });
+    return {
+      status: "cancelled",
+      errorContext: {
+        message: `Unit execution timed out after ${UNIT_EXECUTION_TIMEOUT_MS}ms`,
+        category: "timeout",
+        isTransient: true,
+      },
+    };
+  }
+
+  const result = raceResult;
   debugLog("runUnit", {
     phase: "agent-end-received",
     unitType,
