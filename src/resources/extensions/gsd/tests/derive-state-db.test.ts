@@ -694,6 +694,48 @@ describe('derive-state-db', async () => {
     }
   });
 
+  // ─── Test 14b: needs-remediation + all slices done → blocked (#4506) ──
+  test('derive-state-db: needs-remediation with all slices done returns blocked (#4506)', async () => {
+    const base = createFixtureBase();
+    try {
+      const doneRoadmap = `# M001: Stuck Remediation
+
+**Vision:** Test needs-remediation loop guard.
+
+## Slices
+
+- [x] **S01: Done Slice** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+`;
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', doneRoadmap);
+      writeFile(base, 'milestones/M001/M001-VALIDATION.md',
+        '---\nverdict: needs-remediation\nremediation_round: 1\n---\n\n# Validation\nNeeds fixes.');
+
+      invalidateStateCache();
+      const fileState = await _deriveStateImpl(base);
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'Stuck Remediation', status: 'active' });
+      insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Done Slice', status: 'complete', risk: 'low', depends: [] });
+
+      invalidateStateCache();
+      const dbState = await deriveStateFromDb(base);
+
+      assert.deepStrictEqual(dbState.phase, 'blocked', 'remediation-stuck-db: phase is blocked');
+      assert.deepStrictEqual(dbState.phase, fileState.phase, 'remediation-stuck-db: phase matches filesystem');
+      assert.deepStrictEqual(dbState.activeMilestone?.id, 'M001', 'remediation-stuck-db: activeMilestone is M001');
+      assert.ok(
+        dbState.blockers.some(b => b.includes('needs-remediation') && b.includes('M001')),
+        'remediation-stuck-db: blocker message mentions milestone and verdict',
+      );
+
+      closeDatabase();
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
   // ─── Test 15: Completing-milestone — terminal validation, no summary ──
   test('derive-state-db: completing-milestone via DB', async () => {
     const base = createFixtureBase();

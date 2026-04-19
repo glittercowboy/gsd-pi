@@ -613,12 +613,30 @@ async function handleAllSlicesDone(
   const validationTerminal = validationContent ? isValidationTerminal(validationContent) : false;
   const verdict = validationContent ? extractVerdict(validationContent) : undefined;
 
-  if (!validationTerminal || verdict === 'needs-remediation') {
+  if (!validationTerminal) {
     return {
       activeMilestone, activeSlice: null, activeTask: null,
       phase: 'validating-milestone',
       recentDecisions: [], blockers: [],
       nextAction: `Validate milestone ${activeMilestone.id} before completion.`,
+      registry, requirements,
+      progress: { milestones: milestoneProgress, slices: sliceProgress },
+    };
+  }
+
+  // All roadmap slices are done (enforced by caller) and verdict is
+  // needs-remediation — remediation cannot progress without new slices.
+  // Return blocked instead of re-dispatching validate-milestone (#4506).
+  if (verdict === 'needs-remediation') {
+    return {
+      activeMilestone, activeSlice: null, activeTask: null,
+      phase: 'blocked',
+      recentDecisions: [],
+      blockers: [
+        `Milestone ${activeMilestone.id} validation verdict is needs-remediation but all slices are complete. ` +
+          `Add remediation slices via gsd_reassess_roadmap or override the verdict manually.`,
+      ],
+      nextAction: `Resolve ${activeMilestone.id} remediation before proceeding.`,
       registry, requirements,
       progress: { milestones: milestoneProgress, slices: sliceProgress },
     };
@@ -1450,9 +1468,11 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       total: activeRoadmap.slices.length,
     };
 
-    // Force re-validation when verdict is needs-remediation — remediation slices
-    // may have completed since the stale validation was written (#3596).
-    if (!validationTerminal || verdict === 'needs-remediation') {
+    // Force re-validation when VALIDATION.md is absent or non-terminal —
+    // remediation slices may have completed since the stale validation was
+    // written (#3596). But needs-remediation with all slices done is a dead
+    // end — return blocked to avoid an infinite dispatch loop (#4506).
+    if (!validationTerminal) {
       return {
         activeMilestone,
         activeSlice: null,
@@ -1461,6 +1481,27 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
         recentDecisions: [],
         blockers: [],
         nextAction: `Validate milestone ${activeMilestone.id} before completion.`,
+        registry,
+        requirements,
+        progress: {
+          milestones: milestoneProgress,
+          slices: sliceProgress,
+        },
+      };
+    }
+
+    if (verdict === 'needs-remediation') {
+      return {
+        activeMilestone,
+        activeSlice: null,
+        activeTask: null,
+        phase: 'blocked',
+        recentDecisions: [],
+        blockers: [
+          `Milestone ${activeMilestone.id} validation verdict is needs-remediation but all slices are complete. ` +
+            `Add remediation slices via gsd_reassess_roadmap or override the verdict manually.`,
+        ],
+        nextAction: `Resolve ${activeMilestone.id} remediation before proceeding.`,
         registry,
         requirements,
         progress: {
