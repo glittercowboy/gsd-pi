@@ -6,7 +6,8 @@
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent"
 import { AuthStorage } from "@gsd/pi-coding-agent"
-import { authFilePath } from "../../../../../app-paths.js"
+import { homedir } from "node:os"
+import { join } from "node:path"
 import {
   ONBOARDING_STEPS,
   isValidStepId,
@@ -18,6 +19,35 @@ import {
   readOnboardingRecord,
   resetOnboarding,
 } from "../../onboarding-state.js"
+
+// Inline auth path (mirrors src/app-paths.ts) — keep this module rootDir-clean
+// for the resources tsconfig. Importing from src/ pulls files outside
+// src/resources and breaks the build.
+const AUTH_FILE_PATH = join(
+  process.env.GSD_CODING_AGENT_DIR ||
+    join(process.env.GSD_HOME || join(homedir(), ".gsd"), "agent"),
+  "auth.json",
+)
+
+/**
+ * Dynamic import shim for the first-run wizard.
+ *
+ * src/onboarding.ts lives outside the resources rootDir, so a static import
+ * pulls it into this tsconfig project and triggers TS6059. We resolve the
+ * specifier through a variable + opaque type so TS can't pull the file at
+ * compile time; the path resolves correctly at runtime via dist/onboarding.js.
+ */
+type FirstRunWizardModule = {
+  runOnboarding: (storage: AuthStorage) => Promise<void>
+  runLlmStep: (...args: unknown[]) => Promise<unknown>
+  runWebSearchStep: (...args: unknown[]) => Promise<unknown>
+  runRemoteQuestionsStep: (...args: unknown[]) => Promise<unknown>
+  runToolKeysStep: (...args: unknown[]) => Promise<unknown>
+}
+async function loadFirstRunWizard(): Promise<FirstRunWizardModule> {
+  const specifier = "../../../../../onboarding.js"
+  return (await import(/* @vite-ignore */ specifier)) as FirstRunWizardModule
+}
 
 interface ParsedArgs {
   resume: boolean
@@ -50,7 +80,7 @@ function parseArgs(raw: string): ParsedArgs {
 }
 
 async function getAuthStorage(): Promise<AuthStorage> {
-  return AuthStorage.create(authFilePath)
+  return AuthStorage.create(AUTH_FILE_PATH)
 }
 
 async function runWholeWizard(ctx: ExtensionCommandContext, fromStep?: OnboardingStepId): Promise<void> {
@@ -65,13 +95,13 @@ async function runWholeWizard(ctx: ExtensionCommandContext, fromStep?: Onboardin
       "info",
     )
   }
-  const { runOnboarding } = await import("../../../../../onboarding.js")
+  const { runOnboarding } = await loadFirstRunWizard()
   await runOnboarding(authStorage)
 }
 
 async function runSingleStep(ctx: ExtensionCommandContext, stepId: OnboardingStepId): Promise<void> {
   const authStorage = await getAuthStorage()
-  const ob = await import("../../../../../onboarding.js")
+  const ob = await loadFirstRunWizard()
   // Lazy-load clack + chalk via the same path the wizard uses
   const p = await import("@clack/prompts")
   const { default: chalk } = await import("chalk")

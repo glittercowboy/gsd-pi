@@ -207,7 +207,9 @@ export async function handleSetup(args: string, ctx: ExtensionCommandContext): P
     return;
   }
   if (args === "model") {
-    await handleModel("", ctx);
+    // pi (ExtensionAPI) isn't threaded into handleSetup today — handleModel
+    // accepts undefined and falls back to the no-pi code path.
+    await handleModel("", ctx, undefined);
     return;
   }
   if (args === "keys") {
