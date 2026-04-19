@@ -17,6 +17,8 @@ import { assertSafeDirectory } from "./validate-directory.js";
 import type { ProjectDetection, ProjectSignals } from "./detection.js";
 import { runSkillInstallStep } from "./skill-catalog.js";
 import { generateCodebaseMap, writeCodebaseMap } from "./codebase-generator.js";
+import { handlePrefsWizard, writePreferencesFile } from "./commands-prefs-wizard.js";
+import { getProjectGSDPreferencesPath } from "./preferences.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -233,7 +235,41 @@ export async function showProjectInit(
   }
 
   // ── Step 9: Bootstrap .gsd/ ────────────────────────────────────────────────
-  bootstrapGsdDirectory(basePath, prefs, signals);
+  // Create directory + context.md, then route preferences through the unified
+  // writer (commands-prefs-wizard.writePreferencesFile) so init and the prefs
+  // wizard share one serializer. Optional follow-up step lets the user open
+  // the full prefs wizard with their init answers pre-populated, surfacing
+  // every configurable preference instead of just the init-wizard subset.
+  bootstrapGsdDirectoryStructure(basePath, signals);
+  const prefillPrefs = mapInitPrefsToWizardShape(prefs);
+
+  // ── Step 9b: Optional full-prefs review ────────────────────────────────────
+  const reviewChoice = await showNextAction(ctx, {
+    title: "GSD — Review All Preferences (Optional)",
+    summary: [
+      "Open the full preferences wizard now? It includes models, timeouts,",
+      "budget, notifications, and skills — all pre-filled with your answers.",
+      "",
+      "Skip if you just want sensible defaults; you can always run /gsd prefs project later.",
+    ],
+    actions: [
+      { id: "skip", label: "Skip — use defaults", description: "Save preferences and continue", recommended: true },
+      { id: "review", label: "Open full wizard", description: "Tweak any category before saving" },
+    ],
+    notYetMessage: "Run /gsd init when ready.",
+  });
+
+  if (reviewChoice === "review") {
+    // The wizard handles its own write via writePreferencesFile internally.
+    await handlePrefsWizard(ctx, "project", prefillPrefs);
+  } else {
+    // Direct path: write the init-collected prefs through the unified writer.
+    await writePreferencesFile(getProjectGSDPreferencesPath(), prefillPrefs, ctx, {
+      scope: "project",
+      defaultBody: buildInitPreferencesBody(),
+      notifyOnSave: false,
+    });
+  }
 
   // Initialize SQLite database so GSD starts in full-capability mode (#3880).
   // Without this, isDbAvailable() returns false and GSD enters degraded
@@ -453,21 +489,19 @@ async function customizeAdvancedPrefs(
 
 // ─── Bootstrap ──────────────────────────────────────────────────────────────────
 
-function bootstrapGsdDirectory(
-  basePath: string,
-  prefs: ProjectPreferences,
-  signals: ProjectSignals,
-): void {
+/**
+ * Create .gsd/ directory structure and seed CONTEXT.md.
+ *
+ * Preferences are written separately by the caller via the unified
+ * writePreferencesFile helper so init and the prefs wizard share one path.
+ */
+function bootstrapGsdDirectoryStructure(basePath: string, signals: ProjectSignals): void {
   // Final safety check before writing any files
   assertSafeDirectory(basePath);
 
   const gsd = gsdRoot(basePath);
   mkdirSync(join(gsd, "milestones"), { recursive: true });
   mkdirSync(join(gsd, "runtime"), { recursive: true });
-
-  // Write PREFERENCES.md from wizard answers
-  const preferencesContent = buildPreferencesFile(prefs);
-  writeFileSync(join(gsd, "PREFERENCES.md"), preferencesContent, "utf-8");
 
   // Seed CONTEXT.md with detected project signals
   const contextContent = buildContextSeed(signals);
@@ -476,60 +510,49 @@ function bootstrapGsdDirectory(
   }
 }
 
-function buildPreferencesFile(prefs: ProjectPreferences): string {
-  const lines: string[] = ["---"];
-  lines.push("version: 1");
-  lines.push(`mode: ${prefs.mode}`);
+/**
+ * Map init wizard's typed ProjectPreferences to the prefs-wizard's
+ * Record<string, unknown> shape, matching the keys serializePreferencesToFrontmatter
+ * expects (mode, git.{isolation,main_branch,auto_push}, verification_commands, etc.).
+ *
+ * Exported for testing; init-wizard uses it inline.
+ */
+export function mapInitPrefsToWizardShape(prefs: ProjectPreferences): Record<string, unknown> {
+  const out: Record<string, unknown> = {
+    mode: prefs.mode,
+    git: {
+      isolation: prefs.gitIsolation,
+      main_branch: prefs.mainBranch,
+      auto_push: prefs.autoPush,
+    },
+  };
 
-  // Git preferences
-  lines.push("git:");
-  lines.push(`  isolation: ${prefs.gitIsolation}`);
-  lines.push(`  main_branch: ${prefs.mainBranch}`);
-  lines.push(`  auto_push: ${prefs.autoPush}`);
-
-  // Verification commands
   if (prefs.verificationCommands.length > 0) {
-    lines.push("verification_commands:");
-    for (const cmd of prefs.verificationCommands) {
-      lines.push(`  - "${cmd}"`);
-    }
+    out.verification_commands = prefs.verificationCommands;
   }
-
-  // Custom instructions
   if (prefs.customInstructions.length > 0) {
-    lines.push("custom_instructions:");
-    for (const inst of prefs.customInstructions) {
-      lines.push(`  - "${inst.replace(/"/g, '\\"')}"`);
-    }
+    out.custom_instructions = prefs.customInstructions;
   }
-
-  // Token profile (only if non-default)
   if (prefs.tokenProfile !== "balanced") {
-    lines.push(`token_profile: ${prefs.tokenProfile}`);
+    out.token_profile = prefs.tokenProfile;
   }
-
-  // Phase skips
   if (prefs.skipResearch) {
-    lines.push("phases:");
-    lines.push("  skip_research: true");
+    out.phases = { skip_research: true };
   }
 
-  // Defaults for wizard-generated files
-  lines.push("always_use_skills: []");
-  lines.push("prefer_skills: []");
-  lines.push("avoid_skills: []");
-  lines.push("skill_rules: []");
+  return out;
+}
 
-  lines.push("---");
-  lines.push("");
-  lines.push("# GSD Project Preferences");
-  lines.push("");
-  lines.push("Generated by `/gsd init`. Edit directly or use `/gsd prefs project` to modify.");
-  lines.push("");
-  lines.push("See `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation.");
-  lines.push("");
-
-  return lines.join("\n");
+function buildInitPreferencesBody(): string {
+  return [
+    "",
+    "# GSD Project Preferences",
+    "",
+    "Generated by `/gsd init`. Edit directly or use `/gsd prefs project` to modify.",
+    "",
+    "See `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation.",
+    "",
+  ].join("\n");
 }
 
 function buildContextSeed(signals: ProjectSignals): string | null {

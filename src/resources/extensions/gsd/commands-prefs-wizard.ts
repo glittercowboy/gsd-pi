@@ -699,10 +699,17 @@ async function configureAdvanced(ctx: ExtensionCommandContext, prefs: Record<str
 export async function handlePrefsWizard(
   ctx: ExtensionCommandContext,
   scope: "global" | "project",
+  prefill?: Record<string, unknown>,
 ): Promise<void> {
   const path = scope === "project" ? getProjectGSDPreferencesPath() : getGlobalGSDPreferencesPath();
   const existing = scope === "project" ? loadProjectGSDPreferences() : loadGlobalGSDPreferences();
-  const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : {};
+  // Order: existing-on-disk values, overlaid with prefill (caller's seeded answers).
+  // Callers like /gsd init pass freshly-collected init answers as prefill so the
+  // wizard menu shows them populated and writeable in one place.
+  const prefs: Record<string, unknown> = {
+    ...(existing?.preferences ?? {}),
+    ...(prefill ?? {}),
+  };
 
   ctx.ui.notify(`GSD preferences (${scope}) — pick a category to configure.`, "info");
 
@@ -734,23 +741,48 @@ export async function handlePrefsWizard(
     else if (choice.startsWith("Advanced"))      await configureAdvanced(ctx, prefs);
   }
 
-  // ─── Serialize to frontmatter ───────────────────────────────────────────
-  prefs.version = prefs.version || 1;
-  const frontmatter = serializePreferencesToFrontmatter(prefs);
+  await writePreferencesFile(path, prefs, ctx, { scope });
+}
 
-  // Preserve existing body content (everything after closing ---)
-  let body = "\n# GSD Skill Preferences\n\nSee `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation and examples.\n";
+/**
+ * Single source of truth for writing a PREFERENCES.md file.
+ *
+ * Both `/gsd init` and the prefs wizard route through this helper so we can't
+ * drift on serialization, body preservation, or post-write reload. Callers
+ * pass `ctx` for the reload/notify side effects; the function is safe to call
+ * without a full UI context for tests via `ctx: null` (skips reload/notify).
+ */
+export async function writePreferencesFile(
+  path: string,
+  prefs: Record<string, unknown>,
+  ctx: ExtensionCommandContext | null,
+  opts?: { scope?: "global" | "project"; defaultBody?: string; notifyOnSave?: boolean },
+): Promise<void> {
+  const next = { ...prefs, version: prefs.version || 1 };
+  const frontmatter = serializePreferencesToFrontmatter(next);
+
+  const fallbackBody = opts?.defaultBody
+    ?? "\n# GSD Skill Preferences\n\nSee `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation and examples.\n";
+
+  // Preserve existing body content (everything after closing ---) so users
+  // who edited the markdown body don't lose their notes.
+  let body = fallbackBody;
   if (existsSync(path)) {
     const preserved = extractBodyAfterFrontmatter(readFileSync(path, "utf-8"));
     if (preserved) body = preserved;
   }
 
   const content = `---\n${frontmatter}---${body}`;
-
   await saveFile(path, content);
-  await ctx.waitForIdle();
-  await ctx.reload();
-  ctx.ui.notify(`Saved ${scope} preferences to ${path}`, "info");
+
+  if (ctx) {
+    await ctx.waitForIdle();
+    await ctx.reload();
+    if (opts?.notifyOnSave !== false) {
+      const scopeLabel = opts?.scope ? `${opts.scope} ` : "";
+      ctx.ui.notify(`Saved ${scopeLabel}preferences to ${path}`, "info");
+    }
+  }
 }
 
 /** Wrap a YAML value in double quotes if it contains special characters. */
