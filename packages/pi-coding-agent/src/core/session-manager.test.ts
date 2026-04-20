@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -95,6 +95,35 @@ describe("SessionManager secret redaction on persistence", () => {
 		assert.ok(
 			contents.includes("[REDACTED:llamacloud]"),
 			"redaction placeholder must appear in persisted JSONL",
+		);
+	});
+
+	it("scrubs secrets from JSONL rewritten by _rewriteFile() during migration", () => {
+		// Write a v1 session file (no id/parentId on entries) containing a secret.
+		// setSessionFile() will detect version < 3, run migration, and call _rewriteFile()
+		// which previously serialised entries without passing them through redaction.
+		dir = mkdtempSync(join(tmpdir(), "gsd-session-rewrite-redact-test-"));
+		const leakedKey = "sk-ant-api03-abcDEF1234567890abcDEF1234567890xYz";
+		const v1Header = JSON.stringify({ type: "session", version: 1, id: "test-session-id", timestamp: new Date().toISOString(), cwd: dir });
+		const v1UserMsg = JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: `secret: ${leakedKey}` }] } });
+		const v1AssistantMsg = JSON.stringify({ type: "message", message: { role: "assistant", content: [{ type: "text", text: "ok" }], usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, total: 2, cost: { total: 0 } } } });
+		const sessionFile = join(dir, "test-session.jsonl");
+		writeFileSync(sessionFile, [v1Header, v1UserMsg, v1AssistantMsg].join("\n") + "\n", "utf8");
+
+		// Loading this file triggers migrateToCurrentVersion() which returns true (v1 → v3),
+		// causing _rewriteFile() to rewrite the file. The bug: _rewriteFile() called
+		// JSON.stringify(e) without redaction, so the secret would survive on disk.
+		const manager = SessionManager.create(dir, dir);
+		manager.setSessionFile(sessionFile);
+
+		const contents = readFileSync(sessionFile, "utf8");
+		assert.ok(
+			!contents.includes(leakedKey),
+			"raw secret must not appear in JSONL rewritten by _rewriteFile()",
+		);
+		assert.ok(
+			contents.includes("[REDACTED:anthropic]"),
+			"redaction placeholder must appear in JSONL rewritten by _rewriteFile()",
 		);
 	});
 });

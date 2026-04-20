@@ -959,7 +959,7 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
-		const content = `${this.fileEntries.map((e) => JSON.stringify(e)).join("\n")}\n`;
+		const content = `${this.fileEntries.map((e) => JSON.stringify(prepareForPersistence(e, this.blobStore))).join("\n")}\n`;
 		let release: (() => void) | undefined;
 		try {
 			release = tryAcquireLockSync(this.sessionFile);
