@@ -35,6 +35,34 @@ const MCP_PKG = '@modelcontextprotocol/sdk';
 const SERVER_NAME = 'gsd';
 const SERVER_VERSION = '2.53.0';
 
+/** User-interaction timeout — generous but bounded so elicitation can't hang indefinitely (#4586). */
+const ELICIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Race a promise against a timeout. Rejects with a typed error on timeout so
+ * callers can return a specific MCP error response rather than hanging.
+ *
+ * @param timeoutMs - override for testing; defaults to ELICIT_TIMEOUT_MS
+ */
+export async function withElicitTimeout<T>(
+  promise: Promise<T>,
+  label: string,
+  timeoutMs = ELICIT_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs / 60000} minutes — no user response received`)),
+      timeoutMs,
+    );
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool result helpers
 // ---------------------------------------------------------------------------
@@ -569,7 +597,10 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
           // tryRemoteQuestions() (e.g. env var was cleared) — fall through to local.
         }
 
-        const elicitation = await server.server.elicitInput(buildAskUserQuestionsElicitRequest(questions));
+        const elicitation = await withElicitTimeout(
+          server.server.elicitInput(buildAskUserQuestionsElicitRequest(questions)),
+          'ask_user_questions',
+        );
         if (elicitation.action !== 'accept' || !elicitation.content) {
           return textContent('ask_user_questions was cancelled before receiving a response');
         }
@@ -645,14 +676,17 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
         }
 
         // (3) Elicit input from the MCP client
-        const elicitation = await server.server.elicitInput({
-          message: `Enter values for ${pendingKeys.length} environment variable(s). Values are written directly to the project and never shown to the AI.`,
-          requestedSchema: {
-            type: 'object',
-            properties,
-            required,
-          },
-        });
+        const elicitation = await withElicitTimeout(
+          server.server.elicitInput({
+            message: `Enter values for ${pendingKeys.length} environment variable(s). Values are written directly to the project and never shown to the AI.`,
+            requestedSchema: {
+              type: 'object',
+              properties,
+              required,
+            },
+          }),
+          'secure_env_collect',
+        );
 
         if (elicitation.action !== 'accept' || !elicitation.content) {
           return textContent('secure_env_collect was cancelled by user.');

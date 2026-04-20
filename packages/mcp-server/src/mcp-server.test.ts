@@ -20,6 +20,7 @@ import {
   buildAskUserQuestionsElicitRequest,
   createMcpServer,
   formatAskUserQuestionsElicitResult,
+  withElicitTimeout,
 } from './server.js';
 import { MAX_EVENTS } from './types.js';
 import type { ManagedSession, CostAccumulator, PendingBlocker } from './types.js';
@@ -744,5 +745,34 @@ describe('createMcpServer tool registration', () => {
         },
       }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withElicitTimeout
+// ---------------------------------------------------------------------------
+
+describe('withElicitTimeout', () => {
+  it('resolves with the promise value when it settles before the timeout', async () => {
+    const result = await withElicitTimeout(Promise.resolve(42), 'test', 5000);
+    assert.equal(result, 42);
+  });
+
+  it('rejects with a timeout error when the promise does not settle in time', async () => {
+    const never = new Promise<never>(() => {});
+    await assert.rejects(
+      () => withElicitTimeout(never, 'ask_user_questions', 1),
+      (err: Error) => {
+        assert.ok(err.message.includes('ask_user_questions'));
+        assert.ok(err.message.includes('timed out'));
+        return true;
+      },
+    );
+  });
+
+  it('clears the timer when the promise resolves (no dangling timer)', async () => {
+    const start = Date.now();
+    await withElicitTimeout(Promise.resolve('done'), 'test', 50);
+    assert.ok(Date.now() - start < 40, 'should not wait for the timeout');
   });
 });
