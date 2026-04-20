@@ -35,6 +35,44 @@ test("validateFileChanges works on repos with a single commit (no HEAD~1)", (t) 
   assert.deepEqual(audit.missingFiles, []);
 });
 
+test("validateFileChanges excludes allowlisted files from unexpected-change warnings", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-file-change-validator-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  mkdirSync(join(base, "tracking", "history"), { recursive: true });
+  git(base, "init");
+  git(base, "config", "user.email", "test@example.com");
+  git(base, "config", "user.name", "Test User");
+
+  writeFileSync(join(base, "src.ts"), "initial\n");
+  writeFileSync(join(base, "tracking", "history", "2026-04-20-snapshot.md"), "initial\n");
+  git(base, "add", ".");
+  git(base, "commit", "-m", "initial");
+
+  writeFileSync(join(base, "src.ts"), "updated\n");
+  writeFileSync(join(base, "tracking", "history", "2026-04-20-snapshot.md"), "updated\n");
+  git(base, "add", ".");
+  git(base, "commit", "-m", "update");
+
+  // Without allowlist: tracking/history snapshot is unexpected
+  const auditWithout = validateFileChanges(base, ["src.ts"], []);
+  assert.ok(auditWithout, "audit should be produced");
+  assert.ok(
+    auditWithout.unexpectedFiles.includes("tracking/history/2026-04-20-snapshot.md"),
+    "snapshot should be unexpected without allowlist",
+  );
+
+  // With glob allowlist: snapshot is excluded
+  const auditWith = validateFileChanges(base, ["src.ts"], [], ["tracking/history/**"]);
+  assert.ok(auditWith, "audit should be produced with allowlist");
+  assert.deepEqual(auditWith.unexpectedFiles, [], "no unexpected files when snapshot is allowlisted");
+  assert.equal(
+    auditWith.violations.filter(v => v.severity === "warning").length,
+    0,
+    "no warnings when all unexpected files are allowlisted",
+  );
+});
+
 test("validateFileChanges ignores inline descriptions in expected output paths", (t) => {
   const base = mkdtempSync(join(tmpdir(), "gsd-file-change-validator-"));
   t.after(() => rmSync(base, { recursive: true, force: true }));

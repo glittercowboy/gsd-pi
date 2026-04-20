@@ -653,7 +653,7 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
             if (taskRow) {
               const expectedOutput = taskRow.expected_output ?? [];
               const plannedFiles = taskRow.files ?? [];
-              const audit = validateFileChanges(s.basePath, expectedOutput, plannedFiles);
+              const audit = validateFileChanges(s.basePath, expectedOutput, plannedFiles, safetyConfig.file_change_allowlist);
               if (audit && audit.violations.length > 0) {
                 const warnings = audit.violations.filter(v => v.severity === "warning");
                 for (const v of warnings) {

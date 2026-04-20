@@ -392,6 +392,14 @@ export interface GSDPreferences {
     checkpoints?: boolean;
     auto_rollback?: boolean;
     timeout_scale_cap?: number;
+    /**
+     * Glob patterns for files that are always expected side-effects of any task.
+     * Files matching any pattern here are excluded from unexpected-change warnings.
+     * Supports standard glob syntax (e.g. `tracking/history/**`, `*.log`).
+     * Fixes #4385/#4436 — audit-trail snapshots, build artifacts, and other
+     * project-level secondary writes shouldn't require per-task declaration.
+     */
+    file_change_allowlist?: string[];
   };
 
 
