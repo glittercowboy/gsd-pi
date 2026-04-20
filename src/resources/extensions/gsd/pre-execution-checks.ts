@@ -91,8 +91,13 @@ export function extractPackageReferences(description: string): string[] {
     }
   }
 
-  // require('pkg') or import from 'pkg' in code blocks
-  const importPattern = /(?:require\s*\(\s*['"]|from\s+['"])([a-zA-Z0-9@/_-]+)['"\)]/g;
+  // require('pkg') or `import ... from 'pkg'` in code blocks.
+  // The `from\s+['"]` branch MUST be preceded by an `import` keyword so that
+  // natural-language prose like `from "What's Next"` or `from 'master'` does
+  // not produce false package-existence failures.  Requiring the leading import
+  // keyword anchors the match to JavaScript/TypeScript syntax.
+  // See: https://github.com/gsd-build/gsd-2/issues/4388
+  const importPattern = /(?:require\s*\(\s*['"]|import\b[\s\S]*?\bfrom\s+['"])([a-zA-Z0-9@/_-]+)['"\)]/g;
   let importMatch: RegExpExecArray | null;
   while ((importMatch = importPattern.exec(description)) !== null) {
     // Skip relative imports and node builtins

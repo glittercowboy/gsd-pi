@@ -140,6 +140,25 @@ import type { Request } from 'express';
     assert.ok(packages.includes("typescript"));
     assert.ok(!packages.includes("-D"));
   });
+
+  // Regression tests for #4388: prose containing `from "..."` must not produce false-positive packages
+  test("does not treat prose 'from \"What's Next\"' as a package name (#4388)", () => {
+    const desc = 'Build the feature described from "What\'s Next" in the roadmap';
+    const packages = extractPackageReferences(desc);
+    assert.deepEqual(packages, [], `prose 'from "What\\'s Next"' must not produce package names, got: ${JSON.stringify(packages)}`);
+  });
+
+  test("does not treat prose \"from 'master'\" as a package name (#4388)", () => {
+    const desc = "Review changes from 'master' branch before merging";
+    const packages = extractPackageReferences(desc);
+    assert.deepEqual(packages, [], `prose "from 'master'" must not produce package names, got: ${JSON.stringify(packages)}`);
+  });
+
+  test("still extracts import statements in code blocks after #4388 fix", () => {
+    const desc = "```typescript\nimport express from 'express';\nimport { Router } from 'express';\n```";
+    const packages = extractPackageReferences(desc);
+    assert.ok(packages.includes("express"), "import...from in code blocks must still be recognized");
+  });
 });
 
 // ─── File Path Consistency Tests ─────────────────────────────────────────────
