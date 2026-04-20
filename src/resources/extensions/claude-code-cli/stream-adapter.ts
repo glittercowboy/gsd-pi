@@ -692,18 +692,16 @@ export function makeAbortedMessage(model: string, lastTextContent: string): Assi
 /**
  * Resolve the Claude Code permission mode for the current run.
  *
- * GSD subagents run underneath a host Claude Code session the user has
- * already consented to, and their work (edits, shell inspection, MCP calls)
- * spans the full workflow toolset. Defaulting the inner SDK to
- * `bypassPermissions` avoids per-tool approval prompts that offer no
- * meaningful safety beyond what the host session and the subagent prompts
- * already enforce. `GSD_CLAUDE_CODE_PERMISSION_MODE` lets security-conscious
- * users opt into a stricter mode (`acceptEdits`, `default`, `plan`).
+ * Defaults to `acceptEdits`, which auto-approves file reads/edits but
+ * surfaces a permission dialog for dangerous operations (e.g. general Bash,
+ * Agent, WebFetch). This prevents tools outside the allowlist from being
+ * silently denied — the SDK emits an `extension_ui_request` event so the
+ * user sees a prompt instead of a silent refusal that Claude Code mistakes
+ * for user rejection (#4383).
  *
- * Tradeoff: bypass means a prompt-injection payload read from an untrusted
- * file could trigger tool calls without a second gate. Accepted for GSD
- * because the workflow is explicit user intent and the alternative
- * (#4099) is continuous approval fatigue that blocks real work.
+ * Set `GSD_CLAUDE_CODE_PERMISSION_MODE` to `bypassPermissions` to restore
+ * the old always-approve behaviour, or to `default` / `plan` for stricter
+ * modes.
  */
 export async function resolveClaudePermissionMode(
 	env: NodeJS.ProcessEnv = process.env,
@@ -712,7 +710,7 @@ export async function resolveClaudePermissionMode(
 	if (override === "bypassPermissions" || override === "acceptEdits" || override === "default" || override === "plan") {
 		return override;
 	}
-	return "bypassPermissions";
+	return "acceptEdits";
 }
 
 // NOTE: These helpers intentionally mirror @gsd/pi-ai anthropic-shared
@@ -772,7 +770,7 @@ export function buildSdkOptions(
 ): Record<string, unknown> {
 	const { reasoning, ...sdkExtraOptions } = extraOptions;
 	const mcpServers = buildWorkflowMcpServers();
-	const permissionMode = overrides?.permissionMode ?? "bypassPermissions";
+	const permissionMode = overrides?.permissionMode ?? "acceptEdits";
 	const disallowedTools = ["AskUserQuestion"];
 	// Pre-authorize the safe built-ins and every registered workflow MCP
 	// server's tools. `acceptEdits` mode (the interactive default) only

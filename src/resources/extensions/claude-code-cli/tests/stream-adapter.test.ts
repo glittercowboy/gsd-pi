@@ -1216,11 +1216,15 @@ describe("stream-adapter — permission mode (F10)", () => {
 		}
 	}
 
-	test("buildSdkOptions defaults to bypassPermissions for backwards compatibility", () => {
+	test("buildSdkOptions defaults to acceptEdits (#4383)", () => {
 		clearWorkflowMcpEnv();
 		const opts = buildSdkOptions("claude-sonnet-4-6", "test");
-		assert.equal(opts.permissionMode, "bypassPermissions");
-		assert.equal(opts.allowDangerouslySkipPermissions, true);
+		assert.equal(opts.permissionMode, "acceptEdits");
+		assert.equal(
+			opts.allowDangerouslySkipPermissions,
+			false,
+			"allowDangerouslySkipPermissions must be false when permissionMode is acceptEdits",
+		);
 	});
 
 	test("buildSdkOptions respects explicit acceptEdits override", () => {
@@ -1232,6 +1236,11 @@ describe("stream-adapter — permission mode (F10)", () => {
 			false,
 			"allowDangerouslySkipPermissions must be false for non-bypass modes",
 		);
+	});
+
+	test("resolveClaudePermissionMode defaults to acceptEdits when no env var is set (#4383)", async () => {
+		const mode = await resolveClaudePermissionMode({});
+		assert.equal(mode, "acceptEdits");
 	});
 
 	test("resolveClaudePermissionMode honours the GSD_CLAUDE_CODE_PERMISSION_MODE env override", async () => {
