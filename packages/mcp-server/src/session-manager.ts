@@ -188,7 +188,27 @@ export class SessionManager {
   async cancelSession(sessionId: string): Promise<void> {
     const session = this.getSession(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
+    await this._cancelSessionObject(session);
+  }
 
+  /**
+   * Cancel a session looked up by project directory.
+   *
+   * This is the fallback path for interactive sessions (started via `/gsd auto`
+   * in the terminal) and sessions from a restarted MCP server that have no
+   * registered sessionId. The sessions map is keyed by projectDir, so this
+   * lookup always succeeds for any tracked session regardless of sessionId.
+   */
+  async cancelSessionByDir(projectDir: string): Promise<void> {
+    const session = this.getSessionByDir(projectDir);
+    if (!session) throw new Error(`Session not found for projectDir: ${projectDir}`);
+    await this._cancelSessionObject(session);
+  }
+
+  /**
+   * Internal: perform abort + stop + mark cancelled on a resolved session object.
+   */
+  private async _cancelSessionObject(session: ManagedSession): Promise<void> {
     try {
       await session.client.abort();
     } catch { /* may already be stopped */ }

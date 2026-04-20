@@ -459,17 +459,32 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
 
   // -----------------------------------------------------------------------
   // gsd_cancel — cancel a running session
+  //
+  // Supports two lookup strategies:
+  //   1. sessionId  — the ID returned from gsd_execute (primary)
+  //   2. projectDir — absolute path to the project directory (fallback)
+  //
+  // The projectDir fallback handles interactive sessions (started via
+  // `/gsd auto` in the terminal) and post-restart MCP sessions that were
+  // never registered with a sessionId in this server instance.
   // -----------------------------------------------------------------------
   server.tool(
     'gsd_cancel',
-    'Cancel a running GSD session. Aborts the current operation and stops the process.',
+    'Cancel a running GSD session. Aborts the current operation and stops the process. Provide sessionId (from gsd_execute) or projectDir as a fallback for interactive/restarted sessions.',
     {
-      sessionId: z.string().describe('Session ID returned from gsd_execute'),
+      sessionId: z.string().optional().describe('Session ID returned from gsd_execute'),
+      projectDir: z.string().optional().describe('Absolute path to the project directory (fallback when sessionId is unavailable)'),
     },
     async (args: Record<string, unknown>) => {
-      const { sessionId } = args as { sessionId: string };
+      const { sessionId, projectDir } = args as { sessionId?: string; projectDir?: string };
       try {
-        await sessionManager.cancelSession(sessionId);
+        if (sessionId) {
+          await sessionManager.cancelSession(sessionId);
+        } else if (projectDir) {
+          await sessionManager.cancelSessionByDir(projectDir);
+        } else {
+          return errorContent('Either sessionId or projectDir must be provided');
+        }
         return jsonContent({ cancelled: true });
       } catch (err) {
         return errorContent(err instanceof Error ? err.message : String(err));

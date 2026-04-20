@@ -668,6 +668,43 @@ describe('createMcpServer tool registration', () => {
     assert.equal(session.status, 'cancelled');
   });
 
+  it('gsd_cancel can cancel an interactive session (no sessionId) via projectDir fallback', async () => {
+    // Simulate an interactive session: registered by projectDir but with an empty sessionId
+    // (e.g. started via `/gsd auto` in terminal or from a restarted MCP server that lost its session registry)
+    const projectDir = resolve('/tmp/interactive-session');
+    const mockClient = new MockRpcClient({ cwd: projectDir, args: [] });
+    const interactiveSession: ManagedSession = {
+      sessionId: '', // no sessionId — interactive/restarted scenario
+      projectDir,
+      status: 'running',
+      client: mockClient as any,
+      events: [],
+      pendingBlocker: null,
+      cost: { totalCost: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      startTime: Date.now(),
+    };
+    sm._putSession(projectDir, interactiveSession);
+
+    // cancelSession('') should fail — no session found by empty sessionId
+    // cancelSessionByDir should succeed — finds session by projectDir
+    await sm.cancelSessionByDir(projectDir);
+
+    const session = sm.getSessionByDir(projectDir)!;
+    assert.equal(session.status, 'cancelled');
+    assert.ok(mockClient.aborted, 'client.abort() should have been called');
+  });
+
+  it('gsd_cancel via projectDir works even when sessionId lookup returns undefined', async () => {
+    // Start a normal session to get its projectDir
+    const sessionId = await sm.startSession('/tmp/cancel-by-dir', { cliPath: '/usr/bin/gsd' });
+    const session = sm.getSession(sessionId)!;
+    const { projectDir } = session;
+
+    // cancelSessionByDir should find it by dir and cancel it
+    await sm.cancelSessionByDir(projectDir);
+    assert.equal(session.status, 'cancelled');
+  });
+
   it('buildAskUserQuestionsElicitRequest adds None of the above note field for single-select questions', () => {
     const request = buildAskUserQuestionsElicitRequest([
       {
