@@ -349,6 +349,119 @@ test("runUnit cancels before dispatch when model restore fails after newSession"
   ]);
 });
 
+test("runUnit cancels before dispatch when provider is not request-ready (#4555)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.model = { provider: "anthropic", id: "claude-opus-4-6" };
+  ctx.modelRegistry = {
+    isProviderRequestReady: (_provider: string) => false,
+  };
+
+  const pi = makeMockPi();
+  const s = makeMockSession();
+
+  const result = await runUnit(ctx, pi, s, "task", "T01", "prompt");
+
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.errorContext?.category, "provider");
+  assert.match(
+    result.errorContext?.message ?? "",
+    /Provider anthropic is not request-ready/,
+  );
+  assert.equal(pi.calls.length, 0, "sendMessage must not be called when provider is not ready");
+});
+
+test("runUnit cancels before dispatch using currentUnitModel provider when set (#4555)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.model = { provider: "anthropic", id: "claude-opus-4-6" };
+  // modelRegistry says anthropic is not ready but openai is
+  ctx.modelRegistry = {
+    isProviderRequestReady: (provider: string) => provider === "openai",
+  };
+
+  const pi = makeMockPi();
+  const s = makeMockSession();
+  // currentUnitModel overrides the provider used in the readiness check
+  s.currentUnitModel = { provider: "anthropic", id: "claude-opus-4-6" };
+
+  const result = await runUnit(ctx, pi, s, "task", "T01", "prompt");
+
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.errorContext?.category, "provider");
+  assert.match(
+    result.errorContext?.message ?? "",
+    /Provider anthropic is not request-ready/,
+  );
+  assert.equal(pi.calls.length, 0);
+});
+
+test("runUnit proceeds when provider is request-ready (#4555)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.model = { provider: "anthropic", id: "claude-opus-4-6" };
+  ctx.modelRegistry = {
+    isProviderRequestReady: (_provider: string) => true,
+  };
+
+  const pi = makeMockPi();
+  const s = makeMockSession();
+
+  const resultPromise = runUnit(ctx, pi, s, "task", "T01", "prompt");
+
+  await new Promise((r) => setTimeout(r, 10));
+  resolveAgentEnd(makeEvent());
+
+  const result = await resultPromise;
+  assert.equal(result.status, "completed");
+  assert.equal(pi.calls.length, 1, "sendMessage must be called when provider is ready");
+});
+
+test("runUnit proceeds when modelRegistry is absent (no readiness check available) (#4555)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.model = { provider: "anthropic", id: "claude-opus-4-6" };
+  // No modelRegistry on ctx — pre-check should be skipped
+
+  const pi = makeMockPi();
+  const s = makeMockSession();
+
+  const resultPromise = runUnit(ctx, pi, s, "task", "T01", "prompt");
+
+  await new Promise((r) => setTimeout(r, 10));
+  resolveAgentEnd(makeEvent());
+
+  const result = await resultPromise;
+  assert.equal(result.status, "completed");
+  assert.equal(pi.calls.length, 1);
+});
+
+test("runUnit proceeds when isProviderRequestReady throws (defensive) (#4555)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.model = { provider: "anthropic", id: "claude-opus-4-6" };
+  ctx.modelRegistry = {
+    isProviderRequestReady: (_provider: string) => {
+      throw new Error("registry error");
+    },
+  };
+
+  const pi = makeMockPi();
+  const s = makeMockSession();
+
+  const result = await runUnit(ctx, pi, s, "task", "T01", "prompt");
+
+  // When the readyCheck throws, ready=false → unit cancelled
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.errorContext?.category, "provider");
+  assert.equal(pi.calls.length, 0);
+});
+
 // ─── Structural assertions ───────────────────────────────────────────────────
 
 test("auto-loop.ts exports autoLoop, runUnit, resolveAgentEnd", async () => {

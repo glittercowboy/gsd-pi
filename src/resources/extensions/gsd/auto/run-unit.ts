@@ -118,6 +118,35 @@ export async function runUnit(
     logWarning("engine", "Failed to chdir to basePath before dispatch", { basePath: s.basePath, error: String(e) });
   }
 
+  // ── Provider request-readiness pre-check (#4555) ──
+  // Verify the provider can accept requests before dispatching. If the token
+  // has expired since bootstrap, return cancelled immediately so the unit is
+  // not wasted on a guaranteed 401.
+  {
+    const provider = s.currentUnitModel?.provider ?? ctx.model?.provider;
+    const readyCheck = (ctx as any).modelRegistry?.isProviderRequestReady;
+
+    if (provider && typeof readyCheck === "function") {
+      let ready = false;
+      try {
+        ready = readyCheck(provider);
+      } catch {
+        ready = false;
+      }
+
+      if (!ready) {
+        return {
+          status: "cancelled",
+          errorContext: {
+            message: `Provider ${provider} is not request-ready (login/token expired)`,
+            category: "provider",
+            isTransient: false,
+          },
+        };
+      }
+    }
+  }
+
   // ── Send the prompt ──
   debugLog("runUnit", { phase: "send-message", unitType, unitId });
 
