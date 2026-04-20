@@ -395,7 +395,7 @@ export async function selectAndApplyModel(
         // ADR-005: Adjust active tool set for the selected model's provider capabilities.
         // Hard-filter incompatible tools, then let extensions override via adjust_tool_set hook.
         const activeToolNames = pi.getActiveTools();
-        const { toolNames: compatibleTools, removedTools } = adjustToolSet(activeToolNames, model.api);
+        const { toolNames: compatibleTools, removedTools } = adjustToolSet(activeToolNames, model.api, model.provider);
         let finalToolNames = compatibleTools;
 
         // Fire adjust_tool_set hook — extensions can override the filtered tool set

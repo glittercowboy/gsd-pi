@@ -561,6 +561,23 @@ function bareModelId(modelId: string): string {
   return modelId.includes("/") ? modelId.split("/").pop()! : modelId;
 }
 
+// ─── Provider-specific Tool Limits ─────────────────────────────────────────
+
+/**
+ * Groq enforces a hard limit of 128 tools per request.
+ * Requests exceeding this limit receive a 400 error:
+ * "maximum number of items is 128"
+ * @see https://console.groq.com/docs/tool-use
+ */
+export const GROQ_MAX_TOOLS = 128;
+
+/**
+ * Provider IDs that map to the Groq API backend.
+ * Used to detect Groq at the GSD routing layer where only the provider string
+ * is available (the pi-ai openai-completions adapter is shared across providers).
+ */
+const GROQ_PROVIDER_IDS = new Set(["groq"]);
+
 // ─── Tool Compatibility Filter (ADR-005 Phase 3) ───────────────────────────
 
 /**
@@ -588,10 +605,17 @@ export function isToolCompatibleWithProvider(
 /**
  * Filter a list of tool names to only those compatible with a provider.
  * Used by the routing pipeline to adjust tool sets when switching providers.
+ *
+ * @param toolNames - The full list of active tool names to filter.
+ * @param providerApi - The pi-ai API string (e.g. "openai-completions").
+ * @param provider - Optional provider ID (e.g. "groq"). Used to apply
+ *   provider-specific limits that can't be expressed as API-level capabilities
+ *   (e.g. Groq's 128-tool hard limit on the shared openai-completions adapter).
  */
 export function filterToolsForProvider(
   toolNames: string[],
   providerApi: string,
+  provider?: string,
 ): { compatible: string[]; filtered: string[] } {
   const providerCaps = getProviderCapabilities(providerApi);
 
@@ -611,6 +635,17 @@ export function filterToolsForProvider(
     }
   }
 
+  // Groq enforces a hard limit of 128 tools per request (#4376).
+  // Trim the compatible list to GROQ_MAX_TOOLS and move the excess to filtered.
+  if (provider && GROQ_PROVIDER_IDS.has(provider) && compatible.length > GROQ_MAX_TOOLS) {
+    const trimmed = compatible.splice(GROQ_MAX_TOOLS);
+    filtered.push(...trimmed);
+    console.warn(
+      `[gsd] Groq tool limit: ${compatible.length + trimmed.length} tools active but Groq allows at most ${GROQ_MAX_TOOLS}. ` +
+        `Trimming to the first ${GROQ_MAX_TOOLS} tools. Removed: ${trimmed.join(", ")}`,
+    );
+  }
+
   return { compatible, filtered };
 }
 
@@ -620,11 +655,17 @@ export function filterToolsForProvider(
  *
  * This is a hard filter only — it removes tools that would fail at the
  * provider level. It does NOT remove tools based on soft heuristics.
+ *
+ * @param activeToolNames - The full list of currently active tool names.
+ * @param selectedModelApi - The pi-ai API string for the selected model.
+ * @param provider - Optional provider ID (e.g. "groq") for provider-specific
+ *   limits beyond what the API-level capability profile expresses.
  */
 export function adjustToolSet(
   activeToolNames: string[],
   selectedModelApi: string,
+  provider?: string,
 ): { toolNames: string[]; removedTools: string[] } {
-  const { compatible, filtered } = filterToolsForProvider(activeToolNames, selectedModelApi);
+  const { compatible, filtered } = filterToolsForProvider(activeToolNames, selectedModelApi, provider);
   return { toolNames: compatible, removedTools: filtered };
 }
