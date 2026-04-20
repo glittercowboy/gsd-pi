@@ -372,11 +372,144 @@ describe("stream-adapter — Claude Code external tool results", () => {
 				toolUseId: "tool-bash-1",
 				result: {
 					content: [{ type: "text", text: "line 1\nline 2" }],
-					details: {},
+					// extractStructuredDetailsFromBlock returns undefined when no
+					// structured payload exists, restoring the pre-#4477 nullable
+					// contract (#4477 review feedback).
+					details: undefined,
 					isError: false,
 				},
 			},
 		]);
+	});
+
+	test("extractToolResultsFromSdkUserMessage reads structuredContent as a sibling field (#4472)", () => {
+		const message: SDKUserMessage = {
+			type: "user",
+			session_id: "sess-1",
+			parent_tool_use_id: "tool-mcp-1",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "mcp_tool_result",
+						tool_use_id: "tool-mcp-1",
+						content: [{ type: "text", text: "Gate Q3 result saved: verdict=pass" }],
+						is_error: false,
+						structuredContent: { gateId: "Q3", verdict: "pass" },
+					} as unknown as Record<string, unknown>,
+				],
+			},
+		};
+
+		const results = extractToolResultsFromSdkUserMessage(message);
+		assert.deepEqual(results[0].result.details, { gateId: "Q3", verdict: "pass" });
+	});
+
+	test("extractToolResultsFromSdkUserMessage reads structuredContent from a content sub-block (#4472)", () => {
+		const message: SDKUserMessage = {
+			type: "user",
+			session_id: "sess-1",
+			parent_tool_use_id: "tool-mcp-2",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "mcp_tool_result",
+						tool_use_id: "tool-mcp-2",
+						content: [
+							{ type: "text", text: "Gate Q4 result saved: verdict=flag" },
+							{ type: "structuredContent", structuredContent: { gateId: "Q4", verdict: "flag" } },
+						],
+						is_error: false,
+					} as unknown as Record<string, unknown>,
+				],
+			},
+		};
+
+		const results = extractToolResultsFromSdkUserMessage(message);
+		assert.deepEqual(results[0].result.details, { gateId: "Q4", verdict: "flag" });
+	});
+
+	test("#4477 extractToolResultsFromSdkUserMessage does NOT leak structuredContent pseudo-blocks into visible content", () => {
+		// Regression: when a content sub-block carries `type: "structuredContent"`,
+		// it carries the structured payload (extracted separately into `details`)
+		// and must NOT appear in the visible `content` array — otherwise the
+		// renderer stringifies the JSON pseudo-block and shows it next to the
+		// actual tool output. See PR #4477 review (CodeRabbit, post-fix-round).
+		const message: SDKUserMessage = {
+			type: "user",
+			session_id: "sess-1",
+			parent_tool_use_id: "tool-mcp-strip",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "mcp_tool_result",
+						tool_use_id: "tool-mcp-strip",
+						content: [
+							{ type: "text", text: "Gate Q5 result saved: verdict=pass" },
+							{ type: "structuredContent", structuredContent: { gateId: "Q5", verdict: "pass" } },
+							{ type: "text", text: "second visible line" },
+							// snake_case variant — also a pseudo-block; also must be stripped
+							{ type: "structured_content", structured_content: { extra: "data" } },
+						],
+						is_error: false,
+					} as unknown as Record<string, unknown>,
+				],
+			},
+		};
+
+		const results = extractToolResultsFromSdkUserMessage(message);
+		assert.equal(results.length, 1, "should extract one result");
+		const result = results[0].result;
+
+		// The structured payload IS extracted to `details`.
+		assert.deepEqual(result.details, { gateId: "Q5", verdict: "pass" });
+
+		// The visible content has the two text blocks but NEITHER pseudo-block.
+		const visibleTexts = result.content.map((c: any) => c.text);
+		assert.deepEqual(
+			visibleTexts,
+			["Gate Q5 result saved: verdict=pass", "second visible line"],
+			"visible content must include only the two text blocks; both structuredContent variants must be stripped",
+		);
+
+		// Belt-and-suspenders: assert no rendered text shows the JSON serialization
+		// of a pseudo-block. We don't check for bare keys like "gateId" or "verdict"
+		// because those are legitimate words in the gate-result message text. The
+		// regression signature would be a JSON-shaped substring that could only
+		// appear via stringification.
+		const allText = visibleTexts.join("\n");
+		assert.ok(
+			!allText.includes('"structuredContent"'),
+			"rendered content must not include the pseudo-block type marker as JSON text",
+		);
+		assert.ok(
+			!allText.includes('"structured_content"'),
+			"rendered content must not include the snake_case pseudo-block type marker as JSON text",
+		);
+	});
+
+	test("extractToolResultsFromSdkUserMessage accepts snake_case structured_content defensively (#4472)", () => {
+		const message: SDKUserMessage = {
+			type: "user",
+			session_id: "sess-1",
+			parent_tool_use_id: "tool-mcp-3",
+			message: {
+				role: "user",
+				content: [
+					{
+						type: "mcp_tool_result",
+						tool_use_id: "tool-mcp-3",
+						content: [{ type: "text", text: "ok" }],
+						structured_content: { operation: "save_gate_result" },
+					} as unknown as Record<string, unknown>,
+				],
+			},
+		};
+
+		const results = extractToolResultsFromSdkUserMessage(message);
+		assert.deepEqual(results[0].result.details, { operation: "save_gate_result" });
 	});
 
 	test("extractToolResultsFromSdkUserMessage falls back to tool_use_result", () => {
@@ -398,7 +531,9 @@ describe("stream-adapter — Claude Code external tool results", () => {
 				toolUseId: "tool-read-1",
 				result: {
 					content: [{ type: "text", text: "file contents" }],
-					details: {},
+					// undefined (not {}) per the restored nullable contract — see
+					// the analogous assertion in the tool_result test above.
+					details: undefined,
 					isError: true,
 				},
 			},

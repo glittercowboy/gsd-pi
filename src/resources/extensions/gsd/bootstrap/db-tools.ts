@@ -35,6 +35,19 @@ function registerAlias(pi: ExtensionAPI, toolDef: any, aliasName: string, canoni
   });
 }
 
+/**
+ * Read a tool result's structured payload, accommodating MCP's `details` →
+ * `structuredContent` rename (#4472, #4477). In-process executions still
+ * deliver the payload on `result.details`; MCP-routed executions deliver it
+ * on `result.structuredContent` (post `adaptExecutorResult` transform). All
+ * `renderResult` callbacks in this file route through this helper so a future
+ * field rename only needs to be applied in one place.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- result shape varies by tool
+function readDetails(result: any): any {
+  return result?.details ?? result?.structuredContent;
+}
+
 export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_decision_save (formerly gsd_save_decision) ─────────────────────
 
@@ -110,7 +123,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
       return new Text(text, 0, 0);
     },
     renderResult(result: any, _options: any, theme: any) {
-      const d = result.details;
+      const d = readDetails(result);
       if (result.isError || d?.error) {
         return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
       }
@@ -188,7 +201,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
       return new Text(text, 0, 0);
     },
     renderResult(result: any, _options: any, theme: any) {
-      const d = result.details;
+      const d = readDetails(result);
       if (result.isError || d?.error) {
         return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
       }
@@ -273,7 +286,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
       return new Text(text, 0, 0);
     },
     renderResult(result: any, _options: any, theme: any) {
-      const d = result.details;
+      const d = readDetails(result);
       if (result.isError || d?.error) {
         return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
       }
@@ -322,7 +335,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
       return new Text(text, 0, 0);
     },
     renderResult(result: any, _options: any, theme: any) {
-      const d = result.details;
+      const d = readDetails(result);
       if (result.isError || d?.error) {
         return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
       }
@@ -406,7 +419,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
       return new Text(theme.fg("toolTitle", theme.bold("milestone_generate_id")), 0, 0);
     },
     renderResult(result: any, _options: any, theme: any) {
-      const d = result.details;
+      const d = readDetails(result);
       if (result.isError || d?.error) {
         return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
       }
@@ -1074,13 +1087,31 @@ export function registerDbTools(pi: ExtensionAPI): void {
       text += theme.fg("dim", ` → ${args.verdict ?? ""}`);
       return new Text(text, 0, 0);
     },
+    /**
+     * Render the save_gate_result tool output for the TUI.
+     *
+     * Prefers structured fields, but falls back to `content[0].text` when the
+     * structured payload is empty. Defensive: the structural fix on this
+     * branch plumbs `details` through MCP via `structuredContent`, but older
+     * hosts, a future handler that forgets `structuredContent`, or any drop
+     * of non-standard return fields would otherwise render as
+     * "undefined: undefined". Same fallback applies to error rendering, and
+     * we strip a leading `Error:` from the fallback text to avoid producing
+     * `Error: Error: ...`.
+     */
     renderResult(result: any, _options: any, theme: any) {
-      const d = result.details;
+      const d = readDetails(result);
       if (result.isError || d?.error) {
-        return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
+        const rawMsg = d?.error ?? result.content?.[0]?.text ?? "unknown";
+        const msg = rawMsg.replace(/^\s*Error:\s*/i, "");
+        return new Text(theme.fg("error", `Error: ${msg}`), 0, 0);
       }
-      const color = d?.verdict === "flag" ? "warning" : "success";
-      return new Text(theme.fg(color, `${d?.gateId}: ${d?.verdict}`), 0, 0);
+      if (!d?.gateId || !d?.verdict) {
+        const text = result.content?.[0]?.text ?? "Gate result saved";
+        return new Text(theme.fg("success", text), 0, 0);
+      }
+      const color = d.verdict === "flag" ? "warning" : "success";
+      return new Text(theme.fg(color, `${d.gateId}: ${d.verdict}`), 0, 0);
     },
   };
 

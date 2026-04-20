@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -284,6 +284,136 @@ describe("workflow MCP tools", () => {
       assert.equal(parsed.sliceCount, 1);
       assert.equal(parsed.slices[0].id, "S01");
     } finally {
+      cleanup(base);
+    }
+  });
+
+  it("#4477 gsd_task_complete forwards every schema field to the executor (regression for destructure-rebuild bug class)", async () => {
+    // Locks in the class-fix from PR #4477 review: handleTaskComplete previously
+    // destructured args into a hand-listed set of fields and rebuilt the call
+    // payload, which silently dropped ADR-011's `escalation` field (and any
+    // future schema field added without updating the rebuild). The fix passes
+    // `args` through directly, matching the spread pattern of sibling
+    // handlers. This test verifies the contract by injecting a mock executor
+    // module that captures the args, calling gsd_task_complete with an
+    // `escalation` payload, and asserting the field reached the executor.
+    const base = makeTmpBase();
+    const capturePath = join(base, "captured-args.json");
+    const mockModulePath = join(base, "mock-executors.mjs");
+    const prevModule = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    const prevCapture = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
+    try {
+      // Mock module: implements the WorkflowToolExecutors shape.
+      // executeTaskComplete writes its received args to disk for assertion.
+      // Other executors are no-op stubs to satisfy isWorkflowToolExecutors.
+      const mockSource = `
+import { writeFileSync } from "node:fs";
+
+const noop = async () => ({ content: [{ type: "text", text: "noop" }] });
+
+export const SUPPORTED_SUMMARY_ARTIFACT_TYPES = ["SUMMARY", "UAT", "CONTEXT", "PLAN"];
+export const executeMilestoneStatus = noop;
+export const executePlanMilestone = noop;
+export const executePlanSlice = noop;
+export const executeReplanSlice = noop;
+export const executeSliceComplete = noop;
+export const executeCompleteMilestone = noop;
+export const executeValidateMilestone = noop;
+export const executeReassessRoadmap = noop;
+export const executeSaveGateResult = noop;
+export const executeSummarySave = noop;
+
+export const executeTaskComplete = async (params, projectDir) => {
+  const capturePath = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
+  if (capturePath) {
+    writeFileSync(capturePath, JSON.stringify({ params, projectDir }, null, 2));
+  }
+  return {
+    content: [{ type: "text", text: "mock task complete" }],
+    details: { taskId: params.taskId },
+  };
+};
+`;
+      writeFileSync(mockModulePath, mockSource, "utf-8");
+      process.env.GSD_WORKFLOW_EXECUTORS_MODULE = mockModulePath;
+      process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH = capturePath;
+
+      // Fresh import bypasses the cached workflowToolExecutorsPromise so the
+      // mock module is actually loaded for this test.
+      const { registerWorkflowTools: freshRegisterWorkflowTools } = await import(
+        `./workflow-tools.ts?escalation-test=${randomUUID()}`
+      );
+      const server = makeMockServer();
+      freshRegisterWorkflowTools(server as any);
+      const taskTool = server.tools.find((t) => t.name === "gsd_task_complete");
+      assert.ok(taskTool, "task tool should be registered");
+
+      // Mirrors the ADR-011 escalation schema: question + 2-4 options
+      // (each with id/label/tradeoffs) + recommendation + rationale +
+      // continueWithDefault flag.
+      const escalationPayload = {
+        question: "Should the auth flow use OAuth or PAT?",
+        options: [
+          { id: "A", label: "OAuth", tradeoffs: "Best UX; requires more setup." },
+          { id: "B", label: "PAT", tradeoffs: "Simpler; weaker rotation story." },
+        ],
+        recommendation: "A",
+        recommendationRationale: "Initial requirement implied multi-user; OAuth fits better.",
+        continueWithDefault: true,
+      };
+
+      await taskTool!.handler({
+        projectDir: base,
+        taskId: "T01",
+        sliceId: "S01",
+        milestoneId: "M001",
+        oneLiner: "Completed task with escalation",
+        narrative: "Did the work but flagged an ambiguity",
+        verification: "npm test",
+        escalation: escalationPayload,
+        verificationEvidence: [
+          { command: "npm test", exitCode: 0, verdict: "pass", durationMs: 1234 },
+        ],
+      });
+
+      assert.ok(existsSync(capturePath), "mock executor should have written captured args to disk");
+      const captured = JSON.parse(readFileSync(capturePath, "utf-8"));
+
+      // The handler resolves projectDir via realpathSync (security/symlink check),
+      // so on macOS where /var symlinks to /private/var, the captured path will
+      // be the realpath form. Normalize both sides.
+      assert.equal(captured.projectDir, realpathSync(base), "projectDir should be passed as second arg");
+      assert.deepEqual(
+        captured.params.escalation,
+        escalationPayload,
+        "escalation payload must reach the executor verbatim — regression guard for the destructure-rebuild bug class (#4477 review)",
+      );
+      // Spot-check a couple of other fields to ensure the spread pattern
+      // doesn't accidentally exclude the rest while including escalation.
+      assert.equal(captured.params.taskId, "T01", "taskId must be forwarded");
+      assert.equal(captured.params.milestoneId, "M001", "milestoneId must be forwarded");
+      assert.deepEqual(
+        captured.params.verificationEvidence,
+        [{ command: "npm test", exitCode: 0, verdict: "pass", durationMs: 1234 }],
+        "verificationEvidence must be forwarded (existing field)",
+      );
+      // Ensure no projectDir leak into params (it should be the second arg only).
+      assert.equal(
+        captured.params.projectDir,
+        undefined,
+        "projectDir must NOT appear in params — it's stripped via the spread destructure",
+      );
+    } finally {
+      if (prevModule === undefined) {
+        delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+      } else {
+        process.env.GSD_WORKFLOW_EXECUTORS_MODULE = prevModule;
+      }
+      if (prevCapture === undefined) {
+        delete process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
+      } else {
+        process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH = prevCapture;
+      }
       cleanup(base);
     }
   });
@@ -1237,6 +1367,21 @@ describe("workflow MCP tools", () => {
         findings: "No new attack surface was introduced.",
       });
       assert.match((gateResult as any).content[0].text as string, /Gate Q3 result saved/);
+      // #4472: executor `details` must be adapted to MCP `structuredContent`
+      // so it survives the protocol transport intact. Asserting property
+      // *absence* rather than `=== undefined` so a future regression that
+      // explicitly sets `details: undefined` (rather than removing it) still
+      // fails this contract test.
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(gateResult, "details"),
+        false,
+        "executor `details` field must be stripped from MCP tool result",
+      );
+      assert.deepEqual(
+        (gateResult as any).structuredContent,
+        { operation: "save_gate_result", gateId: "Q3", verdict: "pass" },
+        "executor details must be forwarded on the MCP `structuredContent` channel",
+      );
       const gateRows = _getAdapter()!.prepare(
         "SELECT status, verdict, rationale FROM quality_gates WHERE milestone_id = ? AND slice_id = ? AND gate_id = ?",
       ).all("M006", "S06", "Q3") as Array<Record<string, unknown>>;

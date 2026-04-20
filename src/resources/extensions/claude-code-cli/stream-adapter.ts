@@ -867,6 +867,69 @@ function normalizeToolResultContent(content: unknown): ExternalToolResultContent
 	return blocks.length > 0 ? blocks : [{ type: "text", text: "" }];
 }
 
+/**
+ * Extract a `details` payload from an MCP tool-result block.
+ *
+ * MCP's `CallToolResult` carries structured data in `structuredContent` — the
+ * protocol's supported channel for non-text payloads. Claude Code's synthetic
+ * user message may surface that field in one of two shapes depending on SDK
+ * version: as a sibling on the `mcp_tool_result` block itself, or as a
+ * dedicated content sub-block with `type: "structuredContent"`. Snake-case
+ * (`structured_content`) is accepted defensively in case a transport hop
+ * rewrites casing. All other shapes fall back to an empty object so callers
+ * can rely on `details` being present.
+ */
+function extractStructuredDetailsFromBlock(block: Record<string, unknown>): Record<string, unknown> | undefined {
+	const sibling = block.structuredContent ?? (block as Record<string, unknown>).structured_content;
+	if (sibling && typeof sibling === "object" && !Array.isArray(sibling)) {
+		return sibling as Record<string, unknown>;
+	}
+
+	if (Array.isArray(block.content)) {
+		for (const item of block.content) {
+			if (!item || typeof item !== "object") continue;
+			const sub = item as Record<string, unknown>;
+			if (sub.type !== "structuredContent" && sub.type !== "structured_content") continue;
+			const payload = sub.structuredContent ?? sub.structured_content ?? sub.data ?? sub.value;
+			if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+				return payload as Record<string, unknown>;
+			}
+		}
+	}
+
+	// Return undefined (not {}) when no structured payload is present, matching
+	// the pre-#4477 contract where `details` was nullable. An empty-object
+	// sentinel is truthy and breaks downstream consumers that gate on
+	// `if (details)`. `undefined` matches the type of the field these results
+	// flow into (`Record<string, unknown> | undefined`).
+	return undefined;
+}
+
+/**
+ * True for items that are MCP `structuredContent` pseudo-blocks living inside
+ * a tool-result `content[]` array. These blocks carry the structured payload
+ * (extracted separately by `extractStructuredDetailsFromBlock`) and must NOT
+ * leak into the visible content rendered to the user — otherwise the renderer
+ * stringifies the JSON pseudo-block and shows it next to the actual tool
+ * output. See PR #4477 review (CodeRabbit, post-fix-round).
+ */
+function isStructuredContentPseudoBlock(item: unknown): boolean {
+	if (!item || typeof item !== "object") return false;
+	const type = (item as Record<string, unknown>).type;
+	return type === "structuredContent" || type === "structured_content";
+}
+
+/**
+ * Strip `structuredContent` pseudo-blocks from a tool-result content array
+ * before normalization. The structured payload is extracted via the sibling
+ * `structuredContent` field (or a dedicated extractor pass on the raw block);
+ * the visible content path must not include the pseudo-block itself.
+ */
+function stripStructuredContentPseudoBlocks(content: unknown): unknown {
+	if (!Array.isArray(content)) return content;
+	return content.filter((item) => !isStructuredContentPseudoBlock(item));
+}
+
 /** Extract tool result payloads from an SDK synthetic user message, keyed by tool-use ID. */
 export function extractToolResultsFromSdkUserMessage(message: SDKUserMessage): Array<{
 	toolUseId: string;
@@ -890,8 +953,8 @@ export function extractToolResultsFromSdkUserMessage(message: SDKUserMessage): A
 		extracted.push({
 			toolUseId,
 			result: {
-				content: normalizeToolResultContent(block.content),
-				details: {},
+				content: normalizeToolResultContent(stripStructuredContentPseudoBlocks(block.content)),
+				details: extractStructuredDetailsFromBlock(block),
 				isError: block.is_error === true,
 			},
 		});
@@ -906,8 +969,8 @@ export function extractToolResultsFromSdkUserMessage(message: SDKUserMessage): A
 				extracted.push({
 					toolUseId,
 					result: {
-						content: normalizeToolResultContent(toolResult.content),
-						details: {},
+						content: normalizeToolResultContent(stripStructuredContentPseudoBlocks(toolResult.content)),
+						details: extractStructuredDetailsFromBlock(toolResult),
 						isError: toolResult.is_error === true,
 					},
 				});

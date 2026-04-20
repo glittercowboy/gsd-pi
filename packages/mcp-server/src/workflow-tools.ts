@@ -617,6 +617,51 @@ function getWorkflowOpTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
   return parsed; // 0 disables the timeout
 }
 
+/**
+ * Adapt an executor `ToolExecutionResult` ({ content, details?, isError? }) to
+ * the MCP `CallToolResult` shape ({ content, structuredContent?, isError? }).
+ *
+ * MCP transports (including stdio) only serialize fields declared in the
+ * protocol, so a non-standard `details` field is silently dropped over the
+ * wire. Mirroring it into `structuredContent` — the protocol's supported
+ * channel for structured tool payloads — preserves the data for clients that
+ * render from it (e.g. the save_gate_result renderer that reads gateId /
+ * verdict). See #4472.
+ *
+ * Discard policy for non-plain-object `details`: the `isPlainObject` guard
+ * accepts the canonical case (a record literal) and intentionally drops bare
+ * primitives (string, number, boolean), bare arrays, and class instances /
+ * Date objects. This is deliberate — MCP `structuredContent` is specified as
+ * a JSON object; non-object payloads can't round-trip cleanly. No current
+ * executor returns a non-object `details`, so this never fires in practice.
+ * Future executors needing to return a primitive should wrap it
+ * (`details: { value: 42 }`) rather than relying on the discard.
+ */
+function adaptExecutorResult(result: unknown): unknown {
+  if (!result || typeof result !== "object") return result;
+  const r = result as Record<string, unknown>;
+  if (!("details" in r)) return result;
+  const { details, ...rest } = r;
+  return isPlainObject(details) ? { ...rest, structuredContent: details } : rest;
+}
+
+/**
+ * Strict plain-object guard. True only for object literals and
+ * `Object.create(null)` — not for `Date`, `URL`, `Map`, `Set`, class instances,
+ * or arrays. Used to gate `structuredContent` forwarding so the MCP transport
+ * receives only true JSON objects (the protocol contract).
+ *
+ * Mirrored in `src/mcp-server.ts` for the agent-tool registry path's
+ * structured-content gate. Keep both copies in sync if the contract definition
+ * needs to evolve. See #4477 review.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === null || proto === Object.prototype;
+}
+
 async function runSerializedWorkflowOperation<T>(fn: () => Promise<T>): Promise<T> {
   // The shared DB adapter and workflow log base path are process-global, so
   // workflow MCP mutations must not overlap within a single server process.
@@ -709,39 +754,15 @@ async function handleTaskComplete(
   args: Omit<z.infer<typeof taskCompleteSchema>, "projectDir">,
 ): Promise<unknown> {
   await enforceWorkflowWriteGate("gsd_task_complete", projectDir, args.milestoneId);
-  const {
-    taskId,
-    sliceId,
-    milestoneId,
-    oneLiner,
-    narrative,
-    verification,
-    deviations,
-    knownIssues,
-    keyFiles,
-    keyDecisions,
-    blockerDiscovered,
-    verificationEvidence,
-  } = args;
   const { executeTaskComplete } = await getWorkflowToolExecutors();
-  return runSerializedWorkflowOperation(() =>
-    executeTaskComplete(
-      {
-        taskId,
-        sliceId,
-        milestoneId,
-        oneLiner,
-        narrative,
-        verification,
-        deviations,
-        knownIssues,
-        keyFiles,
-        keyDecisions,
-        blockerDiscovered,
-        verificationEvidence,
-      },
-      projectDir,
-    ),
+  // Pass `args` through directly rather than destructure-then-rebuild. The
+  // previous implementation re-listed each field, which silently dropped
+  // schema fields that weren't in the rebuild list (e.g., ADR-011's
+  // `escalation` payload). The destructure-then-rebuild pattern is the bug
+  // class; matching the spread shape used by sibling handlers (handleSliceComplete,
+  // handleReplanSlice) eliminates the recurrence risk by construction.
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeTaskComplete(args, projectDir)),
   );
 }
 
@@ -752,7 +773,9 @@ async function handleSliceComplete(
   await enforceWorkflowWriteGate("gsd_slice_complete", projectDir, args.milestoneId);
   const { executeSliceComplete } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeSliceComplete(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeSliceComplete(params, projectDir)),
+  );
 }
 
 async function handleReplanSlice(
@@ -762,7 +785,9 @@ async function handleReplanSlice(
   await enforceWorkflowWriteGate("gsd_replan_slice", projectDir, args.milestoneId);
   const { executeReplanSlice } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeReplanSlice(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeReplanSlice(params, projectDir)),
+  );
 }
 
 async function handleCompleteMilestone(
@@ -772,7 +797,9 @@ async function handleCompleteMilestone(
   await enforceWorkflowWriteGate("gsd_complete_milestone", projectDir, args.milestoneId);
   const { executeCompleteMilestone } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeCompleteMilestone(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeCompleteMilestone(params, projectDir)),
+  );
 }
 
 async function handleValidateMilestone(
@@ -782,7 +809,9 @@ async function handleValidateMilestone(
   await enforceWorkflowWriteGate("gsd_validate_milestone", projectDir, args.milestoneId);
   const { executeValidateMilestone } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeValidateMilestone(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeValidateMilestone(params, projectDir)),
+  );
 }
 
 async function handleReassessRoadmap(
@@ -792,7 +821,9 @@ async function handleReassessRoadmap(
   await enforceWorkflowWriteGate("gsd_reassess_roadmap", projectDir, args.milestoneId);
   const { executeReassessRoadmap } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeReassessRoadmap(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeReassessRoadmap(params, projectDir)),
+  );
 }
 
 async function handleSaveGateResult(
@@ -802,7 +833,9 @@ async function handleSaveGateResult(
   await enforceWorkflowWriteGate("gsd_save_gate_result", projectDir, args.milestoneId);
   const { executeSaveGateResult } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeSaveGateResult(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeSaveGateResult(params, projectDir)),
+  );
 }
 
 async function ensureMilestoneDbRow(milestoneId: string): Promise<void> {
@@ -1384,7 +1417,9 @@ export function registerWorkflowTools(server: McpToolServer): void {
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_milestone", projectDir, params.milestoneId);
       const { executePlanMilestone } = await getWorkflowToolExecutors();
-      return runSerializedWorkflowOperation(() => executePlanMilestone(params, projectDir));
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() => executePlanMilestone(params, projectDir)),
+      );
     },
   );
 
@@ -1397,7 +1432,9 @@ export function registerWorkflowTools(server: McpToolServer): void {
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_slice", projectDir, params.milestoneId);
       const { executePlanSlice } = await getWorkflowToolExecutors();
-      return runSerializedWorkflowOperation(() => executePlanSlice(params, projectDir));
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() => executePlanSlice(params, projectDir)),
+      );
     },
   );
 
@@ -1598,8 +1635,10 @@ export function registerWorkflowTools(server: McpToolServer): void {
           `artifact_type must be one of: ${supportedArtifactTypes.join(", ")}`,
         );
       }
-      return runSerializedWorkflowOperation(() =>
-        executors.executeSummarySave({ milestone_id, slice_id, task_id, artifact_type, content }, projectDir),
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() =>
+          executors.executeSummarySave({ milestone_id, slice_id, task_id, artifact_type, content }, projectDir),
+        ),
       );
     },
   );
@@ -1636,7 +1675,9 @@ export function registerWorkflowTools(server: McpToolServer): void {
       // during pending-gate or queue-mode states.
       const { projectDir, milestoneId } = parseWorkflowArgs(milestoneStatusSchema, args);
       const { executeMilestoneStatus } = await getWorkflowToolExecutors();
-      return runSerializedWorkflowOperation(() => executeMilestoneStatus({ milestoneId }, projectDir));
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() => executeMilestoneStatus({ milestoneId }, projectDir)),
+      );
     },
   );
 
