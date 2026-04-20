@@ -1,6 +1,7 @@
 ---
 name: verify-before-complete
-description: "Block completion claims until verification evidence has been produced in the current message. Use before marking a task/slice/milestone complete, before creating a commit or PR, before saying \"it works\" or \"tests pass\", and any time you are about to claim work is done. The rule is: evidence before claims, always — running the verification must happen now, not \"earlier in the session\". Fresh output or no claim."
+description: >-
+  Block completion claims until verification evidence has been produced in the current message. Use before marking a task/slice/milestone complete, before creating a commit or PR, before saying "it works" or "tests pass", and any time you are about to claim work is done. The rule is: evidence before claims, always — running the verification must happen now, not "earlier in the session". Fresh output or no claim.
 ---
 
 <objective>

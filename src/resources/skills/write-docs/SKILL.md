@@ -1,6 +1,7 @@
 ---
 name: write-docs
-description: "Collaborative document authoring workflow for proposals, technical specs, decision docs, README sections, ADRs, and long-form prose that must work for fresh readers. Use when asked to \"write the docs\", \"draft a proposal\", \"write a spec\", \"write an RFC\", \"write the README\", or when a document needs to be understandable by someone without this session's context. Three stages: gather context, iterate on structure, reader-test for a stranger."
+description: >-
+  Collaborative document authoring workflow for proposals, technical specs, decision docs, README sections, ADRs, and long-form prose that must work for fresh readers. Use when asked to "write the docs", "draft a proposal", "write a spec", "write an RFC", "write the README", or when a document needs to be understandable by someone without this session's context. Three stages: gather context, iterate on structure, reader-test for a stranger.
 ---
 
 <objective>
