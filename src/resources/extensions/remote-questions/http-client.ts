@@ -16,12 +16,11 @@ function redactProxyUrl(url: string): string {
     if (parsed.username || parsed.password) {
       parsed.username = "";
       parsed.password = "";
-      return parsed.toString();
     }
+    return parsed.toString();
   } catch {
-    // ignore invalid URL
+    return "[invalid-proxy-url]";
   }
-  return url;
 }
 
 export interface ApiRequestOptions {
