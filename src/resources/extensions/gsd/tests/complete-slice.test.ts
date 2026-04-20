@@ -125,9 +125,9 @@ console.log('\n=== complete-slice: schema v6 migration ===');
 
   const adapter = _getAdapter()!;
 
-  // Verify schema version is current (v21 — ADR-013 structured_fields column)
+  // Verify schema version is current (v22 — quality_gates DDL fix)
   const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(versionRow?.['v'], 21, 'schema version should be 21');
+  assertEq(versionRow?.['v'], 22, 'schema version should be 22');
 
   // Verify slices table has full_summary_md and full_uat_md columns
   const cols = adapter.prepare("PRAGMA table_info(slices)").all();
