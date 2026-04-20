@@ -1380,7 +1380,18 @@ async function renderSlicePrompt(options: {
 
 export async function buildPlanSlicePrompt(
   mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
-  options?: { softScopeHint?: string; sessionContextWindow?: number; modelRegistry?: MinimalModelRegistry },
+  options?: {
+    softScopeHint?: string;
+    sessionContextWindow?: number;
+    modelRegistry?: MinimalModelRegistry;
+    /** Failure context from a prior pre-exec gate run (#4551). When present, a
+     *  "Fix these specific issues" section is appended so the LLM addresses the
+     *  exact problems instead of producing an identical plan that fails again. */
+    priorPreExecFailure?: {
+      blockingFindings: string[];
+      verdictExcerpt: string;
+    };
+  },
 ): Promise<string> {
   const prependBlocks: string[] = [];
   // ADR-011: when the refining-phase dispatch rule gracefully downgrades to
@@ -1391,6 +1402,22 @@ export async function buildPlanSlicePrompt(
     prependBlocks.push(
       `## Prior Sketch Scope (soft hint — non-binding)\n\n${options.softScopeHint.trim()}\n\n` +
       `This scope was captured during an earlier progressive-planning pass that was later disabled. Treat it as context only — you may plan beyond it if the work genuinely requires more scope. Do NOT treat this as a hard boundary.`,
+    );
+  }
+  // #4551: inject pre-exec failure context so the re-dispatched plan-slice
+  // addresses the exact blocked references rather than reproducing the same plan.
+  if (options?.priorPreExecFailure) {
+    const { blockingFindings, verdictExcerpt } = options.priorPreExecFailure;
+    const findingsList = blockingFindings.length > 0
+      ? blockingFindings.map(f => `- ${f}`).join("\n")
+      : "- (no specific findings recorded)";
+    prependBlocks.push(
+      `## Fix these specific issues from the prior pre-exec check\n\n` +
+      `The previous plan-slice attempt was blocked by pre-execution validation.\n` +
+      `Gate verdict: ${verdictExcerpt}\n\n` +
+      `Blocked references that must be resolved in this plan:\n${findingsList}\n\n` +
+      `Revise the plan so that every reference listed above is satisfied before execution begins. ` +
+      `Do not reproduce the same file paths, package names, or task ordering that caused these failures.`,
     );
   }
   return renderSlicePrompt({

@@ -1134,6 +1134,15 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
             `Pre-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found\n${details}${suffix}${evidenceNote}`,
             "error",
           );
+          // Persist failure context so the next plan-slice re-dispatch can inject
+          // it into the prompt and break the infinite loop (#4551).
+          s.lastPreExecFailure = {
+            unitId: currentUnit.id,
+            blockingFindings: blockingChecks.map(
+              c => `[${c.category}] ${c.target}: ${c.message}`,
+            ),
+            verdictExcerpt: `status=${result.status}; ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} detected`,
+          };
           preExecPauseNeeded = true;
         } else if (result.status === "warn") {
           ctx.ui.notify(
@@ -1142,6 +1151,14 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           );
           // Strict mode: treat warnings as blocking
           if (prefs?.enhanced_verification_strict === true) {
+            const warnChecks = result.checks.filter(c => !c.passed);
+            s.lastPreExecFailure = {
+              unitId: currentUnit.id,
+              blockingFindings: warnChecks.map(
+                c => `[${c.category}] ${c.target}: ${c.message}`,
+              ),
+              verdictExcerpt: `status=${result.status} (strict mode); ${warnChecks.length} warning${warnChecks.length === 1 ? "" : "s"} treated as blocking`,
+            };
             preExecPauseNeeded = true;
           }
         }
