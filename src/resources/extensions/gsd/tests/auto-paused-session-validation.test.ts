@@ -39,6 +39,18 @@ test("auto.ts validates milestone before restoring paused session (#1664)", () =
     source.includes('resolveMilestoneFile(base, meta.milestoneId, "SUMMARY")'),
     "auto.ts must check for SUMMARY file to detect completed milestones",
   );
+
+  // Resume path must sanitize paused session file metadata before unlink/recovery.
+  assert.ok(
+    source.includes("normalizeSessionFilePath(meta.sessionFile ?? null)"),
+    "auto.ts must sanitize paused-session metadata sessionFile before using it",
+  );
+
+  // Pause path must sanitize live session file path before persisting metadata.
+  assert.ok(
+    source.includes("normalizeSessionFilePath(ctx?.sessionManager?.getSessionFile() ?? null)"),
+    "auto.ts must sanitize sessionManager getSessionFile output before persisting",
+  );
 });
 
 // ─── Filesystem validation unit tests ───────────────────────────────────────

@@ -22,6 +22,10 @@ import { isClosedStatus } from "../status-guards.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
+import { existsSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { resolveTasksDir, clearPathCache } from "../paths.js";
 
 export interface ReopenTaskParams {
   milestoneId: string;
@@ -99,6 +103,20 @@ export async function handleReopenTask(
   // ── Invalidate caches ────────────────────────────────────────────────────
   invalidateStateCache();
 
+  // ── Clean up stale filesystem artifacts (M12 fix) ────────────────────────
+  // Without this, the DB-filesystem reconciler sees the SUMMARY.md and
+  // auto-corrects the task back to "complete", making reopen a no-op (#3161).
+  try {
+    const tasksDir = resolveTasksDir(basePath, params.milestoneId, params.sliceId);
+    if (tasksDir) {
+      const summaryPath = join(tasksDir, `${params.taskId}-SUMMARY.md`);
+      if (existsSync(summaryPath)) unlinkSync(summaryPath);
+    }
+  } catch (cleanupErr) {
+    logWarning("tool", `reopen-task artifact cleanup warning: ${(cleanupErr as Error).message}`);
+  }
+  clearPathCache();
+
   // ── Post-mutation hook ───────────────────────────────────────────────────
   try {
     await renderAllProjections(basePath, params.milestoneId);
@@ -117,9 +135,7 @@ export async function handleReopenTask(
       trigger_reason: params.triggerReason,
     });
   } catch (hookErr) {
-    process.stderr.write(
-      `gsd: reopen-task post-mutation hook warning: ${(hookErr as Error).message}\n`,
-    );
+    logWarning("tool", `reopen-task post-mutation hook warning: ${(hookErr as Error).message}`);
   }
 
   return {

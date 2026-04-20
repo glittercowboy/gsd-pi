@@ -9,6 +9,7 @@ export interface InteractiveModeStateHost {
 	keybindings: any;
 	statusContainer: any;
 	chatContainer: any;
+	pinnedMessageContainer: any;
 	settingsManager: any;
 	pendingTools: Map<string, any>;
 	toolOutputExpanded: boolean;

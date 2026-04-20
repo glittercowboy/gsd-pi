@@ -26,9 +26,11 @@ import {
   getSliceBranchName,
   autoCommitCurrentBranch,
   SLICE_BRANCH_RE,
+  _resetServiceCache,
 } from "../worktree.ts";
 
 import { deriveState } from "../state.ts";
+import { _clearGsdRootCache } from "../paths.ts";
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -74,6 +76,14 @@ run("git add .", base);
 run('git commit -m "chore: init"', base);
 
 describe('worktree-integration', async () => {
+  // Isolate from user's global preferences (which may have git.main_branch set).
+  // Reset caches so getService() creates a fresh instance with empty preferences.
+  const originalHome = process.env.HOME;
+  const fakeHome = mkdtempSync(join(tmpdir(), "gsd-fake-home-"));
+  process.env.HOME = fakeHome;
+  _clearGsdRootCache();
+  _resetServiceCache();
+
   // ── Verify main tree baseline ──────────────────────────────────────────────
 
   console.log("\n=== Main tree baseline ===");
@@ -197,4 +207,10 @@ describe('worktree-integration', async () => {
   assert.deepStrictEqual(listWorktrees(base).length, 0, "all worktrees removed");
 
   rmSync(base, { recursive: true, force: true });
+
+  // Restore HOME and reset caches
+  process.env.HOME = originalHome;
+  _clearGsdRootCache();
+  _resetServiceCache();
+  rmSync(fakeHome, { recursive: true, force: true });
 });

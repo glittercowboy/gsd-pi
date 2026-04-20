@@ -78,6 +78,8 @@ Based on the user's message, route directly to the appropriate workflow:
 **If user intent is unclear, ask minimal clarifying questions:**
 - "Create a MIDI skill" → "Task-execution skill (does MIDI tasks) or domain expertise (complete MIDI knowledge base)?"
 - "Work on my skill" → "Which skill? What do you want to do with it?"
+- Ask one clarifying question round at a time, then wait for the user's actual response before asking another.
+- Never fabricate or simulate user responses while clarifying (for example, fake `[User]` markers or imagined answers).
 
 Then proceed directly to the workflow.
 </routing>

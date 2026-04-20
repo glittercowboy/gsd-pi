@@ -6,7 +6,13 @@
  */
 
 import {
-  mkdirSync, symlinkSync, existsSync, readFileSync, realpathSync, writeFileSync, mkdtempSync,
+  mkdirSync,
+  symlinkSync,
+  existsSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+  mkdtempSync,
 } from "node:fs";
 import { execSync } from "node:child_process";
 import { join, resolve } from "node:path";
@@ -23,7 +29,10 @@ function findWorktreeSegment(normalizedPath) {
   const symlinkRe = /\/\.gsd\/projects\/[a-f0-9]+\/worktrees\//;
   const match = normalizedPath.match(symlinkRe);
   if (match && match.index !== undefined) {
-    return { gsdIdx: match.index, afterWorktrees: match.index + match[0].length };
+    return {
+      gsdIdx: match.index,
+      afterWorktrees: match.index + match[0].length,
+    };
   }
   return null;
 }
@@ -38,7 +47,11 @@ function resolveProjectRootFromGitFile(worktreePath) {
         if (content.startsWith("gitdir: ")) {
           const gitDir = resolve(dir, content.slice(8));
           const dotGitDir = resolve(gitDir, "..", "..");
-          if (dotGitDir.endsWith(".git") || dotGitDir.endsWith(".git/") || dotGitDir.endsWith(".git\\")) {
+          if (
+            dotGitDir.endsWith(".git") ||
+            dotGitDir.endsWith(".git/") ||
+            dotGitDir.endsWith(".git\\")
+          ) {
             return resolve(dotGitDir, "..");
           }
           const commonDirPath = join(gitDir, "commondir");
@@ -54,7 +67,7 @@ function resolveProjectRootFromGitFile(worktreePath) {
       if (parent === dir) break;
       dir = parent;
     }
-  } catch { }
+  } catch {}
   return null;
 }
 
@@ -83,15 +96,19 @@ function resolveProjectRoot(basePath) {
   const sepChar = basePath.includes("\\") ? "\\" : "/";
   const gsdMarker = `${sepChar}.gsd${sepChar}`;
   const gsdIdx = basePath.indexOf(gsdMarker);
-  const candidate = gsdIdx !== -1
-    ? basePath.slice(0, gsdIdx)
-    : basePath.slice(0, seg.gsdIdx);
+  const candidate =
+    gsdIdx !== -1 ? basePath.slice(0, gsdIdx) : basePath.slice(0, seg.gsdIdx);
 
   // Layer 2: Guard against resolving to the user's home directory.
-  const gsdHome = normalizePathForCompare(process.env.GSD_HOME || join(homedir(), ".gsd"));
+  const gsdHome = normalizePathForCompare(
+    process.env.GSD_HOME || join(homedir(), ".gsd"),
+  );
   const candidateGsdPath = normalizePathForCompare(join(candidate, ".gsd"));
 
-  if (candidateGsdPath === gsdHome || candidateGsdPath.startsWith(gsdHome + "/")) {
+  if (
+    candidateGsdPath === gsdHome ||
+    candidateGsdPath.startsWith(gsdHome + "/")
+  ) {
     const realRoot = resolveProjectRootFromGitFile(basePath);
     if (realRoot) return realRoot;
     return basePath;
@@ -124,9 +141,15 @@ symlinkSync(PROJECT_GSD_STORAGE, PROJECT_GSD_LINK);
 // Init git in project dir
 execSync("git init -b main", { cwd: PROJECT_DIR, stdio: "pipe" });
 execSync('git config user.name "Test"', { cwd: PROJECT_DIR, stdio: "pipe" });
-execSync('git config user.email "test@test.com"', { cwd: PROJECT_DIR, stdio: "pipe" });
+execSync('git config user.email "test@test.com"', {
+  cwd: PROJECT_DIR,
+  stdio: "pipe",
+});
 writeFileSync(join(PROJECT_DIR, "README.md"), "hello\n");
-execSync("git add -A && git commit -m init", { cwd: PROJECT_DIR, stdio: "pipe" });
+execSync("git add -A && git commit -m init", {
+  cwd: PROJECT_DIR,
+  stdio: "pipe",
+});
 
 // Create a REAL git worktree (so .git file exists with gitdir pointer)
 execSync("git worktree add .gsd/worktrees/M001 -b worktree/M001", {
@@ -198,11 +221,7 @@ test(
 );
 
 // Verify it's NOT the home directory
-test(
-  "Result is not the home directory",
-  result !== USER_HOME,
-  true,
-);
+test("Result is not the home directory", result !== USER_HOME, true);
 
 // ── Test 4: Verify the git file fallback works ──────────────────────────
 
@@ -246,11 +265,7 @@ test(
   EXPECTED_BUGGY_ROOT,
 );
 
-test(
-  "New code does NOT return home directory",
-  result !== USER_HOME,
-  true,
-);
+test("New code does NOT return home directory", result !== USER_HOME, true);
 
 // ── Summary ──────────────────────────────────────────────────────────────
 

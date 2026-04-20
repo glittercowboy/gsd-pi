@@ -108,6 +108,7 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+          cache: "npm"
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

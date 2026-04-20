@@ -47,6 +47,14 @@ function shellEscapeSingle(value: string): string {
 	return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
+function isSafeEnvVarKey(key: string): boolean {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(key);
+}
+
+function isSupportedDeploymentEnvironment(env: string): boolean {
+	return env === "development" || env === "preview" || env === "production";
+}
+
 function hydrateProcessEnv(key: string, value: string): void {
 	// Make newly collected secrets immediately visible to the current session.
 	// Some extensions read process.env directly and do not reload .env on every call.
@@ -54,6 +62,9 @@ function hydrateProcessEnv(key: string, value: string): void {
 }
 
 async function writeEnvKey(filePath: string, key: string, value: string): Promise<void> {
+	if (typeof value !== "string") {
+		throw new TypeError(`writeEnvKey expects a string value for key "${key}", got ${typeof value}`);
+	}
 	let content = "";
 	try {
 		content = await readFile(filePath, "utf8");
@@ -115,7 +126,7 @@ async function collectOneSecret(
 ): Promise<string | null> {
 	if (!ctx.hasUI) return null;
 
-	return ctx.ui.custom((tui: any, theme: any, _kb: any, done: (r: string | null) => void) => {
+	const customResult = await ctx.ui.custom((tui: any, theme: any, _kb: any, done: (r: string | null) => void) => {
 		let value = "";
 		let cachedLines: string[] | undefined;
 
@@ -212,6 +223,29 @@ async function collectOneSecret(
 			handleInput,
 		};
 	});
+
+	// RPC/web surfaces may not implement ctx.ui.custom(). Fall back to a
+	// standard input prompt so users can still provide the secret.
+	if (customResult !== undefined) {
+		return customResult;
+	}
+
+	if (typeof ctx.ui?.input !== "function") {
+		return null;
+	}
+
+	const inputTitle = `Secure value for ${keyName} (${pageIndex + 1}/${totalPages})`;
+	const inputPlaceholder = hint || "Enter secret value";
+	const inputResult = await ctx.ui.input(
+		inputTitle,
+		inputPlaceholder,
+		{ secure: true },
+	);
+	if (typeof inputResult !== "string") {
+		return null;
+	}
+	const trimmed = inputResult.trim();
+	return trimmed.length > 0 ? trimmed : null;
 }
 
 /**
@@ -327,12 +361,22 @@ async function applySecrets(
 
 	if ((destination === "vercel" || destination === "convex") && opts.exec) {
 		const env = opts.environment ?? "development";
+		if (!isSupportedDeploymentEnvironment(env)) {
+			errors.push(`environment: unsupported target environment "${env}"`);
+			return { applied, errors };
+		}
 		for (const { key, value } of provided) {
+			if (!isSafeEnvVarKey(key)) {
+				errors.push(`${key}: invalid environment variable name`);
+				continue;
+			}
 			const cmd = destination === "vercel"
 				? `printf %s ${shellEscapeSingle(value)} | vercel env add ${key} ${env}`
-				: `npx convex env set ${key} ${shellEscapeSingle(value)}`;
+				: "";
 			try {
-				const result = await opts.exec("sh", ["-c", cmd]);
+				const result = destination === "vercel"
+					? await opts.exec("sh", ["-c", cmd])
+					: await opts.exec("npx", ["convex", "env", "set", key, value]);
 				if (result.code !== 0) {
 					errors.push(`${key}: ${result.stderr.slice(0, 200)}`);
 				} else {
@@ -419,7 +463,7 @@ export async function collectSecretsFromManifest(
 	for (const { key, value } of collected) {
 		const entry = manifest.entries.find((e) => e.key === key);
 		if (entry) {
-			entry.status = value !== null ? "collected" : "skipped";
+			entry.status = value != null ? "collected" : "skipped";
 		}
 	}
 
@@ -427,14 +471,14 @@ export async function collectSecretsFromManifest(
 	await writeFile(manifestPath, formatSecretsManifest(manifest), "utf8");
 
 	// (j) Apply collected values to destination
-	const provided = collected.filter((c) => c.value !== null) as Array<{ key: string; value: string }>;
+	const provided = collected.filter((c) => c.value != null) as Array<{ key: string; value: string }>;
 	const { applied } = await applySecrets(provided, destination, {
 		envFilePath: resolve(ctx.cwd, ".env"),
 	});
 
 	const skipped = [
 		...alreadySkipped,
-		...collected.filter((c) => c.value === null).map((c) => c.key),
+		...collected.filter((c) => c.value == null).map((c) => c.key),
 	];
 
 	return { applied, skipped, existingSkipped };
@@ -505,8 +549,8 @@ export default function secureEnv(pi: ExtensionAPI) {
 				collected.push({ key: item.key, value });
 			}
 
-			const provided = collected.filter((c) => c.value !== null) as Array<{ key: string; value: string }>;
-			const skipped = collected.filter((c) => c.value === null).map((c) => c.key);
+			const provided = collected.filter((c) => c.value != null) as Array<{ key: string; value: string }>;
+			const skipped = collected.filter((c) => c.value == null).map((c) => c.key);
 
 			// Apply to destination via shared helper
 			const { applied, errors } = await applySecrets(provided, destination, {

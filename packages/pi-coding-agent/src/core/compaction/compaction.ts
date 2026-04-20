@@ -490,8 +490,48 @@ Use this EXACT format:
 Keep each section concise. Preserve exact file paths, function names, and error messages.`;
 
 /**
+ * Split messages into chunks where each chunk's estimated token count
+ * stays within `maxTokensPerChunk`. A single message that exceeds the
+ * budget is placed alone in its own chunk (never dropped).
+ */
+export function chunkMessages(messages: AgentMessage[], maxTokensPerChunk: number): AgentMessage[][] {
+	const chunks: AgentMessage[][] = [];
+	let currentChunk: AgentMessage[] = [];
+	let currentTokens = 0;
+
+	for (const msg of messages) {
+		const msgTokens = estimateTokens(msg);
+
+		if (currentChunk.length > 0 && currentTokens + msgTokens > maxTokensPerChunk) {
+			// Current chunk is full — start a new one
+			chunks.push(currentChunk);
+			currentChunk = [msg];
+			currentTokens = msgTokens;
+		} else {
+			currentChunk.push(msg);
+			currentTokens += msgTokens;
+		}
+	}
+
+	if (currentChunk.length > 0) {
+		chunks.push(currentChunk);
+	}
+
+	return chunks;
+}
+
+/** Type for the completion function, allowing injection for tests. */
+type CompleteFn = typeof completeSimple;
+
+/**
  * Generate a summary of the conversation using the LLM.
  * If previousSummary is provided, uses the update prompt to merge.
+ *
+ * When the messages exceed the model's context window, automatically
+ * falls back to chunked summarization: summarize the first chunk,
+ * then iteratively merge subsequent chunks using the update prompt.
+ *
+ * @param _completeFn - Internal override for testing; defaults to completeSimple.
  */
 export async function generateSummary(
 	currentMessages: AgentMessage[],
@@ -501,6 +541,59 @@ export async function generateSummary(
 	signal?: AbortSignal,
 	customInstructions?: string,
 	previousSummary?: string,
+	_completeFn?: CompleteFn,
+): Promise<string> {
+	const complete = _completeFn ?? completeSimple;
+
+	// Estimate total tokens for the messages to summarize
+	let totalTokens = 0;
+	for (const msg of currentMessages) {
+		totalTokens += estimateTokens(msg);
+	}
+
+	// Overhead for the prompt framing, system prompt, and response budget
+	const promptOverhead = 4_000;
+	const maxTokens = Math.floor(0.8 * reserveTokens);
+	const maxInputTokens = (model.contextWindow || 200_000) - reserveTokens - promptOverhead;
+
+	// If messages fit in the context window, use single-pass summarization
+	if (totalTokens <= maxInputTokens) {
+		return singlePassSummary(currentMessages, model, reserveTokens, apiKey, signal, customInstructions, previousSummary, complete);
+	}
+
+	// Chunked fallback: split messages and iteratively summarize
+	const chunks = chunkMessages(currentMessages, maxInputTokens);
+	let runningSummary = previousSummary;
+
+	for (let i = 0; i < chunks.length; i++) {
+		runningSummary = await singlePassSummary(
+			chunks[i],
+			model,
+			reserveTokens,
+			apiKey,
+			signal,
+			customInstructions,
+			runningSummary,
+			complete,
+		);
+	}
+
+	return runningSummary!;
+}
+
+/**
+ * Single-pass summarization of messages using the LLM.
+ * If previousSummary is provided, uses the update prompt to merge.
+ */
+async function singlePassSummary(
+	currentMessages: AgentMessage[],
+	model: Model<any>,
+	reserveTokens: number,
+	apiKey: string | undefined,
+	signal?: AbortSignal,
+	customInstructions?: string,
+	previousSummary?: string,
+	complete: CompleteFn = completeSimple,
 ): Promise<string> {
 	const maxTokens = Math.floor(0.8 * reserveTokens);
 
@@ -526,7 +619,7 @@ export async function generateSummary(
 		? { maxTokens, signal, apiKey, reasoning: "high" as const }
 		: { maxTokens, signal, apiKey };
 
-	const response = await completeSimple(
+	const response = await complete(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: createSummarizationMessage(promptText) },
 		completionOptions,

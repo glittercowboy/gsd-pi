@@ -42,7 +42,7 @@ describe("double mergeAndExit guard (#2645)", () => {
     const allCompleteIdx = phasesSrc.indexOf("incomplete.length === 0");
     assert.ok(allCompleteIdx > 0, "phases.ts should have an all-milestones-complete check");
 
-    const afterAllComplete = phasesSrc.slice(allCompleteIdx, allCompleteIdx + 600);
+    const afterAllComplete = phasesSrc.slice(allCompleteIdx, allCompleteIdx + 800);
     const mergeIdx = afterAllComplete.indexOf("deps.resolver.mergeAndExit");
     const flagIdx = afterAllComplete.indexOf("s.milestoneMergedInPhases = true");
 

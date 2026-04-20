@@ -12,8 +12,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
-/** Industry-standard skills.sh global skills directory */
+/** Skills directories — skills.sh ecosystem + Claude Code official */
 const SKILLS_DIR = join(homedir(), ".agents", "skills");
+const CLAUDE_SKILLS_DIR = join(homedir(), ".claude", "skills");
 
 export interface DiscoveredSkill {
   name: string;
@@ -58,8 +59,9 @@ export function detectNewSkills(): DiscoveredSkill[] {
   for (const dir of current) {
     if (baselineSkills.has(dir)) continue;
 
-    const skillMdPath = join(SKILLS_DIR, dir, "SKILL.md");
-    if (!existsSync(skillMdPath)) continue;
+    // Check both skill directories for the SKILL.md file
+    const skillMdPath = resolveSkillMdPath(dir);
+    if (!skillMdPath) continue;
 
     const meta = parseSkillFrontmatter(skillMdPath);
     if (meta) {
@@ -97,15 +99,22 @@ ${entries}
 
 // ─── Internals ────────────────────────────────────────────────────────────────
 
-function listSkillDirs(): string[] {
-  if (!existsSync(SKILLS_DIR)) return [];
+function listSkillDirsFrom(dir: string): string[] {
+  if (!existsSync(dir)) return [];
   try {
-    return readdirSync(SKILLS_DIR, { withFileTypes: true })
+    return readdirSync(dir, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => d.name);
   } catch {
     return [];
   }
+}
+
+function listSkillDirs(): string[] {
+  const names = new Set<string>();
+  for (const name of listSkillDirsFrom(SKILLS_DIR)) names.add(name);
+  for (const name of listSkillDirsFrom(CLAUDE_SKILLS_DIR)) names.add(name);
+  return [...names];
 }
 
 function parseSkillFrontmatter(path: string): { name?: string; description?: string } | null {
@@ -129,6 +138,14 @@ function parseSkillFrontmatter(path: string): { name?: string; description?: str
   } catch {
     return null;
   }
+}
+
+function resolveSkillMdPath(skillName: string): string | null {
+  for (const dir of [SKILLS_DIR, CLAUDE_SKILLS_DIR]) {
+    const candidate = join(dir, skillName, "SKILL.md");
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
 }
 
 function escapeXml(text: string): string {

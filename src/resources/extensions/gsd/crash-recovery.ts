@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { effectiveLockFile } from "./session-lock.js";
+import { emitJournalEvent, queryJournal } from "./journal.js";
 
 export interface LockData {
   pid: number;
@@ -117,4 +118,62 @@ export function formatCrashInfo(lock: LockData): string {
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Emit a synthetic unit-end event for a unit that crashed without emitting its own.
+ *
+ * Queries the journal to find the most recent unit-start for the crashed unit.
+ * If a matching unit-end already exists (e.g. the hard timeout fired), this is a
+ * no-op. Called during crash recovery, before clearing the stale lock.
+ *
+ * Addresses the gap reported in #3348 where `unit-start` was emitted but no
+ * `unit-end` followed — side effects landed but the worker died before closeout.
+ */
+export function emitCrashRecoveredUnitEnd(basePath: string, lock: LockData): void {
+  // Skip bootstrap / starting pseudo-units — they have no meaningful unit-start event.
+  if (!lock.unitType || !lock.unitId || lock.unitType === "starting") return;
+
+  try {
+    const all = queryJournal(basePath);
+
+    // Find the most recent unit-start for this unitId
+    const starts = all.filter(
+      (e) => e.eventType === "unit-start" && e.data?.unitId === lock.unitId,
+    );
+    if (starts.length === 0) return;
+
+    const lastStart = starts[starts.length - 1];
+
+    // Check if a unit-end was already emitted (e.g. hard timeout fired after the crash)
+    const alreadyClosed = all.some(
+      (e) =>
+        e.eventType === "unit-end" &&
+        e.data?.unitId === lock.unitId &&
+        e.causedBy?.flowId === lastStart.flowId &&
+        e.causedBy?.seq === lastStart.seq,
+    );
+    if (alreadyClosed) return;
+
+    // Find the highest seq in this flow for monotonic ordering
+    const maxSeq = all
+      .filter((e) => e.flowId === lastStart.flowId)
+      .reduce((max, e) => Math.max(max, e.seq), lastStart.seq);
+
+    emitJournalEvent(basePath, {
+      ts: new Date().toISOString(),
+      flowId: lastStart.flowId,
+      seq: maxSeq + 1,
+      eventType: "unit-end",
+      data: {
+        unitType: lock.unitType,
+        unitId: lock.unitId,
+        status: "crash-recovered",
+        artifactVerified: false,
+      },
+      causedBy: { flowId: lastStart.flowId, seq: lastStart.seq },
+    });
+  } catch {
+    // Never throw from crash recovery path — journal failure must not block recovery
+  }
 }

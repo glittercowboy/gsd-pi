@@ -58,10 +58,13 @@ export class Markdown implements Component {
 	private defaultTextStyle?: DefaultTextStyle;
 	private theme: MarkdownTheme;
 	private defaultStylePrefix?: string;
+	/** Maximum rendered lines (excluding padding). When set, content is truncated from the top with an ellipsis indicator so the most recent output remains visible. */
+	maxLines?: number;
 
 	// Cache for rendered output
 	private cachedText?: string;
 	private cachedWidth?: number;
+	private cachedMaxLines?: number;
 	private cachedLines?: string[];
 
 	constructor(
@@ -86,12 +89,13 @@ export class Markdown implements Component {
 	invalidate(): void {
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
+		this.cachedMaxLines = undefined;
 		this.cachedLines = undefined;
 	}
 
 	render(width: number): string[] {
 		// Check cache
-		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
+		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width && this.cachedMaxLines === this.maxLines) {
 			return this.cachedLines;
 		}
 
@@ -104,6 +108,7 @@ export class Markdown implements Component {
 			// Update cache
 			this.cachedText = this.text;
 			this.cachedWidth = width;
+			this.cachedMaxLines = this.maxLines;
 			this.cachedLines = result;
 			return result;
 		}
@@ -124,6 +129,12 @@ export class Markdown implements Component {
 			for (let j = 0; j < tokenLines.length; j++) renderedLines.push(tokenLines[j]);
 		}
 
+		// Trim trailing empty lines — inter-block spacing at the end just adds
+		// unwanted whitespace before whatever follows (e.g. pinned output border).
+		while (renderedLines.length > 0 && renderedLines[renderedLines.length - 1] === "") {
+			renderedLines.pop();
+		}
+
 		// Wrap lines (NO padding, NO background yet)
 		const wrappedLines: string[] = [];
 		for (const line of renderedLines) {
@@ -141,6 +152,15 @@ export class Markdown implements Component {
 					wrappedLines.push(visibleWidth(wl) > contentWidth ? truncateToWidth(wl, contentWidth, "") : wl);
 				}
 			}
+		}
+
+		// Truncate from the top when maxLines is set so the most recent content
+		// stays visible. This prevents the pinned output zone from exceeding the
+		// terminal height and causing render flashing.
+		if (this.maxLines !== undefined && wrappedLines.length > this.maxLines) {
+			const keep = Math.max(1, this.maxLines - 1); // Reserve one line for the ellipsis indicator
+			const truncated = wrappedLines.length - keep;
+			wrappedLines.splice(0, truncated, `… ${truncated} line${truncated !== 1 ? "s" : ""} above`);
 		}
 
 		// Add margins and background to each wrapped line
@@ -181,6 +201,7 @@ export class Markdown implements Component {
 		// Update cache
 		this.cachedText = this.text;
 		this.cachedWidth = width;
+		this.cachedMaxLines = this.maxLines;
 		this.cachedLines = result;
 
 		return result.length > 0 ? result : [""];

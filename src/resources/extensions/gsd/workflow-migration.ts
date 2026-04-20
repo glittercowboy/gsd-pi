@@ -5,8 +5,9 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { _getAdapter, transaction } from "./gsd-db.js";
+import { _getAdapter, bulkInsertLegacyHierarchy } from "./gsd-db.js";
 import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
+import { logWarning } from "./workflow-logger.js";
 
 // ─── needsAutoMigration ───────────────────────────────────────────────────
 
@@ -23,8 +24,8 @@ export function needsAutoMigration(basePath: string): boolean {
   try {
     const row = db.prepare("SELECT COUNT(*) as cnt FROM milestones").get();
     if (row && (row["cnt"] as number) > 0) return false;
-  } catch {
-    // Table might not exist yet — that's fine, we can still migrate
+  } catch (e) {
+    logWarning("migration", `DB probe failed: ${(e as Error).message}`);
     return false;
   }
 
@@ -71,7 +72,7 @@ export function migrateFromMarkdown(basePath: string): void {
       .filter(e => e.isDirectory())
       .map(e => e.name);
   } catch {
-    process.stderr.write("workflow-migration: failed to read milestones directory\n");
+    logWarning("migration", "failed to read milestones directory");
     return;
   }
 
@@ -141,7 +142,7 @@ export function migrateFromMarkdown(basePath: string): void {
           risk: s.risk || "low",
         }));
       } catch (err) {
-        process.stderr.write(`workflow-migration: failed to parse ROADMAP.md for ${mId}: ${(err as Error).message}\n`);
+        logWarning("migration", `failed to parse ROADMAP.md for ${mId}: ${(err as Error).message}`);
         // Still add milestone with ID as title
         milestoneInserts.push({ id: mId, title: mId, status: milestoneStatus });
       }
@@ -191,7 +192,7 @@ export function migrateFromMarkdown(basePath: string): void {
             });
           }
         } catch (err) {
-          process.stderr.write(`workflow-migration: failed to parse ${slice.id}-PLAN.md for ${mId}: ${(err as Error).message}\n`);
+          logWarning("migration", `failed to parse ${slice.id}-PLAN.md for ${mId}: ${(err as Error).message}`);
         }
       }
     }
@@ -206,8 +207,8 @@ export function migrateFromMarkdown(basePath: string): void {
           process.stderr.write(`workflow-migration: orphaned summary file ${summaryFile} in ${mId} (slice not found in ROADMAP.md), skipping\n`);
         }
       }
-    } catch {
-      // Non-fatal
+    } catch (e) {
+      logWarning("migration", `Orphaned summary check failed for ${mId}: ${(e as Error).message}`);
     }
   }
 
@@ -218,34 +219,26 @@ export function migrateFromMarkdown(basePath: string): void {
     return;
   }
 
-  const placeholders = migratedMilestoneIds.map(() => "?").join(",");
-  transaction(() => {
-    // Clear existing data to handle stale DB shape (DELETE ... IN (...))
-    db.prepare(`DELETE FROM tasks WHERE milestone_id IN (${placeholders})`).run(...migratedMilestoneIds);
-    db.prepare(`DELETE FROM slices WHERE milestone_id IN (${placeholders})`).run(...migratedMilestoneIds);
-    db.prepare(`DELETE FROM milestones WHERE id IN (${placeholders})`).run(...migratedMilestoneIds);
-
-    // Insert milestones
-    const insertMilestone = db.prepare("INSERT INTO milestones (id, title, status, created_at) VALUES (?, ?, ?, ?)");
-    for (const m of milestoneInserts) {
-      insertMilestone.run(m.id, m.title, m.status, now);
-    }
-
-    // Insert slices (using v10 column names: depends, sequence)
-    const insertSlice = db.prepare(
-      "INSERT INTO slices (id, milestone_id, title, status, risk, depends, sequence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-    for (const s of sliceInserts) {
-      insertSlice.run(s.id, s.milestoneId, s.title, s.status, s.risk, "[]", s.sequence, now);
-    }
-
-    // Insert tasks (using v10 column names: sequence, blocker_discovered, full_summary_md)
-    const insertTask = db.prepare(
-      "INSERT INTO tasks (id, slice_id, milestone_id, title, description, status, estimate, files, sequence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-    for (const t of taskInserts) {
-      insertTask.run(t.id, t.sliceId, t.milestoneId, t.title, "", t.status, "", "[]", t.sequence);
-    }
+  bulkInsertLegacyHierarchy({
+    milestones: milestoneInserts,
+    slices: sliceInserts.map(s => ({
+      id: s.id,
+      milestoneId: s.milestoneId,
+      title: s.title,
+      status: s.status,
+      risk: s.risk,
+      sequence: s.sequence,
+    })),
+    tasks: taskInserts.map(t => ({
+      id: t.id,
+      sliceId: t.sliceId,
+      milestoneId: t.milestoneId,
+      title: t.title,
+      status: t.status,
+      sequence: t.sequence,
+    })),
+    clearMilestoneIds: migratedMilestoneIds,
+    createdAt: now,
   });
 }
 
@@ -308,17 +301,18 @@ export function validateMigration(basePath: string): { discrepancies: string[] }
                 const planContent = readFileSync(planPath, "utf-8");
                 const plan = parsePlan(planContent);
                 mdTaskCount += plan.tasks.length;
-              } catch {
-                // Skip unreadable plan
+              } catch (e) {
+                logWarning("migration", `Failed to read plan ${slice.id}-PLAN.md: ${(e as Error).message}`);
               }
             }
           }
-        } catch {
-          // Skip unreadable roadmap
+        } catch (e) {
+          logWarning("migration", `Failed to read roadmap for ${mId}: ${(e as Error).message}`);
         }
       }
     }
-  } catch {
+  } catch (e) {
+    logWarning("migration", `Validation failed to read markdown: ${(e as Error).message}`);
     return { discrepancies: ["Failed to read markdown for validation"] };
   }
 

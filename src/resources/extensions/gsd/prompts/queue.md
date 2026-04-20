@@ -18,6 +18,7 @@ Say exactly: "What do you want to add?" — nothing else. Wait for the user's an
 ## Discussion Phase
 
 After they describe it, your job is to understand the new work deeply enough to create context files that a future planning session can use.
+Never fabricate or simulate user input during this discussion. Never generate fake transcript markers like `[User]`, `[Human]`, or `User:`. Ask one question round, then wait for the user's actual response before continuing.
 
 **If the user provides a file path or pastes a large document** (spec, design doc, product plan, chat export), read it fully before asking questions. Use it as the starting point — don't ask them to re-explain what's already in the document. Your questions should fill gaps and resolve ambiguities the document doesn't cover.
 
@@ -36,11 +37,11 @@ Don't go deep — just enough that your next question reflects what's actually t
 - How the new work relates to existing milestones — overlap, dependencies, prerequisites
 - If `.gsd/REQUIREMENTS.md` exists: which unmet Active or Deferred requirements this queued work advances
 
-**Then use ask_user_questions** to dig into gray areas — scope boundaries, proof expectations, integration choices, tech preferences when they materially matter, and what's in vs out. 1-3 questions per round.
+**Then use ask_user_questions** to dig into gray areas — scope boundaries, proof expectations, integration choices, tech preferences when they materially matter, and what's in vs out. Ask 1-3 questions per round, then wait for the user's response before asking the next round.
 
 If a `GSD Skill Preferences` block is present in system context, use it to decide which skills to load and follow during discuss/planning work, but do not let it override the required discuss flow or artifact requirements.
 
-**Self-regulate:** Do **not** ask a meta "ready to queue?" question after every round. Keep going until you have enough depth to write the context well, then use a single wrap-up prompt if needed. If the user clearly keeps adding detail instead of objecting, treat that as permission to continue.
+**Self-regulate:** Do **not** ask a meta "ready to queue?" question after every round. Keep going until you have enough depth to write the context well, then use a single wrap-up prompt if needed. Do not infer permission to continue from silence or from partial prior answers — each new round requires an actual user response.
 
 ## Existing Milestone Awareness
 
@@ -102,6 +103,8 @@ This triggers the per-milestone write-gate. The question should present:
 The user confirms or corrects before you write. One depth verification per milestone — not one for all milestones combined. This is the required write-gate; do not add extra "ready to proceed?" prompts around it once you have enough signal.
 
 **If you skip this step, the system will block the CONTEXT.md write and return an error telling you to complete verification first.**
+
+**CRITICAL — Non-bypassable gate:** The system mechanically blocks CONTEXT.md writes until the user selects the "(Recommended)" option. If the user declines, cancels, or the tool fails, you MUST re-ask — never rationalize past the block ("tool not responding, I'll proceed" is forbidden). The gate exists to protect the user's work; treat a block as an instruction, not an obstacle to work around.
 
 ## Output Phase
 

@@ -6,7 +6,7 @@ import { theme } from "../theme/theme.js";
  * Format: "+123 content" or "-123 content" or " 123 content" or "     ..."
  */
 function parseDiffLine(line: string): { prefix: string; lineNum: string; content: string } | null {
-	const match = line.match(/^([+-\s])(\s*\d*)\s(.*)$/);
+	const match = line.match(/^([+\- ])(\s*\d*)\s(.*)$/);
 	if (!match) return null;
 	return { prefix: match[1], lineNum: match[2], content: match[3] };
 }
@@ -15,7 +15,7 @@ function parseDiffLine(line: string): { prefix: string; lineNum: string; content
  * Replace tabs with spaces for consistent rendering.
  */
 function replaceTabs(text: string): string {
-	return text.replace(/\t/g, "   ");
+	return text.replace(/\t/g, "    ");
 }
 
 /**

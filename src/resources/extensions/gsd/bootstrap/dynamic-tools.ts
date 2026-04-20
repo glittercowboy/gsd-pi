@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { createBashTool, createEditTool, createReadTool, createWriteTool } from "@gsd/pi-coding-agent";
 
 import { DEFAULT_BASH_TIMEOUT_SECS } from "../constants.js";
-import { setLogBasePath } from "../workflow-logger.js";
+import { setLogBasePath, logWarning } from "../workflow-logger.js";
 
 /**
  * Resolve the correct DB path for the current working directory.
@@ -32,15 +32,52 @@ export function resolveProjectRootDbPath(basePath: string): string {
     return join(projectRoot, ".gsd", "gsd.db");
   }
 
+  // External-state layout: ~/.gsd/projects/<hash>/worktrees/<MID>/...
+  // Resolve to ~/.gsd/projects/<hash>/gsd.db (the canonical project DB) (#2952).
+  // Must be checked before the generic symlink-resolved handler: both match
+  // /.gsd/projects/<hash>/worktrees/ but require different resolution targets.
+  const extRe = /[/\\]\.gsd[/\\]projects[/\\][a-f0-9]+[/\\]worktrees(?:[/\\]|$)/;
+  const extMatch = extRe.exec(basePath);
+  if (extMatch) {
+    const matchStr = extMatch[0];
+    // Find the "/worktrees" portion within the match and slice up to it
+    const wtIdx = matchStr.search(/[/\\]worktrees(?:[/\\]|$)/);
+    const projectStateRoot = basePath.slice(0, extMatch.index + wtIdx);
+    return join(projectStateRoot, "gsd.db");
+  }
+
+  // Symlink-resolved layout: /.gsd/projects/<hash>/worktrees/M001/...
+  // The project root is everything before /.gsd/projects/ (#2517)
+  const symlinkMarker = `${sep}.gsd${sep}projects${sep}`;
+  const symlinkIdx = basePath.indexOf(symlinkMarker);
+  if (symlinkIdx !== -1) {
+    const afterProjects = basePath.slice(symlinkIdx + symlinkMarker.length);
+    // Expect: <hash>/worktrees/...
+    const worktreeSeg = `${sep}worktrees${sep}`;
+    if (afterProjects.includes(worktreeSeg)) {
+      const projectRoot = basePath.slice(0, symlinkIdx);
+      return join(projectRoot, ".gsd", "gsd.db");
+    }
+  }
+
+  // Forward-slash variant for symlink-resolved layout
+  const fwdSymlinkMarker = "/.gsd/projects/";
+  const fwdSymlinkIdx = basePath.indexOf(fwdSymlinkMarker);
+  if (fwdSymlinkIdx !== -1) {
+    const afterProjects = basePath.slice(fwdSymlinkIdx + fwdSymlinkMarker.length);
+    if (afterProjects.includes("/worktrees/")) {
+      const projectRoot = basePath.slice(0, fwdSymlinkIdx);
+      return join(projectRoot, ".gsd", "gsd.db");
+    }
+  }
+
+
   return join(basePath, ".gsd", "gsd.db");
 }
 
-export async function ensureDbOpen(): Promise<boolean> {
+export async function ensureDbOpen(basePath: string = process.cwd()): Promise<boolean> {
   try {
     const db = await import("../gsd-db.js");
-    if (db.isDbAvailable()) return true;
-
-    const basePath = process.cwd();
     const dbPath = resolveProjectRootDbPath(basePath);
     const gsdDir = join(basePath, ".gsd");
 
@@ -67,9 +104,7 @@ export async function ensureDbOpen(): Promise<boolean> {
             const { migrateFromMarkdown } = await import("../md-importer.js");
             migrateFromMarkdown(basePath);
           } catch (err) {
-            process.stderr.write(
-              `gsd-db: ensureDbOpen auto-migration failed: ${(err as Error).message}\n`,
-            );
+            logWarning("bootstrap", `ensureDbOpen auto-migration failed: ${(err as Error).message}`);
           }
         }
         return opened;
@@ -81,8 +116,10 @@ export async function ensureDbOpen(): Promise<boolean> {
       return opened;
     }
 
+    logWarning("bootstrap", "ensureDbOpen failed — no .gsd directory found");
     return false;
-  } catch {
+  } catch (err) {
+    logWarning("bootstrap", `ensureDbOpen failed: ${(err as Error).message ?? String(err)}`);
     return false;
   }
 }
@@ -154,4 +191,3 @@ export function registerDynamicTools(pi: ExtensionAPI): void {
     },
   } as any);
 }
-

@@ -13,9 +13,7 @@ const tmpDir = mkdtempSync(join(tmpdir(), "gsd-smoke-init-"));
 
 try {
   const binary = process.env.GSD_SMOKE_BINARY || "npx";
-  const args = process.env.GSD_SMOKE_BINARY
-    ? ["init"]
-    : ["gsd-pi", "init"];
+  const args = process.env.GSD_SMOKE_BINARY ? ["init"] : ["gsd-pi", "init"];
 
   execFileSync(binary, args, {
     encoding: "utf8",

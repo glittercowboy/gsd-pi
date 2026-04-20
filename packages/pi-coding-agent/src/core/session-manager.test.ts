@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it, afterEach } from "node:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -61,5 +61,40 @@ describe("SessionManager usage totals", () => {
 			cacheWrite: 0,
 			cost: 0,
 		});
+	});
+});
+
+describe("SessionManager secret redaction on persistence", () => {
+	let dir: string;
+
+	afterEach(() => {
+		if (dir) {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
+
+	it("scrubs known secret shapes from JSONL on disk", () => {
+		dir = mkdtempSync(join(tmpdir(), "gsd-session-redact-test-"));
+		const manager = SessionManager.create(dir, dir);
+
+		const leakedKey = "llx-abcDEF1234567890abcDEF1234567890";
+		manager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: `here is my key: ${leakedKey}` }],
+		} as any);
+		// Persistence is gated on an assistant message being present.
+		manager.appendMessage(makeAssistantMessage(1, 1, 0, 0, 0));
+
+		const sessionFile = manager.getSessionFile();
+		assert.ok(sessionFile, "session file should be set");
+		const contents = readFileSync(sessionFile!, "utf8");
+		assert.ok(
+			!contents.includes(leakedKey),
+			"raw secret must not appear in persisted JSONL",
+		);
+		assert.ok(
+			contents.includes("[REDACTED:llamacloud]"),
+			"redaction placeholder must appear in persisted JSONL",
+		);
 	});
 });

@@ -2,17 +2,33 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, chmodSync, readdirSync } from "node:fs";
 import { createWriteStream } from "node:fs";
-import { arch as osArch, homedir as osHomedir } from "node:os";
+import { arch as osArch } from "node:os";
 import { delimiter, join } from "node:path";
 import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import extractZip from "extract-zip";
+import {
+  GSD_RTK_DISABLED_ENV,
+  GSD_RTK_PATH_ENV,
+  RTK_TELEMETRY_DISABLED_ENV,
+  getManagedRtkDir,
+  getPathValue,
+  getRtkBinaryName,
+  isTruthy,
+  isRtkEnabled,
+  resolveSystemRtkPath,
+} from "./rtk-shared.js";
 
 export const RTK_VERSION = "0.33.1";
-export const GSD_RTK_DISABLED_ENV = "GSD_RTK_DISABLED";
 export const GSD_SKIP_RTK_INSTALL_ENV = "GSD_SKIP_RTK_INSTALL";
-export const GSD_RTK_PATH_ENV = "GSD_RTK_PATH";
-export const RTK_TELEMETRY_DISABLED_ENV = "RTK_TELEMETRY_DISABLED";
+export {
+  GSD_RTK_DISABLED_ENV,
+  GSD_RTK_PATH_ENV,
+  RTK_TELEMETRY_DISABLED_ENV,
+  getManagedRtkDir,
+  getRtkBinaryName,
+  isRtkEnabled,
+};
 
 const RTK_REPO = "rtk-ai/rtk";
 const RTK_REWRITE_TIMEOUT_MS = 5_000;
@@ -33,28 +49,6 @@ export interface EnsureRtkResult {
   source: "disabled" | "unsupported" | "managed" | "system" | "downloaded" | "missing";
   binaryPath?: string;
   reason?: string;
-}
-
-function isTruthy(value: string | undefined): boolean {
-  if (!value) return false;
-  const normalized = value.trim().toLowerCase();
-  return normalized === "1" || normalized === "true" || normalized === "yes";
-}
-
-export function isRtkEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return !isTruthy(env[GSD_RTK_DISABLED_ENV]);
-}
-
-function resolveAppRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return env.GSD_HOME || join(osHomedir(), ".gsd");
-}
-
-export function getManagedRtkDir(env: NodeJS.ProcessEnv = process.env): string {
-  return join(resolveAppRoot(env), "agent", "bin");
-}
-
-export function getRtkBinaryName(platform: NodeJS.Platform = process.platform): string {
-  return platform === "win32" ? "rtk.exe" : "rtk";
 }
 
 export function getManagedRtkPath(
@@ -78,11 +72,6 @@ export function applyRtkProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS
   prependPathEntry(env, getManagedRtkDir(env));
   env[RTK_TELEMETRY_DISABLED_ENV] = "1";
   return env;
-}
-
-function getPathValue(env: NodeJS.ProcessEnv): string | undefined {
-  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path");
-  return pathKey ? env[pathKey] : env.PATH;
 }
 
 export function buildRtkEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
@@ -192,30 +181,6 @@ async function extractArchiveAsync(assetName: string, archivePath: string, extra
   extractArchive(assetName, archivePath, extractDir);
 }
 
-function resolvePathCandidates(pathValue: string | undefined): string[] {
-  if (!pathValue) return [];
-  return pathValue
-    .split(delimiter)
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function resolveSystemRtkPath(pathValue: string | undefined, platform: NodeJS.Platform = process.platform): string | null {
-  const candidates = platform === "win32"
-    ? ["rtk.exe", "rtk.cmd", "rtk.bat", "rtk"]
-    : ["rtk"];
-
-  for (const dir of resolvePathCandidates(pathValue)) {
-    for (const candidate of candidates) {
-      const fullPath = join(dir, candidate);
-      if (existsSync(fullPath)) {
-        return fullPath;
-      }
-    }
-  }
-
-  return null;
-}
 
 export interface ResolveRtkBinaryPathOptions {
   binaryPath?: string;

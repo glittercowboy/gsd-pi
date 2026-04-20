@@ -230,6 +230,23 @@ export async function recoverTimedOutUnit(
     return "recovered";
   }
 
+  // #4175: For complete-milestone, never write a blocker placeholder — a stub
+  // SUMMARY has no recovery value (milestone is terminal), it does not update
+  // DB status, and downstream merge paths can treat the stub as a legitimate
+  // completion signal. Pause instead so the worktree branch is preserved.
+  if (unitType === "complete-milestone") {
+    writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
+      phase: "paused",
+      recoveryAttempts: recoveryAttempts + 1,
+      lastRecoveryReason: reason,
+    });
+    ctx.ui.notify(
+      `Milestone ${unitId} ${reason}-recovery exhausted ${maxRecoveryAttempts} attempt(s) — worktree branch preserved. Re-run /gsd auto once blockers are resolved.`,
+      "error",
+    );
+    return "paused";
+  }
+
   // Retries exhausted — write a blocker placeholder and advance the pipeline
   // instead of silently stalling.
   const placeholder = writeBlockerPlaceholder(

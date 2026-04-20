@@ -22,7 +22,7 @@ import { abortAndReset } from "./git-self-heal.js";
 import { rebuildState } from "./doctor.js";
 import { deriveState } from "./state.js";
 import { resolveMilestoneIntegrationBranch } from "./git-service.js";
-import { nativeIsRepo } from "./native-git-bridge.js";
+import { nativeIsRepo, nativeHasChanges, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeAddTracked, nativeCommit } from "./native-git-bridge.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { runEnvironmentChecks } from "./doctor-environment.js";
 
@@ -293,6 +293,43 @@ export async function preDispatchHealthGate(basePath: string): Promise<PreDispat
     }
   } catch {
     // Non-fatal — dispatch continues if state/branch check fails
+  }
+
+  // ── Stale uncommitted changes — auto-snapshot before dispatch ──
+  // If the working tree is dirty and no commit has happened recently,
+  // create a safety snapshot so work isn't lost if the next unit crashes.
+  try {
+    if (nativeIsRepo(basePath)) {
+      const prefs = loadEffectiveGSDPreferences()?.preferences ?? {};
+      // `git.snapshots: false` is the canonical toggle that disables WIP
+      // snapshot commits — honour it before touching the threshold path (#4420).
+      const snapshotsEnabled = prefs.git?.snapshots !== false;
+      const thresholdMinutes = prefs.stale_commit_threshold_minutes ?? 30;
+
+      if (snapshotsEnabled && thresholdMinutes > 0 && nativeHasChanges(basePath)) {
+        const branch = nativeGetCurrentBranch(basePath);
+        const lastEpoch = nativeLastCommitEpoch(basePath, branch || "HEAD");
+        const nowEpoch = Math.floor(Date.now() / 1000);
+        const minutesSinceCommit = lastEpoch > 0 ? (nowEpoch - lastEpoch) / 60 : Infinity;
+
+        if (minutesSinceCommit >= thresholdMinutes) {
+          const mins = Math.floor(minutesSinceCommit);
+          try {
+            nativeAddTracked(basePath);
+            const commitMsg = `gsd snapshot: pre-dispatch, uncommitted changes after ${mins}m inactivity`;
+            const result = nativeCommit(basePath, commitMsg);
+            if (result) {
+              fixesApplied.push(`pre-dispatch: created gsd snapshot after ${mins}m of uncommitted changes`);
+            }
+          } catch {
+            // Non-blocking — snapshot failed but dispatch can continue
+            fixesApplied.push("pre-dispatch: gsd snapshot failed");
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal
   }
 
   // ── Disk space check ──

@@ -32,4 +32,33 @@ describe("Input", () => {
 		input.focused = false;
 		assert.equal(input.focused, false);
 	});
+
+	it("secure mode obscures typed characters in render output", () => {
+		const input = new Input();
+		input.secure = true;
+		input.focused = true;
+		input.handleInput("secret123");
+
+		const line = input.render(40)[0] ?? "";
+		assert.ok(!line.includes("secret123"), "rendered line must not expose raw secret text");
+		assert.ok(line.includes("*********"), "rendered line should include masked characters");
+	});
+
+	it("maps kitty keypad digits to text instead of inserting private-use glyphs", () => {
+		const input = new Input();
+		input.focused = true;
+
+		input.handleInput("\x1b[57400;129u");
+
+		assert.equal(input.getValue(), "1");
+	});
+
+	it("ignores kitty keypad navigation keys in text input", () => {
+		const input = new Input();
+		input.focused = true;
+
+		input.handleInput("\x1b[57417u");
+
+		assert.equal(input.getValue(), "");
+	});
 });

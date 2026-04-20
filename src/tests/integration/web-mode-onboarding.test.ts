@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
+import { setTimeout as delay } from "node:timers/promises";
 
 import { chromium } from "playwright";
 
@@ -130,6 +131,21 @@ function fakeAutoDashboardData() {
     totalCost: 0,
     totalTokens: 0,
   };
+}
+
+async function removeTreeWithRetry(path: string): Promise<void> {
+  const maxAttempts = 5;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      const retryable = code === "ENOTEMPTY" || code === "EBUSY";
+      if (!retryable || attempt === maxAttempts) throw err;
+      await delay(100 * attempt);
+    }
+  }
 }
 
 function fakeWorkspaceIndex() {
@@ -301,6 +317,8 @@ test("successful browser onboarding restarts the stale bridge child and unlocks 
   const harness = configureBridgeRuntime(fixture, authStorage);
   onboarding.configureOnboardingServiceForTests({
     authStorage,
+    getEnvApiKey: () => undefined,
+    isExternalCliProvider: () => false,
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
   });
 
@@ -368,6 +386,8 @@ test("refresh failures keep the workspace locked and expose the failed bridge-re
   const harness = configureBridgeRuntime(fixture, authStorage, { failRestart: true });
   onboarding.configureOnboardingServiceForTests({
     authStorage,
+    getEnvApiKey: () => undefined,
+    isExternalCliProvider: () => false,
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
   });
 
@@ -438,7 +458,7 @@ test("fresh gsd --web browser onboarding stays locked on failed validation and u
     if (port !== null) {
     await killProcessOnPort(port)
     }
-    rmSync(tempRoot, { recursive: true, force: true })
+    await removeTreeWithRetry(tempRoot)
   });
 
   const launch = await launchPackagedWebHost({
@@ -447,6 +467,7 @@ test("fresh gsd --web browser onboarding stays locked on failed validation and u
     browserLogPath,
     env: {
       GSD_WEB_TEST_FAKE_API_KEY_VALIDATION: "1",
+      GSD_WEB_TEST_DISABLE_EXTERNAL_CLI: "1",
       ANTHROPIC_API_KEY: "",
       OPENAI_API_KEY: "",
       GOOGLE_API_KEY: "",

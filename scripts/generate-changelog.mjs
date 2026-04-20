@@ -95,8 +95,23 @@ if (userFacingCount === 0) {
 // ---------------------------------------------------------------------------
 const bumpType = hasBreaking ? "major" : hasFeat ? "minor" : "patch";
 
+// Use the higher of (latest stable tag, package.json version) as the baseline.
+// Tag is the authoritative record of what's already published; package.json can
+// be clobbered by rebases. Taking the max prevents version regressions if the
+// source version is accidentally reverted.
+const tagVersion = stableTag.replace(/^v/, "");
 const currentPkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf-8"));
-const [major, minor, patch] = currentPkg.version.replace(/-.*$/, "").split(".").map(Number);
+const pkgVersion = currentPkg.version.replace(/-.*$/, "");
+const cmp = (a, b) => {
+  const [aMaj, aMin, aPat] = a.split(".").map(Number);
+  const [bMaj, bMin, bPat] = b.split(".").map(Number);
+  return aMaj - bMaj || aMin - bMin || aPat - bPat;
+};
+const baseline = cmp(pkgVersion, tagVersion) >= 0 ? pkgVersion : tagVersion;
+if (baseline !== pkgVersion) {
+  console.error(`[generate-changelog] package.json (${pkgVersion}) is behind latest tag (${tagVersion}); using tag as baseline.`);
+}
+const [major, minor, patch] = baseline.split(".").map(Number);
 
 let newVersion;
 switch (bumpType) {

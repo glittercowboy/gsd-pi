@@ -23,6 +23,7 @@ function capabilityBadges(provider: WorkspaceOnboardingProviderState): string[] 
   if (provider.supports.apiKey) badges.push("API key")
   if (provider.supports.oauth)
     badges.push(provider.supports.oauthAvailable ? "Browser sign-in" : "OAuth unavailable")
+  if (provider.supports.externalCli) badges.push("CLI auth")
   return badges
 }
 
@@ -31,6 +32,7 @@ function configuredViaLabel(source: WorkspaceOnboardingProviderState["configured
     case "auth_file": return "Saved auth"
     case "environment": return "Environment variable"
     case "runtime": return "Runtime"
+    case "external_cli": return "CLI"
     default: return "Not configured"
   }
 }
@@ -147,7 +149,9 @@ export function StepProvider({ providers, selectedId, onSelect, onNext, onBack }
                               ? "Enter an API key to authenticate"
                               : cap === "Browser sign-in"
                                 ? "Authenticate through your browser"
-                                : "This auth method is not available"}
+                                : cap === "CLI auth"
+                                  ? "Authenticated via local CLI — no API key needed"
+                                  : "This auth method is not available"}
                           </TooltipContent>
                         </Tooltip>
                       ))}

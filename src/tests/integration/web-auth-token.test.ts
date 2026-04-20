@@ -69,19 +69,23 @@ test('app-shell.tsx sendBeacon does not send bare unauthenticated URL', () => {
   }
 })
 
-// ─── proxy.ts contract tests ────────────────────────────────────────────────
+// ─── middleware.ts contract tests ─────────────────────────────────��─────────
 
-const proxySource = readFileSync(join(projectRoot, 'web', 'proxy.ts'), 'utf-8')
+const middlewareSource = readFileSync(join(projectRoot, 'web', 'middleware.ts'), 'utf-8')
 
-test('proxy.ts accepts _token query parameter as fallback authentication', () => {
-  assert.match(proxySource, /_token/, 'proxy should support _token query parameter for SSE/sendBeacon')
+test('middleware.ts exports a function named middleware', () => {
+  assert.match(middlewareSource, /export function middleware/, 'must export "middleware" for Next.js to activate it')
 })
 
-test('proxy.ts validates bearer token from Authorization header', () => {
-  assert.match(proxySource, /Bearer/, 'proxy should check Authorization: Bearer header')
+test('middleware.ts accepts _token query parameter as fallback authentication', () => {
+  assert.match(middlewareSource, /_token/, 'middleware should support _token query parameter for SSE/sendBeacon')
 })
 
-test('proxy.ts skips auth when GSD_WEB_AUTH_TOKEN is not set', () => {
-  assert.match(proxySource, /GSD_WEB_AUTH_TOKEN/, 'proxy should read GSD_WEB_AUTH_TOKEN from env')
-  assert.match(proxySource, /NextResponse\.next\(\)/, 'proxy should pass through when no token is configured')
+test('middleware.ts validates bearer token from Authorization header', () => {
+  assert.match(middlewareSource, /Bearer/, 'middleware should check Authorization: Bearer header')
+})
+
+test('middleware.ts skips auth when GSD_WEB_AUTH_TOKEN is not set', () => {
+  assert.match(middlewareSource, /GSD_WEB_AUTH_TOKEN/, 'middleware should read GSD_WEB_AUTH_TOKEN from env')
+  assert.match(middlewareSource, /NextResponse\.next\(\)/, 'middleware should pass through when no token is configured')
 })

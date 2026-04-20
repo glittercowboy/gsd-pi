@@ -350,7 +350,9 @@ test("assembled lifecycle: boot → onboard → prompt → streaming text → to
 
   onboarding.configureOnboardingServiceForTests({
     authStorage,
+    getEnvApiKey: () => undefined,
     validateApiKey: async () => ({ ok: true, message: "openai credentials validated" }),
+    isExternalCliProvider: () => false,
   });
 
   t.after(async () => {
@@ -694,6 +696,7 @@ test("assembled settings controls keep retry visibility and daily-use mutations 
     authStorage: AuthStorage.inMemory({
       anthropic: { type: "api_key", key: "sk-test-assembled-settings" },
     } as any),
+    getEnvApiKey: () => undefined,
   });
 
   t.after(async () => {
@@ -964,6 +967,7 @@ test("assembled slash-command behavior keeps built-ins safe while preserving GSD
     authStorage: AuthStorage.inMemory({
       anthropic: { type: "api_key", key: "sk-test-assembled-slash" },
     } as any),
+    getEnvApiKey: () => undefined,
   });
 
   t.after(async () => {

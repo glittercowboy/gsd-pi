@@ -5,6 +5,7 @@
  * the heavy tool-registration modules.
  */
 
+import { isAnthropicApi } from "@gsd/pi-ai";
 import { resolveSearchProviderFromPreferences } from "../gsd/preferences.js";
 
 /** Tool names for the Brave-backed custom search tools */
@@ -15,6 +16,41 @@ export const CUSTOM_SEARCH_TOOL_NAMES = ["search-the-web", "search_and_read", "g
 
 /** Thinking block types that require signature validation by the API */
 const THINKING_TYPES = new Set(["thinking", "redacted_thinking"]);
+
+/**
+ * Providers whose Anthropic-Messages endpoint is known to accept the native
+ * `web_search_20250305` server tool. Anthropic-shaped transports NOT in this
+ * set (github-copilot, minimax, kimi-coding, opencode, vercel-ai-gateway,
+ * etc.) route Claude or Claude-compatible models through the Messages API
+ * but do NOT expose the server-side search tool — injecting it yields a
+ * 400 "unsupported_value" from their endpoints (regression from #4492).
+ *
+ * Keep this allowlist tight — err on the side of custom/Brave search rather
+ * than a runtime 400. Add a provider here only after confirming its endpoint
+ * accepts the tool type.
+ */
+const NATIVE_WEB_SEARCH_PROVIDERS = new Set([
+  "anthropic",
+  "claude-code",
+  "anthropic-vertex",
+  "vercel-ai-gateway",
+]);
+
+/**
+ * True when the model is an Anthropic-shaped transport AND the provider is
+ * known to accept the native `web_search_20250305` tool. Gate both on api
+ * shape (#4478 / ADR-012) and on provider identity (#444 regression guard
+ * and #4492 scope correction) — provider-level discrimination is legitimate
+ * per ADR-012 for credential/behavior differences that api shape can't
+ * express.
+ */
+export function supportsNativeWebSearch(
+  model: { api?: string; provider?: string } | null | undefined
+): boolean {
+  if (!isAnthropicApi(model)) return false;
+  const provider = model?.provider;
+  return typeof provider === "string" && NATIVE_WEB_SEARCH_PROVIDERS.has(provider);
+}
 
 /**
  * Maximum number of native web searches allowed per session (agent unit).
@@ -94,7 +130,11 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
   pi.on("model_select", async (event: any, ctx: any) => {
     modelSelectFired = true;
     const wasAnthropic = isAnthropicProvider;
-    isAnthropicProvider = event.model.provider === "anthropic";
+    // Gate on api shape AND provider allowlist: direct Anthropic, claude-code
+    // OAuth, and anthropic-vertex accept `web_search_20250305`; copilot /
+    // minimax / kimi / opencode route Claude-compat models through the same
+    // wire protocol but reject the server-side tool (#4492 regression).
+    isAnthropicProvider = supportsNativeWebSearch(event.model);
 
     const hasBrave = !!process.env.BRAVE_API_KEY;
 
@@ -139,13 +179,19 @@ export function registerNativeSearchHooks(pi: NativeSearchPI): { getIsAnthropic:
     // the model_select flag, then to the model name heuristic (last resort).
     // The model name heuristic is needed for session restores where
     // modelsAreEqual suppresses model_select AND the SDK doesn't pass model.
-    const eventModel = event.model as { provider: string } | undefined;
+    const eventModel = event.model as { provider?: string; api?: string } | undefined;
     let isAnthropic: boolean;
-    if (eventModel?.provider) {
-      isAnthropic = eventModel.provider === "anthropic";
+    if (eventModel?.api || eventModel?.provider) {
+      // Preferred path: gate on api shape + provider allowlist. Both fields
+      // are authoritative when present — do NOT fall back to the model-name
+      // heuristic, which would misclassify copilot-served Claude as Anthropic
+      // (#444 regression) or minimax-served Claude-compat as Anthropic (#4492).
+      isAnthropic = supportsNativeWebSearch(eventModel);
     } else if (modelSelectFired) {
       isAnthropic = isAnthropicProvider;
     } else {
+      // Last resort: session-restore paths where the SDK doesn't pass model.
+      // The model-name prefix is best-effort and assumes direct Anthropic.
       const modelName = typeof payload.model === "string" ? payload.model : "";
       isAnthropic = modelName.startsWith("claude-");
     }

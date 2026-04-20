@@ -13,6 +13,7 @@ import type { GSDState } from "./types.js";
 import { runProviderChecks, summariseProviderIssues } from "./doctor-providers.js";
 import { runEnvironmentChecks } from "./doctor-environment.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { nativeIsRepo, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeCommitSubject } from "./native-git-bridge.js";
 import { loadLedgerFromDisk, getProjectTotals } from "./metrics.js";
 import { describeNextUnit, estimateTimeRemaining, updateSliceProgressCache } from "./auto-dashboard.js";
 import { projectRoot } from "./commands/context.js";
@@ -31,6 +32,8 @@ function loadHealthWidgetData(basePath: string): HealthWidgetData {
   let providerIssue: string | null = null;
   let environmentErrorCount = 0;
   let environmentWarningCount = 0;
+  let lastCommitEpoch: number | null = null;
+  let lastCommitMessage: string | null = null;
 
   const projectState = detectHealthWidgetProjectState(basePath);
 
@@ -58,6 +61,18 @@ function loadHealthWidgetData(basePath: string): HealthWidgetData {
     }
   } catch { /* non-fatal */ }
 
+  // ── Last commit info ──
+  try {
+    if (nativeIsRepo(basePath)) {
+      const branch = nativeGetCurrentBranch(basePath);
+      const epoch = nativeLastCommitEpoch(basePath, branch || "HEAD");
+      if (epoch > 0) {
+        lastCommitEpoch = epoch;
+        lastCommitMessage = nativeCommitSubject(basePath, branch || "HEAD") || null;
+      }
+    }
+  } catch { /* non-fatal */ }
+
   return {
     projectState,
     budgetCeiling,
@@ -65,6 +80,8 @@ function loadHealthWidgetData(basePath: string): HealthWidgetData {
     providerIssue,
     environmentErrorCount,
     environmentWarningCount,
+    lastCommitEpoch,
+    lastCommitMessage,
     lastRefreshed: Date.now(),
   };
 }
@@ -91,6 +108,7 @@ export function initHealthWidget(ctx: ExtensionContext): void {
     let data = initialData;
     let cachedLines: string[] | undefined;
     let refreshInFlight = false;
+    let isDisposed = false;
 
     const refresh = async () => {
       if (refreshInFlight) return;
@@ -98,7 +116,7 @@ export function initHealthWidget(ctx: ExtensionContext): void {
       try {
         data = loadHealthWidgetData(basePath);
         cachedLines = undefined;
-        _tui.requestRender();
+        if (!isDisposed) _tui.requestRender();
       } catch { /* non-fatal */ } finally {
         refreshInFlight = false;
       }
@@ -112,13 +130,18 @@ export function initHealthWidget(ctx: ExtensionContext): void {
       void refresh();
     }, REFRESH_INTERVAL_MS);
 
+    let cachedWidth: number | undefined;
     return {
-      render(_width: number): string[] {
-        if (!cachedLines) cachedLines = buildHealthLines(data);
+      render(width: number): string[] {
+        if (!cachedLines || cachedWidth !== width) {
+          cachedLines = buildHealthLines(data, width);
+          cachedWidth = width;
+        }
         return cachedLines;
       },
-      invalidate(): void { cachedLines = undefined; },
+      invalidate(): void { cachedLines = undefined; cachedWidth = undefined; },
       dispose(): void {
+        isDisposed = true;
         clearInterval(refreshTimer);
       },
     };

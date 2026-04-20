@@ -100,6 +100,18 @@ steps: []
 // ─── Catalog Registration ────────────────────────────────────────────────
 
 describe("workflow catalog registration", () => {
+  it("model appears in TOP_LEVEL_SUBCOMMANDS", () => {
+    const entry = TOP_LEVEL_SUBCOMMANDS.find((c) => c.cmd === "model");
+    assert.ok(entry, "model should be in TOP_LEVEL_SUBCOMMANDS");
+    assert.match(entry!.desc, /session model/i);
+  });
+
+  it("getGsdArgumentCompletions('m') includes model", () => {
+    const completions = getGsdArgumentCompletions("m");
+    const labels = completions.map((c: any) => c.label);
+    assert.ok(labels.includes("model"), "should include model completion");
+  });
+
   it("workflow appears in TOP_LEVEL_SUBCOMMANDS", () => {
     const entry = TOP_LEVEL_SUBCOMMANDS.find((c) => c.cmd === "workflow");
     assert.ok(entry, "workflow should be in TOP_LEVEL_SUBCOMMANDS");
@@ -107,13 +119,15 @@ describe("workflow catalog registration", () => {
     assert.ok(entry!.desc.includes("run"), "description should mention run");
   });
 
-  it("getGsdArgumentCompletions('workflow ') returns six subcommands", () => {
+  it("getGsdArgumentCompletions('workflow ') returns the full subcommand set", () => {
     const completions = getGsdArgumentCompletions("workflow ");
     const labels = completions.map((c: any) => c.label);
-    for (const sub of ["new", "run", "list", "validate", "pause", "resume"]) {
+    for (const sub of [
+      "new", "run", "list", "info", "install", "uninstall", "validate", "pause", "resume",
+    ]) {
       assert.ok(labels.includes(sub), `missing completion: ${sub}`);
     }
-    assert.equal(labels.length, 6, "should have exactly 6 subcommands");
+    assert.equal(labels.length, 9, "should have exactly 9 subcommands");
   });
 
   it("getGsdArgumentCompletions('workflow r') filters to run and resume", () => {
@@ -178,12 +192,12 @@ describe("workflow command handler", () => {
     return { handled, notifications: ctx.notifications };
   }
 
-  it("bare '/gsd workflow' shows usage", async () => {
+  it("bare '/gsd workflow' lists plugins grouped by mode", async () => {
     const { handled, notifications } = await callHandler("workflow");
     assert.ok(handled, "should be handled");
     assert.ok(
-      notifications.some((n) => n.message.includes("Usage: /gsd workflow")),
-      "should show usage",
+      notifications.some((n) => n.message.includes("Workflow Plugins")),
+      "should list plugins",
     );
   });
 
@@ -202,6 +216,20 @@ describe("workflow command handler", () => {
     assert.ok(
       notifications.some((n) => n.level === "warning" && n.message.includes("Usage")),
       "should show usage warning",
+    );
+  });
+
+  it("preserves quoted workflow run overrides (#4130)", async () => {
+    const { parseWorkflowRunArgs } = await import("../commands/handlers/workflow.ts");
+    assert.deepStrictEqual(
+      parseWorkflowRunArgs('demo-workflow target="multi word target" region=\'us east\''),
+      {
+        defName: "demo-workflow",
+        overrides: {
+          target: "multi word target",
+          region: "us east",
+        },
+      },
     );
   });
 

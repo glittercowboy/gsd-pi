@@ -47,3 +47,29 @@ export function fitColumns(parts: string[], width: number, separator = "  "): st
   }
   return truncateToWidth(result, width);
 }
+
+/**
+ * Merge two sets of lines into a side-by-side layout with a vertical divider.
+ *
+ * Each left line is padded to `leftWidth`, then joined with a styled divider
+ * and the corresponding right line. Output lines are truncated to `totalWidth`.
+ */
+export function mergeSideBySide(
+  leftLines: string[],
+  rightLines: string[],
+  leftWidth: number,
+  divider: string,
+  totalWidth: number,
+): string[] {
+  const maxLen = Math.max(leftLines.length, rightLines.length);
+  const merged: string[] = [];
+
+  for (let i = 0; i < maxLen; i++) {
+    const left = i < leftLines.length ? leftLines[i] : "";
+    const right = i < rightLines.length ? rightLines[i] : "";
+    const paddedLeft = padRight(left, leftWidth);
+    merged.push(truncateToWidth(paddedLeft + divider + right, totalWidth));
+  }
+
+  return merged;
+}

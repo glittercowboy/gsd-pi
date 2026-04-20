@@ -108,6 +108,14 @@ export interface AgentOptions {
 	 * switches mid-session are handled correctly.
 	 */
 	externalToolExecution?: (model: Model<any>) => boolean;
+
+	/**
+	 * Optional provider-specific options to merge into the next stream call.
+	 *
+	 * Use this for runtime-only callbacks or handles that should not live in
+	 * shared agent state, such as UI bridges for external CLI providers.
+	 */
+	getProviderOptions?: (model: Model<any>) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>;
 }
 
 /**
@@ -152,6 +160,7 @@ export class Agent {
 	private _beforeToolCall?: AgentLoopConfig["beforeToolCall"];
 	private _afterToolCall?: AgentLoopConfig["afterToolCall"];
 	private _externalToolExecution?: (model: Model<any>) => boolean;
+	private _getProviderOptions?: AgentOptions["getProviderOptions"];
 
 	constructor(opts: AgentOptions = {}) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -167,6 +176,7 @@ export class Agent {
 		this._transport = opts.transport ?? "sse";
 		this._maxRetryDelayMs = opts.maxRetryDelayMs;
 		this._externalToolExecution = opts.externalToolExecution;
+		this._getProviderOptions = opts.getProviderOptions;
 	}
 
 	/**
@@ -486,8 +496,10 @@ export class Agent {
 		};
 
 		let skipInitialSteeringPoll = options?.skipInitialSteeringPoll === true;
+		const providerOptions = await this._getProviderOptions?.(model);
 
 		const config: AgentLoopConfig = {
+			...(providerOptions ?? {}),
 			model,
 			reasoning,
 			sessionId: this._sessionId,

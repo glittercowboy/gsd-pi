@@ -78,6 +78,18 @@ Apply these when decomposing and ordering slices:
 - **Ambition matches the milestone.** The number and depth of slices should match the milestone's ambition. A milestone promising "core platform with auth, data model, and primary user loop" should have enough slices to actually deliver all three as working features — not two proof-of-concept slices and a note that "the rest will come in the next milestone." If the milestone's context promises an outcome, the roadmap must deliver it.
 - **Right-size the decomposition.** Match slice count to actual complexity. If the work is small enough to build and verify in one pass, it's one slice — don't split it into three just because you can identify sub-steps. Multiple requirements can share a single slice. Conversely, don't cram genuinely independent capabilities into one slice just to keep the count low. Let the work dictate the structure.
 
+## Progressive Planning (ADR-011)
+
+If the preference `phases.progressive_planning` is enabled and the roadmap has **2 or more slices**, you SHOULD plan S01 in full detail and S02+ as sketches. Plan S02+ full only when the slice is trivially determined (pure boilerplate that cannot meaningfully change based on what S01 ships).
+
+A **sketch slice** has the same roadmap entry as today (title, risk, depends, demo line) plus a `sketchScope` of 2–3 sentences describing the scope boundary. Do NOT attempt to decompose it into tasks during this unit — provide a one-sentence `goal` (the tool schema requires it; keep it at the same level of detail as the roadmap demo line) and leave `successCriteria`, `proofLevel`, `integrationClosure`, `observabilityImpact` blank (or provide them if genuinely known). When the prior slice completes, a separate `refine-slice` unit will expand the sketch into a full plan using the real codebase state and the prior slice SUMMARY.
+
+**To mark a slice as a sketch in the `gsd_plan_milestone` tool call:** set `isSketch: true` and `sketchScope: "<2-3 sentence scope>"` on that slice entry.
+
+S01 is never a sketch — it must always be fully decomposed in this unit.
+
+If the preference is off, ignore this section and plan every slice in full detail as you would normally.
+
 ## Single-Slice Fast Path
 
 If the roadmap has only one slice, also plan the slice and its tasks inline during this unit — don't leave them for a separate planning session.

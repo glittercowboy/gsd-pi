@@ -48,5 +48,7 @@ for (const file of testFiles) {
   }
 }
 
-console.log(`\nLive tests: ${passed} passed, ${failed} failed, ${skipped} skipped`);
+console.log(
+  `\nLive tests: ${passed} passed, ${failed} failed, ${skipped} skipped`,
+);
 if (failed > 0) process.exit(1);

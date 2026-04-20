@@ -3,6 +3,7 @@
 <template_meta>
 name: hotfix
 version: 1
+mode: markdown-phase
 requires_project: false
 artifact_dir: null
 </template_meta>

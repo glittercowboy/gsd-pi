@@ -346,9 +346,14 @@ class ResourceList implements Component, Focusable {
 			}
 		}
 
-		// Scroll indicator
+		// Scroll indicator — count only selectable items (exclude group/subgroup headers)
 		if (startIndex > 0 || endIndex < this.filteredItems.length) {
-			lines.push(theme.fg("dim", `  (${this.selectedIndex + 1}/${this.filteredItems.length})`));
+			const selectableItems = this.filteredItems.filter((e) => e.type === "item");
+			const selectableTotal = selectableItems.length;
+			const selectablePosition = selectableItems.findIndex(
+				(e) => this.filteredItems.indexOf(e) === this.selectedIndex,
+			);
+			lines.push(theme.fg("dim", `  (${selectablePosition + 1}/${selectableTotal})`));
 		}
 
 		return lines;

@@ -22,7 +22,7 @@ console.log("\n=== #2337: Worktree teardown preserves submodule state ===");
 const removeWorktreeIdx = src.indexOf("export function removeWorktree");
 assertTrue(removeWorktreeIdx > 0, "worktree-manager.ts exports removeWorktree");
 
-const fnBody = src.slice(removeWorktreeIdx, removeWorktreeIdx + 3000);
+const fnBody = src.slice(removeWorktreeIdx, removeWorktreeIdx + 6000);
 
 // ── Test 2: The function checks for submodules before force removal ─────
 

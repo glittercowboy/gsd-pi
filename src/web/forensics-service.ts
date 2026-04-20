@@ -94,6 +94,7 @@ export async function collectForensicsData(projectCwdOverride?: string): Promise
           GSD_FORENSICS_BASE: projectCwd,
         },
         maxBuffer: FORENSICS_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {

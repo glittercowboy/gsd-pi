@@ -12,9 +12,6 @@
  */
 
 import { z } from 'zod';
-import { readFileSync, writeFileSync, chmodSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import type Anthropic from '@anthropic-ai/sdk';
 import type {
   MessageParam,
@@ -30,90 +27,18 @@ import type { ProjectInfo, ManagedSession } from './types.js';
 import type { Logger } from './logger.js';
 
 // ---------------------------------------------------------------------------
-// OAuth token resolution — reads GSD's auth.json, refreshes if expired
+// API key resolution — requires ANTHROPIC_API_KEY env var
+// Anthropic OAuth removed per TOS compliance (see docs/user-docs/claude-code-auth-compliance.md)
 // ---------------------------------------------------------------------------
 
-interface OAuthCredentials {
-  type: 'oauth';
-  refresh: string;
-  access: string;
-  expires: number;
-}
-
-const TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
-const CLIENT_ID = atob('OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl');
-
-/**
- * Read the Anthropic OAuth access token from GSD's auth.json.
- * If expired, refresh it and write the new credentials back.
- * Falls back to ANTHROPIC_API_KEY env var if no OAuth credential exists.
- */
-async function resolveAnthropicApiKey(logger?: Logger): Promise<string> {
-  // Try env var first (explicit override)
-  if (process.env.ANTHROPIC_API_KEY) {
-    return process.env.ANTHROPIC_API_KEY;
-  }
-
-  const authPath = join(homedir(), '.gsd', 'agent', 'auth.json');
-  let authData: Record<string, unknown>;
-  try {
-    authData = JSON.parse(readFileSync(authPath, 'utf-8'));
-  } catch {
+function resolveAnthropicApiKey(): string {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
     throw new Error(
-      'No Anthropic auth found. Run `gsd login` to authenticate, or set ANTHROPIC_API_KEY.',
+      'ANTHROPIC_API_KEY is required. Set it in your environment or run `gsd config`.',
     );
   }
-
-  const cred = authData.anthropic as OAuthCredentials | undefined;
-  if (!cred || cred.type !== 'oauth' || !cred.access) {
-    throw new Error(
-      'No Anthropic OAuth credential in auth.json. Run `gsd login` to authenticate.',
-    );
-  }
-
-  // If token is still valid, use it
-  if (Date.now() < cred.expires) {
-    return cred.access;
-  }
-
-  // Token expired — refresh it
-  logger?.info('orchestrator: refreshing Anthropic OAuth token');
-  const response = await fetch(TOKEN_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'refresh_token',
-      client_id: CLIENT_ID,
-      refresh_token: cred.refresh,
-    }),
-    signal: AbortSignal.timeout(30_000),
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    throw new Error(`Anthropic token refresh failed: ${error}`);
-  }
-
-  const data = (await response.json()) as {
-    access_token: string;
-    refresh_token: string;
-    expires_in: number;
-  };
-
-  const newCred: OAuthCredentials = {
-    type: 'oauth',
-    refresh: data.refresh_token,
-    access: data.access_token,
-    expires: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
-  };
-
-  // Write back to auth.json
-  authData.anthropic = newCred;
-  writeFileSync(authPath, JSON.stringify(authData, null, 2), 'utf-8');
-  chmodSync(authPath, 0o600);
-  logger?.info('orchestrator: Anthropic OAuth token refreshed');
-
-  return newCred.access;
+  return apiKey;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,11 +179,11 @@ export class Orchestrator {
 
   /**
    * Lazily initialise the Anthropic client. Dynamic import handles K007 module resolution.
-   * Resolves auth from GSD's OAuth credentials (auth.json), refreshing if needed.
+   * Requires ANTHROPIC_API_KEY environment variable.
    */
   private async getClient(): Promise<Anthropic> {
     if (this.client) return this.client;
-    const apiKey = await resolveAnthropicApiKey(this.deps.logger);
+    const apiKey = resolveAnthropicApiKey();
     const { default: AnthropicSDK } = await import('@anthropic-ai/sdk');
     this.client = new AnthropicSDK({ apiKey });
     return this.client;

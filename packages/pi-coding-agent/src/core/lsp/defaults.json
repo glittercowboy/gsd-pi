@@ -189,8 +189,8 @@
 		"fileTypes": [".java"],
 		"rootMarkers": ["pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", ".project"]
 	},
-	"kotlin-language-server": {
-		"command": "kotlin-language-server",
+	"kotlin-lsp": {
+		"command": "kotlin-lsp",
 		"args": [],
 		"fileTypes": [".kt", ".kts"],
 		"rootMarkers": ["build.gradle", "build.gradle.kts", "pom.xml", "settings.gradle", "settings.gradle.kts"]

@@ -9,6 +9,9 @@ const cjsRequire = createRequire(import.meta.url);
  * Minimal terminal interface for TUI
  */
 export interface Terminal {
+	// Whether stdout is a real TTY (false for pipes, e.g. RPC bridge processes)
+	readonly isTTY: boolean;
+
 	// Start the terminal with input and resize handlers
 	start(onInput: (data: string) => void, onResize: () => void): void;
 
@@ -63,11 +66,22 @@ export class ProcessTerminal implements Terminal {
 	private stdinDataHandler?: (data: string) => void;
 	private writeLogPath = process.env.PI_TUI_WRITE_LOG || "";
 
+	get isTTY(): boolean {
+		return !!process.stdout.isTTY;
+	}
+
 	get kittyProtocolActive(): boolean {
 		return this._kittyProtocolActive;
 	}
 
 	start(onInput: (data: string) => void, onResize: () => void): void {
+		// Non-TTY stdout (pipe) — skip TUI initialization entirely.
+		// RPC bridge processes communicate via JSON, not terminal escape codes.
+		// Without this guard, the render loop burns 500%+ CPU. (issue #3095)
+		if (!this.isTTY) {
+			return;
+		}
+
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
 

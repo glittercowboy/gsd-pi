@@ -4,6 +4,13 @@
     "declaration": false,
     "noEmit": false
   },
-  "include": ["src/tests/headless-cli-surface.test.ts", "src/headless-events.ts", "src/headless-types.ts"],
+  "include": [
+    "src/tests/headless-cli-surface.test.ts",
+    "src/tests/ensure-workspace-builds.test.ts",
+    "src/headless-events.ts",
+    "src/headless-types.ts",
+    "src/tests/google-search-oauth-shape.test.ts",
+    "src/tests/google-search-auth.repro.test.ts"
+  ],
   "exclude": []
 }

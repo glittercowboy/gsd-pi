@@ -195,6 +195,7 @@ export async function executeUndo(projectCwdOverride?: string): Promise<UndoResu
           GSD_UNDO_BASE: projectCwd,
         },
         maxBuffer: UNDO_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {

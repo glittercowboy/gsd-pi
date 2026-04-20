@@ -19,8 +19,11 @@ import {
   appendCapture,
   loadAllCaptures,
   loadPendingCaptures,
+  loadActionableCaptures,
   hasPendingCaptures,
   markCaptureResolved,
+  markCaptureExecuted,
+  stampCaptureMilestone,
   resolveCapturesPath,
   parseTriageOutput,
 } from "../captures.ts";
@@ -418,4 +421,104 @@ test("triage: parseTriageOutput preserves affectedFiles and targetSlice", () => 
   assert.strictEqual(results[0].targetSlice, undefined);
   assert.strictEqual(results[1].targetSlice, "S04");
   assert.strictEqual(results[1].affectedFiles, undefined);
+});
+
+// ─── Stale Quick-Task Captures (#2872) ────────────────────────────────────────
+
+test("captures: markCaptureResolved stores milestone ID when provided", (t) => {
+  const tmp = makeTempDir("cap-milestone");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const id = appendCapture(tmp, "fix dialog width");
+  markCaptureResolved(tmp, id, "quick-task", "widen the dialog", "small fix", "M003");
+
+  const all = loadAllCaptures(tmp);
+  assert.strictEqual(all.length, 1);
+  assert.strictEqual(all[0].resolvedInMilestone, "M003", "should store milestone ID");
+});
+
+test("captures: loadActionableCaptures excludes captures resolved in prior milestones", (t) => {
+  const tmp = makeTempDir("cap-stale-filter");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  // Capture resolved in M003 (prior milestone)
+  const id1 = appendCapture(tmp, "dialog too narrow");
+  markCaptureResolved(tmp, id1, "quick-task", "widen it", "small fix", "M003");
+
+  // Capture resolved in M004 (current milestone)
+  const id2 = appendCapture(tmp, "button misaligned");
+  markCaptureResolved(tmp, id2, "quick-task", "fix alignment", "css fix", "M004");
+
+  // Capture resolved without milestone context (legacy)
+  const id3 = appendCapture(tmp, "typo in label");
+  markCaptureResolved(tmp, id3, "quick-task", "fix typo", "trivial");
+
+  // When loading for M004, only M004 and no-milestone captures should be returned
+  const actionable = loadActionableCaptures(tmp, "M004");
+  const ids = actionable.map(c => c.id);
+
+  assert.ok(!ids.includes(id1), "should exclude capture resolved in M003");
+  assert.ok(ids.includes(id2), "should include capture resolved in M004");
+  assert.ok(ids.includes(id3), "should include capture with no milestone (legacy)");
+});
+
+test("captures: loadActionableCaptures without milestone returns all actionable", (t) => {
+  const tmp = makeTempDir("cap-no-milestone-filter");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const id1 = appendCapture(tmp, "issue one");
+  markCaptureResolved(tmp, id1, "quick-task", "fix it", "small", "M003");
+
+  const id2 = appendCapture(tmp, "issue two");
+  markCaptureResolved(tmp, id2, "inject", "inject it", "needed", "M004");
+
+  // Without milestone filter, all actionable captures are returned (backward compat)
+  const actionable = loadActionableCaptures(tmp);
+  assert.strictEqual(actionable.length, 2, "should return all actionable without filter");
+});
+
+test("captures: loadActionableCaptures excludes already-executed captures", (t) => {
+  const tmp = makeTempDir("cap-executed-filter");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const id1 = appendCapture(tmp, "already done");
+  markCaptureResolved(tmp, id1, "quick-task", "fix it", "small", "M004");
+  markCaptureExecuted(tmp, id1);
+
+  const id2 = appendCapture(tmp, "still pending");
+  markCaptureResolved(tmp, id2, "quick-task", "fix it too", "small", "M004");
+
+  const actionable = loadActionableCaptures(tmp, "M004");
+  assert.strictEqual(actionable.length, 1, "should exclude executed capture");
+  assert.strictEqual(actionable[0].id, id2);
+});
+
+test("captures: stampCaptureMilestone adds milestone to capture missing it", (t) => {
+  const tmp = makeTempDir("cap-stamp-milestone");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const id = appendCapture(tmp, "fix alignment");
+  markCaptureResolved(tmp, id, "quick-task", "fix it", "small");
+
+  // Before stamping, no milestone
+  let all = loadAllCaptures(tmp);
+  assert.strictEqual(all[0].resolvedInMilestone, undefined, "should have no milestone initially");
+
+  stampCaptureMilestone(tmp, id, "M004");
+
+  all = loadAllCaptures(tmp);
+  assert.strictEqual(all[0].resolvedInMilestone, "M004", "should have milestone after stamping");
+});
+
+test("captures: stampCaptureMilestone is no-op if milestone already present", (t) => {
+  const tmp = makeTempDir("cap-stamp-noop");
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  const id = appendCapture(tmp, "fix alignment");
+  markCaptureResolved(tmp, id, "quick-task", "fix it", "small", "M003");
+
+  stampCaptureMilestone(tmp, id, "M004");
+
+  const all = loadAllCaptures(tmp);
+  assert.strictEqual(all[0].resolvedInMilestone, "M003", "should keep original milestone");
 });

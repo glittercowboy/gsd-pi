@@ -16,7 +16,13 @@
  * user-level ~/.gsd), causing resolveProjectRoot() to return /root (home dir).
  */
 
-import { mkdirSync, symlinkSync, existsSync, realpathSync, mkdtempSync } from "node:fs";
+import {
+  mkdirSync,
+  symlinkSync,
+  existsSync,
+  realpathSync,
+  mkdtempSync,
+} from "node:fs";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
@@ -34,7 +40,10 @@ function findWorktreeSegment(normalizedPath) {
   const symlinkRe = /\/\.gsd\/projects\/[a-f0-9]+\/worktrees\//;
   const match = normalizedPath.match(symlinkRe);
   if (match && match.index !== undefined) {
-    return { gsdIdx: match.index, afterWorktrees: match.index + match[0].length };
+    return {
+      gsdIdx: match.index,
+      afterWorktrees: match.index + match[0].length,
+    };
   }
   return null;
 }
@@ -79,8 +88,14 @@ console.log(`Symlink: ${PROJECT_GSD_LINK} → ${PROJECT_GSD_STORAGE}`);
 // 4. Init git in project dir
 execSync("git init -b main", { cwd: PROJECT_DIR, stdio: "pipe" });
 execSync('git config user.name "Test"', { cwd: PROJECT_DIR, stdio: "pipe" });
-execSync('git config user.email "test@test.com"', { cwd: PROJECT_DIR, stdio: "pipe" });
-execSync("git commit --allow-empty -m init", { cwd: PROJECT_DIR, stdio: "pipe" });
+execSync('git config user.email "test@test.com"', {
+  cwd: PROJECT_DIR,
+  stdio: "pipe",
+});
+execSync("git commit --allow-empty -m init", {
+  cwd: PROJECT_DIR,
+  stdio: "pipe",
+});
 console.log(`Git init: ${PROJECT_DIR}`);
 
 console.log("\n=== Path Resolution Tests ===\n");
@@ -93,18 +108,24 @@ console.log(`  Input:    ${logicalPath}`);
 console.log(`  Expected: ${PROJECT_DIR}`);
 const result1 = resolveProjectRoot(logicalPath);
 console.log(`  Got:      ${result1}`);
-console.log(`  Status:   ${result1 === PROJECT_DIR ? "✅ PASS" : "❌ FAIL — BUG NOT TRIGGERED (logical path)"}`);
+console.log(
+  `  Status:   ${result1 === PROJECT_DIR ? "✅ PASS" : "❌ FAIL — BUG NOT TRIGGERED (logical path)"}`,
+);
 
 // ── Test 2: Resolved path (what process.cwd() returns) ──────────────────
 
 const resolvedPath = realpathSync(logicalPath);
-console.log(`\nTest 2: Resolved path (what process.cwd() returns after chdir to worktree)`);
+console.log(
+  `\nTest 2: Resolved path (what process.cwd() returns after chdir to worktree)`,
+);
 console.log(`  Input:    ${resolvedPath}`);
 console.log(`  Expected: ${PROJECT_DIR}`);
 const result2 = resolveProjectRoot(resolvedPath);
 console.log(`  Got:      ${result2}`);
 const isBuggy = result2 !== PROJECT_DIR;
-console.log(`  Status:   ${isBuggy ? "🐛 BUG REPRODUCED — resolves to wrong directory!" : "✅ PASS"}`);
+console.log(
+  `  Status:   ${isBuggy ? "🐛 BUG REPRODUCED — resolves to wrong directory!" : "✅ PASS"}`,
+);
 
 // ── Test 3: Simulate what actually happens in a worker ──────────────────
 
@@ -117,7 +138,9 @@ console.log(`  Expected project root: ${PROJECT_DIR}`);
 const result3 = resolveProjectRoot(workerCwd);
 console.log(`  resolveProjectRoot():  ${result3}`);
 const workerBuggy = result3 !== PROJECT_DIR;
-console.log(`  Status:   ${workerBuggy ? "🐛 BUG REPRODUCED — worker would use wrong project root!" : "✅ PASS"}`);
+console.log(
+  `  Status:   ${workerBuggy ? "🐛 BUG REPRODUCED — worker would use wrong project root!" : "✅ PASS"}`,
+);
 
 // ── Test 4: Show the cascade ────────────────────────────────────────────
 
@@ -125,8 +148,10 @@ if (workerBuggy) {
   console.log(`\n=== Cascade Analysis ===\n`);
   console.log(`The worker thinks project root is: ${result3}`);
   console.log(`It would look for .gsd at:         ${result3}/.gsd`);
-  console.log(`That path exists:                   ${existsSync(join(result3, ".gsd"))}`);
-  
+  console.log(
+    `That path exists:                   ${existsSync(join(result3, ".gsd"))}`,
+  );
+
   if (existsSync(join(result3, ".gsd"))) {
     const resolvedGsd = realpathSync(join(result3, ".gsd"));
     console.log(`It resolves to:                    ${resolvedGsd}`);
@@ -148,15 +173,23 @@ if (seg) {
   console.log(`  gsdIdx:         ${seg.gsdIdx}`);
   console.log(`  afterWorktrees: ${seg.afterWorktrees}`);
   console.log(`  Path before /.gsd/: "${resolvedPath.slice(0, seg.gsdIdx)}"`);
-  console.log(`  This is: ${resolvedPath.slice(0, seg.gsdIdx) === USER_HOME ? "THE HOME DIRECTORY (bug!)" : "some other directory"}`);
-  
+  console.log(
+    `  This is: ${resolvedPath.slice(0, seg.gsdIdx) === USER_HOME ? "THE HOME DIRECTORY (bug!)" : "some other directory"}`,
+  );
+
   // Show which regex matched
   const directMarker = "/.gsd/worktrees/";
   const directIdx = resolvedPath.indexOf(directMarker);
   if (directIdx !== -1) {
-    console.log(`\n  Matched by: direct marker "/.gsd/worktrees/" at index ${directIdx}`);
-    console.log(`  The /.gsd/ it found is at: "${resolvedPath.slice(0, directIdx + 5)}"`);
-    console.log(`  This /.gsd/ is the USER-LEVEL ~/.gsd, not the project .gsd!`);
+    console.log(
+      `\n  Matched by: direct marker "/.gsd/worktrees/" at index ${directIdx}`,
+    );
+    console.log(
+      `  The /.gsd/ it found is at: "${resolvedPath.slice(0, directIdx + 5)}"`,
+    );
+    console.log(
+      `  This /.gsd/ is the USER-LEVEL ~/.gsd, not the project .gsd!`,
+    );
   } else {
     console.log(`\n  Matched by: symlink regex`);
   }

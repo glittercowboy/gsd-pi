@@ -218,7 +218,7 @@ export function serializeConversation(messages: Message[]): string {
 							.filter((c): c is { type: "text"; text: string } => c.type === "text")
 							.map((c) => c.text)
 							.join("");
-			if (content) parts.push(`[User]: ${content}`);
+			if (content) parts.push(`**User said:** ${content}`);
 		} else if (msg.role === "assistant") {
 			const textParts: string[] = [];
 			const thinkingParts: string[] = [];
@@ -239,13 +239,13 @@ export function serializeConversation(messages: Message[]): string {
 			}
 
 			if (thinkingParts.length > 0) {
-				parts.push(`[Assistant thinking]: ${thinkingParts.join("\n")}`);
+				parts.push(`**Assistant thinking:** ${thinkingParts.join("\n")}`);
 			}
 			if (textParts.length > 0) {
-				parts.push(`[Assistant]: ${textParts.join("\n")}`);
+				parts.push(`**Assistant responded:** ${textParts.join("\n")}`);
 			}
 			if (toolCalls.length > 0) {
-				parts.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
+				parts.push(`**Assistant tool calls:** ${toolCalls.join("; ")}`);
 			}
 		} else if (msg.role === "toolResult") {
 			const content = msg.content
@@ -253,7 +253,7 @@ export function serializeConversation(messages: Message[]): string {
 				.map((c) => c.text)
 				.join("");
 			if (content) {
-				parts.push(`[Tool result]: ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
+				parts.push(`**Tool result:** ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
 			}
 		}
 	}

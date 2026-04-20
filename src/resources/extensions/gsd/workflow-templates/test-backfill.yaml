@@ -1,0 +1,73 @@
+# Test Backfill workflow — mode: yaml-step
+#
+# Iterate over functions that lack unit tests, write a test for each, and
+# shell-verify the suite stays green. Use for paying down coverage debt.
+
+version: 1
+name: test-backfill
+mode: yaml-step
+description: >-
+  Inventory untested functions, write a focused test for each,
+  and verify the test suite passes after each addition.
+
+params:
+  test_command: "npm test"
+  src_glob: "src/**/*.ts"
+
+steps:
+  - id: inventory
+    name: Inventory untested functions
+    prompt: >-
+      Scan the source tree (glob: {{src_glob}}) and identify exported
+      functions, classes, and React components that have no direct unit
+      test. Write one finding per line as a Markdown list item:
+
+        - <file_path>::<symbol_name> — <1-line reason it's worth testing>
+
+      Save the list to `untested.md`. If nothing is untested, write a
+      single line "all covered" and no list items.
+    requires: []
+    produces:
+      - untested.md
+    verify:
+      policy: content-heuristic
+      minSize: 1
+
+  - id: write-test
+    name: Write a test for one untested symbol
+    prompt: >-
+      Write a unit test for the symbol indicated by the captured path.
+      The symbol reference in {{_iter_capture_1}} has the form
+      `<file_path>::<symbol_name>`. Follow the project's existing test
+      conventions (framework, style, file naming). Add the test file
+      alongside existing tests or under a parallel tests/ tree.
+
+      After writing, append a one-line note to `backfill-log.md`:
+      `- <symbol_name> — <test file path> — <pass|fail>`.
+    requires:
+      - inventory
+    context_from:
+      - inventory
+    produces:
+      - backfill-log.md
+    iterate:
+      source: untested.md
+      pattern: "^- (.+::.+?) — "
+    verify:
+      policy: shell-command
+      command: "{{test_command}}"
+
+  - id: summary
+    name: Produce coverage summary
+    prompt: >-
+      Summarize the session: how many symbols got tests, how many were
+      skipped and why, and what remains in `untested.md` that would
+      benefit from human review. Save to `backfill-summary.md`.
+    requires:
+      - write-test
+    context_from:
+      - write-test
+    produces:
+      - backfill-summary.md
+    verify:
+      policy: content-heuristic

@@ -4,15 +4,69 @@ import { join, sep } from "node:path";
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
 import { loadFile } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap } from "./parsers-legacy.js";
-import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
+import { isDbAvailable, getMilestone } from "./gsd-db.js";
 import { resolveMilestoneFile } from "./paths.js";
 import { deriveState, isMilestoneComplete } from "./state.js";
 import { listWorktrees, resolveGitDir, worktreesDir } from "./worktree-manager.js";
 import { abortAndReset } from "./git-self-heal.js";
 import { RUNTIME_EXCLUSION_PATHS, resolveMilestoneIntegrationBranch, writeIntegrationBranch } from "./git-service.js";
-import { nativeIsRepo, nativeWorktreeList, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached } from "./native-git-bridge.js";
+import { nativeIsRepo, nativeWorktreeList, nativeWorktreeRemove, nativeBranchList, nativeBranchDelete, nativeLsFiles, nativeRmCached, nativeHasChanges, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeAddTracked, nativeCommit } from "./native-git-bridge.js";
 import { getAllWorktreeHealth } from "./worktree-health.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+
+/**
+ * Returns true if the directory contains only doctor artifacts
+ * (e.g. `.gsd/doctor-history.jsonl`). These dirs are created by
+ * appendDoctorHistory() writing to worktree-scoped paths during the audit
+ * and should not be flagged as orphaned worktrees (#3105).
+ */
+function isDoctorArtifactOnly(dirPath: string): boolean {
+  try {
+    const entries = readdirSync(dirPath);
+    // Empty dir — not a doctor artifact, still orphaned
+    if (entries.length === 0) return false;
+    // Only a .gsd subdirectory
+    if (entries.length === 1 && entries[0] === ".gsd") {
+      const gsdEntries = readdirSync(join(dirPath, ".gsd"));
+      return gsdEntries.length <= 1 && gsdEntries.every(e => e === "doctor-history.jsonl");
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function normalizePathForComparison(path: string): string {
+  const resolved = existsSync(path) ? realpathSync(path) : path;
+  const normalized = resolved
+    .replaceAll("\\", "/")
+    .replace(/^\/\/\?\//, "")
+    .replace(/\/+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function isSameOrNestedPath(candidate: string, container: string): boolean {
+  const normalizedCandidate = normalizePathForComparison(candidate);
+  const normalizedContainer = normalizePathForComparison(container);
+  return normalizedCandidate === normalizedContainer ||
+    normalizedCandidate.startsWith(`${normalizedContainer}/`);
+}
+
+async function isCompletedMilestoneTerminal(basePath: string, milestoneId: string): Promise<boolean> {
+  const summaryPath = resolveMilestoneFile(basePath, milestoneId, "SUMMARY");
+  if (!summaryPath) return false;
+
+  if (isDbAvailable()) {
+    const milestone = getMilestone(milestoneId);
+    return !!milestone && milestone.status === "complete";
+  }
+
+  const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+  const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
+  if (!roadmapContent) return false;
+  const roadmap = parseLegacyRoadmap(roadmapContent);
+  return isMilestoneComplete(roadmap);
+}
 
 export async function checkGitHealth(
   basePath: string,
@@ -43,23 +97,9 @@ export async function checkGitHealth(
       // Extract milestone ID from branch name "milestone/M001" → "M001"
       const milestoneId = wt.branch.replace(/^milestone\//, "");
       const milestoneEntry = state.registry.find(m => m.id === milestoneId);
-
-      // Check if milestone is complete via roadmap
-      let isComplete = false;
-      if (milestoneEntry) {
-        if (isDbAvailable()) {
-          const dbSlices = getMilestoneSlices(milestoneId);
-          isComplete = dbSlices.length > 0 && dbSlices.every(s => s.status === "complete");
-        } else {
-          const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
-          const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
-          if (roadmapContent) {
-            const roadmap = parseLegacyRoadmap(roadmapContent);
-            isComplete = isMilestoneComplete(roadmap);
-          }
-        }
-        // When DB unavailable and no roadmap, isComplete stays false
-      }
+      const isComplete = milestoneEntry
+        ? await isCompletedMilestoneTerminal(basePath, milestoneId)
+        : false;
 
       if (isComplete) {
         issues.push({
@@ -76,8 +116,13 @@ export async function checkGitHealth(
           // pattern in removeWorktree() (#1946). Without this, git cannot
           // remove the worktree and the doctor enters a deadlock where it
           // detects the orphan every run but never cleans it up.
-          const cwd = process.cwd();
-          if (wt.path === cwd || cwd.startsWith(wt.path + sep)) {
+          let cwd = basePath;
+          try {
+            cwd = process.cwd();
+          } catch {
+            cwd = basePath;
+          }
+          if (isSameOrNestedPath(cwd, wt.path)) {
             try {
               process.chdir(basePath);
             } catch {
@@ -108,15 +153,9 @@ export async function checkGitHealth(
           const milestoneId = branch.replace(/^milestone\//, "");
           const roadmapPath = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
           let branchMilestoneComplete = false;
-          if (isDbAvailable()) {
-            const dbSlices = getMilestoneSlices(milestoneId);
-            branchMilestoneComplete = dbSlices.length > 0 && dbSlices.every(s => s.status === "complete");
-          } else {
-            const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
-            if (!roadmapContent) continue;
-            const roadmap = parseLegacyRoadmap(roadmapContent);
-            branchMilestoneComplete = isMilestoneComplete(roadmap);
-          }
+          const roadmapContent = roadmapPath ? await loadFile(roadmapPath) : null;
+          if (!roadmapContent) continue;
+          branchMilestoneComplete = await isCompletedMilestoneTerminal(basePath, milestoneId);
           if (branchMilestoneComplete) {
             issues.push({
               severity: "info",
@@ -314,6 +353,10 @@ export async function checkGitHealth(
         } catch { continue; }
         const normalizedFullPath = normalizePath(fullPath);
         if (!registeredPaths.has(normalizedFullPath)) {
+          // Skip directories that only contain doctor artifacts (.gsd/doctor-history.jsonl).
+          // appendDoctorHistory() can recreate these dirs during the audit itself,
+          // causing a circular false positive (#3105 Bug 1).
+          if (isDoctorArtifactOnly(fullPath)) continue;
           issues.push({
             severity: "warning",
             code: "worktree_directory_orphaned",
@@ -335,6 +378,58 @@ export async function checkGitHealth(
     }
   } catch {
     // Non-fatal — orphaned worktree directory check failed
+  }
+
+  // ── Stale uncommitted changes ────────────────────────────────────────────
+  // If the working tree has uncommitted changes and the last commit was
+  // longer ago than the configured threshold, flag it and optionally
+  // auto-commit a safety snapshot so work isn't lost.
+  try {
+    const prefs = loadEffectiveGSDPreferences()?.preferences ?? {};
+    // `git.snapshots: false` is the canonical toggle that disables WIP
+    // snapshot commits — honour it here as well so both the proactive gate
+    // and the doctor-run path stay consistent (#4420).
+    const snapshotsEnabled = prefs.git?.snapshots !== false;
+    const thresholdMinutes = prefs.stale_commit_threshold_minutes ?? 30;
+
+    if (snapshotsEnabled && thresholdMinutes > 0) {
+      const dirty = nativeHasChanges(basePath);
+      if (dirty) {
+        const branch = nativeGetCurrentBranch(basePath);
+        const lastEpoch = nativeLastCommitEpoch(basePath, branch || "HEAD");
+        const nowEpoch = Math.floor(Date.now() / 1000);
+        const minutesSinceCommit = lastEpoch > 0 ? (nowEpoch - lastEpoch) / 60 : Infinity;
+
+        if (minutesSinceCommit >= thresholdMinutes) {
+          const mins = Math.floor(minutesSinceCommit);
+          issues.push({
+            severity: "warning",
+            code: "stale_uncommitted_changes",
+            scope: "project",
+            unitId: "project",
+            message: `Uncommitted changes detected with no commit in ${mins} minute${mins === 1 ? "" : "s"} (threshold: ${thresholdMinutes}m). Snapshotting tracked files.`,
+            fixable: true,
+          });
+
+          if (shouldFix("stale_uncommitted_changes")) {
+            try {
+              nativeAddTracked(basePath);
+              const commitMsg = `gsd snapshot: uncommitted changes after ${mins}m inactivity`;
+              const result = nativeCommit(basePath, commitMsg);
+              if (result) {
+                fixesApplied.push(`created gsd snapshot after ${mins}m of uncommitted changes`);
+              } else {
+                fixesApplied.push("gsd snapshot skipped — nothing to commit after staging tracked files");
+              }
+            } catch {
+              fixesApplied.push("failed to create gsd snapshot commit");
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    // Non-fatal — stale commit check failed
   }
 
   // ── Worktree lifecycle checks ──────────────────────────────────────────

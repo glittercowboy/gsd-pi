@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 
 import {
   resolveExpectedArtifactPath,
@@ -11,6 +12,7 @@ import {
   diagnoseExpectedArtifact,
   buildLoopRemediationSteps,
   hasImplementationArtifacts,
+  reconcileMergeState,
 } from "../../auto-recovery.ts";
 import { parseRoadmap, parsePlan } from "../../parsers-legacy.ts";
 import { parseTaskPlanFile, clearParseCache } from "../../files.ts";
@@ -111,7 +113,51 @@ test("resolveExpectedArtifactPath returns correct path for all slice-level types
 
   const uatResult = resolveExpectedArtifactPath("run-uat", "M001/S01", base);
   assert.ok(uatResult);
-  assert.ok(uatResult!.includes("UAT"));
+  assert.ok(uatResult!.includes("ASSESSMENT"));
+});
+
+// ─── run-uat artifact path contract (#2873) ──────────────────────────────
+
+test("resolveExpectedArtifactPath for run-uat returns ASSESSMENT path, not UAT (#2873)", (t) => {
+  // The run-uat prompt instructs the agent to call gsd_summary_save with
+  // artifact_type: "ASSESSMENT", which writes S##-ASSESSMENT.md. The artifact
+  // verification path must match — otherwise verification fails and auto-mode
+  // retries the unit in an infinite loop.
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const result = resolveExpectedArtifactPath("run-uat", "M001/S01", base);
+  assert.ok(result, "run-uat should resolve to a non-null artifact path");
+  assert.ok(
+    result!.endsWith("S01-ASSESSMENT.md"),
+    `run-uat artifact path should end with S01-ASSESSMENT.md, got: ${result}`,
+  );
+});
+
+test("diagnoseExpectedArtifact for run-uat references ASSESSMENT (#2873)", (t) => {
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  const diag = diagnoseExpectedArtifact("run-uat", "M001/S01", base);
+  assert.ok(diag, "run-uat should have a diagnostic message");
+  assert.ok(
+    diag!.includes("ASSESSMENT"),
+    `run-uat diagnostic should reference ASSESSMENT, got: ${diag}`,
+  );
+});
+
+test("verifyExpectedArtifact passes for run-uat when ASSESSMENT file exists (#2873)", (t) => {
+  // Regression test: run-uat writes S##-ASSESSMENT.md via gsd_summary_save,
+  // but verification looked for S##-UAT.md, causing false stuck retries.
+  const base = makeTmpBase();
+  t.after(() => cleanup(base));
+
+  // Write the ASSESSMENT file (what gsd_summary_save actually produces)
+  const assessPath = join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-ASSESSMENT.md");
+  writeFileSync(assessPath, "---\nverdict: PASS\n---\n# UAT Assessment\n");
+
+  const verified = verifyExpectedArtifact("run-uat", "M001/S01", base);
+  assert.ok(verified, "verifyExpectedArtifact should pass when ASSESSMENT file exists");
 });
 
 // ─── diagnoseExpectedArtifact ─────────────────────────────────────────────
@@ -410,7 +456,7 @@ test("verifyExpectedArtifact accepts plan-slice with colon-style heading tasks (
   );
 });
 
-test("verifyExpectedArtifact execute-task passes for heading-style plan entry (#1691)", (t) => {
+test("verifyExpectedArtifact execute-task rejects heading-style plan without checked checkbox (#3607)", (t) => {
   const base = makeTmpBase();
   t.after(() => cleanup(base));
 
@@ -427,10 +473,12 @@ test("verifyExpectedArtifact execute-task passes for heading-style plan entry (#
     "Feature description.",
   ].join("\n"));
   writeFileSync(join(tasksDir, "T01-SUMMARY.md"), "# T01 Summary\n\nDone.");
+  // Heading-style entries no longer count as verified — only checked
+  // checkboxes prove gsd_complete_task ran (#3607).
   assert.strictEqual(
     verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
-    true,
-    "execute-task should pass for heading-style plan entry when summary exists",
+    false,
+    "heading-style without checked checkbox should NOT pass verification",
   );
 });
 
@@ -623,8 +671,6 @@ test("#793: invalidateAllCaches clears all caches so deriveState sees fresh disk
 
 // ─── hasImplementationArtifacts (#1703) ───────────────────────────────────
 
-import { execFileSync } from "node:child_process";
-
 function makeGitBase(): string {
   const base = join(tmpdir(), `gsd-test-git-${randomUUID()}`);
   mkdirSync(base, { recursive: true });
@@ -638,7 +684,7 @@ function makeGitBase(): string {
   return base;
 }
 
-test("hasImplementationArtifacts returns false when only .gsd/ files committed (#1703)", (t) => {
+test("hasImplementationArtifacts returns 'absent' when only .gsd/ files committed (#1703)", (t) => {
   const base = makeGitBase();
   t.after(() => cleanup(base));
 
@@ -651,10 +697,10 @@ test("hasImplementationArtifacts returns false when only .gsd/ files committed (
   execFileSync("git", ["commit", "-m", "chore: add plan files"], { cwd: base, stdio: "ignore" });
 
   const result = hasImplementationArtifacts(base);
-  assert.equal(result, false, "should return false when only .gsd/ files were committed");
+  assert.equal(result, "absent", "should return 'absent' when only .gsd/ files were committed");
 });
 
-test("hasImplementationArtifacts returns true when implementation files committed (#1703)", (t) => {
+test("hasImplementationArtifacts returns 'present' when implementation files committed (#1703)", (t) => {
   const base = makeGitBase();
   t.after(() => cleanup(base));
 
@@ -668,16 +714,16 @@ test("hasImplementationArtifacts returns true when implementation files committe
   execFileSync("git", ["commit", "-m", "feat: add feature"], { cwd: base, stdio: "ignore" });
 
   const result = hasImplementationArtifacts(base);
-  assert.equal(result, true, "should return true when implementation files are present");
+  assert.equal(result, "present", "should return 'present' when implementation files are present");
 });
 
-test("hasImplementationArtifacts returns true on non-git directory (fail-open)", (t) => {
+test("hasImplementationArtifacts returns 'unknown' on non-git directory (fail-open)", (t) => {
   const base = join(tmpdir(), `gsd-test-nogit-${randomUUID()}`);
   mkdirSync(base, { recursive: true });
   t.after(() => cleanup(base));
 
   const result = hasImplementationArtifacts(base);
-  assert.equal(result, true, "should return true (fail-open) in non-git directory");
+  assert.equal(result, "unknown", "should return 'unknown' (fail-open) in non-git directory");
 });
 
 // ─── verifyExpectedArtifact: complete-milestone requires impl artifacts (#1703) ──
@@ -695,6 +741,112 @@ test("verifyExpectedArtifact complete-milestone fails with only .gsd/ files (#17
 
   const result = verifyExpectedArtifact("complete-milestone", "M001", base);
   assert.equal(result, false, "complete-milestone should fail verification when only .gsd/ files present");
+});
+
+// ─── reconcileMergeState: silent nativeCommit failure (#2542) ─────────────
+
+function makeMockCtx(): { ctx: any; notifications: Array<{ msg: string; level: string }> } {
+  const notifications: Array<{ msg: string; level: string }> = [];
+  const ctx = {
+    ui: {
+      notify(msg: string, level: string) {
+        notifications.push({ msg, level });
+      },
+    },
+  };
+  return { ctx, notifications };
+}
+
+test("reconcileMergeState returns blocked and notifies error when nativeCommit fails (#2542)", (t) => {
+  const base = makeGitBase();
+  t.after(() => cleanup(base));
+
+  // Create a second branch with a commit, then start a merge on main
+  execFileSync("git", ["checkout", "-b", "feature"], { cwd: base, stdio: "ignore" });
+  writeFileSync(join(base, "feature.txt"), "feature content");
+  execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "add feature"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["checkout", "main"], { cwd: base, stdio: "ignore" });
+
+  // Start merge (no conflicts — fast path with MERGE_HEAD)
+  execFileSync("git", ["merge", "--no-ff", "--no-commit", "feature"], { cwd: base, stdio: "ignore" });
+
+  // Verify MERGE_HEAD exists
+  assert.ok(existsSync(join(base, ".git", "MERGE_HEAD")), "MERGE_HEAD should exist");
+
+  // Make .git/objects read-only so git cannot write the commit object,
+  // causing nativeCommit to throw a non-"nothing to commit" error.
+  const objectsDir = join(base, ".git", "objects");
+  chmodSync(objectsDir, 0o444);
+  t.after(() => { try { chmodSync(objectsDir, 0o755); } catch { /* cleanup */ } });
+
+  const { ctx, notifications } = makeMockCtx();
+  const result = reconcileMergeState(base, ctx);
+
+  assert.equal(result, "blocked", "reconcileMergeState should return blocked when nativeCommit fails");
+  const errorNotifications = notifications.filter(n => n.level === "error");
+  assert.ok(errorNotifications.length > 0, "should notify an error when nativeCommit fails");
+  assert.ok(
+    errorNotifications[0].msg.includes("Failed to finalize"),
+    "error notification should describe the commit failure",
+  );
+});
+
+test("reconcileMergeState returns clean when no merge state present", (t) => {
+  const base = makeGitBase();
+  t.after(() => cleanup(base));
+
+  const { ctx, notifications } = makeMockCtx();
+  const result = reconcileMergeState(base, ctx);
+
+  assert.equal(result, "clean", "should return clean when no merge state exists");
+  assert.equal(notifications.length, 0, "should not notify when no merge state present");
+});
+
+test("reconcileMergeState blocks and preserves unresolved code conflicts", (t) => {
+  const base = makeGitBase();
+  t.after(() => cleanup(base));
+
+  writeFileSync(join(base, "conflict.txt"), "base\n");
+  execFileSync("git", ["add", "conflict.txt"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "add conflict base"], { cwd: base, stdio: "ignore" });
+
+  execFileSync("git", ["checkout", "-b", "feature"], { cwd: base, stdio: "ignore" });
+  writeFileSync(join(base, "conflict.txt"), "feature\n");
+  execFileSync("git", ["add", "conflict.txt"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "feature change"], { cwd: base, stdio: "ignore" });
+
+  execFileSync("git", ["checkout", "main"], { cwd: base, stdio: "ignore" });
+  writeFileSync(join(base, "conflict.txt"), "main\n");
+  execFileSync("git", ["add", "conflict.txt"], { cwd: base, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "main change"], { cwd: base, stdio: "ignore" });
+
+  let mergeFailed = false;
+  try {
+    execFileSync("git", ["merge", "--no-ff", "feature"], { cwd: base, stdio: "ignore" });
+  } catch {
+    mergeFailed = true;
+  }
+  assert.equal(mergeFailed, true, "merge should produce a conflict");
+  assert.ok(existsSync(join(base, ".git", "MERGE_HEAD")), "MERGE_HEAD should remain present before reconcile");
+
+  const beforeContents = readFileSync(join(base, "conflict.txt"), "utf8");
+  assert.match(beforeContents, /<<<<<<<|=======|>>>>>>>/, "fixture should contain conflict markers");
+
+  const { ctx, notifications } = makeMockCtx();
+  const result = reconcileMergeState(base, ctx);
+
+  assert.equal(result, "blocked", "code conflicts should block reconciliation");
+  assert.ok(existsSync(join(base, ".git", "MERGE_HEAD")), "MERGE_HEAD should be preserved for manual resolution");
+  assert.equal(
+    readFileSync(join(base, "conflict.txt"), "utf8"),
+    beforeContents,
+    "reconcile should preserve the conflicted file contents",
+  );
+  assert.ok(
+    notifications.some((n) => n.level === "error" && n.msg.includes("manual conflict resolution is preserved")),
+    "should notify that auto-mode paused and preserved manual work",
+  );
 });
 
 test("verifyExpectedArtifact complete-milestone passes with impl files (#1703)", (t) => {

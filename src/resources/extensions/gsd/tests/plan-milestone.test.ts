@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, readFileSync, existsSync, writeFileSync
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { openDatabase, closeDatabase, getMilestone, getMilestoneSlices } from '../gsd-db.ts';
+import { openDatabase, closeDatabase, getMilestone, getMilestoneSlices, getSlice, updateSliceStatus, deleteSlice, insertMilestone } from '../gsd-db.ts';
 import { handlePlanMilestone } from '../tools/plan-milestone.ts';
 import { parseRoadmap } from '../parsers-legacy.ts';
 
@@ -92,11 +92,10 @@ test('handlePlanMilestone writes milestone and slice planning state and renders 
     assert.ok(existsSync(roadmapPath), 'roadmap should be rendered to disk');
     const roadmap = readFileSync(roadmapPath, 'utf-8');
     assert.match(roadmap, /# M001: DB-backed planning/);
-    assert.match(roadmap, /## Vision/);
-    assert.match(roadmap, /Make planning write through the database\./);
-    assert.match(roadmap, /## Slice Overview/);
-    assert.match(roadmap, /\| S01 \| Tool wiring \| medium \|/);
-    assert.match(roadmap, /\| S02 \| Prompt migration \| low \| S01 \|/);
+    assert.match(roadmap, /\*\*Vision:\*\* Make planning write through the database\./);
+    assert.match(roadmap, /^## Slices$/m);
+    assert.match(roadmap, /- \[ \] \*\*S01: Tool wiring\*\* `risk:medium` `depends:\[\]`/);
+    assert.match(roadmap, /- \[ \] \*\*S02: Prompt migration\*\* `risk:low` `depends:\[S01\]`/);
   } finally {
     cleanup(base);
   }
@@ -193,6 +192,102 @@ test('handlePlanMilestone reruns idempotently and updates existing planning stat
     assert.equal(slices.length, 2);
     assert.equal(slices[0]?.goal, 'Updated goal');
     assert.equal(slices[0]?.observability_impact, 'Updated observability');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanMilestone preserves completed slice status on re-plan (#2558)', async () => {
+  const base = makeTmpBase();
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+
+  try {
+    // Initial plan — both slices start as "pending"
+    const first = await handlePlanMilestone(validParams(), base);
+    assert.ok(!('error' in first), `unexpected error: ${'error' in first ? first.error : ''}`);
+
+    // Mark S01 as complete (simulates work done in a worktree)
+    updateSliceStatus('M001', 'S01', 'complete', new Date().toISOString());
+
+    const s01Before = getSlice('M001', 'S01');
+    assert.equal(s01Before?.status, 'complete', 'S01 should be complete before re-plan');
+
+    // Re-plan the same milestone — S01 must stay "complete", S02 stays "pending"
+    const second = await handlePlanMilestone(validParams(), base);
+    assert.ok(!('error' in second), `unexpected error: ${'error' in second ? second.error : ''}`);
+
+    const s01After = getSlice('M001', 'S01');
+    assert.equal(s01After?.status, 'complete', 'S01 status must be preserved as complete after re-plan');
+
+    const s02After = getSlice('M001', 'S02');
+    assert.equal(s02After?.status, 'pending', 'S02 should remain pending');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('plan-milestone re-plan preserves completed status and updates slice fields (#2558)', async () => {
+  const base = makeTmpBase();
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+
+  try {
+    // Initial plan — both slices start as "pending"
+    const first = await handlePlanMilestone(validParams(), base);
+    assert.ok(!('error' in first), `unexpected error: ${'error' in first ? first.error : ''}`);
+
+    // Mark S01 as complete (simulates work done in worktree, then reconciled)
+    updateSliceStatus('M001', 'S01', 'complete', new Date().toISOString());
+    assert.equal(getSlice('M001', 'S01')?.status, 'complete');
+
+    // Re-plan with updated title for S01.
+    // The handler must:
+    //   1. NOT downgrade S01 from "complete" to "pending"
+    //   2. Update S01's non-status fields (title, risk, depends, demo)
+    //   3. Keep S02 as "pending"
+    const updatedParams = {
+      ...validParams(),
+      slices: [
+        { ...validParams().slices[0], title: 'Updated S01 title', risk: 'high' },
+        validParams().slices[1],
+      ],
+    };
+    const second = await handlePlanMilestone(updatedParams, base);
+    assert.ok(!('error' in second), `unexpected error: ${'error' in second ? second.error : ''}`);
+
+    const s01After = getSlice('M001', 'S01');
+    assert.equal(s01After?.status, 'complete', 'completed slice status must survive re-plan');
+    assert.equal(s01After?.title, 'Updated S01 title', 'title should update on re-plan');
+    assert.equal(s01After?.risk, 'high', 'risk should update on re-plan');
+
+    const s02After = getSlice('M001', 'S02');
+    assert.equal(s02After?.status, 'pending', 'pending slice stays pending');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handlePlanMilestone promotes pre-existing queued milestone to active (#3022)', async () => {
+  const base = makeTmpBase();
+  const dbPath = join(base, '.gsd', 'gsd.db');
+  openDatabase(dbPath);
+
+  try {
+    // Simulate ensureMilestoneDbRow: pre-create row with status "queued"
+    // (this is what gsd_milestone_generate_id does)
+    insertMilestone({ id: 'M001', status: 'queued' });
+
+    const before = getMilestone('M001');
+    assert.equal(before?.status, 'queued', 'pre-condition: milestone should start as queued');
+
+    // Now plan the milestone — status should be promoted to "active"
+    const result = await handlePlanMilestone(validParams(), base);
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+
+    const after = getMilestone('M001');
+    assert.equal(after?.status, 'active', 'milestone status should be promoted from queued to active');
+    assert.equal(after?.title, 'DB-backed planning', 'milestone title should be set');
   } finally {
     cleanup(base);
   }

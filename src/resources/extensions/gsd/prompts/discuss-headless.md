@@ -38,7 +38,7 @@ Do a mandatory investigation pass before making any decisions. This is not optio
 3. **Web search** — `search-the-web` if the domain is unfamiliar, if you need current best practices, or if the spec references external services/APIs you need facts about. Use `fetch_page` for full content when snippets aren't enough.
 
 **Web search budget:** Budget carefully across investigation + focused research:
-- Prefer `resolve_library` / `get_library_docs` over `web_search` for library documentation.
+- Prefer `resolve_library` / `get_library_docs` over `search-the-web` for library documentation.
 - Prefer `search_and_read` for one-shot topic research.
 - Target 2-3 web searches in this investigation pass. Save remaining budget for focused research.
 - Do NOT repeat the same or similar queries.
@@ -162,6 +162,10 @@ Preserve the specification's exact terminology, emphasis, and specific framing. 
 6. For each architectural or pattern decision, call `gsd_decision_save` — the tool auto-assigns IDs and regenerates `.gsd/DECISIONS.md` automatically.
 7. {{commitInstruction}}
 
+### Ready-phrase pre-condition (NON-BYPASSABLE)
+
+Before emitting the ready phrase, verify in the CURRENT turn that you have written `.gsd/PROJECT.md`, `.gsd/REQUIREMENTS.md`, `{{contextPath}}`, and called `gsd_plan_milestone`. If any is missing, **STOP** — emit the missing tool calls in this same turn. The system rejects premature ready signals and retries are capped.
+
 After writing the files, say exactly: "Milestone {{milestoneId}} ready." — nothing else. Auto-mode will start automatically.
 
 ### Multi-Milestone
@@ -233,6 +237,10 @@ For single-milestone projects, do NOT write this file.
 #### Phase 4: Finalize
 
 7. {{multiMilestoneCommitInstruction}}
+
+### Ready-phrase pre-condition (NON-BYPASSABLE)
+
+Before emitting the ready phrase, verify in the CURRENT turn that you have written `.gsd/PROJECT.md`, `.gsd/REQUIREMENTS.md`, the primary `CONTEXT.md`, called `gsd_plan_milestone` for the primary milestone, and written `.gsd/DISCUSSION-MANIFEST.json` with `gates_completed === total`. If any is missing, **STOP** — emit the missing tool calls in this same turn. The system rejects premature ready signals and retries are capped.
 
 After writing the files, say exactly: "Milestone {{milestoneId}} ready." — nothing else. Auto-mode will start automatically.
 

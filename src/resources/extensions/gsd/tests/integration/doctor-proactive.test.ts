@@ -316,6 +316,50 @@ describe('doctor-proactive', async () => {
       }
     });
 
+    test('health gate: git.snapshots:false suppresses stale-commit snapshot (#4420)', async () => {
+      // Build a repo whose HEAD commit is far enough in the past that the
+      // default stale-commit threshold (30 min) is exceeded, then dirty the
+      // tracked file so the snapshot path has material to commit.
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-proactive-4420-")));
+      cleanups.push(dir);
+      const oldDate = "2020-01-01T00:00:00Z";
+      const env = { ...process.env, GIT_AUTHOR_DATE: oldDate, GIT_COMMITTER_DATE: oldDate };
+      execSync("git init", { cwd: dir, stdio: "ignore", env });
+      execSync("git config user.email test@test.com", { cwd: dir, stdio: "ignore", env });
+      execSync("git config user.name Test", { cwd: dir, stdio: "ignore", env });
+      writeFileSync(join(dir, "README.md"), "# test\n");
+      execSync("git add .", { cwd: dir, stdio: "ignore", env });
+      execSync('git commit -m init', { cwd: dir, stdio: "ignore", env });
+      execSync("git branch -M main", { cwd: dir, stdio: "ignore", env });
+      mkdirSync(join(dir, ".gsd"), { recursive: true });
+
+      writeFileSync(join(dir, "README.md"), "# test\n\ndirty\n");
+      assert.ok(run("git status --porcelain", dir).length > 0, "working tree is dirty");
+
+      writeFileSync(
+        join(dir, ".gsd", "PREFERENCES.md"),
+        `---\ngit:\n  snapshots: false\n---\n`,
+      );
+
+      const commitCountBefore = run("git rev-list --count HEAD", dir);
+
+      const previousCwd = process.cwd();
+      process.chdir(dir);
+      try {
+        const result = await preDispatchHealthGate(dir);
+        assert.ok(result.proceed, "gate proceeds when snapshots are disabled");
+        assert.ok(
+          !result.fixesApplied.some(f => f.includes("gsd snapshot")),
+          `no snapshot fix reported when git.snapshots:false (got: ${JSON.stringify(result.fixesApplied)})`,
+        );
+      } finally {
+        process.chdir(previousCwd);
+      }
+
+      const commitCountAfter = run("git rev-list --count HEAD", dir);
+      assert.strictEqual(commitCountAfter, commitCountBefore, "no snapshot commit was created");
+    });
+
   } finally {
     resetProactiveHealing();
     for (const dir of cleanups) {

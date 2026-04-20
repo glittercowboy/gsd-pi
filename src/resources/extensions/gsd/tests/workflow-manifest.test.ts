@@ -12,6 +12,7 @@ import {
   insertMilestone,
   insertSlice,
   insertTask,
+  _getAdapter,
 } from '../gsd-db.ts';
 import {
   writeManifest,
@@ -159,6 +160,97 @@ test('workflow-manifest: bootstrapFromManifest restores DB from manifest (round-
     const t = snap.tasks.find((r) => r.id === 'T01');
     assert.ok(t !== undefined, 'T01 should be restored');
     assert.strictEqual(t!.status, 'complete');
+  } finally {
+    closeDatabase();
+    cleanupDir(base);
+  }
+});
+
+// ─── snapshotState: numeric column coercion (#2962) ─────────────────────
+
+test('workflow-manifest: snapshotState coerces string placeholders in numeric columns to null (#2962)', () => {
+  const base = tempDir();
+  openDatabase(tempDbPath(base));
+  try {
+    // Set up prerequisite rows
+    insertMilestone({ id: 'M001' });
+    insertSlice({ id: 'S01', milestoneId: 'M001' });
+    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Task', status: 'complete' });
+
+    // Insert verification_evidence with string placeholders in numeric columns
+    // This simulates what happens after schema migrations or manual inserts
+    const db = _getAdapter()!;
+    db.prepare(
+      `INSERT INTO verification_evidence (task_id, slice_id, milestone_id, command, exit_code, verdict, duration_ms, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('T01', 'S01', 'M001', 'npm test', '-', 'pass', '-', new Date().toISOString());
+
+    // snapshotState should coerce "-" to null for numeric columns
+    const snap = snapshotState();
+    const ev = snap.verification_evidence[0];
+    assert.strictEqual(ev.exit_code, null, 'exit_code "-" should be coerced to null');
+    assert.strictEqual(ev.duration_ms, null, 'duration_ms "-" should be coerced to null');
+
+    // Round-trip through JSON should not throw
+    const json = JSON.stringify(snap, null, 2);
+    const reparsed = JSON.parse(json);
+    assert.strictEqual(reparsed.verification_evidence[0].exit_code, null);
+    assert.strictEqual(reparsed.verification_evidence[0].duration_ms, null);
+  } finally {
+    closeDatabase();
+    cleanupDir(base);
+  }
+});
+
+test('workflow-manifest: snapshotState coerces empty string and N/A in numeric columns (#2962)', () => {
+  const base = tempDir();
+  openDatabase(tempDbPath(base));
+  try {
+    insertMilestone({ id: 'M001' });
+    insertSlice({ id: 'S01', milestoneId: 'M001' });
+    insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'Task', status: 'complete' });
+
+    const db = _getAdapter()!;
+    db.prepare(
+      `INSERT INTO verification_evidence (task_id, slice_id, milestone_id, command, exit_code, verdict, duration_ms, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('T01', 'S01', 'M001', 'npm test', 'N/A', 'pass', '', new Date().toISOString());
+
+    const snap = snapshotState();
+    const ev = snap.verification_evidence[0];
+    assert.strictEqual(ev.exit_code, null, 'exit_code "N/A" should be coerced to null');
+    assert.strictEqual(ev.duration_ms, null, 'duration_ms "" should be coerced to null');
+  } finally {
+    closeDatabase();
+    cleanupDir(base);
+  }
+});
+
+test('workflow-manifest: snapshotState coerces string placeholders in sequence columns (#2962)', () => {
+  const base = tempDir();
+  openDatabase(tempDbPath(base));
+  try {
+    insertMilestone({ id: 'M001' });
+
+    // Insert a slice with a string sequence via raw SQL
+    const db = _getAdapter()!;
+    db.prepare(
+      `INSERT INTO slices (milestone_id, id, title, status, risk, depends, demo, created_at, sequence)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('M001', 'S01', 'Test Slice', 'planned', 'low', '[]', '', new Date().toISOString(), '-');
+
+    db.prepare(
+      `INSERT INTO tasks (milestone_id, slice_id, id, title, status, sequence)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run('M001', 'S01', 'T01', 'Test Task', 'planned', 'N/A');
+
+    const snap = snapshotState();
+    assert.strictEqual(snap.slices[0].sequence, 0, 'slice sequence "-" should be coerced to 0');
+    assert.strictEqual(snap.tasks[0].sequence, 0, 'task sequence "N/A" should be coerced to 0');
+
+    // JSON round-trip must not throw
+    const json = JSON.stringify(snap, null, 2);
+    assert.doesNotThrow(() => JSON.parse(json));
   } finally {
     closeDatabase();
     cleanupDir(base);

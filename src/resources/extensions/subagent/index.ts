@@ -24,6 +24,7 @@ import { type ExtensionAPI, getMarkdownTheme } from "@gsd/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@gsd/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { formatTokenCount } from "../shared/mod.js";
+import { getCurrentPhase } from "../shared/gsd-phase-state.js";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 import {
 	type IsolationEnvironment,
@@ -350,6 +351,23 @@ async function runSingleAgent(
 			usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
 			step,
 		};
+	}
+
+	// GSD phase guard: block agents that conflict with the active GSD phase
+	if (agent.conflictsWith && agent.conflictsWith.length > 0) {
+		const activePhase = getCurrentPhase();
+		if (activePhase && agent.conflictsWith.includes(activePhase)) {
+			return {
+				agent: agentName,
+				agentSource: agent.source,
+				task,
+				exitCode: 1,
+				messages: [],
+				stderr: `Agent "${agentName}" is blocked: it conflicts with the active GSD phase "${activePhase}". Use the built-in GSD workflow instead.`,
+				usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
+				step,
+			};
+		}
 	}
 
 	let tmpPromptDir: string | null = null;

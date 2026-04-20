@@ -15,6 +15,7 @@ export interface DecisionQueryOpts {
 }
 
 export interface RequirementQueryOpts {
+  milestoneId?: string;
   sliceId?: string;
   status?: string;
 }
@@ -67,7 +68,8 @@ export function queryDecisions(opts?: DecisionQueryOpts): Decision[] {
 
 /**
  * Query active (non-superseded) requirements with optional filters.
- * - sliceId: filters where primary_owner LIKE '%sliceId%' OR supporting_slices LIKE '%sliceId%'
+ * - milestoneId: combined with sliceId for precise filtering (e.g. %M005/S01%)
+ * - sliceId: filters where primary_owner LIKE '%pattern%' OR supporting_slices LIKE '%pattern%'
  * - status: filters where status = :status (exact match)
  *
  * Returns [] if DB is not available. Never throws.
@@ -81,9 +83,19 @@ export function queryRequirements(opts?: RequirementQueryOpts): Requirement[] {
     const clauses: string[] = ['superseded_by IS NULL'];
     const params: Record<string, unknown> = {};
 
-    if (opts?.sliceId) {
+    // Combined milestone+slice filtering for precise scoping
+    if (opts?.milestoneId && opts?.sliceId) {
+      // Use combined pattern like %M005/S01% to avoid cross-milestone contamination
+      clauses.push('(primary_owner LIKE :combined_pattern OR supporting_slices LIKE :combined_pattern)');
+      params[':combined_pattern'] = `%${opts.milestoneId}/${opts.sliceId}%`;
+    } else if (opts?.sliceId) {
+      // Slice-only filtering (legacy behavior)
       clauses.push('(primary_owner LIKE :slice_pattern OR supporting_slices LIKE :slice_pattern)');
       params[':slice_pattern'] = `%${opts.sliceId}%`;
+    } else if (opts?.milestoneId) {
+      // Milestone-only filtering
+      clauses.push('(primary_owner LIKE :milestone_pattern OR supporting_slices LIKE :milestone_pattern)');
+      params[':milestone_pattern'] = `%${opts.milestoneId}%`;
     }
 
     if (opts?.status) {
@@ -193,4 +205,157 @@ export function queryArtifact(path: string): string | null {
  */
 export function queryProject(): string | null {
   return queryArtifact('PROJECT.md');
+}
+
+// ─── Knowledge Query ───────────────────────────────────────────────────────
+
+/**
+ * Filter KNOWLEDGE.md sections by keyword matching.
+ * Uses H2 sections, matches keywords case-insensitively against:
+ * 1. Section header text
+ * 2. First paragraph of section content (up to first blank line or next heading)
+ *
+ * Per D020, returns empty string (not null) when no matches found.
+ * This signals "no relevant knowledge" vs "file not found".
+ *
+ * @param content - Full KNOWLEDGE.md content
+ * @param keywords - Keywords to match (case-insensitive)
+ * @returns Concatenated matching sections with H2 headers, or empty string
+ */
+export async function queryKnowledge(content: string, keywords: string[]): Promise<string> {
+  if (!content || keywords.length === 0) return '';
+
+  // Lazy import to avoid circular dependency
+  const { extractAllSections } = await import('./files.js');
+
+  const sections = extractAllSections(content, 2);
+  if (sections.size === 0) return '';
+
+  // Normalize keywords for case-insensitive matching
+  const normalizedKeywords = keywords.map(k => k.toLowerCase());
+
+  const matchingSections: string[] = [];
+
+  for (const [header, body] of sections) {
+    // Extract first paragraph: everything up to first blank line or next heading
+    const firstParagraph = body.split(/\n\s*\n|\n#/)[0] || '';
+
+    // Check if any keyword matches header or first paragraph
+    const headerLower = header.toLowerCase();
+    const paragraphLower = firstParagraph.toLowerCase();
+
+    const matches = normalizedKeywords.some(kw =>
+      headerLower.includes(kw) || paragraphLower.includes(kw)
+    );
+
+    if (matches) {
+      matchingSections.push(`## ${header}\n\n${body}`);
+    }
+  }
+
+  return matchingSections.join('\n\n');
+}
+
+// ─── Roadmap Excerpt Formatter ─────────────────────────────────────────────
+
+/**
+ * Format a minimal roadmap excerpt for prompt injection.
+ * Parses the slice table from roadmap content, extracts:
+ * 1. Header row + separator
+ * 2. Predecessor row (if sliceId depends on one via the Depends column)
+ * 3. Target slice row
+ * 4. Reference directive pointing to full roadmap path
+ *
+ * Per D021, this minimizes injected content while preserving dependency awareness.
+ * Returns empty string if sliceId is not found in the table.
+ * Never throws.
+ *
+ * @param roadmapContent - Full content of the M###-ROADMAP.md file
+ * @param sliceId - Target slice ID (e.g. 'S02')
+ * @param roadmapPath - Optional path for reference directive (defaults to generic)
+ */
+export function formatRoadmapExcerpt(
+  roadmapContent: string,
+  sliceId: string,
+  roadmapPath = 'ROADMAP.md',
+): string {
+  if (!roadmapContent || !sliceId) return '';
+
+  const lines = roadmapContent.split('\n');
+
+  // Find the slice table header: | ID | Slice | ... (case insensitive)
+  let headerIndex = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line && /^\s*\|\s*ID\s*\|\s*Slice\s*\|/i.test(line)) {
+      headerIndex = i;
+      break;
+    }
+  }
+
+  if (headerIndex === -1) return '';
+
+  // The separator should be the next line (|---|---|...)
+  const separatorIndex = headerIndex + 1;
+  if (separatorIndex >= lines.length) return '';
+
+  const headerLine = lines[headerIndex];
+  const separatorLine = lines[separatorIndex];
+
+  // Validate separator line looks like |---|---|... (may include : for alignment)
+  if (!separatorLine || !/^\s*\|[\s:\-|]+\|/.test(separatorLine)) return '';
+
+  // Parse table rows after separator
+  interface SliceRow {
+    line: string;
+    id: string;
+    depends: string;
+  }
+
+  const sliceRows: SliceRow[] = [];
+  for (let i = separatorIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line || !line.trim().startsWith('|')) break; // End of table
+
+    // Parse row: | ID | Slice | Risk | Depends | Done | After this |
+    const cells = line.split('|').map(c => c.trim());
+    // cells[0] is empty (before first |), cells[1] is ID, etc.
+    if (cells.length < 5) continue;
+
+    const id = cells[1] || '';
+    const depends = cells[4] || ''; // Depends column (0-indexed: empty, ID, Slice, Risk, Depends, ...)
+
+    sliceRows.push({ line, id, depends });
+  }
+
+  // Find target slice row
+  const targetRow = sliceRows.find(r => r.id === sliceId);
+  if (!targetRow) return '';
+
+  // Find predecessor if target depends on one
+  // Depends column may contain: '—', 'S01', 'S01, S02', etc.
+  let predecessorRow: SliceRow | undefined;
+  const dependsRaw = targetRow.depends;
+  if (dependsRaw && dependsRaw !== '—' && dependsRaw !== '-') {
+    // Extract first dependency (e.g. 'S01' from 'S01, S02')
+    const depMatch = dependsRaw.match(/S\d+/);
+    if (depMatch) {
+      predecessorRow = sliceRows.find(r => r.id === depMatch[0]);
+    }
+  }
+
+  // Build excerpt
+  const excerptLines: string[] = [headerLine!, separatorLine!];
+
+  if (predecessorRow) {
+    excerptLines.push(predecessorRow.line);
+  }
+
+  excerptLines.push(targetRow.line);
+
+  // Add reference directive
+  excerptLines.push('');
+  excerptLines.push(`> See full roadmap: ${roadmapPath}`);
+
+  return excerptLines.join('\n');
 }

@@ -77,7 +77,9 @@
       {
         "group": "Features",
         "pages": [
+          "guides/change-management",
           "guides/captures-triage",
+          "guides/debug",
           "guides/parallel-orchestration",
           "guides/remote-questions",
           "guides/skills",

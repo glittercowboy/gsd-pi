@@ -16,7 +16,12 @@ import { resolve } from 'node:path';
 import { EventEmitter } from 'node:events';
 
 import { SessionManager } from './session-manager.js';
-import { createMcpServer } from './server.js';
+import {
+  buildAskUserQuestionsElicitRequest,
+  createMcpServer,
+  formatAskUserQuestionsElicitResult,
+  withElicitTimeout,
+} from './server.js';
 import { MAX_EVENTS } from './types.js';
 import type { ManagedSession, CostAccumulator, PendingBlocker } from './types.js';
 
@@ -117,12 +122,17 @@ class TestableSessionManager extends SessionManager {
 
     const resolvedDir = resolve(projectDir);
 
-    // Check duplicate via getSessionByDir
+    // Mirror the real SessionManager (#4476): only block when a genuinely
+    // active session is running. Terminal states are evicted.
     const existing = this.getSessionByDir(resolvedDir);
     if (existing) {
-      throw new Error(
-        `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
-      );
+      if (existing.status === 'starting' || existing.status === 'running' || existing.status === 'blocked') {
+        throw new Error(
+          `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
+        );
+      }
+      existing.unsubscribe?.();
+      (this as any).sessions.delete(resolvedDir);
     }
 
     const client = new MockRpcClient({ cwd: resolvedDir, args: [] });
@@ -254,6 +264,37 @@ describe('SessionManager', () => {
       },
     );
   });
+
+  // #4476: terminal-state sessions (completed/error/cancelled) are evicted so
+  // the same projectDir can host a fresh session — only starting/running/blocked
+  // sessions block re-entry.
+  for (const terminalStatus of ['completed', 'error', 'cancelled'] as const) {
+    it(`startSession evicts a prior '${terminalStatus}' session for the same projectDir`, async () => {
+      const dir = `/tmp/evict-${terminalStatus}`;
+      const firstSessionId = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
+      const first = sm.getSession(firstSessionId)!;
+      first.status = terminalStatus;
+
+      // Should not throw — terminal session is evicted, fresh one starts.
+      const secondSessionId = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
+      assert.notEqual(secondSessionId, firstSessionId);
+      const second = sm.getSession(secondSessionId)!;
+      assert.equal(second.status, 'running');
+      assert.equal(sm.getSessionByDir(dir)!.sessionId, secondSessionId);
+    });
+  }
+
+  for (const activeStatus of ['starting', 'running', 'blocked'] as const) {
+    it(`startSession still rejects a prior '${activeStatus}' session`, async () => {
+      const dir = `/tmp/keep-${activeStatus}`;
+      const sid = await sm.startSession(dir, { cliPath: '/usr/bin/gsd' });
+      sm.getSession(sid)!.status = activeStatus;
+      await assert.rejects(
+        () => sm.startSession(dir, { cliPath: '/usr/bin/gsd' }),
+        /Session already active/,
+      );
+    });
+  }
 
   it('startSession rejects empty projectDir', async () => {
     await assert.rejects(
@@ -574,6 +615,8 @@ describe('createMcpServer tool registration', () => {
   it('creates server successfully with all required methods', async () => {
     const { server } = await createMcpServer(sm);
     assert.ok(server);
+    assert.ok(server.server);
+    assert.equal(typeof server.server.elicitInput, 'function');
     assert.ok(typeof server.connect === 'function');
     assert.ok(typeof server.close === 'function');
   });
@@ -624,5 +667,112 @@ describe('createMcpServer tool registration', () => {
     await sm.cancelSession(sessionId);
     const session = sm.getSession(sessionId)!;
     assert.equal(session.status, 'cancelled');
+  });
+
+  it('buildAskUserQuestionsElicitRequest adds None of the above note field for single-select questions', () => {
+    const request = buildAskUserQuestionsElicitRequest([
+      {
+        id: 'depth_verification_M001',
+        header: 'Depth Check',
+        question: 'Did I capture the depth right?',
+        options: [
+          { label: 'Yes, you got it (Recommended)', description: 'Continue with the current summary.' },
+          { label: 'Not quite', description: 'I need to clarify the depth further.' },
+        ],
+      },
+      {
+        id: 'focus_areas',
+        header: 'Focus',
+        question: 'Which areas matter most?',
+        allowMultiple: true,
+        options: [
+          { label: 'Frontend', description: 'Prioritize the UI.' },
+          { label: 'Backend', description: 'Prioritize server logic.' },
+        ],
+      },
+    ]);
+
+    assert.equal(request.mode, 'form');
+    assert.deepEqual(request.requestedSchema.required, ['depth_verification_M001', 'focus_areas']);
+    assert.ok(request.requestedSchema.properties['depth_verification_M001']);
+    assert.ok(request.requestedSchema.properties['depth_verification_M001__note']);
+    assert.ok(!request.requestedSchema.properties['focus_areas__note']);
+  });
+
+  it('formatAskUserQuestionsElicitResult preserves the existing answers JSON shape', () => {
+    const result = formatAskUserQuestionsElicitResult(
+      [
+        {
+          id: 'depth_verification_M001',
+          header: 'Depth Check',
+          question: 'Did I capture the depth right?',
+          options: [
+            { label: 'Yes, you got it (Recommended)', description: 'Continue with the current summary.' },
+            { label: 'Not quite', description: 'I need to clarify the depth further.' },
+          ],
+        },
+        {
+          id: 'focus_areas',
+          header: 'Focus',
+          question: 'Which areas matter most?',
+          allowMultiple: true,
+          options: [
+            { label: 'Frontend', description: 'Prioritize the UI.' },
+            { label: 'Backend', description: 'Prioritize server logic.' },
+          ],
+        },
+      ],
+      {
+        action: 'accept',
+        content: {
+          depth_verification_M001: 'None of the above',
+          depth_verification_M001__note: 'Need more implementation detail.',
+          focus_areas: ['Frontend', 'Backend'],
+        },
+      },
+    );
+
+    assert.equal(
+      result,
+      JSON.stringify({
+        answers: {
+          depth_verification_M001: {
+            answers: ['None of the above', 'user_note: Need more implementation detail.'],
+          },
+          focus_areas: {
+            answers: ['Frontend', 'Backend'],
+          },
+        },
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// withElicitTimeout
+// ---------------------------------------------------------------------------
+
+describe('withElicitTimeout', () => {
+  it('resolves with the promise value when it settles before the timeout', async () => {
+    const result = await withElicitTimeout(Promise.resolve(42), 'test', 5000);
+    assert.equal(result, 42);
+  });
+
+  it('rejects with a timeout error when the promise does not settle in time', async () => {
+    const never = new Promise<never>(() => {});
+    await assert.rejects(
+      () => withElicitTimeout(never, 'ask_user_questions', 1),
+      (err: Error) => {
+        assert.ok(err.message.includes('ask_user_questions'));
+        assert.ok(err.message.includes('timed out'));
+        return true;
+      },
+    );
+  });
+
+  it('clears the timer when the promise resolves (no dangling timer)', async () => {
+    const start = Date.now();
+    await withElicitTimeout(Promise.resolve('done'), 'test', 50);
+    assert.ok(Date.now() - start < 40, 'should not wait for the timeout');
   });
 });

@@ -40,10 +40,15 @@ test('renders version', () => {
   assert.ok(out.includes('Get Shit Done'), 'brand name missing')
 })
 
-test('renders model and provider', () => {
+test('renders GSD project state or fallback hint', () => {
+  // Model/provider intentionally removed from the welcome screen — they live
+  // in the persistent footer. Without .gsd/STATE.md present the welcome
+  // should surface the "No active GSD project" fallback instead.
   const out = strip(capture({ version: '1.0.0', modelName: 'claude-opus-4-6', provider: 'Anthropic' }))
-  assert.ok(out.includes('claude-opus-4-6'), 'model name missing')
-  assert.ok(out.includes('Anthropic'), 'provider missing')
+  assert.ok(
+    out.includes('No active GSD project') || /Active\s+M\d+/.test(out),
+    'welcome should show GSD state lines or the no-project fallback',
+  )
 })
 
 test('renders cwd hint', () => {
@@ -70,4 +75,31 @@ test('skips when not a TTY', (t) => {
 test('renders without model or provider', () => {
   const out = strip(capture({ version: '3.0.0' }))
   assert.ok(out.includes('v3.0.0'), 'version missing when no model provided')
+})
+
+test('renders remote channel in tools row', () => {
+  const out = strip(capture({ version: '1.0.0', remoteChannel: 'discord' }))
+  assert.ok(out.includes('Discord'), 'remote channel name missing')
+})
+
+test('omits remote channel when not provided', () => {
+  const out = strip(capture({ version: '1.0.0' }))
+  assert.ok(!out.includes('Discord'), 'should not show Discord when no remote')
+  assert.ok(!out.includes('Slack'), 'should not show Slack when no remote')
+  assert.ok(!out.includes('Telegram'), 'should not show Telegram when no remote')
+})
+
+test('separator lines extend to full terminal width on wide terminals', (t) => {
+  const origColumns = process.stderr.columns
+  ;(process.stderr as any).columns = 250
+  t.after(() => { ;(process.stderr as any).columns = origColumns })
+
+  const out = strip(capture({ version: '1.0.0' }))
+  const lines = out.split('\n')
+  // Top and bottom separator bars should be 249 chars (columns - 1)
+  const separatorLines = lines.filter(l => /^─+$/.test(l.trim()))
+  assert.ok(separatorLines.length >= 2, 'expected at least 2 full-width separator lines')
+  for (const sep of separatorLines) {
+    assert.equal(sep.trim().length, 249, `separator should be 249 chars wide, got ${sep.trim().length}`)
+  }
 })

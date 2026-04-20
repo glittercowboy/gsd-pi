@@ -132,6 +132,24 @@ export function isGraphAmbiguous(graph: DerivedTaskNode[]): boolean {
 }
 
 /**
+ * Returns tasks that are missing IO annotations (no inputFiles and no outputFiles).
+ * These tasks prevent parallel dispatch by making the graph ambiguous.
+ * Used to surface actionable diagnostics when parallel execution falls back to sequential.
+ */
+export function getMissingAnnotationTasks(
+  graph: DerivedTaskNode[],
+): Array<{ id: string; title: string }> {
+  return graph
+    .filter(
+      (node) =>
+        !node.done &&
+        node.inputFiles.length === 0 &&
+        node.outputFiles.length === 0,
+    )
+    .map((node) => ({ id: node.id, title: node.title }));
+}
+
+/**
  * Detect deadlock: no tasks are ready and none are in-flight, yet incomplete
  * tasks remain. This indicates a circular dependency or impossible state.
  */

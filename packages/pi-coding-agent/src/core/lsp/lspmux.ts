@@ -90,6 +90,9 @@ async function checkServerRunning(binaryPath: string): Promise<boolean> {
 	try {
 		const proc = spawn(binaryPath, ["status"], {
 			stdio: ["ignore", "pipe", "pipe"],
+			// On Windows, the binary may be a .cmd wrapper requiring shell
+			// resolution to avoid ENOENT/EINVAL (#2854).
+			shell: process.platform === "win32",
 		});
 
 		const exited = await Promise.race([

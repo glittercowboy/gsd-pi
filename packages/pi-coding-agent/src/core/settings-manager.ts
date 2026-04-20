@@ -92,6 +92,62 @@ export interface ModelDiscoverySettings {
 	autoRefreshOnModelSelect?: boolean; // default: false - refresh discovery when opening model selector
 }
 
+/**
+ * A shell command bound to a Layer 0 hook event.
+ *
+ * Payload is passed to the command on stdin as JSON. The command may write a
+ * JSON object to stdout to mutate the pending action — shape varies per hook
+ * (e.g. `{"block":true,"reason":"..."}` for PreToolUse). Non-zero exit with
+ * `blocking: true` vetoes the action.
+ */
+export interface HookEntry {
+	/** Optional filter on the event payload (currently supports tool name / bash command prefix). */
+	match?: {
+		tool?: string | string[];
+		command?: string;
+	};
+	/** The shell command to execute. */
+	command: string;
+	/** Timeout in milliseconds. Default: 30000. */
+	timeout?: number;
+	/** When true (default), a non-zero exit vetoes the pending action. */
+	blocking?: boolean;
+	/** Extra environment variables for the child process. */
+	env?: Record<string, string>;
+}
+
+/**
+ * Layer 0 shell hooks. Each key is the name of a hook event; each value is a
+ * list of `HookEntry` — all matching entries run in order.
+ *
+ * Hook names mirror Claude Code's for portability.
+ */
+export interface HooksSettings {
+	PreToolUse?: HookEntry[];
+	PostToolUse?: HookEntry[];
+	UserPromptSubmit?: HookEntry[];
+	SessionStart?: HookEntry[];
+	SessionEnd?: HookEntry[];
+	Stop?: HookEntry[];
+	Notification?: HookEntry[];
+	PreCompact?: HookEntry[];
+	PostCompact?: HookEntry[];
+	PreCommit?: HookEntry[];
+	PostCommit?: HookEntry[];
+	PrePush?: HookEntry[];
+	PostPush?: HookEntry[];
+	PrePr?: HookEntry[];
+	PostPr?: HookEntry[];
+	PreMilestone?: HookEntry[];
+	PostMilestone?: HookEntry[];
+	PreUnit?: HookEntry[];
+	PostUnit?: HookEntry[];
+	PreVerify?: HookEntry[];
+	PostVerify?: HookEntry[];
+	BudgetThreshold?: HookEntry[];
+	Blocked?: HookEntry[];
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -152,6 +208,24 @@ export interface Settings {
 	modelDiscovery?: ModelDiscoverySettings;
 	editMode?: "standard" | "hashline"; // Edit tool mode: "standard" (text match) or "hashline" (LINE#ID anchors). Default: "standard"
 	timestampFormat?: "date-time-iso" | "date-time-us"; // Timestamp display format for messages. Default: "date-time-iso"
+	allowedCommandPrefixes?: string[]; // Override built-in SAFE_COMMAND_PREFIXES for !command resolution (global-only — ignored in project settings)
+	fetchAllowedUrls?: string[]; // Hostnames exempted from SSRF blocklist in fetch_page (global-only — ignored in project settings)
+	hooks?: HooksSettings; // Layer 0 shell-command hooks. Project-scoped hooks require explicit trust (.pi/hooks.trusted).
+}
+
+/** Settings keys that are only respected from global config — project settings cannot override these. */
+const GLOBAL_ONLY_KEYS: ReadonlySet<keyof Settings> = new Set([
+	"allowedCommandPrefixes",
+	"fetchAllowedUrls",
+]);
+
+/** Remove global-only keys from a settings object. Applied once at load time. */
+function stripGlobalOnlyKeys(settings: Settings): Settings {
+	const result = { ...settings };
+	for (const key of GLOBAL_ONLY_KEYS) {
+		delete (result as Record<string, unknown>)[key];
+	}
+	return result;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -304,7 +378,7 @@ export class SettingsManager {
 	) {
 		this.storage = storage;
 		this.globalSettings = initialGlobal;
-		this.projectSettings = initialProject;
+		this.projectSettings = stripGlobalOnlyKeys(initialProject);
 		this.globalSettingsLoadError = globalLoadError;
 		this.projectSettingsLoadError = projectLoadError;
 		this.errors = [...initialErrors];
@@ -441,7 +515,7 @@ export class SettingsManager {
 
 		const projectLoad = SettingsManager.tryLoadFromStorage(this.storage, "project");
 		if (!projectLoad.error) {
-			this.projectSettings = projectLoad.settings;
+			this.projectSettings = stripGlobalOnlyKeys(projectLoad.settings);
 			this.projectSettingsLoadError = null;
 		} else {
 			this.projectSettingsLoadError = projectLoad.error;
@@ -571,7 +645,7 @@ export class SettingsManager {
 	}
 
 	private saveProjectSettings(settings: Settings): void {
-		this.projectSettings = structuredClone(settings);
+		this.projectSettings = stripGlobalOnlyKeys(structuredClone(settings));
 		this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
 
 		if (this.projectSettingsLoadError) {
@@ -1095,5 +1169,29 @@ export class SettingsManager {
 
 	setTimestampFormat(format: "date-time-iso" | "date-time-us"): void {
 		this.setGlobalSetting("timestampFormat", format);
+	}
+
+	/**
+	 * Get the allowed command prefixes from global settings only.
+	 * Returns undefined if not configured (caller should use built-in defaults).
+	 */
+	getAllowedCommandPrefixes(): string[] | undefined {
+		return this.globalSettings.allowedCommandPrefixes;
+	}
+
+	setAllowedCommandPrefixes(prefixes: string[]): void {
+		this.setGlobalSetting("allowedCommandPrefixes", prefixes);
+	}
+
+	/**
+	 * Get the fetch URL allowlist from global settings only.
+	 * Returns undefined if not configured (caller should use empty allowlist).
+	 */
+	getFetchAllowedUrls(): string[] | undefined {
+		return this.globalSettings.fetchAllowedUrls;
+	}
+
+	setFetchAllowedUrls(urls: string[]): void {
+		this.setGlobalSetting("fetchAllowedUrls", urls);
 	}
 }

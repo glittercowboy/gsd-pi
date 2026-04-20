@@ -52,6 +52,14 @@ describe("CombinedAutocompleteProvider — slash commands", () => {
 		const result = provider.getSuggestions(["hello /se"], 0, 9);
 		assert.equal(result, null);
 	});
+
+	it("triggers slash commands after leading whitespace", () => {
+		const provider = makeProvider(sampleCommands);
+		const result = provider.getSuggestions(["  /se"], 0, 5);
+		assert.ok(result);
+		assert.equal(result!.prefix, "/se");
+		assert.ok(result!.items.some((item) => item.value === "settings"));
+	});
 });
 
 describe("CombinedAutocompleteProvider — argument completions", () => {
@@ -142,6 +150,13 @@ describe("CombinedAutocompleteProvider — applyCompletion", () => {
 		const result = provider.applyCompletion(["/se"], 0, 3, { value: "settings", label: "settings" }, "/se");
 		assert.equal(result.lines[0], "/settings ");
 		assert.equal(result.cursorCol, 10); // after "/settings "
+	});
+
+	it("preserves leading whitespace when applying slash command completion", () => {
+		const provider = makeProvider(sampleCommands);
+		const result = provider.applyCompletion(["  /se"], 0, 5, { value: "settings", label: "settings" }, "/se");
+		assert.equal(result.lines[0], "  /settings ");
+		assert.equal(result.cursorCol, 12);
 	});
 
 	it("applies file path completion for @ prefix", () => {

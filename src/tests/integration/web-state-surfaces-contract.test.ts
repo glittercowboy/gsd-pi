@@ -487,6 +487,32 @@ test("terminal consumes activeToolExecution from store", () => {
   );
 });
 
+test("chat tool blocks normalize Claude Code tool names before choosing built-in render treatment", () => {
+  const chatPath = resolve(import.meta.dirname, "../../../web/components/gsd/chat-mode.tsx");
+  const source = readFileSync(chatPath, "utf-8");
+
+  assert.match(
+    source,
+    /const normalizedToolName = typeof tool\.name === "string" \? tool\.name\.toLowerCase\(\) : ""/,
+    "chat-mode.tsx must normalize Claude Code tool names before matching built-in tool render branches",
+  );
+  assert.match(
+    source,
+    /normalizedToolName === "bash"/,
+    "chat-mode.tsx must use normalized tool names for bash command rendering",
+  );
+  assert.match(
+    source,
+    /const autoExpandedRef = useRef\(false\)/,
+    "chat-mode.tsx must track one-time auto-expansion for completed tool output blocks",
+  );
+  assert.match(
+    source,
+    /const hasVisibleResult = Boolean\(diff \|\| resultText\.trim\(\) \|\| isError\)/,
+    "chat-mode.tsx must auto-expand tool blocks when visible result content arrives",
+  );
+});
+
 test("live browser panels consume live selectors and expose inspectable freshness markers", () => {
   const contractPath = resolve(import.meta.dirname, "../../../web/lib/command-surface-contract.ts")
   const storePath = resolve(import.meta.dirname, "../../../web/lib/gsd-workspace-store.tsx")

@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { isProjectTrusted, trustProject, getUntrustedExtensionPaths } from "./project-trust.js";
-import { containsTypeScriptSyntax, loadExtensions } from "./loader.js";
+import { containsTypeScriptSyntax, loadExtensions, resetExtensionLoaderCache } from "./loader.js";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -233,5 +233,43 @@ describe("loadExtensions", () => {
 			/TypeScript/.test(errorMsg) && /\.ts\b/.test(errorMsg),
 			`Expected error to mention TypeScript syntax and .ts extension, got: ${errorMsg}`,
 		);
+	});
+});
+
+// ─── resetExtensionLoaderCache ───────────────────────────────────────────────
+
+describe("resetExtensionLoaderCache", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = makeTempDir();
+		// Always start with a clean cache so tests are independent
+		resetExtensionLoaderCache();
+	});
+
+	afterEach(() => {
+		resetExtensionLoaderCache();
+		cleanDir(tmpDir);
+	});
+
+	it("clears the jiti singleton so a fresh instance is created on next load", async () => {
+		// Write a minimal valid extension that returns a name
+		const extPath = path.join(tmpDir, "cache-ext.ts");
+		fs.writeFileSync(
+			extPath,
+			`export default function activate(api: any) { return { name: "cache-ext" }; }\n`,
+		);
+
+		// First load — creates the jiti singleton and caches the module
+		const result1 = await loadExtensions([extPath], tmpDir);
+		assert.equal(result1.extensions.length, 1, "first load should succeed");
+
+		// Reset the cache — nulls the singleton
+		resetExtensionLoaderCache();
+
+		// Second load — should create a new jiti instance (not reuse the old one)
+		// and still successfully load the extension
+		const result2 = await loadExtensions([extPath], tmpDir);
+		assert.equal(result2.extensions.length, 1, "load after reset should succeed with fresh jiti");
 	});
 });

@@ -12,6 +12,11 @@ import type { ServerConfig } from "./types.js";
 const require = createRequire(import.meta.url);
 const DEFAULTS = require("./defaults.json") as Record<string, Partial<ServerConfig>>;
 
+/** Map legacy server keys to their current names so user overrides still merge. */
+const LEGACY_ALIASES: Record<string, string> = {
+	"kotlin-language-server": "kotlin-lsp",
+};
+
 export interface LspConfig {
 	servers: Record<string, ServerConfig>;
 	/** Idle timeout in milliseconds. If set, LSP clients will be shutdown after this period of inactivity. Disabled by default. */
@@ -109,7 +114,8 @@ function mergeServers(
 	overrides: Record<string, Partial<ServerConfig>>,
 ): Record<string, ServerConfig> {
 	const merged: Record<string, ServerConfig> = { ...base };
-	for (const [name, config] of Object.entries(overrides)) {
+	for (const [rawName, config] of Object.entries(overrides)) {
+		const name = LEGACY_ALIASES[rawName] ?? rawName;
 		if (merged[name]) {
 			const candidate = { ...merged[name], ...config };
 			const normalized = normalizeServerConfig(name, candidate);
@@ -166,15 +172,48 @@ export function hasRootMarkers(cwd: string, markers: string[]): boolean {
 // Local Binary Resolution
 // =============================================================================
 
-const LOCAL_BIN_PATHS: Array<{ markers: string[]; binDir: string }> = [
-	{ markers: ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"], binDir: "node_modules/.bin" },
-	{ markers: ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile"], binDir: ".venv/bin" },
-	{ markers: ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile"], binDir: "venv/bin" },
-	{ markers: ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile"], binDir: ".env/bin" },
-	{ markers: ["Gemfile", "Gemfile.lock"], binDir: "vendor/bundle/bin" },
-	{ markers: ["Gemfile", "Gemfile.lock"], binDir: "bin" },
-	{ markers: ["go.mod", "go.sum"], binDir: "bin" },
+const LOCAL_BIN_PATHS: Array<{ markers: string[]; binDirs: string[] }> = [
+	{ markers: ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"], binDirs: ["node_modules/.bin"] },
+	{ markers: ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile"], binDirs: [".venv/bin", ".venv/Scripts"] },
+	{ markers: ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile"], binDirs: ["venv/bin", "venv/Scripts"] },
+	{ markers: ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile"], binDirs: [".env/bin", ".env/Scripts"] },
+	{ markers: ["Gemfile", "Gemfile.lock"], binDirs: ["vendor/bundle/bin"] },
+	{ markers: ["Gemfile", "Gemfile.lock"], binDirs: ["bin"] },
+	{ markers: ["go.mod", "go.sum"], binDirs: ["bin"] },
 ];
+
+function getWindowsBinaryCandidates(command: string): string[] {
+	const ext = path.extname(command).toLowerCase();
+	if (ext) {
+		return [command];
+	}
+
+	return [
+		command,
+		`${command}.cmd`,
+		`${command}.bat`,
+		`${command}.exe`,
+	];
+}
+
+export function resolveLocalBinaryPath(command: string, cwd: string, isWindows: boolean): string | null {
+	for (const { markers, binDirs } of LOCAL_BIN_PATHS) {
+		if (!hasRootMarkers(cwd, markers)) continue;
+
+		for (const binDir of binDirs) {
+			const basePath = path.join(cwd, binDir, command);
+			const candidates = isWindows ? getWindowsBinaryCandidates(basePath) : [basePath];
+
+			for (const candidate of candidates) {
+				if (fs.existsSync(candidate)) {
+					return candidate;
+				}
+			}
+		}
+	}
+
+	return null;
+}
 
 export function which(command: string): string | null {
 	// On Windows, prefer `where.exe` over `which` — MSYS/Git Bash's `which`
@@ -190,15 +229,8 @@ export function which(command: string): string | null {
 }
 
 export function resolveCommand(command: string, cwd: string): string | null {
-	for (const { markers, binDir } of LOCAL_BIN_PATHS) {
-		if (hasRootMarkers(cwd, markers)) {
-			const localPath = path.join(cwd, binDir, command);
-			if (fs.existsSync(localPath)) {
-				return localPath;
-			}
-		}
-	}
-
+	const localPath = resolveLocalBinaryPath(command, cwd, process.platform === "win32");
+	if (localPath) return localPath;
 	return which(command);
 }
 

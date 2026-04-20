@@ -178,6 +178,33 @@ test("init-wizard: multiple project files detected together", (t) => {
   }
 });
 
+// ─── Git init + initial commit regression (#4530) ───────────────────────────
+
+import { execFileSync } from "node:child_process";
+import { nativeInit, nativeAddAll, nativeCommit } from "../native-git-bridge.ts";
+
+test("init-wizard: nativeInit + nativeAddAll + nativeCommit produces a reachable HEAD (#4530)", (t) => {
+  // Regression: showProjectInit called nativeInit but never committed, leaving
+  // the branch unborn. git log and git worktree add both fail on zero-commit repos.
+  const dir = makeTempDir("git-init-commit");
+  t.after(() => { cleanup(dir); });
+
+  nativeInit(dir, "main");
+  execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "Test"], { cwd: dir });
+  writeFileSync(join(dir, ".gitignore"), "*.log\n", "utf-8");
+
+  nativeAddAll(dir);
+  nativeCommit(dir, "chore: init project");
+
+  // git log must succeed (was: fatal: your current branch 'main' does not have any commits yet)
+  const subject = execFileSync("git", ["log", "-1", "--format=%s"], {
+    cwd: dir,
+    encoding: "utf-8",
+  }).trim();
+  assert.equal(subject, "chore: init project");
+});
+
 test("init-wizard: v1 with both .planning/ and .gsd/ prioritizes v2", (t) => {
   const dir = makeTempDir("both-v1-v2");
   try {

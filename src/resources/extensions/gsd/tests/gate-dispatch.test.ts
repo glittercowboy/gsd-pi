@@ -186,4 +186,31 @@ describe("evaluating-gates phase", () => {
     insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q5", scope: "task", taskId: "T01" });
     assert.equal(getPendingSliceGateCount("M001", "S01"), 1);
   });
+
+  test("Q8 (owned by complete-slice) does not block evaluating-gates phase", async () => {
+    // Regression: Q8 is stored with scope:"slice" but owned by the
+    // complete-slice turn. Before the gate registry landed, deriveState
+    // counted Q8 as a blocker for evaluating-gates while the gate-evaluate
+    // prompt silently dropped Q8 — an unrecoverable stall. After the
+    // registry change, deriveState filters by owner turn, so Q8 never
+    // blocks evaluating-gates.
+    planSlice(tmpDir);
+    await renderPlanFromDb(tmpDir, "M001", "S01");
+
+    insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q3", scope: "slice" });
+    insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q4", scope: "slice" });
+    insertGateRow({ milestoneId: "M001", sliceId: "S01", gateId: "Q8", scope: "slice" });
+
+    saveGateResult({ milestoneId: "M001", sliceId: "S01", gateId: "Q3", verdict: "pass", rationale: "OK", findings: "" });
+    saveGateResult({ milestoneId: "M001", sliceId: "S01", gateId: "Q4", verdict: "omitted", rationale: "N/A", findings: "" });
+    // Q8 deliberately left pending — it's complete-slice's problem.
+
+    invalidateStateCache();
+    const state = await deriveState(tmpDir);
+    assert.equal(
+      state.phase,
+      "executing",
+      `pending Q8 must not stall evaluating-gates — got phase=${state.phase}`,
+    );
+  });
 });

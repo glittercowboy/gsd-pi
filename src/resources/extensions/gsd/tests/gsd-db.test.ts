@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { createRequire } from 'node:module';
 import {
   openDatabase,
   closeDatabase,
   isDbAvailable,
+  wasDbOpenAttempted,
   getDbProvider,
+  getDbStatus,
   insertDecision,
   getDecisionById,
   insertRequirement,
@@ -17,7 +20,15 @@ import {
   transaction,
   _getAdapter,
   _resetProvider,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  getTask,
+  getSliceTasks,
+  checkpointDatabase,
 } from '../gsd-db.ts';
+
+const _require = createRequire(import.meta.url);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Helper: create a temp file path for file-backed DB tests
@@ -39,6 +50,30 @@ function cleanup(dbPath: string): void {
     fs.rmdirSync(dir);
   } catch {
     // best effort
+  }
+}
+
+function withPlatform<T>(platform: NodeJS.Platform, fn: () => T): T {
+  const original = process.platform;
+  Object.defineProperty(process, 'platform', { value: platform });
+  try {
+    return fn();
+  } finally {
+    Object.defineProperty(process, 'platform', { value: original });
+  }
+}
+
+function openRawSqliteForTest(dbPath: string): { exec(sql: string): void; close(): void } {
+  try {
+    const mod = _require('node:sqlite') as { DatabaseSync: new (path: string) => { exec(sql: string): void; close(): void } };
+    return new mod.DatabaseSync(dbPath);
+  } catch {
+    type SqliteCtor = new (path: string) => { exec(sql: string): void; close(): void };
+    const mod = _require('better-sqlite3') as
+      | SqliteCtor
+      | { default: SqliteCtor };
+    const DatabaseCtor: SqliteCtor = typeof mod === 'function' ? mod : mod.default;
+    return new DatabaseCtor(dbPath);
   }
 }
 
@@ -64,7 +99,7 @@ describe('gsd-db', () => {
     // Check schema_version table
     const adapter = _getAdapter()!;
     const version = adapter.prepare('SELECT MAX(version) as version FROM schema_version').get();
-    assert.deepStrictEqual(version?.['version'], 14, 'schema version should be 14');
+    assert.deepStrictEqual(version?.['version'], 22, 'schema version should be 22');
 
     // Check tables exist by querying them
     const dRows = adapter.prepare('SELECT count(*) as cnt FROM decisions').get();
@@ -278,6 +313,26 @@ describe('gsd-db', () => {
     cleanup(dbPath);
   });
 
+  test('gsd-db: mmap stays disabled on darwin file-backed DBs', () => {
+    const darwinDbPath = tempDbPath();
+    withPlatform('darwin', () => {
+      openDatabase(darwinDbPath);
+      const adapter = _getAdapter()!;
+      const mmap = adapter.prepare('PRAGMA mmap_size').get();
+      assert.deepStrictEqual(mmap?.['mmap_size'], 0, 'darwin should leave mmap_size disabled');
+      cleanup(darwinDbPath);
+    });
+
+    const linuxDbPath = tempDbPath();
+    withPlatform('linux', () => {
+      openDatabase(linuxDbPath);
+      const adapter = _getAdapter()!;
+      const mmap = adapter.prepare('PRAGMA mmap_size').get();
+      assert.deepStrictEqual(mmap?.['mmap_size'], 67108864, 'non-darwin should still enable mmap_size');
+      cleanup(linuxDbPath);
+    });
+  });
+
   test('gsd-db: transaction rollback on error', () => {
     openDatabase(':memory:');
 
@@ -328,6 +383,126 @@ describe('gsd-db', () => {
     closeDatabase();
   });
 
+  test('gsd-db: recreates missing verification evidence dedup index after removing duplicate rows', () => {
+    const dbPath = tempDbPath();
+    openDatabase(dbPath);
+
+    let adapter = _getAdapter()!;
+    adapter.prepare("INSERT INTO milestones (id, created_at) VALUES (?, '')").run('M001');
+    adapter.prepare("INSERT INTO slices (milestone_id, id, created_at) VALUES (?, ?, '')").run('M001', 'S01');
+    adapter.prepare("INSERT INTO tasks (milestone_id, slice_id, id) VALUES (?, ?, ?)").run('M001', 'S01', 'T01');
+    adapter.exec('DROP INDEX IF EXISTS idx_verification_evidence_dedup');
+
+    const insertEvidence = adapter.prepare(
+      `INSERT INTO verification_evidence (
+        task_id, slice_id, milestone_id, command, exit_code, verdict, duration_ms, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertEvidence.run('T01', 'S01', 'M001', 'npm test', 1, 'fail', 125, '2026-04-12T00:00:00.000Z');
+    insertEvidence.run('T01', 'S01', 'M001', 'npm test', 1, 'fail', 125, '2026-04-12T00:00:01.000Z');
+    insertEvidence.run('T01', 'S01', 'M001', 'npm run lint', 0, 'pass', 90, '2026-04-12T00:00:02.000Z');
+
+    closeDatabase();
+
+    assert.equal(openDatabase(dbPath), true, 'openDatabase should repair legacy duplicate evidence rows');
+
+    adapter = _getAdapter()!;
+    const countRow = adapter.prepare(
+      `SELECT count(*) as cnt
+       FROM verification_evidence
+       WHERE task_id = ? AND slice_id = ? AND milestone_id = ? AND command = ? AND verdict = ?`,
+    ).get('T01', 'S01', 'M001', 'npm test', 'fail');
+    assert.equal(countRow?.['cnt'], 1, 'duplicate verification evidence rows should be deduplicated before index creation');
+
+    const indexRow = adapter.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_verification_evidence_dedup'",
+    ).get();
+    assert.equal(indexRow?.['name'], 'idx_verification_evidence_dedup', 'dedup index should be recreated on reopen');
+
+    cleanup(dbPath);
+  });
+
+  test('gsd-db: legacy DB missing memories.scope opens and bootstraps index columns', () => {
+    const dbPath = tempDbPath();
+    const legacyDb = openRawSqliteForTest(dbPath);
+    legacyDb.exec(`
+      CREATE TABLE schema_version (
+        version INTEGER NOT NULL,
+        applied_at TEXT NOT NULL
+      );
+      INSERT INTO schema_version(version, applied_at) VALUES (17, '2026-04-20T00:00:00.000Z');
+      CREATE TABLE memories (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT NOT NULL UNIQUE,
+        category TEXT NOT NULL,
+        content TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0.8,
+        source_unit_type TEXT,
+        source_unit_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        superseded_by TEXT DEFAULT NULL,
+        hit_count INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO memories(id, category, content, created_at, updated_at)
+      VALUES ('legacy-memory', 'note', 'legacy row', '2026-04-20T00:00:00.000Z', '2026-04-20T00:00:00.000Z');
+    `);
+    legacyDb.close();
+
+    assert.equal(openDatabase(dbPath), true, 'openDatabase should succeed for legacy DB missing memories.scope');
+
+    const adapter = _getAdapter()!;
+    const columns = adapter.prepare('PRAGMA table_info(memories)').all();
+    const names = columns.map((row) => row['name']);
+    assert.ok(names.includes('scope'), 'memories.scope should be added during bootstrap');
+    assert.ok(names.includes('tags'), 'memories.tags should be added during bootstrap');
+
+    const row = adapter.prepare(`SELECT scope, tags FROM memories WHERE id = 'legacy-memory'`).get();
+    assert.equal(row?.['scope'], 'project', 'legacy rows should receive default scope');
+    assert.equal(row?.['tags'], '[]', 'legacy rows should receive default tags');
+
+    const index = adapter.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'idx_memories_scope'",
+    ).get();
+    assert.equal(index?.['name'], 'idx_memories_scope', 'scope index should be created after bootstrap columns are present');
+
+    cleanup(dbPath);
+  });
+
+  test('gsd-db: rowToTask tolerates legacy comma-separated task arrays', () => {
+    openDatabase(':memory:');
+
+    const adapter = _getAdapter()!;
+    adapter.prepare("INSERT INTO milestones (id, created_at) VALUES (?, '')").run('M001');
+    adapter.prepare("INSERT INTO slices (milestone_id, id, created_at) VALUES (?, ?, '')").run('M001', 'S01');
+    adapter.prepare(
+      `INSERT INTO tasks (
+        milestone_id, slice_id, id, key_files, key_decisions, files, inputs, expected_output
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'M001',
+      'S01',
+      'T01',
+      '[]',
+      '[]',
+      'tests/test_verify.py, config.yaml, configs/roster_2026-05-11.yaml',
+      'tests/test_verify.py',
+      'reports/summary.md, artifacts/output.json',
+    );
+
+    const task = getTask('M001', 'S01', 'T01');
+    assert.ok(task, 'task should load successfully from DB');
+    assert.deepEqual(task?.files, [
+      'tests/test_verify.py',
+      'config.yaml',
+      'configs/roster_2026-05-11.yaml',
+    ]);
+    assert.deepEqual(task?.inputs, ['tests/test_verify.py']);
+    assert.deepEqual(task?.expected_output, ['reports/summary.md', 'artifacts/output.json']);
+
+    closeDatabase();
+  });
+
   test('gsd-db: query wrappers return null/empty when DB unavailable', () => {
     // Ensure DB is closed
     closeDatabase();
@@ -344,6 +519,197 @@ describe('gsd-db', () => {
 
     const ar = getActiveRequirements();
     assert.deepStrictEqual(ar, [], 'getActiveRequirements returns [] when DB closed');
+  });
+
+  test('gsd-db: closeDatabase resets wasDbOpenAttempted after an intentional close', () => {
+    openDatabase(':memory:');
+    assert.ok(wasDbOpenAttempted(), 'wasDbOpenAttempted should be true after openDatabase was called');
+
+    closeDatabase();
+    assert.ok(!isDbAvailable(), 'DB should not be available after close');
+    assert.ok(!wasDbOpenAttempted(), 'wasDbOpenAttempted should reset after closeDatabase');
+  });
+
+  test('gsd-db: rowToTask tolerates corrupt comma-separated task arrays', () => {
+    openDatabase(':memory:');
+    insertMilestone({ id: 'M001', status: 'active' });
+    insertSlice({ milestoneId: 'M001', id: 'S01', status: 'active' });
+    insertTask({
+      milestoneId: 'M001',
+      sliceId: 'S01',
+      id: 'T01',
+      title: 'Recover corrupt arrays',
+      planning: {
+        description: 'desc',
+        estimate: 'small',
+        files: ['src/original.ts'],
+        verify: 'npm test',
+        inputs: ['docs/original.md'],
+        expectedOutput: ['dist/original.md'],
+        observabilityImpact: '',
+      },
+    });
+
+    const adapter = _getAdapter()!;
+    adapter.prepare(
+      `UPDATE tasks
+         SET files = ?, inputs = ?, expected_output = ?, key_files = ?, key_decisions = ?
+       WHERE milestone_id = ? AND slice_id = ? AND id = ?`,
+    ).run(
+      'src-erf/Models/foo.cs, src-erf/Models/bar.cs',
+      'docs/input-a.md, docs/input-b.md',
+      'dist/out-a.md, dist/out-b.md',
+      'src/resources/extensions/gsd/gsd-db.ts, src/resources/extensions/gsd/state.ts',
+      '"decision-1"',
+      'M001',
+      'S01',
+      'T01',
+    );
+
+    const task = getTask('M001', 'S01', 'T01');
+    assert.ok(task, 'getTask should still return the corrupt row');
+    assert.deepStrictEqual(task!.files, ['src-erf/Models/foo.cs', 'src-erf/Models/bar.cs']);
+    assert.deepStrictEqual(task!.inputs, ['docs/input-a.md', 'docs/input-b.md']);
+    assert.deepStrictEqual(task!.expected_output, ['dist/out-a.md', 'dist/out-b.md']);
+    assert.deepStrictEqual(
+      task!.key_files,
+      ['src/resources/extensions/gsd/gsd-db.ts', 'src/resources/extensions/gsd/state.ts'],
+    );
+    assert.deepStrictEqual(task!.key_decisions, ['decision-1']);
+
+    const sliceTasks = getSliceTasks('M001', 'S01');
+    assert.equal(sliceTasks.length, 1, 'getSliceTasks should also survive corrupt rows');
+    assert.deepStrictEqual(sliceTasks[0]!.files, task!.files);
+
+    closeDatabase();
+  });
+
+  // ─── checkpointDatabase ────────────────────────────────────────────────────
+
+  describe('checkpointDatabase', () => {
+    test('checkpointDatabase: flushes WAL into base file (TRUNCATE)', (t) => {
+      const dbPath = tempDbPath();
+      t.after(() => cleanup(dbPath));
+
+      openDatabase(dbPath);
+
+      // Write enough data to ensure WAL has content
+      transaction(() => {
+        insertDecision({
+          id: 'D001',
+          when_context: 'test',
+          scope: 'global',
+          decision: 'WAL flush test',
+          choice: 'checkpoint',
+          rationale: 'WAL checkpoint regression test — #4418',
+          revisable: 'yes',
+          made_by: 'agent',
+          superseded_by: null,
+        });
+      });
+
+      const walPath = dbPath + '-wal';
+      assert.ok(fs.existsSync(walPath), 'WAL file should exist after write');
+      const walSizeBefore = fs.statSync(walPath).size;
+      assert.ok(walSizeBefore > 0, 'WAL file should be non-empty after write');
+
+      checkpointDatabase();
+
+      const walSizeAfter = fs.existsSync(walPath) ? fs.statSync(walPath).size : 0;
+      assert.equal(walSizeAfter, 0, 'WAL file should be truncated to 0 after checkpoint');
+    });
+
+    test('checkpointDatabase: is a no-op when no database is open', () => {
+      closeDatabase();
+      // Must not throw
+      assert.doesNotThrow(() => checkpointDatabase());
+    });
+  });
+
+  // ─── getDbStatus ───────────────────────────────────────────────────────────
+
+  describe('getDbStatus', () => {
+    test('getDbStatus: initial state before any open', () => {
+      closeDatabase();
+      const status = getDbStatus();
+      assert.strictEqual(status.available, false, 'available false before open');
+      assert.strictEqual(status.attempted, false, 'attempted false before open');
+      assert.strictEqual(status.lastError, null, 'lastError null before open');
+      assert.strictEqual(status.lastPhase, null, 'lastPhase null before open');
+    });
+
+    test('getDbStatus: available after successful open', () => {
+      openDatabase(':memory:');
+      const status = getDbStatus();
+      assert.strictEqual(status.available, true, 'available true after open');
+      assert.strictEqual(status.attempted, true, 'attempted true after open');
+      assert.ok(status.provider !== null, 'provider set after open');
+      assert.strictEqual(status.lastError, null, 'lastError null on success');
+      assert.strictEqual(status.lastPhase, null, 'lastPhase null on success');
+      closeDatabase();
+    });
+
+    test('getDbStatus: resets lastError/lastPhase after closeDatabase', () => {
+      // Simulate a failed open to set error state
+      const corruptPath = path.join(os.tmpdir(), `gsd-corrupt-${Date.now()}.db`);
+      fs.writeFileSync(corruptPath, Buffer.from('not a sqlite file at all!!!!!'));
+      try {
+        openDatabase(corruptPath);
+      } catch {
+        // expected
+      }
+      assert.ok(getDbStatus().lastError !== null, 'lastError set after failed open');
+
+      // closeDatabase should clear it even though no DB was opened
+      closeDatabase();
+      const status = getDbStatus();
+      assert.strictEqual(status.lastError, null, 'lastError cleared by closeDatabase');
+      assert.strictEqual(status.lastPhase, null, 'lastPhase cleared by closeDatabase');
+      assert.strictEqual(status.attempted, false, 'attempted reset by closeDatabase');
+      fs.unlinkSync(corruptPath);
+    });
+
+    test('getDbStatus: captures open-phase error on corrupt file', () => {
+      closeDatabase();
+      const corruptPath = path.join(os.tmpdir(), `gsd-corrupt-${Date.now()}.db`);
+      fs.writeFileSync(corruptPath, Buffer.from('not a sqlite file at all!!!!!'));
+      try {
+        openDatabase(corruptPath);
+      } catch {
+        // expected — both providers should reject a non-SQLite file
+      }
+      const status = getDbStatus();
+      if (!status.available) {
+        // open failed (expected in most environments)
+        assert.strictEqual(status.attempted, true, 'attempted true after failed open');
+        // provider may reject at raw-open level ("open") or at SQL init level ("initSchema")
+        assert.ok(
+          status.lastPhase === 'open' || status.lastPhase === 'initSchema',
+          `lastPhase should be "open" or "initSchema", got: ${status.lastPhase}`,
+        );
+        assert.ok(status.lastError instanceof Error, 'lastError is an Error');
+      }
+      // If somehow it succeeded (unlikely with garbage content), that's also fine
+      closeDatabase();
+      try { fs.unlinkSync(corruptPath); } catch { /* best effort */ }
+    });
+
+    test('getDbStatus: error state resets on next successful open', () => {
+      closeDatabase();
+      const corruptPath = path.join(os.tmpdir(), `gsd-corrupt-${Date.now()}.db`);
+      fs.writeFileSync(corruptPath, Buffer.from('not a sqlite file at all!!!!!'));
+      try { openDatabase(corruptPath); } catch { /* expected */ }
+      assert.ok(!getDbStatus().available, 'DB unavailable after corrupt open');
+
+      // Now open a valid in-memory DB — error state should clear
+      openDatabase(':memory:');
+      const status = getDbStatus();
+      assert.strictEqual(status.available, true, 'available after valid open');
+      assert.strictEqual(status.lastError, null, 'lastError cleared on successful open');
+      assert.strictEqual(status.lastPhase, null, 'lastPhase cleared on successful open');
+      closeDatabase();
+      try { fs.unlinkSync(corruptPath); } catch { /* best effort */ }
+    });
   });
 
   // ─── Final Report ──────────────────────────────────────────────────────────

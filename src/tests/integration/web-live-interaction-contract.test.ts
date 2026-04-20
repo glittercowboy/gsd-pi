@@ -358,6 +358,7 @@ function routeEvent(state: MinimalLiveState, event: any): MinimalLiveState {
     }
     case "tool_execution_start": {
       s.activeToolExecution = { id: event.toolCallId, name: event.toolName };
+      s.streamingAssistantText = "";
       break;
     }
     case "tool_execution_end": {
@@ -802,6 +803,7 @@ test("(g-2) tool_execution_start/end update activeToolExecution", async () => {
   assert.ok(state.activeToolExecution);
   assert.equal(state.activeToolExecution.id, "tc-1");
   assert.equal(state.activeToolExecution.name, "bash");
+  assert.equal(state.streamingAssistantText, "");
 
   state = routeEvent(state, {
     type: "tool_execution_end",
@@ -811,6 +813,46 @@ test("(g-2) tool_execution_start/end update activeToolExecution", async () => {
     isError: false,
   });
   assert.equal(state.activeToolExecution, null);
+});
+
+test("(g-3) tool_execution_start clears provisional streaming text so only post-tool final text survives", async () => {
+  let state = createMinimalLiveState();
+
+  state = routeEvent(state, {
+    type: "message_update",
+    assistantMessageEvent: {
+      type: "text_delta",
+      delta: "It seems the questions were presented to the user. Let me wait for them to answer.",
+    },
+  });
+  assert.equal(state.streamingAssistantText, "It seems the questions were presented to the user. Let me wait for them to answer.");
+
+  state = routeEvent(state, {
+    type: "tool_execution_start",
+    toolCallId: "tc-ask-1",
+    toolName: "ask_user_questions",
+  });
+  assert.equal(state.streamingAssistantText, "");
+
+  state = routeEvent(state, {
+    type: "tool_execution_end",
+    toolCallId: "tc-ask-1",
+    toolName: "ask_user_questions",
+    result: {},
+    isError: false,
+  });
+  state = routeEvent(state, {
+    type: "message_update",
+    assistantMessageEvent: {
+      type: "text_delta",
+      delta: "What are you working on? Once you answer I'll tailor my approach accordingly.",
+    },
+  });
+  state = routeEvent(state, { type: "turn_end" });
+
+  assert.deepEqual(state.liveTranscript, [
+    "What are you working on? Once you answer I'll tailor my approach accordingly.",
+  ]);
 });
 
 test("(h) steer and abort commands post the correct RPC command type", async (t) => {

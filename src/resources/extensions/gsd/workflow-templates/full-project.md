@@ -3,6 +3,7 @@
 <template_meta>
 name: full-project
 version: 1
+mode: auto-milestone
 requires_project: true
 artifact_dir: .gsd/
 </template_meta>

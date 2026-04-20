@@ -3,7 +3,8 @@
  *
  * Full-screen overlay showing auto-mode progress: milestone/slice/task
  * breakdown, current unit, completed units, timing, and activity log.
- * Toggled with Ctrl+Alt+G (⌃⌥G on macOS) or opened from /gsd status.
+ * Toggled with Ctrl+Alt+G (⌃⌥G on macOS), Ctrl+Shift+G fallback,
+ * or opened from /gsd status.
  */
 
 import type { Theme } from "@gsd/pi-coding-agent";
@@ -26,6 +27,7 @@ import { formatDuration, padRight, joinColumns, centerLine, fitColumns, STATUS_G
 import { estimateTimeRemaining } from "./auto-dashboard.js";
 import { computeProgressScore, formatProgressLine } from "./progress-score.js";
 import { runEnvironmentChecks, type EnvironmentCheckResult } from "./doctor-environment.js";
+import { formattedShortcutPair } from "./shortcut-defs.js";
 
 function unitLabel(type: string): string {
   switch (type) {
@@ -203,7 +205,12 @@ export class GSDDashboardOverlay {
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c")) || matchesKey(data, Key.ctrlAlt("g"))) {
+    if (
+      matchesKey(data, Key.escape) ||
+      matchesKey(data, Key.ctrl("c")) ||
+      matchesKey(data, Key.ctrlAlt("g")) ||
+      matchesKey(data, Key.ctrlShift("g"))
+    ) {
       this.dispose();
       this.onClose();
       return;
@@ -587,7 +594,7 @@ export class GSDDashboardOverlay {
 
     lines.push(blank());
     lines.push(hr());
-    lines.push(centered(th.fg("dim", "↑↓ scroll · g/G top/end · esc close")));
+    lines.push(centered(th.fg("dim", `↑↓ scroll · g/G top/end · Esc/${formattedShortcutPair("dashboard")} close`)));
 
     return lines;
   }

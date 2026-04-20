@@ -356,10 +356,10 @@ test("full lifecycle: migration through completion through doctor", async (t) =>
       assert.match(sliceSummary, /Core feature proven/, "Slice summary should contain one-liner");
     }
 
-    // Verify roadmap checkbox toggled
+    // Verify roadmap checkbox toggled — authoritative renderer emits a checkbox list.
     const roadmapPath = join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md");
     const roadmapAfter = readFileSync(roadmapPath, "utf-8");
-    assert.ok(roadmapAfter.includes("\u2705"), "S01 should be checked in roadmap (✅ emoji in table format)");
+    assert.match(roadmapAfter, /- \[x\] \*\*S01:/, "S01 should be checked ([x]) in roadmap");
 
     // Verify slice status in DB
     const sliceRow = getSlice("M001", "S01");

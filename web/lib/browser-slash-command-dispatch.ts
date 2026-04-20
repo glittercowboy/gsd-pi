@@ -126,6 +126,7 @@ const GSD_SURFACE_SUBCOMMANDS = new Map<string, BrowserSlashCommandSurface>([
   ["history", "gsd-history"],
   ["undo", "gsd-undo"],
   ["inspect", "gsd-inspect"],
+  ["model", "model"],
   ["prefs", "gsd-prefs"],
   ["config", "gsd-config"],
   ["hooks", "gsd-hooks"],
@@ -153,7 +154,7 @@ export const GSD_HELP_TEXT = `Available /gsd subcommands:
 Workflow:    next · auto · stop · pause · skip · queue · quick · capture · triage
 Diagnostics: status · visualize · forensics · doctor · skill-health · inspect
 Context:     knowledge · history · undo · discuss
-Settings:    prefs · config · hooks · mode · steer
+Settings:    model · prefs · config · hooks · mode · steer
 Advanced:    export · cleanup · run-hook · migrate · remote
 
 Type /gsd <subcommand> to run. Use /gsd help for this message.`

@@ -1,8 +1,8 @@
-import { DefaultResourceLoader } from '@gsd/pi-coding-agent'
+import { DefaultResourceLoader, sortExtensionPaths } from '@gsd/pi-coding-agent'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { compareSemver } from './update-check.js'
 import { discoverExtensionEntryPaths } from './extension-discovery.js'
@@ -87,9 +87,13 @@ function writeManagedResourceManifest(agentDir: string): void {
       installedExtensionDirs = entries
         .filter(e => e.isDirectory())
         .filter(e => {
-          // Only track directories that are actual extensions (contain index.js or index.ts)
+          // Track directories that are actual extensions — identified by an
+          // index.js/index.ts entry point OR an extension-manifest.json (e.g.
+          // remote-questions which uses mod.ts instead of index.ts).
           const dirPath = join(bundledExtensionsDir, e.name)
-          return existsSync(join(dirPath, 'index.js')) || existsSync(join(dirPath, 'index.ts'))
+          return existsSync(join(dirPath, 'index.js'))
+            || existsSync(join(dirPath, 'index.ts'))
+            || existsSync(join(dirPath, 'extension-manifest.json'))
         })
         .map(e => e.name)
     }
@@ -283,33 +287,147 @@ function copyDirRecursive(src: string, dest: string): void {
  * ~/.gsd/agent/extensions/ have no ancestor node_modules, so imports of
  * @gsd/* packages fail. The symlink makes Node's standard resolution find
  * them without requiring every call site to use jiti.
+ *
+ * Layout differences by install method:
+ * - Source/monorepo: packageRoot/node_modules has everything → simple symlink
+ * - npm/bun global: deps hoisted to dirname(packageRoot), including @gsd/* → simple symlink
+ * - pnpm global: external deps hoisted, but @gsd/* stays in packageRoot/node_modules
+ *   → merged directory with symlinks from both roots (#3529, #3564)
  */
 function ensureNodeModulesSymlink(agentDir: string): void {
   const agentNodeModules = join(agentDir, 'node_modules')
-  const gsdNodeModules = join(packageRoot, 'node_modules')
+  const internalNodeModules = join(packageRoot, 'node_modules')
+  const hoistedNodeModules = dirname(packageRoot)
+  const isGlobalInstall = basename(hoistedNodeModules) === 'node_modules'
 
+  if (!isGlobalInstall) {
+    // Source/monorepo: internal node_modules has everything
+    reconcileSymlink(agentNodeModules, internalNodeModules)
+    return
+  }
+
+  // Global install: check if workspace scopes (@gsd/*) are hoisted.
+  // npm/bun hoist everything; pnpm keeps workspace packages internal.
+  if (!hasMissingWorkspaceScopes(hoistedNodeModules, internalNodeModules)) {
+    // Everything is hoisted — simple symlink to parent node_modules
+    reconcileSymlink(agentNodeModules, hoistedNodeModules)
+    return
+  }
+
+  // pnpm-style layout: create a real directory merging both roots
+  reconcileMergedNodeModules(agentNodeModules, hoistedNodeModules, internalNodeModules)
+}
+
+/** Check if any @gsd* scopes exist in internal but not in hoisted node_modules */
+function hasMissingWorkspaceScopes(hoisted: string, internal: string): boolean {
+  if (!existsSync(internal)) return false
   try {
-    const stat = lstatSync(agentNodeModules)
+    for (const entry of readdirSync(internal, { withFileTypes: true })) {
+      if (entry.isDirectory() && entry.name.startsWith('@gsd') &&
+          !existsSync(join(hoisted, entry.name))) {
+        return true
+      }
+    }
+  } catch { /* non-fatal */ }
+  return false
+}
 
+/** Ensure a symlink at `link` points to `target`, fixing stale/wrong entries */
+function reconcileSymlink(link: string, target: string): void {
+  try {
+    const stat = lstatSync(link)
     if (stat.isSymbolicLink()) {
-      const existing = readlinkSync(agentNodeModules)
-      // Symlink exists — verify it points to the correct, existing target
-      if (existing === gsdNodeModules && existsSync(agentNodeModules)) return  // correct and target exists
-      // Stale or wrong target — remove and recreate
-      unlinkSync(agentNodeModules)
+      const existing = readlinkSync(link)
+      if (existing === target && existsSync(link)) return  // correct and target exists
+      unlinkSync(link)
     } else {
-      // Real directory (not a symlink) is blocking — remove it
-      rmSync(agentNodeModules, { recursive: true, force: true })
+      // Real directory (or merged dir from previous pnpm fix) — remove it
+      rmSync(link, { recursive: true, force: true })
     }
   } catch {
-    // lstatSync throws if path doesn't exist — that's fine, we'll create below
+    // lstatSync throws if path doesn't exist — fine, we'll create below
   }
 
   try {
-    symlinkSync(gsdNodeModules, agentNodeModules, 'junction')
+    symlinkSync(target, link, 'junction')
   } catch (err) {
-    // This failure makes GSD non-functional — extensions can't resolve @gsd/* packages
-    console.error(`[gsd] WARN: Failed to symlink ${agentNodeModules} → ${gsdNodeModules}: ${err instanceof Error ? err.message : err}`)
+    console.error(`[gsd] WARN: Failed to symlink ${link} → ${target}: ${err instanceof Error ? err.message : err}`)
+  }
+}
+
+/**
+ * Create a real node_modules directory containing symlinks from both the
+ * hoisted root (external deps) and internal root (@gsd/* workspace packages).
+ * Used for pnpm global installs where @gsd/* isn't hoisted.
+ */
+function reconcileMergedNodeModules(
+  agentNodeModules: string,
+  hoisted: string,
+  internal: string,
+): void {
+  // Fast path: if already merged for this packageRoot + same directory contents, skip.
+  // The fingerprint includes entry names from both roots so `pnpm add/remove` triggers rebuild.
+  const marker = join(agentNodeModules, '.gsd-merged')
+  const fingerprint = mergedFingerprint(hoisted, internal)
+  try {
+    if (existsSync(marker) && readFileSync(marker, 'utf-8').trim() === fingerprint) return
+  } catch { /* rebuild */ }
+
+  // Remove any existing symlink or stale merged directory
+  try {
+    const stat = lstatSync(agentNodeModules)
+    if (stat.isSymbolicLink()) {
+      unlinkSync(agentNodeModules)
+    } else {
+      rmSync(agentNodeModules, { recursive: true, force: true })
+    }
+  } catch { /* doesn't exist */ }
+
+  mkdirSync(agentNodeModules, { recursive: true })
+
+  let linkedCount = 0
+
+  // Symlink entries from the hoisted node_modules (external deps)
+  try {
+    for (const entry of readdirSync(hoisted, { withFileTypes: true })) {
+      // Skip the gsd-pi package itself and dotfiles
+      if (entry.name === basename(packageRoot)) continue
+      if (entry.name.startsWith('.')) continue
+      try { symlinkSync(join(hoisted, entry.name), join(agentNodeModules, entry.name), 'junction'); linkedCount++ } catch { /* skip individual */ }
+    }
+  } catch (err) {
+    console.error(`[gsd] WARN: Failed to read hoisted node_modules at ${hoisted}: ${err instanceof Error ? err.message : err}`)
+  }
+
+  // Overlay internal node_modules entries that weren't hoisted.
+  // This covers @gsd/* workspace packages AND optional deps like
+  // @anthropic-ai/claude-agent-sdk that npm keeps internal.
+  try {
+    for (const entry of readdirSync(internal, { withFileTypes: true })) {
+      if (entry.name.startsWith('.')) continue
+      const link = join(agentNodeModules, entry.name)
+      // Replace hoisted symlink with internal version (internal takes precedence)
+      try { lstatSync(link); unlinkSync(link) } catch { /* didn't exist — will create below */ }
+      try { symlinkSync(join(internal, entry.name), link, 'junction'); linkedCount++ } catch { /* skip individual */ }
+    }
+  } catch (err) {
+    console.error(`[gsd] WARN: Failed to read internal node_modules at ${internal}: ${err instanceof Error ? err.message : err}`)
+  }
+
+  // Only stamp marker if we actually linked something — avoids caching a broken state
+  if (linkedCount > 0) {
+    try { writeFileSync(marker, fingerprint) } catch { /* non-fatal */ }
+  }
+}
+
+/** Build a cache fingerprint from packageRoot + sorted entry names of both directories */
+function mergedFingerprint(hoisted: string, internal: string): string {
+  try {
+    const h = readdirSync(hoisted).sort().join(',')
+    const i = readdirSync(internal).sort().join(',')
+    return `${packageRoot}\n${h}\n${i}`
+  } catch {
+    return packageRoot  // fallback: at least invalidate on version change
   }
 }
 
@@ -369,6 +487,16 @@ function pruneRemovedBundledExtensions(
     }
   }
 
+  // Sweep-based: also remove any installed extension subdirectory not in the current bundle,
+  // even if it was never tracked in the manifest (e.g. installed by a pre-manifest version).
+  try {
+    if (existsSync(extensionsDir)) {
+      for (const e of readdirSync(extensionsDir, { withFileTypes: true })) {
+        if (e.isDirectory()) removeDirIfStale(e.name)
+      }
+    }
+  } catch { /* non-fatal */ }
+
   // Always remove known stale files regardless of manifest state.
   // These were installed by pre-manifest versions so they may not appear in
   // installedExtensionRootFiles even when a manifest exists.
@@ -394,17 +522,19 @@ function pruneRemovedBundledExtensions(
  *
  * Inspectable: `ls ~/.gsd/agent/extensions/`
  */
-export function initResources(agentDir: string): void {
+export function initResources(agentDir: string, skillsDir: string = join(homedir(), '.agents', 'skills')): void {
   mkdirSync(agentDir, { recursive: true })
 
   const currentVersion = getBundledGsdVersion()
   const manifest = readManagedResourceManifest(agentDir)
+  const extensionsDir = join(agentDir, 'extensions')
 
   // Always prune root-level extension files that were removed from the bundle.
   // This is cheap (a few existence checks + at most one rmSync) and must run
   // unconditionally so that stale files left by a previous version are cleaned
   // up even when the version/hash match causes the full sync to be skipped.
   pruneRemovedBundledExtensions(manifest, agentDir)
+  pruneStaleSiblingFiles(bundledExtensionsDir, extensionsDir)
 
   // Ensure ~/.gsd/agent/node_modules symlinks to GSD's node_modules on EVERY
   // launch, not just during resource syncs. A stale/broken symlink makes ALL
@@ -421,7 +551,7 @@ export function initResources(agentDir: string): void {
   if (manifest && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
     const currentHash = computeResourceFingerprint()
-    const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(join(agentDir, 'extensions'))
+    const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(extensionsDir, bundledExtensionsDir)
     if (manifest.contentHash && manifest.contentHash === currentHash && !hasStaleExtensionFiles) {
       return
     }
@@ -431,13 +561,7 @@ export function initResources(agentDir: string): void {
 
   syncResourceDir(bundledExtensionsDir, join(agentDir, 'extensions'))
   syncResourceDir(join(resourcesDir, 'agents'), join(agentDir, 'agents'))
-  // Skills are no longer force-synced here. Users install skills via the
-  // skills.sh CLI (`npx skills add <repo>`) into ~/.agents/skills/ which
-  // is the industry-standard Agent Skills ecosystem directory.
-  //
-  // Migration from the legacy ~/.gsd/agent/skills/ directory is handled
-  // above the manifest check so it runs on every launch (including retries
-  // after partial copy failures).
+  syncResourceDir(join(resourcesDir, 'skills'), skillsDir)
 
   // Sync GSD-WORKFLOW.md to agentDir as a fallback for when GSD_WORKFLOW_PATH
   // env var is not set (e.g. fork/dev builds, alternative entry points).
@@ -557,12 +681,26 @@ function migrateSkillsToEcosystemDir(agentDir: string): void {
   }
 }
 
-export function hasStaleCompiledExtensionSiblings(extensionsDir: string): boolean {
+export function hasStaleCompiledExtensionSiblings(extensionsDir: string, sourceDir: string = bundledExtensionsDir): boolean {
   if (!existsSync(extensionsDir)) return false
+  const sourceFiles = existsSync(sourceDir)
+    ? new Set(
+        readdirSync(sourceDir, { withFileTypes: true })
+          .filter((entry) => entry.isFile())
+          .map((entry) => entry.name),
+      )
+    : new Set<string>()
   for (const entry of readdirSync(extensionsDir, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith('.ts')) continue
-    const jsName = entry.name.replace(/\.ts$/, '.js')
-    if (existsSync(join(extensionsDir, jsName))) {
+    if (!entry.isFile()) continue
+    if (!entry.name.endsWith('.ts') && !entry.name.endsWith('.js')) continue
+
+    const siblingName = entry.name.endsWith('.ts')
+      ? entry.name.replace(/\.ts$/, '.js')
+      : entry.name.replace(/\.js$/, '.ts')
+
+    if (!existsSync(join(extensionsDir, siblingName))) continue
+    if (sourceFiles.has(entry.name) && sourceFiles.has(siblingName)) continue
+    if (sourceFiles.has(entry.name) || sourceFiles.has(siblingName)) {
       return true
     }
   }
@@ -602,6 +740,22 @@ export function buildResourceLoader(agentDir: string): DefaultResourceLoader {
   return new DefaultResourceLoader({
     agentDir,
     additionalExtensionPaths: piExtensionPaths,
-    bundledExtensionNames: bundledKeys,
+    bundledExtensionKeys: bundledKeys,
+    extensionPathsTransform: (paths: string[]) => {
+      // 1. Filter community extensions through the GSD registry
+      const filteredPaths = paths.filter((entryPath) => {
+        const manifest = readManifestFromEntryPath(entryPath)
+        if (!manifest) return true // no manifest = always load
+        return isExtensionEnabled(registry, manifest.id)
+      })
+
+      // 2. Sort in topological dependency order
+      const { sortedPaths, warnings } = sortExtensionPaths(filteredPaths)
+
+      return {
+        paths: sortedPaths,
+        diagnostics: warnings.map((w) => w.message),
+      }
+    },
   } as ConstructorParameters<typeof DefaultResourceLoader>[0])
 }

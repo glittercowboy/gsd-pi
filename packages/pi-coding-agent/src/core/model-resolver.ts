@@ -3,42 +3,12 @@
  */
 
 import type { ThinkingLevel } from "@gsd/pi-agent-core";
-import { type Api, type KnownProvider, type Model, modelsAreEqual } from "@gsd/pi-ai";
+import { type Api, type Model, modelsAreEqual } from "@gsd/pi-ai";
 import chalk from "chalk";
 import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import type { ModelRegistry } from "./model-registry.js";
-
-/** Default model IDs for each known provider */
-const defaultModelPerProvider: Record<KnownProvider, string> = {
-	"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
-	anthropic: "claude-opus-4-6[1m]",
-	"anthropic-vertex": "claude-sonnet-4-6",
-	openai: "gpt-5.4",
-	"azure-openai-responses": "gpt-5.2",
-	"openai-codex": "gpt-5.4",
-	google: "gemini-2.5-pro",
-	"google-gemini-cli": "gemini-2.5-pro",
-	"google-antigravity": "gemini-3.1-pro-high",
-	"google-vertex": "gemini-3-pro-preview",
-	"github-copilot": "gpt-4o",
-	openrouter: "openai/gpt-5.1-codex",
-	"vercel-ai-gateway": "anthropic/claude-opus-4-6[1m]",
-	xai: "grok-4-fast-non-reasoning",
-	groq: "openai/gpt-oss-120b",
-	cerebras: "zai-glm-4.6",
-	zai: "glm-4.6",
-	mistral: "devstral-medium-latest",
-	minimax: "MiniMax-M2.1",
-	"minimax-cn": "MiniMax-M2.1",
-	huggingface: "moonshotai/Kimi-K2.5",
-	opencode: "claude-opus-4-6",
-	"opencode-go": "kimi-k2.5",
-	"kimi-coding": "kimi-k2-thinking",
-	"alibaba-coding-plan": "qwen3.5-plus",
-	"ollama-cloud": "qwen3:32b",
-};
 
 export interface ScopedModel {
 	model: Model<Api>;
@@ -121,10 +91,11 @@ function buildFallbackModel(provider: string, modelId: string, availableModels: 
 	const providerModels = availableModels.filter((m) => m.provider === provider);
 	if (providerModels.length === 0) return undefined;
 
-	const defaultId = defaultModelPerProvider[provider as KnownProvider];
-	const baseModel = defaultId
-		? (providerModels.find((m) => m.id === defaultId) ?? providerModels[0])
-		: providerModels[0];
+	// Use the first available model from this provider as a template for
+	// capabilities (context window, reasoning support, etc.). The user is
+	// explicitly providing a custom model id, so we just need any shape of
+	// model from the same provider to inherit from.
+	const baseModel = providerModels[0];
 
 	return {
 		...baseModel,
@@ -501,24 +472,14 @@ export async function findInitialModel(options: {
 		};
 	}
 
-	// 3. Try saved default from settings
-	if (defaultProvider && defaultModelId) {
+	// 3. Try saved default from settings — use it exactly as configured.
+	// Whatever the user chose is what gets used; no silent substitution.
+	// Skip the saved default if its provider is not request-ready (no auth
+	// available) so we fall through to an actually-usable model instead of
+	// returning a stale selection every selector surface would display.
+	if (defaultProvider && defaultModelId && modelRegistry.isProviderRequestReady(defaultProvider)) {
 		const found = modelRegistry.find(defaultProvider, defaultModelId);
 		if (found) {
-			// Check if the provider's recommended default is a higher-capability variant
-			// of the saved model (e.g. saved "claude-opus-4-6" vs recommended "claude-opus-4-6[1m]").
-			// If so, prefer the recommended variant to avoid using a smaller context window (#1125).
-			const recommendedId = defaultModelPerProvider[defaultProvider as KnownProvider];
-			if (recommendedId && recommendedId !== defaultModelId && recommendedId.startsWith(defaultModelId)) {
-				const recommended = modelRegistry.find(defaultProvider, recommendedId);
-				if (recommended) {
-					model = recommended;
-					if (defaultThinkingLevel) {
-						thinkingLevel = defaultThinkingLevel;
-					}
-					return { model, thinkingLevel, fallbackMessage: undefined };
-				}
-			}
 			model = found;
 			if (defaultThinkingLevel) {
 				thinkingLevel = defaultThinkingLevel;
@@ -531,16 +492,17 @@ export async function findInitialModel(options: {
 	const availableModels = await modelRegistry.getAvailable();
 
 	if (availableModels.length > 0) {
-		// Try to find a default model from known providers
-		for (const provider of Object.keys(defaultModelPerProvider) as KnownProvider[]) {
-			const defaultId = defaultModelPerProvider[provider];
-			const match = availableModels.find((m) => m.provider === provider && m.id === defaultId);
-			if (match) {
-				return { model: match, thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
+		// Prefer a model from the user's saved provider if any is still available —
+		// provider stickiness, not a hard-coded Anthropic/OpenAI preference.
+		if (defaultProvider) {
+			const sameProvider = availableModels.find((m) => m.provider === defaultProvider);
+			if (sameProvider) {
+				return { model: sameProvider, thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
 			}
 		}
 
-		// If no default found, use first available
+		// Otherwise use the first available — registry order reflects models.json
+		// order, which the user controls.
 		return { model: availableModels[0], thinkingLevel: DEFAULT_THINKING_LEVEL, fallbackMessage: undefined };
 	}
 

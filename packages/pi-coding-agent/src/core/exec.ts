@@ -39,7 +39,9 @@ export async function execCommand(
 	return new Promise((resolve) => {
 		const proc = spawn(command, args, {
 			cwd,
-			shell: false,
+			// On Windows, npm/npx/tsc etc. are .cmd scripts that require shell
+			// resolution.  Without this, spawn fails with ENOENT or EINVAL (#2854).
+			shell: process.platform === "win32",
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 

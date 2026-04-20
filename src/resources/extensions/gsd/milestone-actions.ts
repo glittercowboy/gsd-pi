@@ -20,7 +20,9 @@ import {
 } from "./paths.js";
 import { invalidateAllCaches } from "./cache.js";
 import { loadQueueOrder, saveQueueOrder } from "./queue-order.js";
-import { isDbAvailable, updateMilestoneStatus } from "./gsd-db.js";
+import { deleteMilestone, getMilestone, isDbAvailable, updateMilestoneStatus } from "./gsd-db.js";
+import { removeWorktree } from "./worktree-manager.js";
+import { logWarning } from "./workflow-logger.js";
 
 // ─── Park ──────────────────────────────────────────────────────────────────
 
@@ -58,7 +60,7 @@ export function parkMilestone(basePath: string, milestoneId: string, reason: str
     try {
       updateMilestoneStatus(milestoneId, "parked");
     } catch (err) {
-      process.stderr.write(`gsd: parkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}\n`);
+      logWarning("engine", `parkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}`);
     }
   }
   invalidateAllCaches();
@@ -76,15 +78,22 @@ export function unparkMilestone(basePath: string, milestoneId: string): boolean 
   if (!mDir || !existsSync(mDir)) return false;
 
   const parkedPath = join(mDir, buildMilestoneFileName(milestoneId, "PARKED"));
-  if (!existsSync(parkedPath)) return false; // not parked
+  const hadParkedFile = existsSync(parkedPath);
+  const dbThinksParked = isDbAvailable() && getMilestone(milestoneId)?.status === "parked";
 
-  unlinkSync(parkedPath);
+  // Recover the reverse desync too: DB can still say "parked" even when the
+  // PARKED marker was lost on disk, and /gsd unpark should repair that state.
+  if (!hadParkedFile && !dbThinksParked) return false;
+
+  if (hadParkedFile) {
+    unlinkSync(parkedPath);
+  }
   // Sync DB status so deriveStateFromDb picks up the unparked milestone (#2694)
   if (isDbAvailable()) {
     try {
       updateMilestoneStatus(milestoneId, "active");
     } catch (err) {
-      process.stderr.write(`gsd: unparkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}\n`);
+      logWarning("engine", `unparkMilestone DB sync failed for ${milestoneId}: ${(err as Error).message}`);
     }
   }
   invalidateAllCaches();
@@ -102,12 +111,29 @@ export function discardMilestone(basePath: string, milestoneId: string): boolean
   const mDir = resolveMilestonePath(basePath, milestoneId);
   if (!mDir || !existsSync(mDir)) return false;
 
+  try {
+    removeWorktree(basePath, milestoneId, {
+      branch: `milestone/${milestoneId}`,
+      deleteBranch: true,
+    });
+  } catch (err) {
+    logWarning("engine", `discardMilestone worktree cleanup failed for ${milestoneId}: ${(err as Error).message}`);
+  }
+
   rmSync(mDir, { recursive: true, force: true });
 
   // Prune from queue order if present
   const order = loadQueueOrder(basePath);
   if (order && order.includes(milestoneId)) {
     saveQueueOrder(basePath, order.filter(id => id !== milestoneId));
+  }
+
+  if (isDbAvailable()) {
+    try {
+      deleteMilestone(milestoneId);
+    } catch (err) {
+      logWarning("engine", `discardMilestone DB cleanup failed for ${milestoneId}: ${(err as Error).message}`);
+    }
   }
 
   invalidateAllCaches();

@@ -25,6 +25,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { buildHttpTransportOpts } from "./auth.js";
+import type { McpHttpAuthConfig } from "./auth.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +38,10 @@ interface McpServerConfig {
 	env?: Record<string, string>;
 	url?: string;
 	cwd?: string;
+	/** Static headers for HTTP transport (supports ${VAR} env resolution). */
+	headers?: Record<string, string>;
+	/** OAuth config for HTTP transport. */
+	oauth?: McpHttpAuthConfig["oauth"];
 }
 
 interface McpToolSchema {
@@ -87,6 +93,9 @@ function readConfigs(): McpServerConfig[] {
 						? "http"
 						: "unknown";
 
+				const hasHeaders = hasUrl && config.headers && typeof config.headers === "object";
+				const hasOAuth = hasUrl && config.oauth && typeof config.oauth === "object";
+
 				servers.push({
 					name,
 					transport,
@@ -99,6 +108,8 @@ function readConfigs(): McpServerConfig[] {
 						cwd: typeof config.cwd === "string" ? config.cwd : undefined,
 					}),
 					...(hasUrl && { url: config.url as string }),
+					headers: hasHeaders ? config.headers as Record<string, string> : undefined,
+					oauth: hasOAuth ? config.oauth as McpHttpAuthConfig["oauth"] : undefined,
 				});
 			}
 		} catch {
@@ -111,7 +122,11 @@ function readConfigs(): McpServerConfig[] {
 }
 
 function getServerConfig(name: string): McpServerConfig | undefined {
-	return readConfigs().find((s) => s.name === name);
+	const trimmed = name.trim();
+	return readConfigs().find((s) =>
+		s.name === trimmed ||
+		s.name.toLowerCase() === trimmed.toLowerCase(),
+	);
 }
 
 /** Resolve ${VAR} references in env values against process.env. */
@@ -131,11 +146,13 @@ function resolveEnv(env: Record<string, string>): Record<string, string> {
 }
 
 async function getOrConnect(name: string, signal?: AbortSignal): Promise<Client> {
-	const existing = connections.get(name);
-	if (existing) return existing.client;
-
 	const config = getServerConfig(name);
 	if (!config) throw new Error(`Unknown MCP server: "${name}". Use mcp_servers to list available servers.`);
+
+	// Always use config.name as the canonical cache key so that variant
+	// casing / whitespace still hits the same connection.
+	const existing = connections.get(config.name);
+	if (existing) return existing.client;
 
 	const client = new Client({ name: "gsd", version: "1.0.0" });
 	let transport: StdioClientTransport | StreamableHTTPClientTransport;
@@ -151,15 +168,19 @@ async function getOrConnect(name: string, signal?: AbortSignal): Promise<Client>
 	} else if (config.transport === "http" && config.url) {
 		const resolvedUrl = config.url.replace(
 			/\$\{([^}]+)\}/g,
-			(_, name) => process.env[name] ?? "",
+			(_, varName) => process.env[varName] ?? "",
 		);
-		transport = new StreamableHTTPClientTransport(new URL(resolvedUrl));
+		const httpOpts = buildHttpTransportOpts({
+			headers: config.headers,
+			oauth: config.oauth,
+		});
+		transport = new StreamableHTTPClientTransport(new URL(resolvedUrl), httpOpts);
 	} else {
-		throw new Error(`Server "${name}" has unsupported transport: ${config.transport}`);
+		throw new Error(`Server "${config.name}" has unsupported transport: ${config.transport}`);
 	}
 
 	await client.connect(transport, { signal, timeout: 30000 });
-	connections.set(name, { client, transport });
+	connections.set(config.name, { client, transport });
 	return client;
 }
 

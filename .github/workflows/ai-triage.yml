@@ -96,41 +96,47 @@ jobs:
             Be generous in your assessment — only flag clear violations. Ambiguous cases should be marked as aligned.
             Do NOT flag issues/PRs that are legitimately reporting bugs or requesting features, even if they could be better written.`;
 
-            const response = await fetch('https://api.anthropic.com/v1/messages', {
-              method: 'POST',
-              headers: {
-                'x-api-key': process.env.ANTHROPIC_API_KEY,
-                'content-type': 'application/json',
-                'anthropic-version': '2023-06-01'
-              },
-              body: JSON.stringify({
-                model: 'claude-haiku-4-5-20251001',
-                max_tokens: 1024,
-                messages: [{ role: 'user', content: prompt }]
-              })
-            });
-
-            if (!response.ok) {
-              const err = await response.text();
-              core.setFailed(`Anthropic API error: ${response.status} ${err}`);
-              return;
-            }
-
-            const data = await response.json();
-            const text = data.content[0].text;
-
-            // Extract JSON from response (handle markdown code blocks)
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) {
-              core.setFailed(`Could not parse Claude response: ${text}`);
+            if (!process.env.ANTHROPIC_API_KEY) {
+              core.warning('Skipping AI triage because ANTHROPIC_API_KEY is not configured.');
               return;
             }
 
             let result;
             try {
+              const response = await fetch('https://api.anthropic.com/v1/messages', {
+                method: 'POST',
+                headers: {
+                  'x-api-key': process.env.ANTHROPIC_API_KEY,
+                  'content-type': 'application/json',
+                  'anthropic-version': '2023-06-01'
+                },
+                body: JSON.stringify({
+                  model: 'claude-haiku-4-5-20251001',
+                  max_tokens: 1024,
+                  messages: [{ role: 'user', content: prompt }]
+                }),
+                signal: AbortSignal.timeout(20000)
+              });
+
+              if (!response.ok) {
+                const err = await response.text();
+                core.warning(`Skipping AI triage after Anthropic API error: ${response.status} ${err}`);
+                return;
+              }
+
+              const data = await response.json();
+              const text = data.content?.[0]?.text ?? '';
+
+              // Extract JSON from response (handle markdown code blocks)
+              const jsonMatch = text.match(/\{[\s\S]*\}/);
+              if (!jsonMatch) {
+                core.warning(`Skipping AI triage because the model response was not parseable JSON: ${text}`);
+                return;
+              }
+
               result = JSON.parse(jsonMatch[0]);
             } catch (e) {
-              core.setFailed(`JSON parse error: ${e.message}\nRaw text: ${text}`);
+              core.warning(`Skipping AI triage after unexpected failure: ${e.message}`);
               return;
             }
             core.info(`Triage result: ${JSON.stringify(result, null, 2)}`);

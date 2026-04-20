@@ -9,6 +9,7 @@ import {
   closeDatabase,
   insertMilestone,
   insertSlice,
+  insertAssessment,
   getSlice,
   getMilestoneSlices,
   getAssessment,
@@ -319,6 +320,122 @@ test('handleReassessRoadmap returns structured error payloads with actionable me
     }, base);
     assert.ok('error' in removeResult);
     assert.ok(removeResult.error.includes('S02'), 'error should name the specific slice ID S02');
+  } finally {
+    cleanup(base);
+  }
+});
+
+// ─── Bug #2957: Stale VALIDATION survives roadmap remediation ────────────
+
+test('handleReassessRoadmap invalidates stale milestone-validation when roadmap changes (#2957)', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    // Seed: M001 with S01-S04 all complete, plus a stale VALIDATION with needs-remediation
+    insertMilestone({ id: 'M001', title: 'Test Milestone', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Slice One', status: 'complete', demo: 'Demo' });
+    insertSlice({ id: 'S02', milestoneId: 'M001', title: 'Slice Two', status: 'complete', demo: 'Demo' });
+    insertSlice({ id: 'S03', milestoneId: 'M001', title: 'Slice Three', status: 'complete', demo: 'Demo' });
+    insertSlice({ id: 'S04', milestoneId: 'M001', title: 'Slice Four', status: 'complete', demo: 'Demo' });
+
+    // Insert milestone-validation assessment with needs-remediation verdict (stale)
+    const validationPath = join('.gsd', 'milestones', 'M001', 'M001-VALIDATION.md');
+    insertAssessment({
+      path: validationPath,
+      milestoneId: 'M001',
+      sliceId: null,
+      taskId: null,
+      status: 'needs-remediation',
+      scope: 'milestone-validation',
+      fullContent: '---\nverdict: needs-remediation\nremediation_round: 0\n---\n\n# Validation\nNeeds remediation.',
+    });
+
+    // Verify the validation row exists before reassess
+    const adapter = _getAdapter()!;
+    const before = adapter.prepare(
+      `SELECT * FROM assessments WHERE milestone_id = 'M001' AND scope = 'milestone-validation'`,
+    ).get() as Record<string, unknown> | undefined;
+    assert.ok(before, 'milestone-validation row should exist before reassess');
+
+    // Now reassess the roadmap: add remediation slice S05
+    // This simulates the scenario from #2957 where validation produced needs-remediation
+    // and then roadmap was reassessed to add a remediation slice
+    const result = await handleReassessRoadmap({
+      milestoneId: 'M001',
+      completedSliceId: 'S04',
+      verdict: 'on-track',
+      assessment: 'S04 completed. Adding remediation slice S05.',
+      sliceChanges: {
+        modified: [],
+        added: [
+          {
+            sliceId: 'S05',
+            title: 'Remediation Slice',
+            risk: 'low',
+            depends: ['S04'],
+            demo: 'Fix the issues found during validation.',
+          },
+        ],
+        removed: [],
+      },
+    }, base);
+
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+
+    // The stale milestone-validation row must be deleted after roadmap changes
+    const after = adapter.prepare(
+      `SELECT * FROM assessments WHERE milestone_id = 'M001' AND scope = 'milestone-validation'`,
+    ).get() as Record<string, unknown> | undefined;
+    assert.equal(after, undefined, 'milestone-validation row should be deleted after roadmap changes — stale validation must not survive remediation (#2957)');
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('handleReassessRoadmap does NOT invalidate validation when no roadmap structural changes (#2957)', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    // Seed: M001 with slices, plus a validation with pass verdict
+    insertMilestone({ id: 'M001', title: 'Test Milestone', status: 'active' });
+    insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Slice One', status: 'complete', demo: 'Demo' });
+    insertSlice({ id: 'S02', milestoneId: 'M001', title: 'Slice Two', status: 'pending', demo: 'Demo' });
+
+    // Insert milestone-validation assessment with pass verdict
+    const validationPath = join('.gsd', 'milestones', 'M001', 'M001-VALIDATION.md');
+    insertAssessment({
+      path: validationPath,
+      milestoneId: 'M001',
+      sliceId: null,
+      taskId: null,
+      status: 'pass',
+      scope: 'milestone-validation',
+      fullContent: '---\nverdict: pass\nremediation_round: 0\n---\n\n# Validation\nAll good.',
+    });
+
+    // Reassess with no structural changes (empty added/modified/removed)
+    const result = await handleReassessRoadmap({
+      milestoneId: 'M001',
+      completedSliceId: 'S01',
+      verdict: 'confirmed',
+      assessment: 'S01 completed. No changes needed.',
+      sliceChanges: {
+        modified: [],
+        added: [],
+        removed: [],
+      },
+    }, base);
+
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+
+    // Validation should still exist when no structural changes occurred
+    const adapter = _getAdapter()!;
+    const row = adapter.prepare(
+      `SELECT * FROM assessments WHERE milestone_id = 'M001' AND scope = 'milestone-validation'`,
+    ).get() as Record<string, unknown> | undefined;
+    assert.ok(row, 'milestone-validation row should survive when no structural changes occurred');
   } finally {
     cleanup(base);
   }

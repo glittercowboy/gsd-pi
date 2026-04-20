@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import googleSearchExtension from "../resources/extensions/google-search/index.ts";
+import googleSearchExtension from "../resources/extensions/google-search/index.js";
 
 function createMockPI() {
   const handlers: any[] = [];

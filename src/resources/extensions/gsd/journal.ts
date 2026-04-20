@@ -15,6 +15,8 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
+import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
+import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +39,8 @@ export type JournalEventType =
   | "worktree-create-failed"
   | "worktree-skip"
   | "worktree-merge-start"
-  | "worktree-merge-failed";
+  | "worktree-merge-failed"
+  | "artifact-verification-retry";
 
 /** A single structured event in the journal. */
 export interface JournalEntry {
@@ -89,6 +92,34 @@ export function emitJournalEvent(basePath: string, entry: JournalEntry): void {
     appendFileSync(filePath, JSON.stringify(entry) + "\n");
   } catch {
     // Silent failure — journal must never break auto-mode
+  }
+
+  if (!isUnifiedAuditEnabled()) return;
+  try {
+    const causedBy = entry.causedBy
+      ? `${entry.causedBy.flowId}:${entry.causedBy.seq}`
+      : undefined;
+    const turnId =
+      typeof entry.data?.turnId === "string"
+        ? entry.data.turnId
+        : undefined;
+    emitUokAuditEvent(
+      basePath,
+      buildAuditEnvelope({
+        traceId: entry.flowId,
+        turnId,
+        causedBy,
+        category: "orchestration",
+        type: `journal-${entry.eventType}`,
+        payload: {
+          seq: entry.seq,
+          rule: entry.rule,
+          data: entry.data ?? {},
+        },
+      }),
+    );
+  } catch {
+    // Best-effort: audit projection must never block journal writes.
   }
 }
 

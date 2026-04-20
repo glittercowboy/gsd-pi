@@ -145,6 +145,59 @@ test("dispatch guard falls back to positional ordering when no dependencies decl
   );
 });
 
+test("dispatch guard ignores positionally-earlier reverse dependents for zero-dependency slices (#3720)", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+
+  mkdirSync(join(repo, ".gsd", "milestones", "M015"), { recursive: true });
+
+  insertMilestone({ id: "M015", title: "Reverse dependency fallback" });
+  insertSlice({ id: "S03", milestoneId: "M015", title: "Complete prerequisite", status: "complete", depends: [], sequence: 0 });
+  insertSlice({ id: "S04", milestoneId: "M015", title: "Depends on S04A", status: "pending", depends: ["S03", "S04A"], sequence: 0 });
+  insertSlice({ id: "S04A", milestoneId: "M015", title: "No explicit deps", status: "pending", depends: [], sequence: 0 });
+
+  writeFileSync(join(repo, ".gsd", "milestones", "M015", "M015-ROADMAP.md"), "# M015\n");
+
+  // S04A has no declared dependencies and should not be blocked by S04, because
+  // S04 itself depends on S04A. With sequence=0, DB ordering falls back to id.
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M015/S04A/T02"),
+    null,
+  );
+
+  // The reverse direction is still blocked normally.
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M015/S04/T01"),
+    "Cannot dispatch execute-task M015/S04/T01: dependency slice M015/S04A is not complete.",
+  );
+});
+
+test("dispatch guard treats zero-dependency slices as independent when a milestone uses explicit deps (#3998)", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+
+  mkdirSync(join(repo, ".gsd", "milestones", "M022"), { recursive: true });
+
+  insertMilestone({ id: "M022", title: "Mixed dependency milestone" });
+  insertSlice({ id: "S02", milestoneId: "M022", title: "Core A", status: "complete", depends: [], sequence: 2 });
+  insertSlice({ id: "S03", milestoneId: "M022", title: "Core B", status: "complete", depends: [], sequence: 3 });
+  insertSlice({ id: "S05", milestoneId: "M022", title: "Blocked integration", status: "pending", depends: ["S02", "S03", "S07"], sequence: 5 });
+  insertSlice({ id: "S06", milestoneId: "M022", title: "Independent zero-dep slice", status: "pending", depends: [], sequence: 6 });
+  insertSlice({ id: "S07", milestoneId: "M022", title: "Late prerequisite", status: "pending", depends: ["S02"], sequence: 7 });
+
+  writeFileSync(join(repo, ".gsd", "milestones", "M022", "M022-ROADMAP.md"), "# M022\n");
+
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M022/S06/T02"),
+    null,
+  );
+
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "execute-task", "M022/S05/T01"),
+    "Cannot dispatch execute-task M022/S05/T01: dependency slice M022/S07 is not complete.",
+  );
+});
+
 test("dispatch guard allows slice with all declared dependencies complete", (t) => {
   const repo = setupRepo();
   t.after(() => teardownRepo(repo));

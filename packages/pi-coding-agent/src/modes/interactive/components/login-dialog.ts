@@ -7,6 +7,27 @@ import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
 
+function wrapPlainText(text: string, width: number): string[] {
+	const lines: string[] = [];
+	const safeWidth = Math.max(1, width);
+	for (let idx = 0; idx < text.length; idx += safeWidth) {
+		lines.push(text.slice(idx, idx + safeWidth));
+	}
+	return lines.length > 0 ? lines : [""];
+}
+
+export function buildAuthUrlPresentation(url: string, terminalColumns: number): {
+	displayUrl: string;
+	fullUrlLines: string[];
+} {
+	const maxUrlWidth = Math.max(20, terminalColumns - 4);
+	const displayUrl = truncateToWidth(url, maxUrlWidth);
+	return {
+		displayUrl,
+		fullUrlLines: displayUrl === url ? [] : wrapPlainText(url, maxUrlWidth),
+	};
+}
+
 /**
  * Login dialog component - replaces editor during OAuth login flow.
  *
@@ -124,13 +145,20 @@ export class LoginDialogComponent extends Container implements Focusable {
 
 		// Truncate the visible URL text so it never wraps (which would break
 		// the OSC 8 hyperlink). The full URL is still the link target.
-		const maxUrlWidth = Math.max(20, this.tui.terminal.columns - 4);
-		const displayUrl = truncateToWidth(url, maxUrlWidth);
+		const { displayUrl, fullUrlLines } = buildAuthUrlPresentation(url, this.tui.terminal.columns);
 		const urlLink = `\x1b]8;;${url}\x07${theme.fg("accent", displayUrl)}\x1b]8;;\x07`;
 		this.contentContainer.addChild(new Text(urlLink, 1, 0));
 
 		const clickHint = process.platform === "darwin" ? "Cmd+click to open" : "Ctrl+click to open";
 		this.contentContainer.addChild(new Text(theme.fg("dim", clickHint), 1, 0));
+
+		if (fullUrlLines.length > 0) {
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(new Text(theme.fg("dim", "Full URL:"), 1, 0));
+			for (const line of fullUrlLines) {
+				this.contentContainer.addChild(new Text(theme.fg("dim", line), 1, 0));
+			}
+		}
 
 		if (instructions) {
 			this.contentContainer.addChild(new Spacer(1));

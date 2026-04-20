@@ -397,10 +397,11 @@ test("/api/session/events exposes explicit live_state_invalidation events for ag
   harness.emit({ type: "auto_retry_end", success: false, attempt: 1, finalError: "still failing" });
   harness.emit({ type: "auto_compaction_start", reason: "threshold" });
   harness.emit({ type: "auto_compaction_end", result: undefined, aborted: false, willRetry: false });
+  harness.emit({ type: "turn_end" });
 
   const events = await readSseEventsUntil(
     response,
-    (seen) => seen.filter((event) => event.type === "live_state_invalidation").length >= 5,
+    (seen) => seen.filter((event) => event.type === "live_state_invalidation").length >= 6,
   );
   const invalidations = events.filter((event) => event.type === "live_state_invalidation");
 
@@ -416,6 +417,7 @@ test("/api/session/events exposes explicit live_state_invalidation events for ag
       { reason: "auto_retry_end", source: "bridge_event", workspaceIndexCacheInvalidated: false },
       { reason: "auto_compaction_start", source: "bridge_event", workspaceIndexCacheInvalidated: false },
       { reason: "auto_compaction_end", source: "bridge_event", workspaceIndexCacheInvalidated: false },
+      { reason: "turn_end", source: "bridge_event", workspaceIndexCacheInvalidated: true },
     ],
     "live_state_invalidation reasons/sources should stay inspectable on /api/session/events",
   );
@@ -424,6 +426,7 @@ test("/api/session/events exposes explicit live_state_invalidation events for ag
   assert.deepEqual(invalidations[2].domains, ["auto", "recovery"]);
   assert.deepEqual(invalidations[3].domains, ["auto", "recovery"]);
   assert.deepEqual(invalidations[4].domains, ["auto", "recovery"]);
+  assert.deepEqual(invalidations[5].domains, ["workspace"]);
 
   controller.abort();
   await waitForMicrotasks();
@@ -582,6 +585,82 @@ test("workspace cache only busts on real boundaries and session mutations emit t
   assert.ok(renameInvalidation, "inactive rename should emit an inspectable set_session_name invalidation");
   assert.deepEqual(renameInvalidation.domains, ["resumable_sessions"]);
   assert.equal(renameInvalidation.workspaceIndexCacheInvalidated, false);
+
+  unsubscribe();
+});
+
+test("turn_end events invalidate workspace so milestones list reflects current state (issue #2706)", async (t) => {
+  const fixture = makeWorkspaceFixture();
+  const sessionPath = createSessionFile(
+    fixture.projectCwd,
+    fixture.sessionsDir,
+    "sess-turn",
+    "Turn Session",
+    "2026-03-15T03:32:00.000Z",
+  );
+  let workspaceIndexCalls = 0;
+
+  const harness = createHarness((command, current) => {
+    if (command.type === "get_state") {
+      current.emit({
+        id: command.id,
+        type: "response",
+        command: "get_state",
+        success: true,
+        data: fakeSessionState("sess-turn", sessionPath),
+      });
+      return;
+    }
+
+    assert.fail(`unexpected command: ${command.type}`);
+  });
+
+  setupBridge(harness, fixture, {
+    indexWorkspace: async () => {
+      workspaceIndexCalls += 1;
+      return fakeWorkspaceIndex();
+    },
+  });
+
+  t.after(async () => {
+    await bridge.resetBridgeServiceForTests();
+    onboarding.resetOnboardingServiceForTests();
+    fixture.cleanup();
+  });
+
+  const service = bridge.getProjectBridgeService();
+  await service.ensureStarted();
+  const seenEvents: any[] = [];
+  const unsubscribe = service.subscribe((event) => {
+    seenEvents.push(event);
+  });
+
+  // Load workspace once to prime cache
+  await bridge.collectBootPayload();
+  assert.equal(workspaceIndexCalls, 1, "initial boot should call indexWorkspace once");
+
+  // Emit turn_end — this should invalidate the workspace cache so the
+  // milestones list picks up state changes that occurred during the turn.
+  harness.emit({ type: "turn_end" });
+  await waitForMicrotasks();
+
+  // Verify a live_state_invalidation was emitted for turn_end
+  const invalidations = seenEvents.filter((event) => event.type === "live_state_invalidation");
+  const turnEndInvalidation = invalidations.find((event) => event.reason === "turn_end");
+  assert.ok(turnEndInvalidation, "turn_end should emit a live_state_invalidation event");
+  assert.ok(
+    turnEndInvalidation.domains.includes("workspace"),
+    "turn_end invalidation should include the workspace domain",
+  );
+  assert.equal(
+    turnEndInvalidation.workspaceIndexCacheInvalidated,
+    true,
+    "turn_end should invalidate the workspace index cache",
+  );
+
+  // Verify workspace cache was actually busted
+  await bridge.collectBootPayload();
+  assert.equal(workspaceIndexCalls, 2, "turn_end should bust the workspace index cache so the next fetch re-indexes");
 
   unsubscribe();
 });
