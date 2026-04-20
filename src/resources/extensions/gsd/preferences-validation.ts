@@ -697,6 +697,41 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Slice Parallel Config ───────────────────────────────────────────────
+  if (preferences.slice_parallel !== undefined) {
+    if (typeof preferences.slice_parallel === "object" && preferences.slice_parallel !== null) {
+      const sp = preferences.slice_parallel as Record<string, unknown>;
+      const validSp: NonNullable<GSDPreferences["slice_parallel"]> = {};
+
+      if (sp.enabled !== undefined) {
+        if (typeof sp.enabled === "boolean") validSp.enabled = sp.enabled;
+        else errors.push("slice_parallel.enabled must be a boolean");
+      }
+
+      if (sp.max_workers !== undefined) {
+        const maxWorkers = typeof sp.max_workers === "number" ? sp.max_workers : Number(sp.max_workers);
+        if (Number.isFinite(maxWorkers) && maxWorkers >= 1 && maxWorkers <= 8) {
+          validSp.max_workers = Math.floor(maxWorkers);
+        } else {
+          errors.push("slice_parallel.max_workers must be a number between 1 and 8");
+        }
+      }
+
+      const knownSliceParallelKeys = new Set(["enabled", "max_workers"]);
+      for (const key of Object.keys(sp)) {
+        if (!knownSliceParallelKeys.has(key)) {
+          warnings.push(`unknown slice_parallel key "${key}" — ignored`);
+        }
+      }
+
+      if (Object.keys(validSp).length > 0) {
+        validated.slice_parallel = validSp;
+      }
+    } else {
+      errors.push("slice_parallel must be an object");
+    }
+  }
+
   // ─── Reactive Execution ─────────────────────────────────────────────────
   if (preferences.reactive_execution !== undefined) {
     if (typeof preferences.reactive_execution === "object" && preferences.reactive_execution !== null) {

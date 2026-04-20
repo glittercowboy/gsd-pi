@@ -186,6 +186,45 @@ test("flat_rate_providers is a recognized preference key (no warning)", () => {
   );
 });
 
+test("slice_parallel preferences validate and pass through", () => {
+  const { preferences, errors, warnings } = validatePreferences({
+    slice_parallel: { enabled: true, max_workers: 8 },
+  });
+
+  assert.equal(errors.length, 0);
+  assert.equal(warnings.filter(w => w.includes("slice_parallel")).length, 0);
+  assert.deepEqual(preferences.slice_parallel, { enabled: true, max_workers: 8 });
+});
+
+test("slice_parallel rejects invalid values and warns on unknown keys", () => {
+  const { preferences, errors, warnings } = validatePreferences({
+    slice_parallel: {
+      enabled: "yes",
+      max_workers: 9,
+      future_mode: true,
+    },
+  } as any);
+
+  assert.ok(errors.some(e => e.includes("slice_parallel.enabled")), "should reject non-boolean enabled");
+  assert.ok(errors.some(e => e.includes("slice_parallel.max_workers")), "should reject max_workers outside 1..8");
+  assert.ok(warnings.some(w => w.includes('unknown slice_parallel key "future_mode"')));
+  assert.equal(preferences.slice_parallel, undefined);
+});
+
+test("slice_parallel numeric max_workers is bounded to 1..8", () => {
+  const low = validatePreferences({ slice_parallel: { max_workers: 1 } });
+  const high = validatePreferences({ slice_parallel: { max_workers: 8 } });
+  const tooLow = validatePreferences({ slice_parallel: { max_workers: 0 } });
+  const tooHigh = validatePreferences({ slice_parallel: { max_workers: 9 } });
+
+  assert.equal(low.errors.length, 0);
+  assert.equal(low.preferences.slice_parallel?.max_workers, 1);
+  assert.equal(high.errors.length, 0);
+  assert.equal(high.preferences.slice_parallel?.max_workers, 8);
+  assert.ok(tooLow.errors.some(e => e.includes("slice_parallel.max_workers")));
+  assert.ok(tooHigh.errors.some(e => e.includes("slice_parallel.max_workers")));
+});
+
 test("valid values pass through correctly", () => {
   const { preferences: p1 } = validatePreferences({ budget_enforcement: "halt" });
   assert.equal(p1.budget_enforcement, "halt");
@@ -597,6 +636,44 @@ test("loadEffectiveGSDPreferences preserves experimental prefs across global+pro
     assert.notEqual(loaded, null);
     assert.equal(loaded!.preferences.experimental?.rtk, true);
     assert.equal(loaded!.preferences.git?.isolation, "none");
+  } finally {
+    process.chdir(originalCwd);
+    if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = originalGsdHome;
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempGsdHome, { recursive: true, force: true });
+  }
+});
+
+test("loadEffectiveGSDPreferences exposes slice_parallel prefs to runtime callers", () => {
+  const originalCwd = process.cwd();
+  const originalGsdHome = process.env.GSD_HOME;
+  const tempProject = mkdtempSync(join(tmpdir(), "gsd-slice-parallel-project-"));
+  const tempGsdHome = mkdtempSync(join(tmpdir(), "gsd-slice-parallel-home-"));
+
+  try {
+    mkdirSync(join(tempProject, ".gsd"), { recursive: true });
+
+    writeFileSync(
+      join(tempProject, ".gsd", "PREFERENCES.md"),
+      [
+        "---",
+        "version: 1",
+        "slice_parallel:",
+        "  enabled: true",
+        "  max_workers: 3",
+        "---",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    process.env.GSD_HOME = tempGsdHome;
+    process.chdir(tempProject);
+
+    const loaded = loadEffectiveGSDPreferences();
+    assert.notEqual(loaded, null);
+    assert.equal(loaded!.preferences.slice_parallel?.enabled, true);
+    assert.equal(loaded!.preferences.slice_parallel?.max_workers, 3);
   } finally {
     process.chdir(originalCwd);
     if (originalGsdHome === undefined) delete process.env.GSD_HOME;
