@@ -398,13 +398,19 @@ function containsGlobPattern(candidate: string): boolean {
 
 /**
  * Build a set of files that will be created by tasks up to (but not including) taskIndex.
+ * Also includes outputs of completed tasks at any position — a completed task has already
+ * run and its outputs are available regardless of sequence position or disk state (#4071).
  * All paths are normalized for consistent comparison.
  */
 function getExpectedOutputsUpTo(tasks: TaskRow[], taskIndex: number): Set<string> {
   const outputs = new Set<string>();
-  for (let i = 0; i < taskIndex; i++) {
-    for (const file of tasks[i].expected_output) {
-      outputs.add(normalizeFilePath(file));
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    // Include prior tasks (i < taskIndex) OR completed tasks at any position
+    if (i < taskIndex || task.status === "completed") {
+      for (const file of task.expected_output) {
+        outputs.add(normalizeFilePath(file));
+      }
     }
   }
   return outputs;
@@ -491,13 +497,19 @@ export function checkTaskOrdering(
   const results: PreExecutionCheckJSON[] = [];
 
   // Build map: normalized file → task index that creates it
-  const fileCreators = new Map<string, { taskId: string; index: number; originalPath: string }>();
+  const fileCreators = new Map<string, { taskId: string; index: number; originalPath: string; completed: boolean }>();
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i];
     for (const file of task.expected_output) {
       const normalizedFile = normalizeFilePath(file);
-      if (!fileCreators.has(normalizedFile)) {
-        fileCreators.set(normalizedFile, { taskId: task.id, index: i, originalPath: file });
+      const existing = fileCreators.get(normalizedFile);
+      if (!existing || (!existing.completed && task.status === "completed")) {
+        fileCreators.set(normalizedFile, {
+          taskId: task.id,
+          index: i,
+          originalPath: file,
+          completed: task.status === "completed",
+        });
       }
     }
   }
@@ -521,7 +533,11 @@ export function checkTaskOrdering(
       const creator = fileCreators.get(normalizedFile);
       const absolutePath = resolve(basePath, normalizedFile);
       const existsOnDisk = existsSync(absolutePath);
-      if (creator && creator.index > i && !existsOnDisk) {
+      // Skip if the creating task has already completed — its output is available
+      // regardless of disk state (e.g. file was a temp artifact cleaned up after
+      // the task ran, or a replan introduced a new earlier-sequence task that
+      // reads this pre-execution output). (#4071)
+      if (creator && creator.index > i && !existsOnDisk && !creator.completed) {
         // Task reads file that is created later — impossible ordering
         results.push({
           category: "file",

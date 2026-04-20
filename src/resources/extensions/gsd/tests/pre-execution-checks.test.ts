@@ -1599,6 +1599,221 @@ describe("checkTaskOrdering directory inputs (#4446)", () => {
   });
 });
 
+// ─── Regression Tests: checkTaskOrdering false positive for pre-execution refs (#4071) ──
+
+describe("checkTaskOrdering false positive for pre-execution refs (#4071)", () => {
+  test("completed task at higher index does not trigger ordering violation for its outputs", () => {
+    // Scenario: after a replan, a completed task at higher array index has already
+    // created a file. A new earlier-sequence task reads that file. Since the
+    // completed task already ran, its output is available regardless of disk state.
+    // checkTaskOrdering must not flag this as a sequence violation.
+    const tasks = [
+      createTask({
+        id: "T_NEW",
+        sequence: 1,
+        status: "pending",
+        inputs: ["artifacts/setup.json"],
+        expected_output: [],
+      }),
+      createTask({
+        id: "T_SETUP",
+        sequence: 5,
+        status: "completed",
+        inputs: [],
+        expected_output: ["artifacts/setup.json"],
+      }),
+    ];
+
+    const results = checkTaskOrdering(tasks, "/tmp");
+    assert.equal(
+      results.length,
+      0,
+      "completed task outputs must not trigger ordering violations for earlier-sequence tasks that read them",
+    );
+  });
+
+  test("pending task at higher index still triggers ordering violation", () => {
+    // A PENDING task at higher index creating a file is a real violation.
+    // Only completed tasks get the exemption.
+    const tasks = [
+      createTask({
+        id: "T01",
+        sequence: 1,
+        status: "pending",
+        inputs: ["artifacts/output.json"],
+        expected_output: [],
+      }),
+      createTask({
+        id: "T02",
+        sequence: 5,
+        status: "pending",
+        inputs: [],
+        expected_output: ["artifacts/output.json"],
+      }),
+    ];
+
+    const results = checkTaskOrdering(tasks, "/tmp");
+    assert.equal(
+      results.length,
+      1,
+      "pending task at higher index must still be flagged as ordering violation",
+    );
+    assert.equal(results[0].blocking, true);
+    assert.ok(results[0].message.includes("T01"));
+    assert.ok(results[0].message.includes("T02"));
+    assert.ok(results[0].message.includes("sequence violation"));
+  });
+
+  test("pending-first then completed-later: completed replaces pending in fileCreators (#4572)", () => {
+    // Regression for CodeRabbit Major finding on PR #4572:
+    // fileCreators only stored the FIRST task for a given path. If a PENDING task at
+    // array index 1 was registered first, and a COMPLETED task at array index 2 also
+    // declared the same output path, the completed entry was discarded. Line ~529 then
+    // saw a pending creator with index > i and incorrectly fired a sequence violation
+    // for the reader at array index 0.
+    //
+    // Scenario: path first declared by pending task (index 1), then by completed task
+    // (index 2). Reader is at index 0. Without the fix a violation fires; with the fix
+    // the completed entry replaces the pending entry and grants the exemption.
+    const tasks = [
+      // array index 0 — reads the shared path
+      createTask({
+        id: "T_READER",
+        sequence: 1,
+        status: "pending",
+        inputs: ["shared/artifact.json"],
+        expected_output: [],
+      }),
+      // array index 1 — pending producer (visited first during map build)
+      createTask({
+        id: "T_PENDING_PRODUCER",
+        sequence: 5,
+        status: "pending",
+        inputs: [],
+        expected_output: ["shared/artifact.json"],
+      }),
+      // array index 2 — completed producer (visited second; must replace pending entry)
+      createTask({
+        id: "T_COMPLETED_PRODUCER",
+        sequence: 2,
+        status: "completed",
+        inputs: [],
+        expected_output: ["shared/artifact.json"],
+      }),
+    ];
+
+    // Without the fix: creator = T_PENDING_PRODUCER (index 1), !creator.completed && 1 > 0 → violation.
+    // With the fix:    creator = T_COMPLETED_PRODUCER (index 2), creator.completed → no violation.
+    const results = checkTaskOrdering(tasks, "/tmp");
+    assert.equal(
+      results.length,
+      0,
+      "completed producer must replace pending producer in fileCreators and suppress false violation",
+    );
+  });
+
+  test("completed task output exemption applies regardless of whether file exists on disk", (t) => {
+    // The completed-task exemption must work even when the file is not on disk
+    // (e.g., the file was a temporary artifact that was cleaned up after the task ran).
+    const tempDir = join(tmpdir(), `pre-exec-completed-task-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    // File deliberately NOT created on disk — completed task ran in a prior session
+    const tasks = [
+      createTask({
+        id: "T_MAIN",
+        sequence: 0,
+        status: "pending",
+        inputs: ["generated/config.json"],
+        expected_output: [],
+      }),
+      createTask({
+        id: "T_INIT",
+        sequence: 10,
+        status: "completed",
+        inputs: [],
+        expected_output: ["generated/config.json"],
+      }),
+    ];
+
+    const results = checkTaskOrdering(tasks, tempDir);
+    assert.equal(
+      results.length,
+      0,
+      "completed task exemption must apply even when file is absent from disk",
+    );
+  });
+});
+
+describe("checkFilePathConsistency completed-task output exemption (#4071)", () => {
+  test("completed task at higher index does not cause false positive for file it produced", (t) => {
+    // Parallel to the checkTaskOrdering fix: checkFilePathConsistency also uses
+    // getExpectedOutputsUpTo which historically only looked at prior-index tasks.
+    // A completed task at a higher index has already run and its outputs are available.
+    const tempDir = join(tmpdir(), `pre-exec-fc-completed-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    // File is NOT on disk — completed task ran in a prior session and file was cleaned
+    const tasks = [
+      createTask({
+        id: "T_MAIN",
+        sequence: 1,
+        status: "pending",
+        inputs: ["artifacts/config.json"],
+        expected_output: [],
+      }),
+      createTask({
+        id: "T_SETUP",
+        sequence: 10,
+        status: "completed",
+        inputs: [],
+        expected_output: ["artifacts/config.json"],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.equal(
+      results.length,
+      0,
+      "completed task at higher index should satisfy inputs of pending tasks that read its outputs",
+    );
+  });
+
+  test("pending task at higher index still causes a missing-file error", (t) => {
+    const tempDir = join(tmpdir(), `pre-exec-fc-pending-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    t.after(() => rmSync(tempDir, { recursive: true, force: true }));
+
+    const tasks = [
+      createTask({
+        id: "T01",
+        sequence: 1,
+        status: "pending",
+        inputs: ["artifacts/output.json"],
+        expected_output: [],
+      }),
+      createTask({
+        id: "T02",
+        sequence: 10,
+        status: "pending",
+        inputs: [],
+        expected_output: ["artifacts/output.json"],
+      }),
+    ];
+
+    const results = checkFilePathConsistency(tasks, tempDir);
+    assert.equal(
+      results.length,
+      1,
+      "pending task at higher index must still be flagged — the file is not available yet",
+    );
+    assert.equal(results[0].blocking, true);
+    assert.equal(results[0].target, "artifacts/output.json");
+  });
+});
+
 describe("checkFilePathConsistency self-referential inputs (#4459)", () => {
   test("input that is also in the same task's expected_output is not blocking when missing on disk", (t) => {
     const tempDir = join(tmpdir(), `pre-exec-self-output-${Date.now()}`);
