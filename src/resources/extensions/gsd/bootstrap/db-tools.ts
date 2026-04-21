@@ -8,6 +8,12 @@ import { ensureDbOpen } from "./dynamic-tools.js";
 import { StringEnum } from "@gsd/pi-ai";
 import { logError } from "../workflow-logger.js";
 import { getErrorMessage } from "../error-utils.js";
+import { getTask, updateTaskStatus, insertExternalWait } from "../gsd-db.js";
+import { invalidateStateCache } from "../state.js";
+import { saveJsonFile } from "../json-persistence.js";
+import { resolveTasksDir } from "../paths.js";
+import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import {
   executeCompleteMilestone,
   executePlanMilestone,
@@ -1116,4 +1122,120 @@ export function registerDbTools(pi: ExtensionAPI): void {
   };
 
   pi.registerTool(saveGateResultTool);
+
+  // ─── gsd_register_external_wait ──────────────────────────────────────────
+
+  const registerExternalWaitExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const dbOk = ensureDbOpen();
+    if (!dbOk) {
+      return { content: [{ type: "text" as const, text: "Error: GSD database is not available" }], isError: true, details: { error: "GSD database is not available" } };
+    }
+
+    const { milestoneId, sliceId, taskId, checkCommand, successCheck, pollIntervalMs, timeoutMs, contextHint, onTimeout } = params;
+
+    // Validate task exists
+    const task = getTask(milestoneId, sliceId, taskId);
+    if (!task) {
+      return { content: [{ type: "text" as const, text: `Error: task not found — ${milestoneId}/${sliceId}/${taskId}` }], isError: true, details: { error: "task not found" } };
+    }
+
+    // Validate task status is 'executing' (R229)
+    if (task.status !== "executing") {
+      return { content: [{ type: "text" as const, text: `Error: task not in executing status (current: ${task.status})` }], isError: true, details: { error: `task not in executing status (current: ${task.status})` } };
+    }
+
+    // Insert external_waits DB row (R213, R214, R223)
+    insertExternalWait(milestoneId, sliceId, taskId, checkCommand, {
+      successCheck,
+      pollIntervalMs,
+      timeoutMs,
+      contextHint,
+      onTimeout,
+    });
+
+    // Update task status to awaiting-external
+    updateTaskStatus(milestoneId, sliceId, taskId, "awaiting-external");
+
+    // Write JSON probe spec (R215)
+    const basePath = process.cwd();
+    const resolvedPollInterval = pollIntervalMs ?? 30000;
+    const resolvedTimeout = timeoutMs ?? 86400000;
+    const resolvedOnTimeout = onTimeout ?? "manual-attention";
+    const registeredAt = new Date().toISOString();
+
+    let tasksDir = resolveTasksDir(basePath, milestoneId, sliceId);
+    if (!tasksDir) {
+      const gsdDir = join(basePath, ".gsd");
+      tasksDir = join(gsdDir, "milestones", milestoneId, "slices", sliceId, "tasks");
+      mkdirSync(tasksDir, { recursive: true });
+    }
+    const jsonPath = join(tasksDir, `${taskId}-EXTERNAL-WAIT.json`);
+    saveJsonFile(jsonPath, {
+      milestoneId,
+      sliceId,
+      taskId,
+      checkCommand,
+      successCheck: successCheck ?? null,
+      pollIntervalMs: resolvedPollInterval,
+      timeoutMs: resolvedTimeout,
+      contextHint: contextHint ?? null,
+      onTimeout: resolvedOnTimeout,
+      registeredAt,
+    });
+
+    // Invalidate state cache
+    invalidateStateCache();
+
+    const relPath = jsonPath.replace(basePath + "/", "");
+    return {
+      content: [{ type: "text" as const, text: `External wait registered for ${milestoneId}/${sliceId}/${taskId}. Probe spec: ${relPath}` }],
+      isError: false,
+      details: { milestoneId, sliceId, taskId, jsonPath: relPath },
+    };
+  };
+
+  const registerExternalWaitTool = {
+    name: "gsd_register_external_wait",
+    label: "Register External Wait",
+    description:
+      "Register an external wait for a task that is blocked on an external process (CI pipeline, deployment, HPC job, etc.). " +
+      "Creates a probe spec and transitions the task to awaiting-external status.",
+    promptSnippet: "Register an external wait probe for a task blocked on an external process",
+    promptGuidelines: [
+      "Use gsd_register_external_wait when a task must wait for an external process to complete.",
+      "The task must be in 'executing' status — registration is rejected otherwise.",
+      "checkCommand is required — a shell command that probes the external process status.",
+      "successCheck is optional — a second-phase shell command for deeper validation after checkCommand succeeds.",
+      "onTimeout defaults to 'manual-attention'; set to 'resume-with-failure' to auto-resume on timeout.",
+      'Example SLURM: checkCommand="squeue -j $JOBID | grep -c $JOBID", successCheck="sacct -j $JOBID --format=ExitCode --noheader | head -1 | grep -q 0:0"',
+      'Example CI: checkCommand="test \\"$(gh run view $RUNID --json status -q .status)\\" != \\"completed\\""',
+      "Exit code convention: exit 0 = still running, non-zero = done. This matches squeue (returns 0 while job in queue).",
+    ],
+    parameters: Type.Object({
+      milestoneId: Type.String({ description: "Milestone ID (e.g. M006)" }),
+      sliceId: Type.String({ description: "Slice ID (e.g. S02)" }),
+      taskId: Type.String({ description: "Task ID (e.g. T01)" }),
+      checkCommand: Type.String({ description: "Shell command to probe external process status" }),
+      successCheck: Type.Optional(Type.String({ description: "Optional second-phase validation command after checkCommand succeeds" })),
+      pollIntervalMs: Type.Optional(Type.Number({ description: "Probe poll interval in milliseconds (default 30000)" })),
+      timeoutMs: Type.Optional(Type.Number({ description: "Overall timeout in milliseconds (default 86400000 = 24h)" })),
+      contextHint: Type.Optional(Type.String({ description: "Human-readable hint about what is being waited on" })),
+      onTimeout: Type.Optional(StringEnum(["manual-attention", "resume-with-failure"], { description: "Action on timeout: manual-attention (default) or resume-with-failure" })),
+    }),
+    execute: registerExternalWaitExecute,
+    renderCall(args: any, theme: any) {
+      let text = theme.fg("toolTitle", theme.bold("register_external_wait "));
+      text += theme.fg("accent", `${args.milestoneId ?? ""}/${args.sliceId ?? ""}/${args.taskId ?? ""}`);
+      return new Text(text, 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = result.details;
+      if (result.isError || d?.error) {
+        return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
+      }
+      return new Text(theme.fg("success", `Registered: ${d?.jsonPath ?? ""}`), 0, 0);
+    },
+  };
+
+  pi.registerTool(registerExternalWaitTool);
 }

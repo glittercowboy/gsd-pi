@@ -48,6 +48,8 @@ export function bridgeDispatchAction(da: DispatchAction): EngineDispatchAction {
       };
     case "skip":
       return { action: "skip" };
+    case "sleep":
+      return { action: "sleep", durationMs: da.durationMs };
   }
 }
 
