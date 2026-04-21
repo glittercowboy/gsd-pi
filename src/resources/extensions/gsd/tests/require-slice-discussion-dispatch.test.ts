@@ -16,7 +16,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { DISPATCH_RULES, type DispatchContext } from "../auto-dispatch.ts";
-import type { GSDState, GSDPreferences } from "../types.ts";
+import type { GSDState } from "../types.ts";
+import type { GSDPreferences } from "../preferences.ts";
 
 const RULE_NAME = "planning (require_slice_discussion) → pause for discussion (#3454)";
 
