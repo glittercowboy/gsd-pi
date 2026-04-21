@@ -687,10 +687,13 @@ export class WorktreeResolver {
     });
     try {
       this.mergeAndExit(currentMilestoneId, ctx);
-    } catch {
-      // mergeAndExit already emitted a warning notification and restored state.
-      // Still enter the next milestone so the session can continue working
-      // rather than leaving the loop stuck with no active worktree.
+    } catch (err) {
+      // mergeAndExit emits a warning and restores state when it fails during
+      // merge/cleanup. But if it throws before recovery runs (e.g., in
+      // validateMilestoneId or emitJournalEvent), basePath won't be restored
+      // to projectRoot — re-throw so we don't enter the next milestone with
+      // the current one unmerged.
+      if (this.s.basePath !== this.projectRoot) throw err;
     }
     this.enterMilestone(nextMilestoneId, ctx);
   }
