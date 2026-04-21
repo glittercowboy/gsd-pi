@@ -313,6 +313,43 @@ test("enterMilestone uses originalBasePath as base for worktree ops", () => {
   assert.equal(createdFrom, "/project"); // uses originalBasePath, not current basePath
 });
 
+test("enterMilestone does not create double-nested worktree when originalBasePath is empty and basePath is a worktree path", () => {
+  // Regression test for #3729: when s.originalBasePath is "" (falsy) and
+  // s.basePath is already a worktree path, the expression
+  // `this.s.originalBasePath || this.s.basePath` evaluates to the worktree
+  // path. Passing that to createAutoWorktree produces a doubly-nested path
+  // like /project/.gsd/worktrees/M001/.gsd/worktrees/M002.
+  const wtPath = "/project/.gsd/worktrees/M001";
+  const s = makeSession({
+    basePath: wtPath,
+    originalBasePath: "/project", // will be overwritten below to simulate the bug
+  });
+  // Simulate the real bug: originalBasePath is "" (falsy) as it is when AutoSession
+  // is constructed fresh or reset() is called without auto-start re-setting it.
+  s.originalBasePath = "";
+
+  let createdFromPath = "";
+  const deps = makeDeps({
+    getAutoWorktreePath: () => null,
+    createAutoWorktree: (basePath: string, _mid: string) => {
+      createdFromPath = basePath;
+      return `/project/.gsd/worktrees/M002`;
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M002", ctx);
+
+  // The path passed to createAutoWorktree must be the project root, NOT the
+  // worktree path. If it equals wtPath the worktree would be created at
+  // /project/.gsd/worktrees/M001/.gsd/worktrees/M002 (double-nesting).
+  assert.ok(
+    !createdFromPath.includes("/.gsd/worktrees/"),
+    `createAutoWorktree must be called with project root, got: "${createdFromPath}"`,
+  );
+});
+
 // ─── enterMilestone Tests (branch mode) ──────────────────────────────────────
 
 test("enterMilestone in branch mode calls enterBranchModeForMilestone and rebuilds GitService", () => {

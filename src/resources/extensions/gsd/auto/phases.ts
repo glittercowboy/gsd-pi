@@ -81,7 +81,11 @@ export function resetSessionTimeoutState(): void {
  * Exported for testing as _resolveReportBasePath.
  */
 export function _resolveReportBasePath(s: Pick<AutoSession, "originalBasePath" | "basePath">): string {
-  return s.originalBasePath || s.basePath;
+  // Strip /.gsd/worktrees/ suffix when basePath is itself a worktree path and
+  // originalBasePath is falsy — prevents reports landing in the worktree (#3729).
+  const resolved = s.originalBasePath || s.basePath;
+  const markerIdx = resolved.indexOf("/.gsd/worktrees/");
+  return markerIdx !== -1 ? resolved.slice(0, markerIdx) : resolved;
 }
 
 /**
@@ -92,7 +96,12 @@ export function _resolveReportBasePath(s: Pick<AutoSession, "originalBasePath" |
 export function _resolveDispatchGuardBasePath(
   s: Pick<AutoSession, "originalBasePath" | "basePath">,
 ): string {
-  return s.originalBasePath || s.basePath;
+  // Strip /.gsd/worktrees/ suffix when basePath is itself a worktree path and
+  // originalBasePath is falsy — prevents guard checks running against the
+  // worktree instead of the project root (#3729).
+  const resolved = s.originalBasePath || s.basePath;
+  const markerIdx = resolved.indexOf("/.gsd/worktrees/");
+  return markerIdx !== -1 ? resolved.slice(0, markerIdx) : resolved;
 }
 
 const PLAN_V2_GATE_PHASES: ReadonlySet<Phase> = new Set([
