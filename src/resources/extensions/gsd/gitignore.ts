@@ -48,6 +48,7 @@ const BASELINE_PATTERNS = [
   // ── GSD state directory (symlink to external storage) ──
   ".gsd",
   ".gsd-id",
+  ".mcp.json",
   ".bg-shell/",
 
   // ── OS junk ──
@@ -319,4 +320,3 @@ custom_instructions:
   writeFileSync(preferencesPath, template, "utf-8");
   return true;
 }
-

@@ -1235,6 +1235,7 @@ describe('git-service', async () => {
     const content = readFileSync(join(repo, ".gitignore"), "utf-8");
     const lines = content.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
     assert.ok(lines.includes(".gsd"), "ensureGitignore: .gitignore contains .gsd");
+    assert.ok(lines.includes(".mcp.json"), "ensureGitignore: .gitignore contains .mcp.json");
 
     // Idempotent — calling again doesn't add duplicates
     const modified2 = ensureGitignore(repo);
