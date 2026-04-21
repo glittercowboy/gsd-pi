@@ -1471,6 +1471,17 @@ export async function startAuto(
     s.stepMode = requestedStepMode;
     s.cmdCtx = ctx;
     s.basePath = base;
+    // ── Resume worktree: if the paused session was inside a milestone worktree,
+    // apply that path as the dispatch basePath immediately (#3723).
+    // This ensures the dispatch loop runs from the worktree directory even when
+    // enterMilestone guard conditions differ between the original and resumed
+    // session (e.g. isolation mode changed, detectWorktreeName differs across
+    // process restarts).  We guard with existsSync so a stale or deleted
+    // worktree directory safely falls back to the project root.
+    const resumeWorktreePath = freshStartAssessment.pausedSession?.worktreePath;
+    if (resumeWorktreePath && existsSync(resumeWorktreePath)) {
+      s.basePath = resumeWorktreePath;
+    }
     // Ensure the workflow-logger audit log is pinned to the project root
     // even when auto-mode is entered via a path that bypasses the
     // bootstrap/dynamic-tools ensureDbOpen() → setLogBasePath() chain
