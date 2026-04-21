@@ -99,6 +99,9 @@ async function handleStatus(ctx: any): Promise<void> {
 		lines.push(`Error listing models: ${err instanceof Error ? err.message : String(err)}`);
 	}
 
+	lines.push("");
+	lines.push("Press any key to dismiss");
+
 	await ctx.ui.custom(
 		(tui: any, theme: any, _kb: any, done: (r: undefined) => void) => {
 			const text = new Text(lines.map((l) => theme.fg("fg", l)).join("\n"), 0, 0);
@@ -125,6 +128,8 @@ async function handleList(ctx: any): Promise<void> {
 	for (const m of models) {
 		lines.push(`  ${formatModelForDisplay(m)}`);
 	}
+	lines.push("");
+	lines.push("Press any key to dismiss");
 
 	await ctx.ui.custom(
 		(tui: any, theme: any, _kb: any, done: (r: undefined) => void) => {
@@ -231,6 +236,8 @@ async function handlePs(ctx: any): Promise<void> {
 			const idleMin = Math.max(0, Math.floor(idleMs / 60000));
 			lines.push(`  ${m.name}  ${totalSize}  ${vram}  expires in ${idleMin}m`);
 		}
+		lines.push("");
+		lines.push("Press any key to dismiss");
 
 		await ctx.ui.custom(
 			(tui: any, theme: any, _kb: any, done: (r: undefined) => void) => {
