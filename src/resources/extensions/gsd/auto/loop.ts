@@ -50,6 +50,13 @@ function stuckStatePath(basePath: string): string {
 function loadStuckState(basePath: string): { recentUnits: Array<{ key: string }>; stuckRecoveryAttempts: number } {
   try {
     const data = JSON.parse(readFileSync(stuckStatePath(basePath), "utf-8"));
+    // Only load state written by a DIFFERENT process (real session restart).
+    // If the PID matches the current process, this state was written by an earlier
+    // autoLoop call in the same process (e.g., a test that completed before this
+    // one), not by a crashed session — skip it to prevent test state pollution.
+    if (data.pid === process.pid) {
+      return { recentUnits: [], stuckRecoveryAttempts: 0 };
+    }
     return {
       recentUnits: Array.isArray(data.recentUnits) ? data.recentUnits : [],
       stuckRecoveryAttempts: typeof data.stuckRecoveryAttempts === "number" ? data.stuckRecoveryAttempts : 0,
@@ -65,6 +72,7 @@ function saveStuckState(basePath: string, state: LoopState): void {
     const filePath = stuckStatePath(basePath);
     mkdirSync(join(gsdRoot(basePath), "runtime"), { recursive: true });
     writeFileSync(filePath, JSON.stringify({
+      pid: process.pid,
       recentUnits: state.recentUnits.slice(-20), // keep last 20 entries
       stuckRecoveryAttempts: state.stuckRecoveryAttempts,
       updatedAt: new Date().toISOString(),
@@ -590,6 +598,7 @@ export async function autoLoop(
       consecutiveCooldowns = 0;
       recentErrorMessages.length = 0;
       deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration } });
+      saveStuckState(s.basePath, loopState); // persist across session restarts (#4382)
       debugLog("autoLoop", { phase: "iteration-complete", iteration });
       finishTurn("completed");
     } catch (loopErr) {
