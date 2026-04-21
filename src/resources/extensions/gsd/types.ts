@@ -23,7 +23,8 @@ export type Phase =
   | "escalating-task"
   | "complete"
   | "paused"
-  | "blocked";
+  | "blocked"
+  | "awaiting-external";
 export type ContinueStatus = "in_progress" | "interrupted" | "compacted";
 
 // ─── Roadmap (Milestone-level) ─────────────────────────────────────────────
