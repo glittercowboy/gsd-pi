@@ -381,16 +381,27 @@ function renderGitHubSummary(report) {
     if (relevant.length > 0) {
       const systemNames = relevant.map(({ system }) => system).join(', ');
       lines.push('>');
+      lines.push('> **⛔ This PR should not be merged without executing this follow-up prompt.**');
+      lines.push('>');
       lines.push('> **Ask your coding agent to verify before submitting:**');
       lines.push('>');
+      lines.push('> ```');
       lines.push(`> Review this PR for risks in: ${systemNames}. Verify:`);
       lines.push('>');
       relevant.forEach(({ system }, i) => {
         lines.push(`> ${i + 1}. ${SYSTEM_CHECKS[system]}`);
       });
       lines.push('>');
-      lines.push('> Report all findings before I merge.');
-      lines.push('> ');
+      lines.push('> Before modifying any code, assess the scope of this fix:');
+      lines.push('>');
+      lines.push('> - Identify the root cause, not just the reported symptom.');
+      lines.push('> - Search the codebase for other call sites, similar patterns, or duplicated logic that may share the same bug.');
+      lines.push('> - List affected tests, documentation, and any downstream consumers that depend on the current behavior.');
+      lines.push('> - Flag any changes that extend beyond the immediate file or function.');
+      lines.push('>');
+      lines.push('> Report findings first. Then propose a fix scoped to the actual root cause, and wait for confirmation before applying changes outside the originally reported location.');
+      lines.push('> ```');
+      lines.push('>');
       lines.push('> 💡 **Have a Codex subscription?** Get an independent second opinion: `codex review --adversarial`');
     }
   }
