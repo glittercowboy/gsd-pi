@@ -3,10 +3,29 @@
 import { resolveMilestoneFile } from "./paths.js";
 import { findMilestoneIds } from "./guided-flow.js";
 import { parseUnitId } from "./unit-id.js";
-import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
+import { isDbAvailable, getMilestoneSlices, getMilestone } from "./gsd-db.js";
 import { parseRoadmap } from "./parsers-legacy.js";
 import { isClosedStatus } from "./status-guards.js";
 import { readFileSync } from "node:fs";
+
+/**
+ * Detect failure-path milestone SUMMARY content (#4663 sibling to #4658).
+ * A failure SUMMARY must not let the dispatch guard treat an active
+ * milestone as complete. The markers mirror those produced by
+ * writeBlockerPlaceholder and the "verification FAILED" retry path.
+ *
+ * This is intentionally a minimal local detector so this fix does not
+ * depend on PR #4660's `classifyMilestoneSummaryContent`. It can migrate
+ * to the shared classifier once that lands.
+ */
+function isFailureMilestoneSummary(content: string): boolean {
+  return (
+    /(?:^|\n)\s*#\s*BLOCKER\b/i.test(content) ||
+    /auto-mode recovery failed/i.test(content) ||
+    /verification\s+failed/i.test(content) ||
+    /\bnot complete\b/i.test(content)
+  );
+}
 
 const SLICE_DISPATCH_TYPES = new Set([
   "research-slice",
@@ -47,7 +66,30 @@ export function getPriorSliceCompletionBlocker(
 
   for (const mid of milestoneIds) {
     if (resolveMilestoneFile(base, mid, "PARKED")) continue;
-    if (resolveMilestoneFile(base, mid, "SUMMARY")) continue;
+
+    // DB/SUMMARY completion check (#4663 sibling to #4658).
+    // Prior behavior treated any SUMMARY file on disk as proof of milestone
+    // completion, which is wrong when the SUMMARY is a failure-path report
+    // (verification FAILED, blocker placeholder, etc.). Resolve as follows:
+    //   1. When DB is available and status is closed → skip (authoritative).
+    //   2. When SUMMARY exists but looks like a failure/blocker report →
+    //      do not short-circuit; fall through to the slice-level check so
+    //      the guard can still block dependents of an active milestone.
+    //   3. Otherwise (SUMMARY without failure markers) → skip. Preserves
+    //      the #1716 contract where a completed milestone with unchecked
+    //      remediation slices is still treated as done.
+    const summaryPath = resolveMilestoneFile(base, mid, "SUMMARY");
+    if (isDbAvailable()) {
+      const milestoneRow = getMilestone(mid);
+      if (milestoneRow && isClosedStatus(milestoneRow.status)) continue;
+    }
+    if (summaryPath) {
+      let summaryContent: string | null = null;
+      try { summaryContent = readFileSync(summaryPath, "utf-8"); } catch { /* ignore */ }
+      if (!summaryContent || !isFailureMilestoneSummary(summaryContent)) {
+        continue;
+      }
+    }
 
     // Normalised slice list from DB or file fallback
     type NormSlice = { id: string; done: boolean; depends: string[] };

@@ -61,6 +61,7 @@ import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
 import { isDbAvailable, getMilestone, openDatabase, getDbStatus } from "./gsd-db.js";
+import { isClosedStatus } from "./status-guards.js";
 
 import {
   debugLog,
@@ -419,15 +420,28 @@ export async function bootstrapAutoSession(
     // Invalidate caches before initial state derivation
     invalidateAllCaches();
 
-    // Clean stale runtime unit files for completed milestones (#887)
-    cleanStaleRuntimeUnits(
-      gsdRoot(base),
-      (mid) => !!resolveMilestoneFile(base, mid, "SUMMARY"),
-    );
-
     // Open the project-root DB before deriveState so DB-backed state
     // derivation (queue-order, task status) works on a cold start (#2841).
+    // Must happen before cleanStaleRuntimeUnits so the cleanup predicate can
+    // consult DB status and avoid clearing runtime units for milestones that
+    // only have a failure-path SUMMARY on disk (#4663).
     await openProjectDbIfPresent(base);
+
+    // Clean stale runtime unit files for completed milestones (#887).
+    // DB-authoritative: when DB is available, require DB status to be closed
+    // before clearing runtime units. A SUMMARY file alone is no longer
+    // trusted as proof of completion (#4663). Fall back to SUMMARY-file
+    // presence only when DB is unavailable (legacy/pre-migration).
+    cleanStaleRuntimeUnits(
+      gsdRoot(base),
+      (mid) => {
+        if (isDbAvailable()) {
+          const row = getMilestone(mid);
+          return !!row && isClosedStatus(row.status);
+        }
+        return !!resolveMilestoneFile(base, mid, "SUMMARY");
+      },
+    );
 
     // ── Orphaned milestone branch audit ──
     // Catches completed milestones whose teardown (merge + branch delete)
