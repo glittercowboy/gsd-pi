@@ -91,6 +91,7 @@ function runPackageScript(command, args, cwd = REPO_ROOT, label = command) {
 	const result = spawnSync(command, args, {
 		stdio: 'inherit',
 		cwd,
+		shell: process.platform === 'win32',
 	})
 	if ((result.status ?? 1) !== 0) {
 		if (result.error) {
