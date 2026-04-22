@@ -1,0 +1,25 @@
+{
+  "name": "@gsd/agent-core",
+  "version": "1.0.0",
+  "description": "GSD session orchestration layer",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-assets.cjs",
+    "copy-assets": "node scripts/copy-assets.cjs"
+  },
+  "dependencies": {
+    "@gsd/agent-types": "*",
+    "@gsd/pi-coding-agent": "*",
+    "@gsd/pi-agent-core": "*",
+    "@gsd/pi-ai": "*",
+    "@gsd/pi-tui": "*"
+  }
+}

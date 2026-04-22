@@ -182,23 +182,18 @@ test("wrapper key-drift guard: every ExtensionAPI method is delegated", () => {
   const { pi } = buildPiStub();
   const api = createGSDExtensionAPI(pi, []);
 
+  // pi 0.67.2 removed: emitBeforeModelSelect, emitAdjustToolSet, retryLastTurn,
+  // registerBeforeInstall, registerAfterInstall, registerBeforeRemove, registerAfterRemove
   const expectedKeys = [
     "on",
-    "emitBeforeModelSelect",
-    "emitAdjustToolSet",
     "registerTool",
     "registerCommand",
-    "registerBeforeInstall",
-    "registerAfterInstall",
-    "registerBeforeRemove",
-    "registerAfterRemove",
     "registerShortcut",
     "registerFlag",
     "getFlag",
     "registerMessageRenderer",
     "sendMessage",
     "sendUserMessage",
-    "retryLastTurn",
     "appendEntry",
     "setSessionName",
     "getSessionName",

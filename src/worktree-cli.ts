@@ -26,7 +26,7 @@ import { existsSync } from 'node:fs'
 import { resolveBundledSourceResource } from './bundled-resource-path.js'
 
 const jiti = createJiti(fileURLToPath(import.meta.url), { interopDefault: true, debug: false })
-const gsdExtensionPath = (...segments: string[]) =>
+const gsdExtensionPath = (...segments: string[]): string =>
   resolveBundledSourceResource(import.meta.url, 'extensions', 'gsd', ...segments)
 
 // Lazily-loaded extension modules (loaded once on first use via jiti)

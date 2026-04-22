@@ -97,7 +97,7 @@ if (!existsSync(appRoot)) {
   const green = '\x1b[32m'
   const dim   = '\x1b[2m'
   const reset = '\x1b[0m'
-  const colorCyan = (s: string) => `${cyan}${s}${reset}`
+  const colorCyan = (s: string): string => `${cyan}${s}${reset}`
   process.stderr.write(
     renderLogo(colorCyan) +
     '\n' +
@@ -129,9 +129,9 @@ process.env.NODE_PATH = [gsdNodeModules, process.env.NODE_PATH]
   .join(delimiter)
 // Force Node to re-evaluate module search paths with the updated NODE_PATH.
 // Must happen synchronously before cli.js imports → extension loading.
-// eslint-disable-next-line @typescript-eslint/no-require-imports
+ 
 const { Module } = await import('module');
-(Module as any)._initPaths?.()
+(Module as unknown as { _initPaths?: () => void })._initPaths?.()
 
 // GSD_VERSION — expose package version so extensions can display it
 process.env.GSD_VERSION = gsdVersion

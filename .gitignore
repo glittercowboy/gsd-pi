@@ -42,6 +42,7 @@ venv/
 target/
 vendor/
 !packages/pi-coding-agent/src/core/export-html/vendor/
+!packages/gsd-agent-core/src/export-html/vendor/
 !pkg/dist/core/export-html/vendor/
 *.log
 coverage/

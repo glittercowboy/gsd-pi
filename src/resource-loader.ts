@@ -461,13 +461,13 @@ function pruneRemovedBundledExtensions(
     }
   } catch { /* non-fatal */ }
 
-  const removeFileIfStale = (fileName: string) => {
+  const removeFileIfStale = (fileName: string): void => {
     if (currentSourceFiles.has(fileName)) return  // still in bundle, not stale
     const stale = join(extensionsDir, fileName)
     try { if (existsSync(stale)) rmSync(stale, { force: true }) } catch { /* non-fatal */ }
   }
 
-  const removeDirIfStale = (dirName: string) => {
+  const removeDirIfStale = (dirName: string): void => {
     if (currentSourceDirs.has(dirName)) return  // still in bundle, not stale
     const stale = join(extensionsDir, dirName)
     try { if (existsSync(stale)) rmSync(stale, { recursive: true, force: true }) } catch { /* non-fatal */ }

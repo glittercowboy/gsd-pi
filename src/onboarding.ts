@@ -148,7 +148,7 @@ async function loadPico(): Promise<PicoModule> {
     }
   } catch {
     // Fallback: return identity functions
-    const identity = (s: string) => s
+    const identity = (s: string): string => s
     return { cyan: identity, green: identity, yellow: identity, dim: identity, bold: identity, red: identity, reset: identity }
   }
 }
@@ -702,7 +702,7 @@ async function runCustomOpenAIFlow(
 
   // Write or merge into models.json
   const modelsJsonPath = join(agentDir, 'models.json')
-  let config: { providers: Record<string, any> } = { providers: {} }
+  let config: { providers: Record<string, unknown> } = { providers: {} }
 
   if (existsSync(modelsJsonPath)) {
     try {
@@ -880,11 +880,11 @@ export async function runRemoteQuestionsStep(
   pc: PicoModule,
   authStorage: AuthStorage,
 ): Promise<string | null> {
-  // Check existing config — use getCredentialsForProvider to skip empty-key entries
-  const hasValidKey = (provider: string) =>
-    authStorage
-      .getCredentialsForProvider(provider)
-      .some((c: ApiKeyCredential) => c.type === 'api_key' && typeof c.key === 'string' && c.key.length > 0)
+  // Check existing config — use authStorage.get() and validate the key
+  const hasValidKey = (provider: string): boolean => {
+    const c = authStorage.get(provider) as ApiKeyCredential | undefined
+    return c?.type === 'api_key' && typeof c.key === 'string' && c.key.length > 0
+  }
   const hasDiscord = hasValidKey('discord_bot')
   const hasSlack = hasValidKey('slack_bot')
   const hasTelegram = hasValidKey('telegram_bot')
@@ -1097,7 +1097,6 @@ async function runDiscordChannelStep(p: ClackModule, pc: PicoModule, token: stri
     })
     if (p.isCancel(choice)) return null
     guildId = choice as string
-    guildName = guilds.find(g => g.id === guildId)?.name ?? guildId
   }
 
   // Fetch channels

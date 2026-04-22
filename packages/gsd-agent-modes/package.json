@@ -1,0 +1,23 @@
+{
+  "name": "@gsd/agent-modes",
+  "version": "1.0.0",
+  "description": "GSD run-mode and CLI layer",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@gsd/agent-types": "*",
+    "@gsd/agent-core": "*",
+    "@gsd/pi-coding-agent": "*",
+    "@gsd/pi-tui": "*"
+  }
+}

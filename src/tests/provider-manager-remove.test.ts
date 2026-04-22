@@ -6,10 +6,10 @@ import { join } from "node:path";
 
 const { ModelsJsonWriter } = await import("../../packages/pi-coding-agent/src/core/models-json-writer.ts");
 const { ProviderManagerComponent } = await import(
-  "../../packages/pi-coding-agent/src/modes/interactive/components/provider-manager.ts"
+  "../../packages/pi-coding-agent/src/components/provider-manager.ts"
 );
 const { initTheme } = await import(
-  "../../packages/pi-coding-agent/src/modes/interactive/theme/theme.ts"
+  "../../packages/pi-coding-agent/src/core/theme/theme.ts"
 );
 
 initTheme();

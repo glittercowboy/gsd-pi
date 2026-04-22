@@ -30,7 +30,7 @@ export function saveRemoteQuestionsConfig(channel: "slack" | "discord" | "telegr
 
   const content = existsSync(prefsPath) ? readFileSync(prefsPath, "utf-8") : "";
   const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-  let next = content;
+  let next: string;
 
   if (fmMatch) {
     let frontmatter = fmMatch[1];

@@ -35,7 +35,7 @@ test("resolve-ts loader rewrites direct pi-coding-agent source entry import to .
 
 test("resolve-ts loader transpiles pi-coding-agent source files that strip-only mode cannot parse", async () => {
   const orchestratorUrl = new URL(
-    "../../packages/pi-coding-agent/src/core/compaction-orchestrator.ts",
+    "../../packages/gsd-agent-core/src/compaction-orchestrator.ts",
     import.meta.url,
   ).href
 

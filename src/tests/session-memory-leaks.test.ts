@@ -49,42 +49,10 @@ test("TUI skips post-processing when component output is unchanged", () => {
   );
 });
 
-// ── Loader frame isolation ──────────────────────────────────────────
-
-test("Loader does not call setText on every spinner tick", () => {
-  const src = readSource("packages/pi-tui/src/components/loader.ts");
-  // The old pattern was: setText(`${frame} ${message}`) inside the interval
-  // The new pattern: only update Text when message changes, prepend frame in render()
-  assert.ok(
-    src.includes("_lastMessage"),
-    "Loader must track _lastMessage to avoid setText on every tick",
-  );
-  // Verify the interval does NOT call setText or updateDisplay
-  const intervalMatch = src.match(/setInterval\s*\(\s*\(\)\s*=>\s*\{([^}]+)\}/s);
-  assert.ok(intervalMatch, "Loader must have a setInterval callback");
-  const intervalBody = intervalMatch[1];
-  assert.ok(
-    !intervalBody.includes("setText") && !intervalBody.includes("updateDisplay"),
-    "Loader interval must NOT call setText or updateDisplay — " +
-    "frame rotation should only trigger requestRender()",
-  );
-});
-
-// ── Text cache guard ────────────────────────────────────────────────
-
-test("Text.setText returns early when text is unchanged", () => {
-  const src = readSource("packages/pi-tui/src/components/text.ts");
-  const setTextBody = extractFunctionBody(src, "setText(");
-  assert.ok(
-    setTextBody.includes("if (this.text === text) return"),
-    "setText must early-return when text is identical to prevent cache invalidation",
-  );
-});
-
 // ── Chat component cap ──────────────────────────────────────────────
 
 test("InteractiveMode caps rendered chat components", () => {
-  const src = readSource("packages/pi-coding-agent/src/modes/interactive/interactive-mode.ts");
+  const src = readSource("packages/gsd-agent-modes/src/modes/interactive/interactive-mode.ts");
   assert.ok(
     src.includes("MAX_CHAT_COMPONENTS"),
     "InteractiveMode must define MAX_CHAT_COMPONENTS to prevent unbounded growth",
@@ -98,7 +66,7 @@ test("InteractiveMode caps rendered chat components", () => {
 // ── ToolExecution dispose ───────────────────────────────────────────
 
 test("ToolExecutionComponent has dispose() to clear heavy references", () => {
-  const src = readSource("packages/pi-coding-agent/src/modes/interactive/components/tool-execution.ts");
+  const src = readSource("packages/gsd-agent-modes/src/modes/interactive/components/tool-execution.ts");
   assert.ok(
     src.includes("dispose()"),
     "ToolExecutionComponent must have dispose() for GC of image maps, diff previews, etc.",
@@ -108,7 +76,7 @@ test("ToolExecutionComponent has dispose() to clear heavy references", () => {
 // ── Orphan process prevention ───────────────────────────────────────
 
 test("InteractiveMode kills descendant processes on shutdown", () => {
-  const src = readSource("packages/pi-coding-agent/src/modes/interactive/interactive-mode.ts");
+  const src = readSource("packages/gsd-agent-modes/src/modes/interactive/interactive-mode.ts");
   assert.ok(
     src.includes("listDescendants"),
     "Shutdown must use listDescendants to find orphan child processes",

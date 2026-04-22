@@ -548,8 +548,9 @@ async function promptElicitationWithDialogs(
 		const title = buildElicitationPromptTitle(request, question);
 
 		if (question.allowMultiple) {
+			// allowMultiple removed from ExtensionUIDialogOptions in pi 0.67.2;
+			// fall back to single-select (result is wrapped in array below)
 			const selected = await ui.select(title, question.options.map((option) => option.label), {
-				allowMultiple: true,
 				signal,
 			});
 			if (Array.isArray(selected)) {
@@ -985,7 +986,8 @@ function attachExternalResultsToToolBlocks(
 	toolResultsById: ReadonlyMap<string, ExternalToolResultPayload>,
 ): void {
 	for (const block of toolBlocks) {
-		if (block.type !== "toolCall" && block.type !== "serverToolUse") continue;
+		// serverToolUse removed from AssistantMessage content in pi 0.67.2
+		if (block.type !== "toolCall") continue;
 		const externalResult = toolResultsById.get(block.id);
 		if (!externalResult) continue;
 		(block as ToolCallWithExternalResult & { id: string }).externalResult = externalResult;
@@ -1176,8 +1178,9 @@ async function pumpSdkMessages(
 								lastTextContent = block.text;
 							} else if (block.type === "thinking" && block.thinking) {
 								lastThinkingContent = block.thinking;
-							} else if (block.type === "toolCall" || block.type === "serverToolUse") {
+							} else if (block.type === "toolCall") {
 								// Collect tool blocks for externalToolExecution rendering
+								// (serverToolUse removed from pi-ai content types in pi 0.67.2)
 								intermediateToolBlocks.push(block);
 							}
 						}
@@ -1208,13 +1211,8 @@ async function pumpSdkMessages(
 									toolCall: block,
 									partial: builder.message,
 								});
-							} else if (block.type === "serverToolUse") {
-								stream.push({
-									type: "server_tool_use",
-									contentIndex,
-									partial: builder.message,
-								});
 							}
+							// serverToolUse/server_tool_use removed from pi-ai in pi 0.67.2
 						}
 					}
 

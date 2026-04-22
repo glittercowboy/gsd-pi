@@ -19,7 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const source = readFileSync(
-  join(__dirname, '..', '..', 'packages', 'pi-coding-agent', 'src', 'modes', 'interactive', 'components', 'provider-manager.ts'),
+  join(__dirname, '..', '..', 'packages', 'gsd-agent-modes', 'src', 'modes', 'interactive', 'components', 'provider-manager.ts'),
   'utf-8',
 );
 
@@ -30,8 +30,8 @@ describe('provider manager Enter key handler (#3579)', () => {
   });
 
   test('selectConfirm key handler exists', () => {
-    assert.match(source, /selectConfirm/,
-      'selectConfirm key binding should be handled');
+    assert.match(source, /"tui\.select\.confirm"/,
+      'selectConfirm key binding should be handled via kb.matches(keyData, "tui.select.confirm")');
   });
 
   test('onSetupAuth is called with provider name', () => {

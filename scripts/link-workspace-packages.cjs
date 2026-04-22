@@ -33,6 +33,8 @@ const packageMap = {
   'pi-ai': { scope: '@gsd', name: 'pi-ai' },
   'pi-coding-agent': { scope: '@gsd', name: 'pi-coding-agent' },
   'pi-tui': { scope: '@gsd', name: 'pi-tui' },
+  'gsd-agent-core': { scope: '@gsd', name: 'agent-core' },
+  'gsd-agent-modes': { scope: '@gsd', name: 'agent-modes' },
   'rpc-client': { scope: '@gsd-build', name: 'rpc-client' },
   'mcp-server': { scope: '@gsd-build', name: 'mcp-server' },
 }

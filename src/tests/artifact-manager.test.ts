@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { ArtifactManager } from '../../packages/pi-coding-agent/src/core/artifact-manager.ts'
+import { ArtifactManager } from '../../packages/gsd-agent-core/src/artifact-manager.ts'
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 

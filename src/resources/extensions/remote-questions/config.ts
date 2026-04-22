@@ -58,12 +58,9 @@ function hydrateRemoteTokensFromAuth(): void {
 
     for (const [providerId, envVar] of needed) {
       try {
-        const creds = auth.getCredentialsForProvider(providerId);
-        const apiKeyCred = creds.find((c: { type: string; key?: string }) => c.type === "api_key" && !!c.key) as
-          | { type: "api_key"; key: string }
-          | undefined;
-        if (apiKeyCred?.key) {
-          process.env[envVar] = apiKeyCred.key;
+        const cred = auth.get(providerId) as { type?: string; key?: string } | undefined;
+        if (cred?.type === "api_key" && cred.key) {
+          process.env[envVar] = cred.key;
         }
       } catch {
         // Per-provider failure is non-fatal — skip and move on.

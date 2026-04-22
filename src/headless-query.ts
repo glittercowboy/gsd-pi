@@ -28,23 +28,50 @@ const jiti = createJiti(fileURLToPath(import.meta.url), { interopDefault: true, 
 const agentExtensionsDir = join(process.env.GSD_AGENT_DIR || join(homedir(), '.gsd', 'agent'), 'extensions', 'gsd')
 const { existsSync } = await import('node:fs')
 const useAgentDir = existsSync(join(agentExtensionsDir, 'state.ts'))
-const gsdExtensionPath = (...segments: string[]) =>
+const gsdExtensionPath = (...segments: string[]): string =>
   useAgentDir
     ? join(agentExtensionsDir, ...segments)
     : resolveBundledSourceResource(import.meta.url, 'extensions', 'gsd', ...segments)
 
-async function loadExtensionModules() {
-  const stateModule = await jiti.import(gsdExtensionPath('state.ts'), {}) as any
-  const dispatchModule = await jiti.import(gsdExtensionPath('auto-dispatch.ts'), {}) as any
-  const sessionModule = await jiti.import(gsdExtensionPath('session-status-io.ts'), {}) as any
-  const prefsModule = await jiti.import(gsdExtensionPath('preferences.ts'), {}) as any
-  const autoStartModule = await jiti.import(gsdExtensionPath('auto-start.ts'), {}) as any
+type ExtensionModule = Record<string, unknown>
+
+interface DispatchResult {
+  action: 'dispatch' | 'stop' | 'skip'
+  unitType?: string
+  unitId?: string
+  reason?: string
+}
+
+interface SessionStatus {
+  milestoneId: string
+  pid: number
+  state: string
+  cost: number
+  lastHeartbeat: number
+}
+
+interface GSDPreferences {
+  preferences?: Record<string, unknown>
+}
+
+async function loadExtensionModules(): Promise<{
+  openProjectDbIfPresent: (basePath: string) => Promise<void>;
+  deriveState: (basePath: string) => Promise<GSDState>;
+  resolveDispatch: (opts: Record<string, unknown>) => Promise<DispatchResult>;
+  readAllSessionStatuses: (basePath: string) => SessionStatus[];
+  loadEffectiveGSDPreferences: () => GSDPreferences;
+}> {
+  const stateModule = await jiti.import(gsdExtensionPath('state.ts'), {}) as ExtensionModule
+  const dispatchModule = await jiti.import(gsdExtensionPath('auto-dispatch.ts'), {}) as ExtensionModule
+  const sessionModule = await jiti.import(gsdExtensionPath('session-status-io.ts'), {}) as ExtensionModule
+  const prefsModule = await jiti.import(gsdExtensionPath('preferences.ts'), {}) as ExtensionModule
+  const autoStartModule = await jiti.import(gsdExtensionPath('auto-start.ts'), {}) as ExtensionModule
   return {
     openProjectDbIfPresent: autoStartModule.openProjectDbIfPresent as (basePath: string) => Promise<void>,
     deriveState: stateModule.deriveState as (basePath: string) => Promise<GSDState>,
-    resolveDispatch: dispatchModule.resolveDispatch as (opts: any) => Promise<any>,
-    readAllSessionStatuses: sessionModule.readAllSessionStatuses as (basePath: string) => any[],
-    loadEffectiveGSDPreferences: prefsModule.loadEffectiveGSDPreferences as () => any,
+    resolveDispatch: dispatchModule.resolveDispatch as (opts: Record<string, unknown>) => Promise<DispatchResult>,
+    readAllSessionStatuses: sessionModule.readAllSessionStatuses as (basePath: string) => SessionStatus[],
+    loadEffectiveGSDPreferences: prefsModule.loadEffectiveGSDPreferences as () => GSDPreferences,
   }
 }
 

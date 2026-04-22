@@ -23,6 +23,9 @@ const GSD_ALIASES = {
   '@gsd/pi-agent-core':   new URL('../dist-test/packages/pi-agent-core/src/index.js', import.meta.url).href,
   '@gsd/pi-tui':          new URL('../dist-test/packages/pi-tui/src/index.js', import.meta.url).href,
   '@gsd/native':          new URL('../dist-test/packages/native/src/index.js', import.meta.url).href,
+  '@gsd/agent-core':      new URL('../dist-test/packages/gsd-agent-core/src/index.js', import.meta.url).href,
+  '@gsd/agent-modes':     new URL('../dist-test/packages/gsd-agent-modes/src/index.js', import.meta.url).href,
+  '@gsd/agent-types':     new URL('../dist-test/packages/gsd-agent-types/src/index.js', import.meta.url).href,
 };
 
 export function resolve(specifier, context, nextResolve) {

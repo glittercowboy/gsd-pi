@@ -988,10 +988,12 @@ describe("stream-adapter — MCP elicitation bridge", () => {
 	});
 
 	test("createClaudeCodeElicitationHandler falls back to dialog prompts when custom UI is unavailable", async () => {
+		// pi 0.67.2: allowMultiple removed from ExtensionUIDialogOptions.
+		// Multi-select falls back to single-select; result is wrapped in an array.
+		// The select mock no longer receives opts.allowMultiple=true, so it returns options[0].
 		const ui = {
 			custom: async () => undefined,
-			select: async (_title: string, options: string[], opts?: { allowMultiple?: boolean }) => {
-				if (opts?.allowMultiple) return ["Desktop", "Mobile"];
+			select: async (_title: string, options: string[], _opts?: Record<string, unknown>) => {
 				return options.includes("None of the above") ? "None of the above" : options[0];
 			},
 			input: async () => "CLI-only deployment target",
@@ -1005,7 +1007,8 @@ describe("stream-adapter — MCP elicitation bridge", () => {
 			content: {
 				storage_scope: "None of the above",
 				storage_scope__note: "CLI-only deployment target",
-				platform: ["Desktop", "Mobile"],
+				// Single-select fallback: first option "Web" wrapped in array
+				platform: ["Web"],
 			},
 		});
 	});

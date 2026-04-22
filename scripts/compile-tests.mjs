@@ -21,8 +21,10 @@ const esbuild = require(join(ROOT, 'node_modules/esbuild'));
 // Recursively collect files by extension (skip node_modules, templates, etc.)
 // Directories to skip during file collection
 const SKIP_DIRS = new Set(['node_modules', 'templates', '__tests__', 'integration']);
+// Same as SKIP_DIRS but includes __tests__ directories so package-level tests are compiled
+const SKIP_DIRS_PKG = new Set(['node_modules', 'templates', 'integration']);
 
-async function collectFiles(dir, exts = ['.ts', '.mjs']) {
+async function collectFiles(dir, exts = ['.ts', '.mjs'], skipDirs = SKIP_DIRS) {
   const results = [];
   let entries;
   try {
@@ -31,10 +33,10 @@ async function collectFiles(dir, exts = ['.ts', '.mjs']) {
     return results;
   }
   for (const entry of entries) {
-    if (SKIP_DIRS.has(entry.name)) continue;
+    if (skipDirs.has(entry.name)) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      results.push(...await collectFiles(full, exts));
+      results.push(...await collectFiles(full, exts, skipDirs));
     } else if (
       exts.some(ext => entry.name.endsWith(ext)) &&
       !entry.name.endsWith('.d.ts')
@@ -87,7 +89,8 @@ async function main() {
   for (const entry of pkgEntries) {
     if (!entry.isDirectory()) continue;
     const pkgSrc = join(packagesDir, entry.name, 'src');
-    packageFiles.push(...await collectFiles(pkgSrc));
+    // Use SKIP_DIRS_PKG so __tests__/ directories inside packages are compiled
+    packageFiles.push(...await collectFiles(pkgSrc, ['.ts', '.mjs'], SKIP_DIRS_PKG));
   }
 
   // Also compile web/lib/ — some tests import from ../../web/lib/

@@ -9,7 +9,7 @@ import { join } from "node:path";
 const assistantMessagePath = join(
   process.cwd(),
   "packages",
-  "pi-coding-agent",
+  "gsd-agent-modes",
   "src",
   "modes",
   "interactive",
@@ -28,19 +28,15 @@ test("assistant-message caps thinking block height when text content is present"
 
   assert.match(
     src,
-    /const hasToolContent = message\.content\.some\(\(c\) => c\.type === "toolCall" \|\| c\.type === "serverToolUse"\);/,
+    /const hasToolContent = message\.content\.some\(\(c\) => c\.type === "toolCall" \|\| isServerToolUseBlock\(c\)\);/,
     "assistant-message should detect tool blocks in mixed turns",
   );
 
+  // pi-tui 0.67.2: maxLines removed from Markdown component; thinking blocks render at full height.
+  // The cap policy variable (_shouldCapThinking) is preserved for future restoration.
   assert.match(
     src,
-    /const shouldCapThinking = hasTextContent \|\| hasToolContent \|\| message\.provider === "claude-code";/,
+    /const _shouldCapThinking = hasTextContent \|\| hasToolContent \|\| message\.provider === "claude-code";/,
     "assistant-message should derive a cap policy that also covers claude-code long reasoning traces",
-  );
-
-  assert.match(
-    src,
-    /if \(shouldCapThinking\)\s*\{\s*thinkingMarkdown\.maxLines = 8;\s*\}/s,
-    "assistant-message should cap visible thinking lines when the cap policy is active",
   );
 });
