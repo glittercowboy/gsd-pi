@@ -1187,7 +1187,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
       updateTaskStatus(milestoneId, sliceId, taskId, "awaiting-external");
     } catch (dbErr) {
       // Cleanup the JSON file to avoid partial state
-      try { unlinkSync(jsonPath); } catch { /* best effort */ }
+      try { unlinkSync(jsonPath); } catch (cleanupErr) { logError("register-external-wait", `Failed to clean up probe spec ${jsonPath}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`); }
       return { content: [{ type: "text" as const, text: `Error: DB update failed — ${dbErr instanceof Error ? dbErr.message : String(dbErr)}` }], isError: true, details: { error: "db update failed" } as any };
     }
 
