@@ -8,6 +8,7 @@ import {
 	getResultErrorMessage,
 	makeAbortedMessage,
 	mergePendingToolCalls,
+	buildFinalAssistantContent,
 	resolveClaudePermissionMode,
 	buildPromptFromContext,
 	buildSdkQueryPrompt,
@@ -538,6 +539,71 @@ describe("stream-adapter — Claude Code external tool results", () => {
 				},
 			},
 		]);
+	});
+
+	test("buildFinalAssistantContent preserves intermediate tool calls with attached external results", () => {
+		const finalContent = buildFinalAssistantContent({
+			intermediateToolBlocks: [
+				{
+					type: "toolCall",
+					id: "tool-bash-1",
+					name: "bash",
+					arguments: { command: "echo hi" },
+				} as any,
+			],
+			pendingContent: [{ type: "text", text: "All done." }],
+			toolResultsById: new Map([
+				[
+					"tool-bash-1",
+					{
+						content: [{ type: "text", text: "hi\n" }],
+						details: { source: "claude-code" },
+						isError: false,
+					},
+				],
+			]),
+		});
+
+		assert.equal(finalContent[0]?.type, "toolCall");
+		assert.deepEqual((finalContent[0] as any).externalResult, {
+			content: [{ type: "text", text: "hi\n" }],
+			details: { source: "claude-code" },
+			isError: false,
+		});
+		assert.deepEqual(finalContent[1], { type: "text", text: "All done." });
+	});
+
+	test("buildFinalAssistantContent keeps final-turn tool calls when result arrives without a synthetic user boundary", () => {
+		const finalContent = buildFinalAssistantContent({
+			intermediateToolBlocks: [],
+			pendingContent: [
+				{
+					type: "toolCall",
+					id: "tool-read-1",
+					name: "read",
+					arguments: { path: "README.md" },
+				} as any,
+				{ type: "text", text: "Read complete." },
+			],
+			toolResultsById: new Map([
+				[
+					"tool-read-1",
+					{
+						content: [{ type: "text", text: "file contents" }],
+						details: { path: "README.md" },
+						isError: false,
+					},
+				],
+			]),
+		});
+
+		assert.equal(finalContent[0]?.type, "toolCall");
+		assert.deepEqual((finalContent[0] as any).externalResult, {
+			content: [{ type: "text", text: "file contents" }],
+			details: { path: "README.md" },
+			isError: false,
+		});
+		assert.deepEqual(finalContent[1], { type: "text", text: "Read complete." });
 	});
 });
 

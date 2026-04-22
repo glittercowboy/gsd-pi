@@ -3,8 +3,9 @@
  *
  * The SDK runs the full agentic loop (multi-turn, tool execution, compaction)
  * in one call. This adapter translates the SDK's streaming output into
- * AssistantMessageEvents for TUI rendering, then strips tool-call blocks from
- * the final AssistantMessage so GSD's agent loop doesn't try to dispatch them.
+ * AssistantMessageEvents for TUI rendering, then preserves externally executed
+ * tool-call blocks on the final AssistantMessage so Agent Core can render them
+ * while `externalToolExecution` prevents local redispatch.
  */
 
 import type {
@@ -1005,6 +1006,49 @@ function attachExternalResultsToToolBlocks(
 }
 
 /**
+ * Build the final assistant content that Agent Core consumes in
+ * `externalToolExecution` mode. This preserves tool-call blocks, attaches any
+ * SDK-produced external results by tool-call id, and then appends the final
+ * text/thinking blocks for the completed turn.
+ */
+export function buildFinalAssistantContent(params: {
+	intermediateToolBlocks: AssistantMessage["content"];
+	pendingContent?: AssistantMessage["content"];
+	toolResultsById: ReadonlyMap<string, ExternalToolResultPayload>;
+	lastThinkingContent?: string;
+	lastTextContent?: string;
+	fallbackResultText?: string;
+}): AssistantMessage["content"] {
+	const mergedToolBlocks = [...params.intermediateToolBlocks];
+	if (params.pendingContent) {
+		mergePendingToolCalls(mergedToolBlocks, params.pendingContent);
+	}
+	attachExternalResultsToToolBlocks(mergedToolBlocks, params.toolResultsById);
+
+	const finalContent: AssistantMessage["content"] = [...mergedToolBlocks];
+	if (params.pendingContent && params.pendingContent.length > 0) {
+		for (const block of params.pendingContent) {
+			if (block.type === "text" || block.type === "thinking") {
+				finalContent.push(block);
+			}
+		}
+	} else {
+		if (params.lastThinkingContent) {
+			finalContent.push({ type: "thinking", thinking: params.lastThinkingContent });
+		}
+		if (params.lastTextContent) {
+			finalContent.push({ type: "text", text: params.lastTextContent });
+		}
+	}
+
+	if (finalContent.length === 0 && params.fallbackResultText) {
+		finalContent.push({ type: "text", text: params.fallbackResultText });
+	}
+
+	return finalContent;
+}
+
+/**
  * Merge tool-call blocks from the active partial-message builder into the
  * running list of intermediate tool calls, preserving order and de-duping
  * by tool-call id. Exposed for testing the F3 fix (final-turn tool calls
@@ -1035,8 +1079,9 @@ export function mergePendingToolCalls(
  * GSD streamSimple function that delegates to the Claude Agent SDK.
  *
  * Emits AssistantMessageEvent deltas for real-time TUI rendering
- * (thinking, text, tool calls). The final AssistantMessage has tool-call
- * blocks stripped so the agent loop ends the turn without local dispatch.
+ * (thinking, text, tool calls). The final AssistantMessage preserves
+ * SDK-executed tool-call blocks for Agent Core's `externalToolExecution`
+ * path, which renders the results without dispatching the tools locally.
  */
 export function streamViaClaudeCode(
 	model: Model<any>,
@@ -1237,46 +1282,15 @@ async function pumpSdkMessages(
 				// -- Result (terminal) --
 				case "result": {
 					const result = msg as SDKResultMessage;
-
-					// Build final message. Include intermediate tool calls so the
-					// agent loop's externalToolExecution path emits tool_execution
-					// events for proper TUI rendering, followed by the text response.
-					const finalContent: AssistantMessage["content"] = [];
-
-					// If the final turn ended without a synthetic user message
-					// (e.g. stop_reason: "tool_use" followed directly by result,
-					// or a turn with text but no tool execution), the `builder`
-					// still holds toolCall blocks that were never pushed into
-					// `intermediateToolBlocks`. Fold them in here so they aren't
-					// dropped from the final AssistantMessage.
-					if (builder) {
-						mergePendingToolCalls(intermediateToolBlocks, builder.message.content);
-					}
-
-					// Add tool calls from intermediate turns first (renders above text)
-					attachExternalResultsToToolBlocks(intermediateToolBlocks, toolResultsById);
-					finalContent.push(...intermediateToolBlocks);
-
-					// Add text/thinking from the last turn
-					if (builder && builder.message.content.length > 0) {
-						for (const block of builder.message.content) {
-							if (block.type === "text" || block.type === "thinking") {
-								finalContent.push(block);
-							}
-						}
-					} else {
-						if (lastThinkingContent) {
-							finalContent.push({ type: "thinking", thinking: lastThinkingContent });
-						}
-						if (lastTextContent) {
-							finalContent.push({ type: "text", text: lastTextContent });
-						}
-					}
-
-					// Fallback: use the SDK's result text if we have no content
-					if (finalContent.length === 0 && result.subtype === "success" && result.result) {
-						finalContent.push({ type: "text", text: result.result });
-					}
+					const finalContent = buildFinalAssistantContent({
+						intermediateToolBlocks,
+						pendingContent: builder?.message.content,
+						toolResultsById,
+						lastThinkingContent,
+						lastTextContent,
+						fallbackResultText:
+							result.subtype === "success" && result.result ? result.result : undefined,
+					});
 
 					const finalMessage: AssistantMessage = {
 						role: "assistant",
