@@ -12,13 +12,10 @@ import {
 } from "@gsd/pi-tui";
 import stripAnsi from "strip-ansi";
 import type { ToolDefinition } from "@gsd/agent-types";
-import { computeEditDiff } from "@gsd/pi-coding-agent";
 import type { EditDiffError, EditDiffResult } from "@gsd/agent-types";
-import { allTools } from "@gsd/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@gsd/pi-coding-agent";
-import { convertToPng } from "@gsd/pi-coding-agent";
-import { sanitizeBinaryOutput } from "@gsd/pi-coding-agent";
 import { getLanguageFromPath, highlightCode } from "@gsd/pi-coding-agent";
+import { allTools, computeEditDiff, convertToPng, sanitizeBinaryOutput } from "../../../pi-coding-agent-compat.js";
 import { theme } from "../../../theme.js";
 import { shortenPath } from "../utils/shorten-path.js";
 import { renderDiff } from "./diff.js";

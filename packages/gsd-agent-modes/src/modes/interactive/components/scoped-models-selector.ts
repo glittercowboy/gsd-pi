@@ -4,13 +4,13 @@ import {
 	Container,
 	type Focusable,
 	fuzzyFilter,
-	getKeybindings,
 	Input,
 	Key,
 	matchesKey,
 	Spacer,
 	Text,
 } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 import { theme } from "../../../theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 

@@ -1,6 +1,7 @@
 import type { OAuthProviderInterface } from "@gsd/pi-ai";
 import { getOAuthProviders } from "@gsd/pi-ai/oauth";
-import { Container, getKeybindings, Spacer, TruncatedText } from "@gsd/pi-tui";
+import { Container, Spacer, TruncatedText } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 import type { AuthStorage } from "@gsd/agent-types";
 import { theme } from "../../../theme.js";
 import { DynamicBorder } from "./dynamic-border.js";

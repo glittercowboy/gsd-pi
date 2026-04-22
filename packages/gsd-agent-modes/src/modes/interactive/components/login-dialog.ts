@@ -1,7 +1,8 @@
 // GSD Login Dialog Component — OAuth login flow UI
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 import { getOAuthProviders } from "@gsd/pi-ai/oauth";
-import { Container, type Focusable, getKeybindings, Input, Spacer, Text, truncateToWidth, type TUI } from "@gsd/pi-tui";
+import { Container, type Focusable, Input, Spacer, Text, truncateToWidth, type TUI } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 import { execFile } from "child_process";
 import { theme } from "../../../theme.js";
 import { DynamicBorder } from "./dynamic-border.js";

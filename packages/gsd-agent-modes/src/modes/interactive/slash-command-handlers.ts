@@ -14,7 +14,6 @@ import * as path from "node:path";
 import type { ThinkingLevel } from "@gsd/pi-agent-core";
 import type {
 	EditorComponent,
-	Keybinding,
 	MarkdownTheme,
 } from "@gsd/pi-tui";
 import {
@@ -25,16 +24,13 @@ import {
 	Text,
 } from "@gsd/pi-tui";
 import { spawn, spawnSync } from "child_process";
-import {
-	getShareViewerUrl,
-} from "@gsd/pi-coding-agent";
+import { getShareViewerUrl, getChangelogPath, parseChangelog } from "../../pi-coding-agent-compat.js";
 import type { AgentSession } from "@gsd/agent-core";
 import type { AppAction } from "@gsd/agent-types";
 import { KeybindingsManager } from "@gsd/agent-core";
 import type { SessionManager } from "@gsd/agent-types";
 import type { SettingsManager } from "@gsd/agent-types";
 import { copyToClipboard } from "@gsd/pi-coding-agent";
-import { getChangelogPath, parseChangelog } from "@gsd/pi-coding-agent";
 import { ArminComponent } from "./components/armin.js";
 import { BorderedLoader } from "./components/bordered-loader.js";
 import { DynamicBorder } from "./components/dynamic-border.js";
@@ -43,6 +39,7 @@ import { SelectSubmenu, THINKING_DESCRIPTIONS } from "./components/settings-sele
 import { theme } from "../../theme.js";
 
 import type { TUI } from "@gsd/pi-tui";
+import type { Keybinding } from "../../pi-tui-compat.js";
 
 // ---------------------------------------------------------------------------
 // Context interface — the subset of InteractiveMode needed by slash commands

@@ -3,12 +3,12 @@ import {
 	Container,
 	type Focusable,
 	fuzzyFilter,
-	getKeybindings,
 	Input,
 	Spacer,
 	Text,
 	type TUI,
 } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 import type { ModelRegistry } from "@gsd/agent-types";
 import type { SettingsManager } from "@gsd/agent-types";
 import { theme } from "../../../theme.js";

@@ -37,13 +37,7 @@ import {
 	visibleWidth,
 } from "@gsd/pi-tui";
 import { spawn, spawnSync } from "child_process";
-import {
-	APP_NAME,
-	getAuthPath,
-	getDebugLogPath,
-	getUpdateInstruction,
-	VERSION,
-} from "@gsd/pi-coding-agent";
+import { VERSION } from "@gsd/pi-coding-agent";
 import type { AgentSession, AgentSessionEvent } from "@gsd/agent-core";
 import { parseSkillBlock } from "@gsd/pi-coding-agent";
 import type { CompactionResult } from "@gsd/agent-types";
@@ -55,20 +49,13 @@ import type {
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 } from "@gsd/agent-types";
-import { FooterDataProvider } from "@gsd/pi-coding-agent";
 import type { ReadonlyFooterDataProvider } from "@gsd/agent-types";
 import type { AppAction } from "@gsd/agent-types";
 import { KeybindingsManager } from "@gsd/agent-core";
-import { createCompactionSummaryMessage } from "@gsd/pi-coding-agent";
-import { resolveModelScope } from "@gsd/pi-coding-agent";
 import type { ResourceDiagnostic } from "@gsd/agent-types";
 import { SessionManager } from "@gsd/pi-coding-agent";
 import type { SessionContext } from "@gsd/agent-types";
-import { BUILTIN_SLASH_COMMANDS } from "@gsd/pi-coding-agent";
 import type { TruncationResult } from "@gsd/agent-types";
-import { getChangelogPath, getNewEntries, parseChangelog } from "@gsd/pi-coding-agent";
-import { extensionForImageMimeType, readClipboardImage } from "@gsd/pi-coding-agent";
-import { ensureTool } from "@gsd/pi-coding-agent";
 import type { RegisteredCommand } from "@gsd/pi-coding-agent";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
 import { BashExecutionComponent } from "./components/bash-execution.js";
@@ -97,7 +84,23 @@ import type { TimestampFormat } from "./components/timestamp.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
-import { ContextualTips } from "@gsd/pi-coding-agent";
+import {
+	APP_NAME,
+	BUILTIN_SLASH_COMMANDS,
+	ContextualTips,
+	FooterDataProvider,
+	createCompactionSummaryMessage,
+	ensureTool,
+	extensionForImageMimeType,
+	getAuthPath,
+	getChangelogPath,
+	getDebugLogPath,
+	getNewEntries,
+	getUpdateInstruction,
+	parseChangelog,
+	readClipboardImage,
+	resolveModelScope,
+} from "../../pi-coding-agent-compat.js";
 import type { InteractiveModeStateHost } from "./interactive-mode-state.js";
 import { type SlashCommandContext, getAppKeyDisplay } from "./slash-command-handlers.js";
 import { handleAgentEvent } from "./controllers/chat-controller.js";
@@ -110,17 +113,12 @@ import {
 	updateAvailableProviderCount as updateAvailableProviderCountController,
 } from "./controllers/model-controller.js";
 import {
-	getAvailableThemes,
-	getEditorTheme,
 	getMarkdownTheme,
 	initTheme,
-	onThemeChange,
-	stopThemeWatcher,
-	setRegisteredThemes,
-	setTheme,
 	Theme,
 	type ThemeColor,
 } from "@gsd/pi-coding-agent";
+import { getAvailableThemes, getEditorTheme, onThemeChange, setRegisteredThemes, setTheme, stopThemeWatcher } from "../../pi-coding-agent-compat.js";
 import { theme } from "../../theme.js";
 
 /** Interface for components that can be expanded/collapsed */

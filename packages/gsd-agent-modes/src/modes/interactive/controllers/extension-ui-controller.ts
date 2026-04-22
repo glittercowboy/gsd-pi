@@ -1,6 +1,7 @@
 import type { ExtensionUIContext } from "@gsd/agent-types";
 
-import { Theme, getAvailableThemesWithPaths, getThemeByName, setTheme, setThemeInstance } from "@gsd/pi-coding-agent";
+import { Theme } from "@gsd/pi-coding-agent";
+import { getAvailableThemesWithPaths, getThemeByName, setTheme, setThemeInstance } from "../../../pi-coding-agent-compat.js";
 import { theme } from "../../../theme.js";
 import { appKey } from "../components/keybinding-hints.js";
 import type { InteractiveModeStateHost } from "../interactive-mode-state.js";

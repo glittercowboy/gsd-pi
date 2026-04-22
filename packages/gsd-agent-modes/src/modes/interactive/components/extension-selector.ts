@@ -4,7 +4,8 @@
  * Options starting with SEPARATOR_PREFIX are rendered as non-selectable group headers.
  */
 
-import { Container, getKeybindings, Spacer, Text, type TUI } from "@gsd/pi-tui";
+import { Container, Spacer, Text, type TUI } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 import { theme } from "../../../theme.js";
 import { CountdownTimer } from "./countdown-timer.js";
 import { DynamicBorder } from "./dynamic-border.js";

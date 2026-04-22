@@ -12,13 +12,13 @@ import {
 	Editor,
 	type EditorOptions,
 	type Focusable,
-	getKeybindings,
 	Spacer,
 	Text,
 	type TUI,
 } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 import { KeybindingsManager } from "@gsd/agent-core";
-import { getEditorTheme } from "@gsd/pi-coding-agent";
+import { getEditorTheme } from "../../../pi-coding-agent-compat.js";
 import { theme } from "../../../theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { appKeyHint, keyHint } from "./keybinding-hints.js";

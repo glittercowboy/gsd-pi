@@ -6,8 +6,8 @@ import { ProcessTerminal, TUI } from "@gsd/pi-tui";
 import { ConfigSelectorComponent } from "../modes/interactive/components/config-selector.js";
 import {
 	initTheme,
-	stopThemeWatcher,
 } from "@gsd/pi-coding-agent";
+import { stopThemeWatcher } from "../pi-coding-agent-compat.js";
 import type { ResolvedPaths, SettingsManager } from "@gsd/agent-types";
 
 export interface ConfigSelectorOptions {

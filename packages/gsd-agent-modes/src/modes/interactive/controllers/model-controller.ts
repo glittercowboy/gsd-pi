@@ -1,5 +1,5 @@
 import type { Api, Model } from "@gsd/pi-ai";
-import type { ScopedModel } from "@gsd/pi-coding-agent";
+import type { ScopedModel } from "../../../pi-coding-agent-compat.js";
 import type { InteractiveModeStateHost } from "../interactive-mode-state.js";
 
 export async function handleModelCommand(host: InteractiveModeStateHost, searchTerm?: string): Promise<void> {
@@ -75,4 +75,3 @@ export async function updateAvailableProviderCount(host: InteractiveModeStateHos
 	const uniqueProviders = new Set(models.map((m) => m.provider));
 	host.footerDataProvider.setAvailableProviderCount(uniqueProviders.size);
 }
-

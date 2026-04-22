@@ -6,11 +6,11 @@
 import {
 	Container,
 	type Focusable,
-	getKeybindings,
 	Spacer,
 	Text,
 	type TUI,
 } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 import type { AuthStorage } from "@gsd/agent-types";
 // getDiscoverableProviders and ModelsJsonWriter removed in pi-coding-agent 0.67.2
 import { providerDisplayName } from "./model-selector.js";

@@ -5,7 +5,6 @@ import {
 	type Component,
 	Container,
 	type Focusable,
-	getKeybindings,
 	Input,
 	matchesKey,
 	Spacer,
@@ -13,6 +12,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 import { KeybindingsManager } from "@gsd/agent-core";
 import type { SessionInfo } from "@gsd/agent-types";
 import { theme } from "../../../theme.js";

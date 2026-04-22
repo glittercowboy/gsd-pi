@@ -2,7 +2,8 @@
  * Simple text input component for extensions.
  */
 
-import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@gsd/pi-tui";
+import { Container, type Focusable, Input, Spacer, Text, type TUI } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 
 // vendor-seam: dual-module-path -- Input from pi-tui exposes secure/placeholder at runtime
 // but the pi-tui type declarations don't include them. Extension interface bridges the gap.

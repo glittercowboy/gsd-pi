@@ -1,4 +1,5 @@
-import { type Component, Container, getKeybindings, Spacer, Text, truncateToWidth } from "@gsd/pi-tui";
+import { type Component, Container, Spacer, Text, truncateToWidth } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 import { theme } from "../../../theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 

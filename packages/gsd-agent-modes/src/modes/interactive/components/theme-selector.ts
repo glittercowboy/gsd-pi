@@ -1,5 +1,6 @@
 import { Container, type SelectItem, SelectList } from "@gsd/pi-tui";
-import { getAvailableThemes, getSelectListTheme } from "@gsd/pi-coding-agent";
+import { getSelectListTheme } from "@gsd/pi-coding-agent";
+import { getAvailableThemes } from "../../../pi-coding-agent-compat.js";
 import { DynamicBorder } from "./dynamic-border.js";
 
 /**

@@ -7,14 +7,14 @@ import {
 	type Component,
 	Container,
 	type Focusable,
-	getKeybindings,
 	Input,
 	matchesKey,
 	Spacer,
 	truncateToWidth,
 	visibleWidth,
 } from "@gsd/pi-tui";
-import { CONFIG_DIR_NAME } from "@gsd/pi-coding-agent";
+import { getKeybindings } from "../../../pi-tui-compat.js";
+import { CONFIG_DIR_NAME } from "../../../pi-coding-agent-compat.js";
 import type { PathMetadata, ResolvedPaths, ResolvedResource } from "@gsd/agent-types";
 import type { PackageSource, SettingsManager } from "@gsd/agent-types";
 import { theme } from "../../../theme.js";

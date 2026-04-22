@@ -11,7 +11,7 @@ import {
 	formatDimensionNote,
 	resizeImage,
 	resolveReadPath,
-} from "@gsd/pi-coding-agent";
+} from "../pi-coding-agent-compat.js";
 
 export interface ProcessedFiles {
 	text: string;

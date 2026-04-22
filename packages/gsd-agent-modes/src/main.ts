@@ -9,29 +9,31 @@ import { type ImageContent, modelsAreEqual, supportsXhigh } from "@gsd/pi-ai";
 import chalk from "chalk";
 import { createInterface } from "readline";
 import {
-	APP_NAME as _APP_NAME,
 	AuthStorage,
 	DefaultPackageManager,
 	DefaultResourceLoader,
 	type LoadExtensionsResult,
 	ModelRegistry,
-	exportFromFile,
 	getAgentDir,
-	getModelsPath,
 	initTheme,
+	SessionManager,
+	SettingsManager,
+	VERSION,
+} from "@gsd/pi-coding-agent";
+import {
+	APP_NAME as _APP_NAME,
+	allTools,
+	exportFromFile,
+	getModelsPath,
 	printTimings,
 	resolveCliModel,
 	resolveModelScope,
 	runMigrations,
 	type ScopedModel,
-	SessionManager,
-	SettingsManager,
 	showDeprecationWarnings,
 	stopThemeWatcher,
 	time,
-	VERSION,
-	allTools,
-} from "@gsd/pi-coding-agent";
+} from "./pi-coding-agent-compat.js";
 import { KeybindingsManager, createAgentSession, type CreateAgentSessionOptions } from "@gsd/agent-core";
 import { type Args, parseArgs, printHelp } from "./cli/args.js";
 import { selectConfig } from "./cli/config-selector.js";

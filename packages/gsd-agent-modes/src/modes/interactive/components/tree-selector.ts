@@ -2,7 +2,6 @@ import {
 	type Component,
 	Container,
 	type Focusable,
-	getKeybindings,
 	Input,
 	matchesKey,
 	Spacer,
@@ -10,6 +9,7 @@ import {
 	TruncatedText,
 	truncateToWidth,
 } from "@gsd/pi-tui";
+import { getKeybindings } from "../../../pi-tui-compat.js";
 // SessionTreeNode is not exported from pi-coding-agent index in 0.67.2 — define locally.
 interface SessionTreeNode {
 	entry: {

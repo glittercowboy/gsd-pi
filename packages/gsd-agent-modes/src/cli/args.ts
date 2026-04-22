@@ -9,7 +9,7 @@ import {
 	CONFIG_DIR_NAME,
 	ENV_AGENT_DIR,
 	allTools,
-} from "@gsd/pi-coding-agent";
+} from "../pi-coding-agent-compat.js";
 import type { ToolName } from "@gsd/agent-types";
 
 // isValidThinkingLevel and VALID_THINKING_LEVELS removed from pi-coding-agent 0.67.2 — define locally.

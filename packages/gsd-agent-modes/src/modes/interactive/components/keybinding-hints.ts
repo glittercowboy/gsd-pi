@@ -2,7 +2,8 @@
  * Utilities for formatting keybinding hints in the UI.
  */
 
-import { type Keybinding, getKeybindings, type KeyId } from "@gsd/pi-tui";
+import type { KeyId } from "@gsd/pi-tui";
+import { type Keybinding, getKeybindings } from "../../../pi-tui-compat.js";
 import type { AppAction } from "@gsd/agent-types";
 import { KeybindingsManager } from "@gsd/agent-core";
 import { theme } from "../../../theme.js";
