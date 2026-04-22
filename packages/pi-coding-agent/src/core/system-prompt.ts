@@ -109,9 +109,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	}
 
 	// Get absolute paths to documentation and examples
-	const readmePath = getReadmePath();
-	const docsPath = getDocsPath();
-	const examplesPath = getExamplesPath();
+	const readmePath = toPosixPath(getReadmePath());
+	const docsPath = toPosixPath(getDocsPath());
+	const examplesPath = toPosixPath(getExamplesPath());
 
 	// Build tools list based on selected tools.
 	// Built-ins use toolDescriptions. Custom tools can provide one-line snippets.

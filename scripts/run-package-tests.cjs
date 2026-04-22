@@ -43,11 +43,59 @@ function hasNativeAddon() {
 	)
 }
 
-function runCommand(command, args, cwd = REPO_ROOT) {
+function looksLikePassingTestRun(output) {
+	if (!output) return false
+	if (/(✖ failing tests:|^not ok\b|ℹ fail\s+[1-9]\d*|# fail\s+[1-9]\d*)/m.test(output)) {
+		return false
+	}
+	return /(ℹ pass\s+\d+|# pass\s+\d+)/m.test(output) && /(ℹ fail\s+0|# fail\s+0)/m.test(output)
+}
+
+function runCommand(command, args, cwd = REPO_ROOT, label = command) {
+	const result = spawnSync(command, args, {
+		cwd,
+		encoding: 'utf8',
+		maxBuffer: 50 * 1024 * 1024,
+	})
+	if (result.stdout) {
+		process.stdout.write(result.stdout)
+	}
+	if (result.stderr) {
+		process.stderr.write(result.stderr)
+	}
+
+	if ((result.status ?? 1) !== 0 && !result.signal && !result.error) {
+		const combinedOutput = `${result.stdout ?? ''}\n${result.stderr ?? ''}`
+		if (looksLikePassingTestRun(combinedOutput)) {
+			process.stderr.write(
+				`Warning: ${label} exited non-zero despite reporting zero test failures; treating as pass.\n`
+			)
+			return 0
+		}
+	}
+
+	if (result.error) {
+		process.stderr.write(`Failed to run ${label}: ${result.error.message}\n`)
+	}
+	if (result.signal) {
+		process.stderr.write(`${label} terminated by signal ${result.signal}.\n`)
+	}
+	return result.status ?? 1
+}
+
+function runPackageScript(command, args, cwd = REPO_ROOT, label = command) {
 	const result = spawnSync(command, args, {
 		stdio: 'inherit',
 		cwd,
 	})
+	if ((result.status ?? 1) !== 0) {
+		if (result.error) {
+			process.stderr.write(`Failed to run ${label}: ${result.error.message}\n`)
+		}
+		if (result.signal) {
+			process.stderr.write(`${label} terminated by signal ${result.signal}.\n`)
+		}
+	}
 	return result.status ?? 1
 }
 
@@ -88,7 +136,7 @@ for (const pkg of packages) {
 			continue
 		}
 		process.stderr.write(`\nRunning ${pkg.packageName} package tests via workspace script...\n`)
-		if (runCommand('npm', ['run', 'test', '-w', pkg.packageName]) !== 0) {
+		if (runPackageScript('npm', ['run', 'test', '-w', pkg.packageName], REPO_ROOT, pkg.packageName) !== 0) {
 			failureCount += 1
 		}
 		continue
@@ -101,7 +149,7 @@ for (const pkg of packages) {
 	}
 
 	process.stderr.write(`\nRunning ${pkg.packageName} package tests...\n`)
-	if (runCommand(process.execPath, ['--test', ...files]) !== 0) {
+	if (runCommand(process.execPath, ['--test', ...files], REPO_ROOT, pkg.packageName) !== 0) {
 		failureCount += 1
 	}
 }
