@@ -3,7 +3,7 @@
  */
 
 import { dirname, resolve } from "node:path";
-import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { formatSkillsForPrompt } from "@gsd/pi-coding-agent";
 import type { Skill } from "@gsd/agent-types";
 
@@ -13,10 +13,8 @@ function toPosixPath(p: string): string {
 	return p.replace(/\\/g, "/");
 }
 
-const require = createRequire(import.meta.url);
-
 function getPiPackageDir(): string {
-	const piEntryPath = require.resolve("@gsd/pi-coding-agent");
+	const piEntryPath = fileURLToPath(import.meta.resolve("@gsd/pi-coding-agent"));
 	return resolve(dirname(piEntryPath), "..");
 }
 

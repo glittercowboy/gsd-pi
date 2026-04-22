@@ -64,6 +64,11 @@ export function resolveGsdCliEntry(options: ResolveGsdCliEntryOptions): GsdCliEn
       } satisfies GsdCliEntry
     : null;
 
+  if (options.mode === "rpc") {
+    if (sourceCliEntry) return sourceCliEntry;
+    if (builtCliEntry) return builtCliEntry;
+  }
+
   if (options.hostKind === "packaged-standalone") {
     if (builtCliEntry) return builtCliEntry;
     if (sourceCliEntry) return sourceCliEntry;
