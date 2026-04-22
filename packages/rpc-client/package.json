@@ -3,6 +3,11 @@
   "version": "2.77.0",
   "description": "Standalone RPC client SDK for GSD — zero internal dependencies",
   "license": "MIT",
+  "gsd": {
+    "linkable": true,
+    "scope": "@gsd-build",
+    "name": "rpc-client"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/gsd-build/gsd-2.git",

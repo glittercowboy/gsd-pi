@@ -3,6 +3,11 @@
   "version": "2.77.0",
   "description": "Unified LLM API (vendored from pi-mono)",
   "type": "module",
+  "gsd": {
+    "linkable": true,
+    "scope": "@gsd",
+    "name": "pi-ai"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

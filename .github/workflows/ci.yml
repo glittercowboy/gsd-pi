@@ -159,6 +159,9 @@ jobs:
       - name: Validate package is installable
         run: npm run validate-pack
 
+      - name: Verify workspace coverage (every linkable package has tests)
+        run: npm run verify:workspace-coverage
+
       - name: Run unit tests
         run: npm run test:unit
 

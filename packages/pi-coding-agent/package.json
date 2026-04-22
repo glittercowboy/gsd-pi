@@ -3,6 +3,11 @@
   "version": "2.77.0",
   "description": "Coding agent CLI (vendored from pi-mono)",
   "type": "module",
+  "gsd": {
+    "linkable": true,
+    "scope": "@gsd",
+    "name": "pi-coding-agent"
+  },
   "piConfig": {
     "name": "pi",
     "configDir": ".pi"
