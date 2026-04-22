@@ -17,7 +17,7 @@ interface SessionTreeNode {
 		parentId: string | null;
 		timestamp: string;
 		type?: string;
-		message?: any;
+		message: { role: string; content?: unknown; [key: string]: unknown };
 		summary?: string;
 		modelId?: string;
 		thinkingLevel?: string;
@@ -535,6 +535,7 @@ class TreeList implements Component {
 		switch (entry.type) {
 			case "message": {
 				const msg = entry.message;
+				if (!msg) break;
 				parts.push(msg.role);
 				if ("content" in msg && msg.content) {
 					parts.push(this.extractContent(msg.content));
@@ -571,6 +572,8 @@ class TreeList implements Component {
 					break;
 			case "label":
 				parts.push("label", entry.label ?? "");
+				break;
+			case undefined:
 				break;
 		}
 
@@ -704,6 +707,10 @@ class TreeList implements Component {
 		switch (entry.type) {
 			case "message": {
 				const msg = entry.message;
+				if (!msg) {
+					result = "";
+					break;
+				}
 				const role = msg.role;
 				if (role === "user") {
 					const msgWithContent = msg as { content?: unknown };
@@ -749,13 +756,13 @@ class TreeList implements Component {
 				result = theme.fg("customMessageLabel", `[${entry.customType}]: `) + normalize(content);
 				break;
 			}
-				case "compaction": {
-					const tokens = Math.round((entry.tokensBefore ?? 0) / 1000);
-					result = theme.fg("borderAccent", `[compaction: ${tokens}k tokens]`);
-					break;
-				}
-				case "branch_summary":
-					result = theme.fg("warning", `[branch summary]: `) + normalize(entry.summary ?? "");
+			case "compaction": {
+				const tokens = Math.round((entry.tokensBefore ?? 0) / 1000);
+				result = theme.fg("borderAccent", `[compaction: ${tokens}k tokens]`);
+				break;
+			}
+			case "branch_summary":
+				result = theme.fg("warning", `[branch summary]: `) + normalize(entry.summary ?? "");
 				break;
 			case "model_change":
 				result = theme.fg("dim", `[model: ${entry.modelId}]`);
@@ -768,6 +775,9 @@ class TreeList implements Component {
 				break;
 			case "label":
 				result = theme.fg("dim", `[label: ${entry.label ?? "(cleared)"}]`);
+				break;
+			case undefined:
+				result = "";
 				break;
 			default:
 				result = "";

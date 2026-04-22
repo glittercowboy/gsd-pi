@@ -119,6 +119,28 @@ type WriteHighlightCache = {
 	highlightedLines: string[];
 };
 
+type ToolTruncationDetails = {
+	truncated?: boolean;
+	truncatedBy?: string;
+	outputLines?: number;
+	totalLines?: number;
+	maxBytes?: number;
+	maxLines?: number;
+	firstLineExceedsLimit?: boolean;
+};
+
+type ToolResultDetails = {
+	truncation?: ToolTruncationDetails;
+	fullOutputPath?: string;
+	firstChangedLine?: number;
+	diff?: string;
+	entryLimitReached?: number;
+	resultLimitReached?: number;
+	matchLimitReached?: number;
+	linesTruncated?: boolean;
+	[key: string]: unknown;
+};
+
 /**
  * Component that renders a tool call with its result (updateable)
  */
@@ -128,7 +150,7 @@ export class ToolExecutionComponent extends Container {
 	private imageComponents: Image[] = [];
 	private imageSpacers: Spacer[] = [];
 	private toolName: string;
-	private args: Record<string, any>;
+	private args: Record<string, unknown>;
 	private expanded = false;
 	private showImages: boolean;
 	private isPartial = true;
@@ -138,7 +160,7 @@ export class ToolExecutionComponent extends Container {
 	private result?: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
-		details?: Record<string, any>;
+		details?: ToolResultDetails;
 	};
 	// Cached edit diff preview (computed when args arrive, before tool executes)
 	private editDiffPreview?: EditDiffResult | EditDiffError;
@@ -159,7 +181,7 @@ export class ToolExecutionComponent extends Container {
 
 	constructor(
 		toolName: string,
-		args: Record<string, any>,
+		args: Record<string, unknown>,
 		options: ToolExecutionOptions = {},
 		toolDefinition: ToolDefinition | undefined,
 		ui: TUI,
@@ -211,7 +233,7 @@ export class ToolExecutionComponent extends Container {
 		this.result = undefined;
 	}
 
-	updateArgs(args: Record<string, any>): void {
+	updateArgs(args: Record<string, unknown>): void {
 		this.args = args;
 		if (this.normalizedToolName === "write" && this.isPartial) {
 			this.updateWriteHighlightCacheIncremental();
@@ -334,7 +356,7 @@ export class ToolExecutionComponent extends Container {
 	private maybeComputeEditDiff(): void {
 		if (this.toolName !== "edit") return;
 
-		const path = this.args?.path;
+		const path = str(this.args?.path);
 
 		if (!path) return;
 
@@ -382,12 +404,12 @@ export class ToolExecutionComponent extends Container {
 		}
 	}
 
-		updateResult(
-			result: {
-				content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-				details?: Record<string, any>;
-				isError: boolean;
-			},
+	updateResult(
+		result: {
+			content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+			details?: ToolResultDetails;
+			isError: boolean;
+		},
 		isPartial = false,
 	): void {
 		this.result = result;
@@ -771,8 +793,8 @@ export class ToolExecutionComponent extends Container {
 		if (normalizedToolName === "read") {
 			const rawPath = str(this.args?.file_path ?? this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
-			const offset = this.args?.offset;
-			const limit = this.args?.limit;
+			const offset = typeof this.args?.offset === "number" ? this.args.offset : undefined;
+			const limit = typeof this.args?.limit === "number" ? this.args.limit : undefined;
 
 			let pathDisplay = path === null ? invalidArg : path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
 			if (offset !== undefined || limit !== undefined) {

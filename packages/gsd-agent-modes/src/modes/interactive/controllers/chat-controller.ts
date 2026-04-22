@@ -296,7 +296,7 @@ export async function handleAgentEvent(host: InteractiveModeStateHost & {
 						if (!host.pendingTools.has(content.id)) {
 							const component = new ToolExecutionComponent(
 								content.name,
-								content.input ?? {},
+								(content.input ?? {}) as Record<string, unknown>,
 								{ showImages: host.settingsManager.getShowImages() },
 								undefined,
 								host.ui,
