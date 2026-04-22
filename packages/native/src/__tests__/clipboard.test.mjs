@@ -101,9 +101,14 @@ describe("native clipboard: readTextFromClipboard()", () => {
 });
 
 describe("native clipboard: readImageFromClipboard()", () => {
-  test("returns a promise", () => {
+  test("returns a promise", async (t) => {
     const result = native.readImageFromClipboard();
     assert.ok(result instanceof Promise);
+    try {
+      await result;
+    } catch (error) {
+      skipIfClipboardUnavailable(t, error);
+    }
   });
 
   test("resolves to ClipboardImage or null", async (t) => {
