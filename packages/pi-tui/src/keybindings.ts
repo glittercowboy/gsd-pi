@@ -187,3 +187,16 @@ export function getEditorKeybindings(): EditorKeybindingsManager {
 export function setEditorKeybindings(manager: EditorKeybindingsManager): void {
 	globalEditorKeybindings = manager;
 }
+
+export type Keybinding = EditorAction;
+export type KeybindingsConfig = EditorKeybindingsConfig;
+export const KeybindingsManager = EditorKeybindingsManager;
+export const getKeybindings = getEditorKeybindings;
+export const setKeybindings = setEditorKeybindings;
+
+export const TUI_KEYBINDINGS = Object.fromEntries(
+	Object.entries(DEFAULT_EDITOR_KEYBINDINGS).map(([action, keys]) => [
+		action,
+		{ defaultKeys: Array.isArray(keys) ? keys : [keys] },
+	]),
+) as Record<Keybinding, { defaultKeys: KeyId[] }>;

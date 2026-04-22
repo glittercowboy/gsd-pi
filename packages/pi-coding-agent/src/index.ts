@@ -1,7 +1,23 @@
 // Core session management
 
 // Config paths
-export { getAgentDir, VERSION } from "./config.js";
+export {
+	APP_NAME,
+	CONFIG_DIR_NAME,
+	ENV_AGENT_DIR,
+	getAgentDir,
+	getAuthPath,
+	getChangelogPath,
+	getDebugLogPath,
+	getDocsPath,
+	getExportTemplateDir,
+	getExamplesPath,
+	getModelsPath,
+	getReadmePath,
+	getShareViewerUrl,
+	getUpdateInstruction,
+	VERSION,
+} from "./config.js";
 export {
 	AgentSession,
 	type AgentSessionConfig,
@@ -169,8 +185,18 @@ export {
 } from "./core/extensions/index.js";
 // Footer data provider (git branch + extension statuses - data not otherwise available to extensions)
 export type { ReadonlyFooterDataProvider } from "./core/footer-data-provider.js";
-export { convertToLlm } from "./core/messages.js";
+export {
+	type BashExecutionMessage,
+	type BranchSummaryMessage,
+	type CompactionSummaryMessage,
+	type CustomMessage,
+	convertToLlm,
+	createBranchSummaryMessage,
+	createCompactionSummaryMessage,
+	createCustomMessage,
+} from "./core/messages.js";
 export { ModelDiscoveryCache } from "./core/discovery-cache.js";
+export { DEFAULT_THINKING_LEVEL } from "./core/defaults.js";
 export type { DiscoveredModel, DiscoveryResult, ProviderDiscoveryAdapter } from "./core/model-discovery.js";
 export { getDiscoverableProviders, getDiscoveryAdapter } from "./core/model-discovery.js";
 export { ModelRegistry } from "./core/model-registry.js";
@@ -186,8 +212,16 @@ export type {
 export { DefaultPackageManager } from "./core/package-manager.js";
 export type { PackageCommand, PackageCommandOptions, PackageCommandRunnerOptions, PackageCommandRunnerResult } from "./core/package-commands.js";
 export { getPackageCommandUsage, parsePackageCommand, runPackageCommand } from "./core/package-commands.js";
-export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
+export type { ResourceCollision, ResourceDiagnostic, ResourceExtensionPaths, ResourceLoader } from "./core/resource-loader.js";
 export { DefaultResourceLoader } from "./core/resource-loader.js";
+export { type BashResult, executeBash, executeBashWithOperations } from "./core/bash-executor.js";
+export { ContextualTips, type TipContext } from "./core/contextual-tips.js";
+export { exportFromFile } from "./core/export-html/index.js";
+export { findInitialModel, resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
+export { time, printTimings } from "./core/timings.js";
+export { runMigrations, showDeprecationWarnings } from "./migrations.js";
+export { expandPromptTemplate } from "./core/prompt-templates.js";
+export { BUILTIN_SLASH_COMMANDS } from "./core/slash-commands.js";
 // SDK for programmatic usage
 export {
 	type CreateAgentSessionOptions,
@@ -278,7 +312,9 @@ export {
 	type CompiledInterceptor,
 	compileInterceptor,
 	DEFAULT_BASH_INTERCEPTOR_RULES,
+	allTools,
 	codingTools,
+	createAllTools,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	type EditOperations,
@@ -307,6 +343,8 @@ export {
 	type ReadToolInput,
 	type ReadToolOptions,
 	readTool,
+	type Tool,
+	type ToolName,
 	type ToolsOptions,
 	type TruncationOptions,
 	type TruncationResult,
@@ -337,6 +375,8 @@ export {
 	registerMcpToolCompatibility,
 	resetToolCompatibilityRegistry,
 } from "./core/tools/index.js";
+export { computeEditDiff, type EditDiffError, type EditDiffResult } from "./core/tools/edit-diff.js";
+export { resolveReadPath } from "./core/tools/path-utils.js";
 // Main entry point
 export { main } from "./main.js";
 // Run modes for programmatic SDK usage
@@ -403,19 +443,38 @@ export {
 } from "./modes/interactive/components/index.js";
 // Theme utilities for custom tools and extensions
 export {
+	getAvailableThemes,
+	getAvailableThemesWithPaths,
+	getEditorTheme,
+	getResolvedThemeColors,
+	getThemeByName,
+	getThemeExportColors,
 	getLanguageFromPath,
 	getMarkdownTheme,
 	getSelectListTheme,
 	getSettingsListTheme,
 	highlightCode,
 	initTheme,
+	onThemeChange,
+	setRegisteredThemes,
+	setTheme,
+	setThemeInstance,
+	stopThemeWatcher,
 	Theme,
 	type ThemeColor,
 } from "./modes/interactive/theme/theme.js";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.js";
+export { extensionForImageMimeType, readClipboardImage } from "./utils/clipboard-image.js";
+export { getNewEntries, parseChangelog } from "./utils/changelog.js";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.js";
+export { convertToPng } from "./utils/image-convert.js";
+export { detectSupportedImageMimeTypeFromFile } from "./utils/mime.js";
+export { formatDimensionNote, resizeImage } from "./utils/image-resize.js";
 // Shell utilities
-export { getShellConfig, sanitizeCommand } from "./utils/shell.js";
+export { getShellConfig, getShellEnv, killProcessTree, sanitizeBinaryOutput, sanitizeCommand } from "./utils/shell.js";
+export { parseGitUrl } from "./utils/git.js";
+export { ensureTool } from "./utils/tools-manager.js";
 // Cross-platform path display
 export { toPosixPath } from "./utils/path-display.js";
+export type { PathMetadata as SourceInfo } from "./core/package-manager.js";
