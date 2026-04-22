@@ -158,17 +158,17 @@ export class ProviderManagerComponent extends Container implements Focusable {
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 
-		if (kb.matches(keyData, "tui.select.up")) {
+		if (kb.matches(keyData, "selectUp")) {
 			if (this.providers.length === 0) return;
 			this.selectedIndex = this.selectedIndex === 0 ? this.providers.length - 1 : this.selectedIndex - 1;
 			this.updateList();
 			this.tui.requestRender();
-		} else if (kb.matches(keyData, "tui.select.down")) {
+		} else if (kb.matches(keyData, "selectDown")) {
 			if (this.providers.length === 0) return;
 			this.selectedIndex = this.selectedIndex === this.providers.length - 1 ? 0 : this.selectedIndex + 1;
 			this.updateList();
 			this.tui.requestRender();
-		} else if (kb.matches(keyData, "tui.select.cancel")) {
+		} else if (kb.matches(keyData, "selectCancel")) {
 			if (this.confirmingRemove) {
 				this.confirmingRemove = false;
 				this.updateHints();
@@ -199,7 +199,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
 					this.tui.requestRender();
 				}
 			}
-		} else if (kb.matches(keyData, "tui.select.confirm")) {
+		} else if (kb.matches(keyData, "selectConfirm")) {
 			// Enter key → initiate auth setup for the selected provider (#3579)
 			const provider = this.providers[this.selectedIndex];
 			if (provider) {

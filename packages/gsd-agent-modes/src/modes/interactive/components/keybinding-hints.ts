@@ -7,7 +7,7 @@ import type { AppAction } from "@gsd/agent-types";
 import { KeybindingsManager } from "@gsd/agent-core";
 import { theme } from "../../../theme.js";
 
-// EditorAction is any valid keybinding string (namespaced like "tui.select.cancel" or app-level).
+// EditorAction is any valid keybinding string (namespaced like "selectCancel" or app-level).
 // Widened to string so both TUI keybindings and app actions can be passed without TS errors.
 type EditorAction = string;
 
@@ -50,7 +50,7 @@ export function appKey(keybindings: KeybindingsManager, action: AppAction): stri
  * Format a keybinding hint with consistent styling: dim key, muted description.
  * Looks up the key from editor keybindings automatically.
  *
- * @param action - Editor action name (e.g., "tui.select.confirm", "expandTools")
+ * @param action - Editor action name (e.g., "selectConfirm", "expandTools")
  * @param description - Description text (e.g., "to expand", "cancel")
  * @returns Formatted string with dim key and muted description
  */

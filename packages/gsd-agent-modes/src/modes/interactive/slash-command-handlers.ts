@@ -472,26 +472,26 @@ function getEditorKeyDisplay(action: Keybinding): string {
 
 function handleHotkeysCommand(ctx: SlashCommandContext): void {
 	// Navigation keybindings
-	const cursorWordLeft = getEditorKeyDisplay("tui.editor.cursorWordLeft");
-	const cursorWordRight = getEditorKeyDisplay("tui.editor.cursorWordRight");
-	const cursorLineStart = getEditorKeyDisplay("tui.editor.cursorLineStart");
-	const cursorLineEnd = getEditorKeyDisplay("tui.editor.cursorLineEnd");
-	const jumpForward = getEditorKeyDisplay("tui.editor.jumpForward");
-	const jumpBackward = getEditorKeyDisplay("tui.editor.jumpBackward");
-	const pageUp = getEditorKeyDisplay("tui.editor.pageUp");
-	const pageDown = getEditorKeyDisplay("tui.editor.pageDown");
+	const cursorWordLeft = getEditorKeyDisplay("cursorWordLeft");
+	const cursorWordRight = getEditorKeyDisplay("cursorWordRight");
+	const cursorLineStart = getEditorKeyDisplay("cursorLineStart");
+	const cursorLineEnd = getEditorKeyDisplay("cursorLineEnd");
+	const jumpForward = getEditorKeyDisplay("jumpForward");
+	const jumpBackward = getEditorKeyDisplay("jumpBackward");
+	const pageUp = getEditorKeyDisplay("pageUp");
+	const pageDown = getEditorKeyDisplay("pageDown");
 
 	// Editing keybindings
-	const submit = getEditorKeyDisplay("tui.input.submit");
-	const newLine = getEditorKeyDisplay("tui.input.newLine");
-	const deleteWordBackward = getEditorKeyDisplay("tui.editor.deleteWordBackward");
-	const deleteWordForward = getEditorKeyDisplay("tui.editor.deleteWordForward");
-	const deleteToLineStart = getEditorKeyDisplay("tui.editor.deleteToLineStart");
-	const deleteToLineEnd = getEditorKeyDisplay("tui.editor.deleteToLineEnd");
-	const yank = getEditorKeyDisplay("tui.editor.yank");
-	const yankPop = getEditorKeyDisplay("tui.editor.yankPop");
-	const undo = getEditorKeyDisplay("tui.editor.undo");
-	const tab = getEditorKeyDisplay("tui.input.tab");
+	const submit = getEditorKeyDisplay("submit");
+	const newLine = getEditorKeyDisplay("newLine");
+	const deleteWordBackward = getEditorKeyDisplay("deleteWordBackward");
+	const deleteWordForward = getEditorKeyDisplay("deleteWordForward");
+	const deleteToLineStart = getEditorKeyDisplay("deleteToLineStart");
+	const deleteToLineEnd = getEditorKeyDisplay("deleteToLineEnd");
+	const yank = getEditorKeyDisplay("yank");
+	const yankPop = getEditorKeyDisplay("yankPop");
+	const undo = getEditorKeyDisplay("undo");
+	const tab = getEditorKeyDisplay("tab");
 
 	// App keybindings
 	const interrupt = getAppKeyDisplay(ctx.keybindings, "interrupt");

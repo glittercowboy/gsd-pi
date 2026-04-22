@@ -65,9 +65,9 @@ export class ExtensionSelectorComponent extends Container {
 			new Text(
 				rawKeyHint("↑↓", "navigate") +
 					"  " +
-					keyHint("tui.select.confirm", "select") +
+					keyHint("selectConfirm", "select") +
 					"  " +
-					keyHint("tui.select.cancel", "cancel"),
+					keyHint("selectCancel", "cancel"),
 				1,
 				0,
 			),
@@ -121,7 +121,7 @@ export class ExtensionSelectorComponent extends Container {
 
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
-		if (kb.matches(keyData, "tui.select.up") || keyData === "k") {
+		if (kb.matches(keyData, "selectUp") || keyData === "k") {
 			let next = this.selectedIndex - 1;
 			if (next < 0) next = this.options.length - 1;
 			next = this.nextSelectable(next, -1);
@@ -130,7 +130,7 @@ export class ExtensionSelectorComponent extends Container {
 			}
 			this.selectedIndex = next;
 			this.updateList();
-		} else if (kb.matches(keyData, "tui.select.down") || keyData === "j") {
+		} else if (kb.matches(keyData, "selectDown") || keyData === "j") {
 			let next = this.selectedIndex + 1;
 			if (next >= this.options.length) next = 0;
 			next = this.nextSelectable(next, 1);
@@ -139,12 +139,12 @@ export class ExtensionSelectorComponent extends Container {
 			}
 			this.selectedIndex = next;
 			this.updateList();
-		} else if (kb.matches(keyData, "tui.select.confirm") || keyData === "\n") {
+		} else if (kb.matches(keyData, "selectConfirm") || keyData === "\n") {
 			const selected = this.options[this.selectedIndex];
 			if (selected && !this.isSeparator(this.selectedIndex)) {
 				this.onSelectCallback(selected);
 			}
-		} else if (kb.matches(keyData, "tui.select.cancel")) {
+		} else if (kb.matches(keyData, "selectCancel")) {
 			this.onCancelCallback();
 		}
 	}

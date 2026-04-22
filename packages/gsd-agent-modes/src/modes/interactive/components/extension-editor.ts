@@ -79,11 +79,11 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 		// Add hint
 		const hasExternalEditor = !!(process.env.VISUAL || process.env.EDITOR);
 		const hint =
-			keyHint("tui.select.confirm", "submit") +
+			keyHint("selectConfirm", "submit") +
 			"  " +
-			keyHint("tui.input.newLine", "newline") +
+			keyHint("newLine", "newline") +
 			"  " +
-			keyHint("tui.select.cancel", "cancel") +
+			keyHint("selectCancel", "cancel") +
 			(hasExternalEditor ? `  ${appKeyHint(this.keybindings, "externalEditor", "external editor")}` : "");
 		this.addChild(new Text(hint, 1, 0));
 
@@ -96,7 +96,7 @@ export class ExtensionEditorComponent extends Container implements Focusable {
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		// Escape or Ctrl+C to cancel
-		if (kb.matches(keyData, "tui.select.cancel")) {
+		if (kb.matches(keyData, "selectCancel")) {
 			this.onCancelCallback();
 			return;
 		}

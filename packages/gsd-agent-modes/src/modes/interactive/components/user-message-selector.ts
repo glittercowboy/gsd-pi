@@ -80,22 +80,22 @@ class UserMessageList implements Component {
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		// Up arrow - go to previous (older) message, wrap to bottom when at top
-		if (kb.matches(keyData, "tui.select.up")) {
+		if (kb.matches(keyData, "selectUp")) {
 			this.selectedIndex = this.selectedIndex === 0 ? this.messages.length - 1 : this.selectedIndex - 1;
 		}
 		// Down arrow - go to next (newer) message, wrap to top when at bottom
-		else if (kb.matches(keyData, "tui.select.down")) {
+		else if (kb.matches(keyData, "selectDown")) {
 			this.selectedIndex = this.selectedIndex === this.messages.length - 1 ? 0 : this.selectedIndex + 1;
 		}
 		// Enter - select message and branch
-		else if (kb.matches(keyData, "tui.select.confirm")) {
+		else if (kb.matches(keyData, "selectConfirm")) {
 			const selected = this.messages[this.selectedIndex];
 			if (selected && this.onSelect) {
 				this.onSelect(selected.id);
 			}
 		}
 		// Escape - cancel
-		else if (kb.matches(keyData, "tui.select.cancel")) {
+		else if (kb.matches(keyData, "selectCancel")) {
 			if (this.onCancel) {
 				this.onCancel();
 			}

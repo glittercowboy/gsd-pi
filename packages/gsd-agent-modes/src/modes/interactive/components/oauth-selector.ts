@@ -97,24 +97,24 @@ export class OAuthSelectorComponent extends Container {
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		// Up arrow (wrap)
-		if (kb.matches(keyData, "tui.select.up")) {
+		if (kb.matches(keyData, "selectUp")) {
 			this.selectedIndex = this.selectedIndex === 0 ? this.allProviders.length - 1 : this.selectedIndex - 1;
 			this.updateList();
 		}
 		// Down arrow (wrap)
-		else if (kb.matches(keyData, "tui.select.down")) {
+		else if (kb.matches(keyData, "selectDown")) {
 			this.selectedIndex = this.selectedIndex === this.allProviders.length - 1 ? 0 : this.selectedIndex + 1;
 			this.updateList();
 		}
 		// Enter
-		else if (kb.matches(keyData, "tui.select.confirm")) {
+		else if (kb.matches(keyData, "selectConfirm")) {
 			const selectedProvider = this.allProviders[this.selectedIndex];
 			if (selectedProvider) {
 				this.onSelectCallback(selectedProvider.id);
 			}
 		}
 		// Escape or Ctrl+C
-		else if (kb.matches(keyData, "tui.select.cancel")) {
+		else if (kb.matches(keyData, "selectCancel")) {
 			this.onCancelCallback();
 		}
 	}

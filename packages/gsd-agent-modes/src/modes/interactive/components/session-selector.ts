@@ -169,12 +169,12 @@ class SessionSelectorHeader implements Component {
 		} else {
 			const pathState = this.showPath ? "(on)" : "(off)";
 			const sep = theme.fg("muted", " · ");
-			const hint1 = keyHint("tui.input.tab", "scope") + sep + theme.fg("muted", 're:<pattern> regex · "phrase" exact');
+			const hint1 = keyHint("tab", "scope") + sep + theme.fg("muted", 're:<pattern> regex · "phrase" exact');
 			const hint2Parts = [
-				keyHint("app.session.toggleSort", "sort"),
+				keyHint("toggleSessionSort", "sort"),
 				appKeyHint(this.keybindings, "toggleSessionNamedFilter", "named"),
-				keyHint("app.session.delete", "delete"),
-				keyHint("app.session.togglePath", `path ${pathState}`),
+				keyHint("deleteSession", "delete"),
+				keyHint("toggleSessionPath", `path ${pathState}`),
 			];
 			if (this.showRenameHint) {
 				hint2Parts.push(keyHint("app.session.rename", "rename"));
@@ -507,14 +507,14 @@ class SessionList implements Component, Focusable {
 
 		// Handle delete confirmation state first - intercept all keys
 		if (this.confirmingDeletePath !== null) {
-			if (kb.matches(keyData, "tui.select.confirm")) {
+			if (kb.matches(keyData, "selectConfirm")) {
 				const pathToDelete = this.confirmingDeletePath;
 				this.setConfirmingDeletePath(null);
 				void this.onDeleteSession?.(pathToDelete);
 				return;
 			}
 			// Allow both Escape and Ctrl+C to cancel (consistent with pi UX)
-			if (kb.matches(keyData, "tui.select.cancel") || matchesKey(keyData, "ctrl+c")) {
+			if (kb.matches(keyData, "selectCancel") || matchesKey(keyData, "ctrl+c")) {
 				this.setConfirmingDeletePath(null);
 				return;
 			}
@@ -522,14 +522,14 @@ class SessionList implements Component, Focusable {
 			return;
 		}
 
-		if (kb.matches(keyData, "tui.input.tab")) {
+		if (kb.matches(keyData, "tab")) {
 			if (this.onToggleScope) {
 				this.onToggleScope();
 			}
 			return;
 		}
 
-		if (kb.matches(keyData, "app.session.toggleSort")) {
+		if (kb.matches(keyData, "toggleSessionSort")) {
 			this.onToggleSort?.();
 			return;
 		}
@@ -540,14 +540,14 @@ class SessionList implements Component, Focusable {
 		}
 
 		// Ctrl+P: toggle path display
-		if (kb.matches(keyData, "app.session.togglePath")) {
+		if (kb.matches(keyData, "toggleSessionPath")) {
 			this.showPath = !this.showPath;
 			this.onTogglePath?.(this.showPath);
 			return;
 		}
 
 		// Ctrl+D: initiate delete confirmation (useful on terminals that don't distinguish Ctrl+Backspace from Backspace)
-		if (kb.matches(keyData, "app.session.delete")) {
+		if (kb.matches(keyData, "deleteSession")) {
 			this.startDeleteConfirmationForSelectedSession();
 			return;
 		}
@@ -563,7 +563,7 @@ class SessionList implements Component, Focusable {
 
 		// Ctrl+Backspace: non-invasive convenience alias for delete
 		// Only triggers deletion when the query is empty; otherwise it is forwarded to the input
-		if (kb.matches(keyData, "app.session.deleteNoninvasive")) {
+		if (kb.matches(keyData, "deleteSessionNoninvasive")) {
 			if (this.searchInput.getValue().length > 0) {
 				this.searchInput.handleInput(keyData);
 				this.filterSessions(this.searchInput.getValue());
@@ -575,30 +575,30 @@ class SessionList implements Component, Focusable {
 		}
 
 		// Up arrow (wrap)
-		if (kb.matches(keyData, "tui.select.up")) {
+		if (kb.matches(keyData, "selectUp")) {
 			this.selectedIndex = this.selectedIndex === 0 ? this.filteredSessions.length - 1 : this.selectedIndex - 1;
 		}
 		// Down arrow (wrap)
-		else if (kb.matches(keyData, "tui.select.down")) {
+		else if (kb.matches(keyData, "selectDown")) {
 			this.selectedIndex = this.selectedIndex === this.filteredSessions.length - 1 ? 0 : this.selectedIndex + 1;
 		}
 		// Page up - jump up by maxVisible items
-		else if (kb.matches(keyData, "tui.select.pageUp")) {
+		else if (kb.matches(keyData, "selectPageUp")) {
 			this.selectedIndex = Math.max(0, this.selectedIndex - this.maxVisible);
 		}
 		// Page down - jump down by maxVisible items
-		else if (kb.matches(keyData, "tui.select.pageDown")) {
+		else if (kb.matches(keyData, "selectPageDown")) {
 			this.selectedIndex = Math.min(this.filteredSessions.length - 1, this.selectedIndex + this.maxVisible);
 		}
 		// Enter
-		else if (kb.matches(keyData, "tui.select.confirm")) {
+		else if (kb.matches(keyData, "selectConfirm")) {
 			const selected = this.filteredSessions[this.selectedIndex];
 			if (selected && this.onSelect) {
 				this.onSelect(selected.session.path);
 			}
 		}
 		// Escape - cancel
-		else if (kb.matches(keyData, "tui.select.cancel")) {
+		else if (kb.matches(keyData, "selectCancel")) {
 			if (this.onCancel) {
 				this.onCancel();
 			}
@@ -660,7 +660,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	handleInput(data: string): void {
 		if (this.mode === "rename") {
 			const kb = getKeybindings();
-			if (kb.matches(data, "tui.select.cancel") || matchesKey(data, "ctrl+c")) {
+			if (kb.matches(data, "selectCancel") || matchesKey(data, "ctrl+c")) {
 				this.exitRenameMode();
 				return;
 			}

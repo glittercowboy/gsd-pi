@@ -228,13 +228,13 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		const kb = getKeybindings();
 
 		// Navigation
-		if (kb.matches(data, "tui.select.up")) {
+		if (kb.matches(data, "selectUp")) {
 			if (this.filteredItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === 0 ? this.filteredItems.length - 1 : this.selectedIndex - 1;
 			this.updateList();
 			return;
 		}
-		if (kb.matches(data, "tui.select.down")) {
+		if (kb.matches(data, "selectDown")) {
 			if (this.filteredItems.length === 0) return;
 			this.selectedIndex = this.selectedIndex === this.filteredItems.length - 1 ? 0 : this.selectedIndex + 1;
 			this.updateList();

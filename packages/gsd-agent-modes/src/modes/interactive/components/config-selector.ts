@@ -362,15 +362,15 @@ class ResourceList implements Component, Focusable {
 	handleInput(data: string): void {
 		const kb = getKeybindings();
 
-		if (kb.matches(data, "tui.select.up")) {
+		if (kb.matches(data, "selectUp")) {
 			this.selectedIndex = this.findNextItem(this.selectedIndex, -1);
 			return;
 		}
-		if (kb.matches(data, "tui.select.down")) {
+		if (kb.matches(data, "selectDown")) {
 			this.selectedIndex = this.findNextItem(this.selectedIndex, 1);
 			return;
 		}
-		if (kb.matches(data, "tui.select.pageUp")) {
+		if (kb.matches(data, "selectPageUp")) {
 			// Jump up by maxVisible, then find nearest item
 			let target = Math.max(0, this.selectedIndex - this.maxVisible);
 			while (target < this.filteredItems.length && this.filteredItems[target].type !== "item") {
@@ -381,7 +381,7 @@ class ResourceList implements Component, Focusable {
 			}
 			return;
 		}
-		if (kb.matches(data, "tui.select.pageDown")) {
+		if (kb.matches(data, "selectPageDown")) {
 			// Jump down by maxVisible, then find nearest item
 			let target = Math.min(this.filteredItems.length - 1, this.selectedIndex + this.maxVisible);
 			while (target >= 0 && this.filteredItems[target].type !== "item") {
@@ -392,7 +392,7 @@ class ResourceList implements Component, Focusable {
 			}
 			return;
 		}
-		if (kb.matches(data, "tui.select.cancel")) {
+		if (kb.matches(data, "selectCancel")) {
 			this.onCancel?.();
 			return;
 		}
@@ -400,7 +400,7 @@ class ResourceList implements Component, Focusable {
 			this.onExit?.();
 			return;
 		}
-		if (data === " " || kb.matches(data, "tui.select.confirm")) {
+		if (data === " " || kb.matches(data, "selectConfirm")) {
 			const entry = this.filteredItems[this.selectedIndex];
 			if (entry?.type === "item") {
 				const newEnabled = !entry.item.enabled;
