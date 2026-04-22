@@ -622,7 +622,6 @@ export const SKILL_CATALOG: SkillPack[] = [
     description: "Generate text, images, video, speech, and music via MiniMax AI platform",
     repo: "MiniMax-AI/cli",
     skills: ["mmx-cli"],
-    matchAlways: true,
   },
   // ── Code Quality (wshobson/agents — matchAlways) ──────────────────────────
   {

@@ -182,6 +182,23 @@ test("SKILL_CATALOG: every matchFiles entry is backed by detection", () => {
   }
 });
 
+// ── MiniMax AI catalog entry ─────────────────────────────────────────────────
+// Smoke tests for the opt-in MiniMax pack: it requires an API key and a
+// MiniMax account, so it must not appear in default brownfield recommendations.
+
+test("SKILL_CATALOG: MiniMax AI entry has required fields", () => {
+  const minimax = SKILL_CATALOG.find((p) => p.label === "MiniMax AI");
+  assert.ok(minimax, "MiniMax AI entry should exist in SKILL_CATALOG");
+  assert.equal(minimax!.repo, "MiniMax-AI/cli");
+  assert.ok(minimax!.skills.length > 0, "MiniMax AI should declare at least one skill");
+  assert.ok(minimax!.description.length > 0, "MiniMax AI should have a description");
+});
+
+test("matchPacksForProject: MiniMax AI is opt-in (not in default recommendations)", () => {
+  const labels = packLabels(makeSignals());
+  assert.ok(!labels.includes("MiniMax AI"), "MiniMax AI requires explicit opt-in and must not be matched for empty signals");
+});
+
 test("GREENFIELD_STACKS: every pack label resolves to SKILL_CATALOG", () => {
   const labels = new Set(SKILL_CATALOG.map((pack) => pack.label));
 
