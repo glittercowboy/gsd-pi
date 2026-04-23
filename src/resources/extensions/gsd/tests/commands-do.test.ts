@@ -19,29 +19,30 @@ const mockCtx = {
 interface Route {
   keywords: string[];
   command: string;
+  acceptsArgs?: boolean;
 }
 
 const ROUTES: Route[] = [
-  { keywords: ["progress", "status", "dashboard", "how far", "where are we"], command: "status" },
-  { keywords: ["auto", "autonomous", "run all", "keep going", "start auto"], command: "auto" },
+  { keywords: ["progress", "status", "dashboard", "how far", "where are we", "show me progress"], command: "status" },
+  { keywords: ["auto", "autonomous", "run all", "keep going", "start auto", "run autonomously"], command: "auto", acceptsArgs: true },
   { keywords: ["stop", "halt", "abort"], command: "stop" },
   { keywords: ["pause", "break", "take a break"], command: "pause" },
-  { keywords: ["history", "past", "what happened", "previous"], command: "history" },
-  { keywords: ["doctor", "health", "diagnose", "check health"], command: "doctor" },
+  { keywords: ["history", "past", "what happened", "previous"], command: "history", acceptsArgs: true },
+  { keywords: ["doctor", "health", "diagnose", "check health"], command: "doctor", acceptsArgs: true },
   { keywords: ["clean up", "cleanup", "remove old", "prune", "tidy"], command: "cleanup" },
-  { keywords: ["ship", "pull request", "create pr", "open pr", "merge"], command: "ship" },
+  { keywords: ["ship", "pull request", "create pr", "open pr", "merge"], command: "ship", acceptsArgs: true },
   { keywords: ["discuss", "talk about", "architecture", "design"], command: "discuss" },
   { keywords: ["undo", "revert", "rollback", "take back"], command: "undo" },
-  { keywords: ["skip", "skip task", "skip this"], command: "skip" },
+  { keywords: ["skip", "skip task", "skip this"], command: "skip", acceptsArgs: true },
   { keywords: ["visualize", "viz", "graph", "chart", "show graph"], command: "visualize" },
-  { keywords: ["capture", "note", "idea", "thought", "remember"], command: "capture" },
+  { keywords: ["capture", "note", "idea", "thought", "remember"], command: "capture", acceptsArgs: true },
   { keywords: ["inspect", "database", "sqlite", "db state"], command: "inspect" },
-  { keywords: ["session report", "session summary", "cost summary", "how much"], command: "session-report" },
+  { keywords: ["session report", "session summary", "cost summary", "how much"], command: "session-report", acceptsArgs: true },
   { keywords: ["backlog", "parking lot", "later", "someday"], command: "backlog" },
-  { keywords: ["add tests", "write tests", "generate tests", "test coverage"], command: "add-tests" },
-  { keywords: ["next", "step", "next step", "what's next"], command: "next" },
-  { keywords: ["logs", "debug logs", "log files"], command: "logs" },
-  { keywords: ["debug", "debug session", "investigate", "troubleshoot", "diagnose issue"], command: "debug" },
+  { keywords: ["add tests", "write tests", "generate tests", "test coverage"], command: "add-tests", acceptsArgs: true },
+  { keywords: ["next", "step", "next step", "what's next"], command: "next", acceptsArgs: true },
+  { keywords: ["logs", "debug logs", "log files"], command: "logs", acceptsArgs: true },
+  { keywords: ["debug", "debug session", "investigate", "troubleshoot", "diagnose issue"], command: "debug", acceptsArgs: true },
 ];
 
 interface MatchResult {
@@ -50,17 +51,32 @@ interface MatchResult {
   score: number;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function keywordPattern(keyword: string, acceptsArgs: boolean): RegExp {
+  const escaped = keyword
+    .trim()
+    .split(/\s+/)
+    .map(escapeRegExp)
+    .join("\\s+");
+  return acceptsArgs
+    ? new RegExp(`^${escaped}(?:\\s+(.+))?$`, "i")
+    : new RegExp(`^${escaped}$`, "i");
+}
+
 function matchRoute(input: string): MatchResult | null {
-  const lower = input.toLowerCase();
+  const trimmed = input.trim();
   let bestMatch: MatchResult | null = null;
 
   for (const route of ROUTES) {
     for (const keyword of route.keywords) {
-      if (lower.includes(keyword)) {
+      const match = trimmed.match(keywordPattern(keyword, route.acceptsArgs === true));
+      if (match) {
         const score = keyword.length;
         if (!bestMatch || score > bestMatch.score) {
-          const idx = lower.indexOf(keyword);
-          const remaining = (input.slice(0, idx) + input.slice(idx + keyword.length)).trim();
+          const remaining = route.acceptsArgs === true ? (match[1] ?? "").trim() : "";
           bestMatch = { command: route.command, remainingArgs: remaining, score };
         }
       }
@@ -72,23 +88,28 @@ function matchRoute(input: string): MatchResult | null {
 
 // ─── Tests ──────────────────────────────────────────────────────────────
 
-test("/gsd do: routes 'show me progress' to status", () => {
+test("/gsd do: routes exact progress intent to status", () => {
   const match = matchRoute("show me progress");
   assert.ok(match);
   assert.equal(match.command, "status");
 });
 
-test("/gsd do: routes 'run autonomously' to auto", () => {
+test("/gsd do: routes bare auto intent to auto", () => {
   const match = matchRoute("run autonomously");
   assert.ok(match);
   assert.equal(match.command, "auto");
 });
 
-test("/gsd do: routes 'clean up old branches' to cleanup", () => {
-  const match = matchRoute("clean up old branches");
+test("/gsd do: routes bare cleanup intent to cleanup", () => {
+  const match = matchRoute("clean up");
   assert.ok(match);
   assert.equal(match.command, "cleanup");
-  assert.equal(match.remainingArgs, "old branches");
+  assert.equal(match.remainingArgs, "");
+});
+
+test("/gsd do: does not route no-arg cleanup when sentence has extra words", () => {
+  const match = matchRoute("clean up old branches");
+  assert.equal(match, null);
 });
 
 test("/gsd do: routes 'create pr for milestone' to ship", () => {
@@ -129,13 +150,13 @@ test("/gsd do: routes debug troubleshooting intent to debug", () => {
 });
 
 test("/gsd do: keeps 'debug logs' routed to logs (longer keyword wins)", () => {
-  const match = matchRoute("show me debug logs for today");
+  const match = matchRoute("debug logs for today");
   assert.ok(match);
   assert.equal(match.command, "logs");
 });
 
 test("/gsd do: routes 'session report' to session-report", () => {
-  const match = matchRoute("show me the session report");
+  const match = matchRoute("session report");
   assert.ok(match);
   assert.equal(match.command, "session-report");
 });
@@ -172,4 +193,9 @@ test("/gsd do: 'diagnose' alone routes to doctor (health check), not debug", () 
   const match = matchRoute("diagnose my project");
   assert.ok(match);
   assert.equal(match.command, "doctor");
+});
+
+test("/gsd do: full task sentence falls back instead of token-routing to command", () => {
+  const match = matchRoute("review tickets on linear and update the ticket status as you work");
+  assert.equal(match, null);
 });
