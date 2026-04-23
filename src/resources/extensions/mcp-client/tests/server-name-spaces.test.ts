@@ -18,7 +18,8 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const source = readFileSync(join(__dirname, "..", "index.ts"), "utf-8");
+// Implementation moved to shared.ts — read that file for source-level assertions.
+const source = readFileSync(join(__dirname, "..", "shared.ts"), "utf-8");
 
 test("#3029: getServerConfig trims whitespace from input name", () => {
 	assert.ok(

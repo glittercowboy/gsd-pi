@@ -267,7 +267,24 @@ export function listConfiguredMcpServers(options?: { refresh?: boolean; baseDir?
 }
 
 export function getMcpServerConfig(name: string, options?: { refresh?: boolean; baseDir?: string }): McpServerConfig | undefined {
-	return getMcpConfigSnapshot(options).servers.find((server) => server.name === name);
+	const normalized = name.trim().toLowerCase();
+	return getMcpConfigSnapshot(options).servers.find((server) => server.name.toLowerCase() === normalized);
+}
+
+/** @internal Alias used by connection cache — always keys by canonical config.name. */
+async function getOrConnect(name: string, signal?: AbortSignal, options?: { refresh?: boolean; baseDir?: string; timeoutMs?: number }): Promise<Client> {
+	const config = getMcpServerConfig(name, options);
+	if (!config) throw new Error(`Unknown MCP server: "${name}". Use mcp_servers to list available servers.`);
+	const baseDir = resolveBaseDir(options?.baseDir);
+	const key = cacheKey(baseDir, config.name);
+	if (options?.refresh) await closeConnectionByKey(key);
+	const existing = connections.get(config.name);
+	if (existing) return existing.client;
+	const transport = createTransport(config);
+	const client = createClient();
+	await client.connect(transport, { signal, timeout: options?.timeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS });
+	connections.set(config.name, { client, transport });
+	return client;
 }
 
 export function getCachedMcpTools(name: string, baseDir: string = process.cwd()): McpToolSchema[] | undefined {

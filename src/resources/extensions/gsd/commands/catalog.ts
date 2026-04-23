@@ -225,6 +225,8 @@ const NESTED_COMPLETIONS: CompletionMap = {
     { cmd: "status", desc: "Show all MCP server statuses (default)" },
     { cmd: "check", desc: "Detailed status for a specific server" },
     { cmd: "init", desc: "Write .mcp.json for the local GSD workflow MCP server" },
+    { cmd: "--verbose", desc: "Show detailed tool listings for each server" },
+    { cmd: "--refresh", desc: "Force reconnect and re-discover tools" },
   ],
   doctor: [
     { cmd: "fix", desc: "Auto-fix detected issues" },
@@ -467,6 +469,15 @@ export function getGsdArgumentCompletions(prefix: string) {
   const nested = NESTED_COMPLETIONS[command];
   if (nested && parts.length <= 2) {
     return filterOptions(subcommand, nested, command);
+  }
+
+  // mcp <server-name> --<flag> completions
+  if (command === "mcp" && parts.length === 3) {
+    const flags = [
+      { cmd: "--verbose", desc: "Show detailed tool listings for each server" },
+      { cmd: "--refresh", desc: "Force reconnect and re-discover tools" },
+    ];
+    return filterOptions(third, flags, `mcp ${subcommand}`);
   }
 
   return [];
