@@ -17,6 +17,11 @@ import { loadFile, extractUatType, loadActiveOverrides } from "./files.js";
 import { isDbAvailable, getMilestoneSlices, getPendingGates, markAllGatesOmitted, getMilestone, updateMilestoneStatus, getExternalWait, incrementProbeFailureCount, updateExternalWaitStatus, resetProbeFailureCount, getAllWaitingExternalWaits, updateTaskStatus } from "./gsd-db.js";
 import { exec } from "node:child_process";
 import { isClosedStatus } from "./status-guards.js";
+
+/** Platform-appropriate shell for probe commands. Unix → /bin/sh, Windows → %COMSPEC% or cmd.exe. */
+const probeShell = process.platform === "win32"
+  ? (process.env.COMSPEC || "cmd.exe")
+  : "/bin/sh";
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
 
 import {
@@ -800,7 +805,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
       const probeTimeoutMs = Math.max(30000, Math.min(pollIntervalMs, 120000));
       try {
         const { exitCode, killed, stdout } = await new Promise<{ exitCode: number | null; killed: boolean; stdout: string }>((resolve) => {
-          exec(checkCommand, { timeout: probeTimeoutMs, shell: "/bin/sh" }, (err, stdout, _stderr) => {
+          exec(checkCommand, { timeout: probeTimeoutMs, shell: probeShell }, (err, stdout, _stderr) => {
             if (err) {
               resolve({ exitCode: (err as any).code ?? null, killed: !!(err as any).killed, stdout: stdout || "" });
             } else {
@@ -843,7 +848,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
         if (successCheck) {
           try {
             const scResult = await new Promise<{ exitCode: number | null; stdout: string; stderr: string }>((resolve) => {
-              exec(successCheck, { timeout: 30000, shell: "/bin/sh" }, (err, scStdout, scStderr) => {
+              exec(successCheck, { timeout: 30000, shell: probeShell }, (err, scStdout, scStderr) => {
                 if (err) resolve({ exitCode: (err as any).code ?? 1, stdout: scStdout || "", stderr: scStderr || "" });
                 else resolve({ exitCode: 0, stdout: scStdout || "", stderr: scStderr || "" });
               });
