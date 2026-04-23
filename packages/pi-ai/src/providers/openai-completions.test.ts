@@ -184,6 +184,7 @@ describe("convertMessages — stripReasoningFromHistory", () => {
 			const params = convertMessages(model, context, compat);
 			const assistantMsg = params.find((p) => p.role === "assistant") as any;
 
+			assert.ok(assistantMsg, `assistant message should be present for fieldName="${fieldName}"`);
 			assert.equal(
 				(assistantMsg as any)[fieldName],
 				undefined,
@@ -213,6 +214,7 @@ describe("convertMessages — stripReasoningFromHistory", () => {
 		const params = convertMessages(model, context, compat);
 		const assistantMsg = params.find((p) => p.role === "assistant") as any;
 
+		assert.ok(assistantMsg, "assistant message should be present");
 		assert.equal(assistantMsg.reasoning_content, undefined, "reasoning_content must not be in payload");
 		// With stripReasoningFromHistory: true, thinking is dropped entirely (not converted to text)
 		const textContent = Array.isArray(assistantMsg.content)
@@ -222,5 +224,64 @@ describe("convertMessages — stripReasoningFromHistory", () => {
 			!textContent.includes("My reasoning."),
 			"thinking must NOT be folded into text when stripping is active",
 		);
+	});
+
+	it("strips reasoning_details from tool calls when stripReasoningFromHistory: true", () => {
+		const model = makeModel({ stripReasoningFromHistory: true });
+		const compat = makeCompat({ stripReasoningFromHistory: true });
+		const reasoningPayload = JSON.stringify([{ type: "thinking", thinking: "tool reasoning" }]);
+		const context: Context = {
+			messages: [
+				makeUserMsg("Do something"),
+				makeAssistantMsg({
+					content: [
+						{
+							type: "toolCall",
+							id: "call_1",
+							name: "some_tool",
+							arguments: { x: 1 },
+							thoughtSignature: reasoningPayload,
+						},
+					],
+				}),
+				makeUserMsg("Done"),
+			],
+		};
+
+		const params = convertMessages(model, context, compat);
+		const assistantMsg = params.find((p) => p.role === "assistant") as any;
+
+		assert.ok(assistantMsg, "assistant message should be present");
+		assert.equal(assistantMsg.reasoning_details, undefined, "reasoning_details must not appear in the serialized payload");
+		assert.ok(Array.isArray(assistantMsg.tool_calls) && assistantMsg.tool_calls.length === 1, "tool_calls must still be present");
+	});
+
+	it("replays reasoning_details on tool calls by default (stripReasoningFromHistory: false)", () => {
+		const model = makeModel();
+		const compat = makeCompat({ stripReasoningFromHistory: false });
+		const reasoningPayload = JSON.stringify([{ type: "thinking", thinking: "tool reasoning" }]);
+		const context: Context = {
+			messages: [
+				makeUserMsg("Do something"),
+				makeAssistantMsg({
+					content: [
+						{
+							type: "toolCall",
+							id: "call_1",
+							name: "some_tool",
+							arguments: { x: 1 },
+							thoughtSignature: reasoningPayload,
+						},
+					],
+				}),
+				makeUserMsg("Done"),
+			],
+		};
+
+		const params = convertMessages(model, context, compat);
+		const assistantMsg = params.find((p) => p.role === "assistant") as any;
+
+		assert.ok(assistantMsg, "assistant message should be present");
+		assert.ok(Array.isArray(assistantMsg.reasoning_details) && assistantMsg.reasoning_details.length > 0, "reasoning_details must be re-injected when stripReasoningFromHistory is false");
 	});
 });
