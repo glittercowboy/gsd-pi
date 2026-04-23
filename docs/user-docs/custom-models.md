@@ -300,6 +300,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `requiresToolResultName` | Include `name` on tool result messages |
 | `requiresAssistantAfterToolResult` | Insert an assistant message before a user message after tool results |
 | `requiresThinkingAsText` | Convert thinking blocks to plain text |
+| `stripReasoningFromHistory` | Strip `reasoning_content`/`reasoning_details` from replayed messages — use for providers that return reasoning fields in responses but reject them as input (e.g. TRT-LLM, vLLM) |
 | `thinkingFormat` | Use `reasoning_effort`, `zai`, `qwen`, or `qwen-chat-template` thinking parameters |
 | `supportsStrictMode` | Include the `strict` field in tool definitions |
 | `openRouterRouting` | OpenRouter routing config passed to OpenRouter for model/provider selection |
