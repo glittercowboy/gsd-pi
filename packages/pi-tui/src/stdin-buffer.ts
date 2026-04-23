@@ -229,6 +229,11 @@ export type StdinBufferOptions = {
 	 * After this time, the buffer is flushed even if incomplete
 	 */
 	timeout?: number;
+	/**
+	 * Maximum time to retain an incomplete escape prefix after the normal
+	 * sequence timeout has fired (default: 1000ms).
+	 */
+	staleTimeout?: number;
 };
 
 export type StdinBufferEventMap = {
@@ -243,13 +248,16 @@ export type StdinBufferEventMap = {
 export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private buffer: string = "";
 	private timeout: ReturnType<typeof setTimeout> | null = null;
+	private staleTimeout: ReturnType<typeof setTimeout> | null = null;
 	private readonly timeoutMs: number;
+	private readonly staleTimeoutMs: number;
 	private pasteMode: boolean = false;
 	private pasteBuffer: string = "";
 
 	constructor(options: StdinBufferOptions = {}) {
 		super();
 		this.timeoutMs = options.timeout ?? 10;
+		this.staleTimeoutMs = options.staleTimeout ?? 1000;
 	}
 
 	public process(data: string | Buffer): void {
@@ -257,6 +265,10 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		if (this.timeout) {
 			clearTimeout(this.timeout);
 			this.timeout = null;
+		}
+		if (this.staleTimeout) {
+			clearTimeout(this.staleTimeout);
+			this.staleTimeout = null;
 		}
 
 		// Handle high-byte conversion (for compatibility with parseKeypress)
@@ -365,6 +377,16 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		// sequences do not get emitted as literal text on timeout.
 		// A lone ESC is still flushed so an actual Escape keypress is not lost.
 		if (this.buffer.length > 1 && this.buffer.startsWith(ESC) && isCompleteSequence(this.buffer) === "incomplete") {
+			if (!this.staleTimeout) {
+				this.staleTimeout = setTimeout(() => {
+					this.staleTimeout = null;
+					if (this.buffer.length > 0 && this.buffer.startsWith(ESC) && isCompleteSequence(this.buffer) === "incomplete") {
+						const stale = this.buffer;
+						this.buffer = "";
+						this.emit("data", stale);
+					}
+				}, this.staleTimeoutMs);
+			}
 			return [];
 		}
 
@@ -377,6 +399,10 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		if (this.timeout) {
 			clearTimeout(this.timeout);
 			this.timeout = null;
+		}
+		if (this.staleTimeout) {
+			clearTimeout(this.staleTimeout);
+			this.staleTimeout = null;
 		}
 		this.buffer = "";
 		this.pasteMode = false;

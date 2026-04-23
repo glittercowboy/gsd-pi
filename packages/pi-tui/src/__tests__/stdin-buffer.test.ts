@@ -40,4 +40,29 @@ describe("StdinBuffer", () => {
 		assert.deepEqual(received, ["\x1b[I", "\x1b[<35;20;5m"]);
 		assert.equal(buffer.getBuffer(), "");
 	});
+
+	it("flushes a stale incomplete escape prefix after the stale timeout", async () => {
+		const buffer = new StdinBuffer({ timeout: 5, staleTimeout: 10 });
+		const received: string[] = [];
+		buffer.on("data", (sequence) => received.push(sequence));
+
+		buffer.process("\x1b[");
+		await delay(25);
+
+		assert.deepEqual(received, ["\x1b["]);
+		assert.equal(buffer.getBuffer(), "");
+	});
+
+	it("still allows an incomplete escape prefix to complete before the stale timeout", async () => {
+		const buffer = new StdinBuffer({ timeout: 5, staleTimeout: 30 });
+		const received: string[] = [];
+		buffer.on("data", (sequence) => received.push(sequence));
+
+		buffer.process("\x1b[");
+		await delay(10);
+		buffer.process("I");
+
+		assert.deepEqual(received, ["\x1b[I"]);
+		assert.equal(buffer.getBuffer(), "");
+	});
 });
