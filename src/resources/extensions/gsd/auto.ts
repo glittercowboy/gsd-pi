@@ -220,6 +220,13 @@ import { runLegacyAutoLoop, runUokKernelLoop, resolveAgentEnd, resolveAgentEndCa
 import { runAutoLoopWithUok } from "./uok/kernel.js";
 import { resolveUokFlags } from "./uok/flags.js";
 import { cleanupPausedMetadataAfterResumeLock } from "./auto/paused-metadata-cleanup.js";
+import {
+  snapshotPausedModelMetadata,
+  restoreModelSnapshotFromPausedMetadata,
+  applyPausedModelSnapshot,
+  backfillMissingPausedModelSnapshot,
+  attemptRestoreOriginalModelForPausedInteraction,
+} from "./auto/paused-model-snapshot.js";
 // Slice-level parallelism (#2340)
 import { getEligibleSlices } from "./slice-parallel-eligibility.js";
 import { startSliceParallel } from "./slice-parallel-orchestrator.js";
@@ -1144,9 +1151,7 @@ export async function pauseAuto(
       activeRunDir: s.activeRunDir,
       autoStartTime: s.autoStartTime,
       milestoneLock: s.sessionMilestoneLock ?? undefined,
-      autoModeStartModel: s.autoModeStartModel,
-      originalModelId: s.originalModelId,
-      originalModelProvider: s.originalModelProvider,
+      ...snapshotPausedModelMetadata(s),
     };
     const runtimeDir = join(gsdRoot(s.originalBasePath || s.basePath), "runtime");
     mkdirSync(runtimeDir, { recursive: true });
@@ -1192,24 +1197,23 @@ export async function pauseAuto(
 
   // Return the interactive session to the user's pre-auto model so the paused
   // state does not stay stranded on an auto-selected provider/model.
-  try {
-    if (pi && ctx && s.originalModelId && s.originalModelProvider) {
-      const original = ctx.modelRegistry.find(
-        s.originalModelProvider,
-        s.originalModelId,
-      );
-      if (original) {
-        const ok = await pi.setModel(original, { persist: false });
-        if (!ok) {
-          logWarning(
-            "engine",
-            `paused-model restore skipped: setModel returned false for ${s.originalModelProvider}/${s.originalModelId}`,
-            { file: "auto.ts" },
-          );
-        }
-      }
-    }
-  } catch (err) {
+  const restoreResult = await attemptRestoreOriginalModelForPausedInteraction({
+    originalModelProvider: s.originalModelProvider,
+    originalModelId: s.originalModelId,
+    findModel: ctx?.modelRegistry?.find?.bind(ctx.modelRegistry),
+    setModel: pi
+      ? async (model, options) => pi.setModel(model as Parameters<ExtensionAPI["setModel"]>[0], options)
+      : null,
+  });
+
+  if (restoreResult.status === "set-model-false") {
+    logWarning(
+      "engine",
+      `paused-model restore skipped: setModel returned false for ${s.originalModelProvider}/${s.originalModelId}`,
+      { file: "auto.ts" },
+    );
+  } else if (restoreResult.status === "error") {
+    const err = restoreResult.error;
     logWarning("engine", `paused-model restore failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
   }
 
@@ -1462,31 +1466,9 @@ export async function startAuto(
         || base;
       const pausedPath = join(gsdRoot(pausedMetadataBase), "runtime", "paused-session.json");
       if (meta) {
-        const restoredAutoModeStartModel =
-          meta.autoModeStartModel &&
-          typeof meta.autoModeStartModel.provider === "string" &&
-          typeof meta.autoModeStartModel.id === "string"
-            ? {
-                provider: meta.autoModeStartModel.provider,
-                id: meta.autoModeStartModel.id,
-              }
-            : null;
-        const restoredOriginalModel =
-          typeof meta.originalModelProvider === "string" &&
-          typeof meta.originalModelId === "string"
-            ? {
-                provider: meta.originalModelProvider,
-                id: meta.originalModelId,
-              }
-            : null;
+        const restoredModelSnapshot = restoreModelSnapshotFromPausedMetadata(meta);
         const applyRestoredModelSnapshot = () => {
-          if (restoredAutoModeStartModel) {
-            s.autoModeStartModel = { ...restoredAutoModeStartModel };
-          }
-          if (restoredOriginalModel) {
-            s.originalModelProvider = restoredOriginalModel.provider;
-            s.originalModelId = restoredOriginalModel.id;
-          }
+          applyPausedModelSnapshot(s, restoredModelSnapshot);
         };
 
         if (meta.activeEngineId && meta.activeEngineId !== "dev") {
@@ -1637,18 +1619,10 @@ export async function startAuto(
     if ("newSession" in ctx && typeof (ctx as any).newSession === "function") {
       s.cmdCtx = ctx;
       if (ctx.model) {
-        if (!s.autoModeStartModel) {
-          s.autoModeStartModel = {
-            provider: ctx.model.provider,
-            id: ctx.model.id,
-          };
-        }
-        if (!s.originalModelProvider) {
-          s.originalModelProvider = ctx.model.provider;
-        }
-        if (!s.originalModelId) {
-          s.originalModelId = ctx.model.id;
-        }
+        backfillMissingPausedModelSnapshot(s, {
+          provider: ctx.model.provider,
+          id: ctx.model.id,
+        });
       }
     } else if (!s.cmdCtx) {
       // No saved cmdCtx — this shouldn't happen, but handle gracefully
