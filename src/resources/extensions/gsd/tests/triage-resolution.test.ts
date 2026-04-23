@@ -258,6 +258,55 @@ test("resolution: markCaptureExecuted is idempotent", () => {
   }
 });
 
+// ─── executeTriageResolutions + note execution (#3578) ──────────────────────
+
+test("resolution: executeTriageResolutions stamps note captures as executed", () => {
+  const tmp = makeTempDir("res-exec-note");
+  try {
+    const id = appendCapture(tmp, "FYI the API changed");
+    markCaptureResolved(tmp, id, "note", "acknowledged", "informational");
+
+    const result = executeTriageResolutions(tmp, "M001", "S01");
+
+    // The note should now be marked as executed
+    const all = loadAllCaptures(tmp);
+    assert.strictEqual(all.length, 1);
+    assert.strictEqual(all[0].executed, true, "note capture should be marked as executed");
+
+    // It should appear in the actions log
+    assert.ok(
+      result.actions.some(a => a.includes(id) && a.includes("Note acknowledged")),
+      "actions should include a note-acknowledged entry",
+    );
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("resolution: executeTriageResolutions does not double-stamp already-executed notes", () => {
+  const tmp = makeTempDir("res-exec-note-idem");
+  try {
+    const id = appendCapture(tmp, "informational note");
+    markCaptureResolved(tmp, id, "note", "acknowledged", "info");
+
+    // First execution — stamps the note
+    executeTriageResolutions(tmp, "M001", "S01");
+
+    // Second execution — should be a no-op for the note
+    const result2 = executeTriageResolutions(tmp, "M001", "S01");
+
+    assert.strictEqual(result2.actions.length, 0, "second call should produce no actions");
+
+    // Verify the Executed field was not duplicated in the file
+    const filePath = join(tmp, ".gsd", "CAPTURES.md");
+    const content = readFileSync(filePath, "utf-8");
+    const executedMatches = content.match(/\*\*Executed:\*\*/g);
+    assert.strictEqual(executedMatches?.length, 1, "should have exactly one Executed field");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 // ─── loadActionableCaptures ──────────────────────────────────────────────────
 
 test("resolution: loadActionableCaptures returns only unexecuted actionable captures", () => {
@@ -387,8 +436,7 @@ test("resolution: executeTriageResolutions handles mixed classifications", () =>
     assert.strictEqual(result.injected, 1, "should inject 1 task");
     assert.strictEqual(result.replanned, 0);
     assert.strictEqual(result.quickTasks.length, 1, "should queue 1 quick-task");
-    // inject + quick-task + note acknowledged = 3 actions (defer still excluded)
-    assert.strictEqual(result.actions.length, 3, "should have 3 action entries (defer excluded, note now included)");
+    assert.strictEqual(result.actions.length, 3, "should have 3 action entries (inject + quick-task + note acknowledged; defer excluded)");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
