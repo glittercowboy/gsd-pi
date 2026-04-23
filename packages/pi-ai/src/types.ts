@@ -296,6 +296,13 @@ export interface OpenAICompletionsCompat {
 	requiresAssistantAfterToolResult?: boolean;
 	/** Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL. */
 	requiresThinkingAsText?: boolean;
+	/**
+	 * Whether to strip reasoning/thinking content from assistant messages before replaying them
+	 * in subsequent requests. Use for providers that return reasoning_content in responses but
+	 * reject it as an input field (e.g. TensorRT-LLM, vLLM). Thinking blocks remain intact in
+	 * GSD's internal message history — only the serialized API payload is affected. Default: false.
+	 */
+	stripReasoningFromHistory?: boolean;
 	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "zai" uses thinking: { type: "enabled" }, "qwen" uses enable_thinking: boolean. Default: "openai". */
 	thinkingFormat?: "openai" | "zai" | "qwen";
 	/** OpenRouter-specific routing preferences. Only used when baseUrl points to OpenRouter. */
