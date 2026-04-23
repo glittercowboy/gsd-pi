@@ -105,7 +105,54 @@ export async function checkEngineHealth(
         // Non-fatal — done-task-no-summary check failed
       }
 
-      // d. Duplicate entity IDs (safety check)
+      // d. Stale external_waits — rows stuck in 'waiting' past their timeout or with mismatched task status
+      try {
+        const staleWaits = adapter
+          .prepare(
+            `SELECT ew.milestone_id, ew.slice_id, ew.task_id, ew.registered_at, ew.timeout_ms,
+                    t.status AS task_status
+             FROM external_waits ew
+             LEFT JOIN tasks t ON ew.milestone_id = t.milestone_id
+                              AND ew.slice_id = t.slice_id
+                              AND ew.task_id = t.id
+             WHERE ew.status = 'waiting'`,
+          )
+          .all() as Array<{
+            milestone_id: string; slice_id: string; task_id: string;
+            registered_at: string; timeout_ms: number; task_status: string | null;
+          }>;
+
+        const now = Date.now();
+        for (const row of staleWaits) {
+          const unitId = `${row.milestone_id}/${row.slice_id}/${row.task_id}`;
+          const registeredAt = new Date(row.registered_at).getTime();
+          const expired = Number.isFinite(registeredAt) && (now - registeredAt > row.timeout_ms);
+
+          if (expired) {
+            issues.push({
+              severity: "warning",
+              code: "stale_external_wait",
+              scope: "task",
+              unitId,
+              message: `External wait for ${row.task_id} registered at ${row.registered_at} has exceeded its ${Math.round(row.timeout_ms / 3600000)}h timeout — may need manual resolution`,
+              fixable: false,
+            });
+          } else if (row.task_status && row.task_status !== "awaiting-external") {
+            issues.push({
+              severity: "warning",
+              code: "stale_external_wait",
+              scope: "task",
+              unitId,
+              message: `External wait for ${row.task_id} is 'waiting' but task status is '${row.task_status}' — DB state mismatch`,
+              fixable: false,
+            });
+          }
+        }
+      } catch {
+        // Non-fatal — stale external wait check failed
+      }
+
+      // e. Duplicate entity IDs (safety check)
       try {
         const dupMilestones = adapter
           .prepare("SELECT id, COUNT(*) as cnt FROM milestones GROUP BY id HAVING cnt > 1")

@@ -80,7 +80,9 @@ export type DoctorIssueCode =
   | "db_done_task_no_summary"
   | "db_duplicate_id"
   | "db_unavailable"
-  | "projection_drift";
+  | "projection_drift"
+  // External wait hygiene
+  | "stale_external_wait";
 
 /**
  * Issue codes that represent global or completion-critical state.
