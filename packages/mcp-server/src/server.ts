@@ -388,6 +388,126 @@ export function formatAskUserQuestionsElicitResult(
 }
 
 // ---------------------------------------------------------------------------
+// secure_env_collect handler (extracted so tests can drive it directly)
+// ---------------------------------------------------------------------------
+
+export type ElicitInputFn = (params: {
+  message: string;
+  requestedSchema: { type: 'object'; properties: Record<string, unknown>; required: string[] };
+}) => Promise<{ action: 'accept' | 'cancel' | 'decline'; content?: Record<string, unknown> }>;
+
+type ToolContent =
+  | { content: Array<{ type: 'text'; text: string }> }
+  | { isError: true; content: Array<{ type: 'text'; text: string }> };
+
+export async function secureEnvCollectHandler(
+  args: Record<string, unknown>,
+  elicitInput: ElicitInputFn,
+): Promise<ToolContent> {
+  const { projectDir, keys, destination, envFilePath, environment } = args as {
+    projectDir: string;
+    keys: Array<{ key: string; hint?: string; guidance?: string[] }>;
+    destination?: 'dotenv' | 'vercel' | 'convex';
+    envFilePath?: string;
+    environment?: 'development' | 'preview' | 'production';
+  };
+
+  try {
+    const resolvedProjectDir = validateProjectDir(projectDir);
+    const resolvedEnvPath = resolveProjectEnvFilePath(resolvedProjectDir, envFilePath ?? '.env');
+
+    // (1) Check which keys already exist
+    const allKeyNames = keys.map((k) => k.key);
+    const existingKeys = await checkExistingEnvKeys(allKeyNames, resolvedEnvPath);
+    const existingSet = new Set(existingKeys);
+    const pendingKeys = keys.filter((k) => !existingSet.has(k.key));
+
+    // If all keys already exist, return immediately
+    if (pendingKeys.length === 0) {
+      const lines = existingKeys.map((k) => `• ${k}: already set`);
+      return textContent(`All ${existingKeys.length} key(s) already set.\n${lines.join('\n')}`);
+    }
+
+    // (2) Build elicitation form — one string field per pending key
+    const properties: Record<string, Record<string, unknown>> = {};
+    const required: string[] = [];
+
+    for (const item of pendingKeys) {
+      const descParts: string[] = [];
+      if (item.hint) descParts.push(`Format: ${item.hint}`);
+      if (item.guidance && item.guidance.length > 0) {
+        descParts.push('How to get this:');
+        item.guidance.forEach((step, i) => descParts.push(`${i + 1}. ${step}`));
+      }
+      descParts.push('Leave empty to skip.');
+
+      properties[item.key] = {
+        type: 'string',
+        title: item.key,
+        description: descParts.join('\n'),
+      };
+      // Don't mark as required — empty string = skip
+    }
+
+    // (3) Elicit input from the MCP client
+    const elicitation = await withElicitTimeout(
+      elicitInput({
+        message: `Enter values for ${pendingKeys.length} environment variable(s). Values are written directly to the project and never shown to the AI.`,
+        requestedSchema: {
+          type: 'object',
+          properties,
+          required,
+        },
+      }),
+      'secure_env_collect',
+    );
+
+    if (elicitation.action !== 'accept' || !elicitation.content) {
+      return textContent('secure_env_collect was cancelled by user.');
+    }
+
+    // (4) Separate provided vs skipped from form response
+    const provided: Array<{ key: string; value: string }> = [];
+    const skipped: string[] = [];
+
+    for (const item of pendingKeys) {
+      const raw = elicitation.content[item.key];
+      const value = typeof raw === 'string' ? raw.trim() : '';
+      if (value.length > 0) {
+        provided.push({ key: item.key, value });
+      } else {
+        skipped.push(item.key);
+      }
+    }
+
+    // (5) Auto-detect destination if not specified
+    const resolvedDestination = destination ?? detectDestination(resolvedProjectDir);
+
+    // (6) Write secrets to destination
+    const { applied, errors } = await applySecrets(provided, resolvedDestination, {
+      envFilePath: resolvedEnvPath,
+      environment,
+      execFn: defaultExecFn,
+    });
+
+    // (7) Build result — NEVER include secret values
+    const lines: string[] = [
+      `destination: ${resolvedDestination}${!destination ? ' (auto-detected)' : ''}${environment ? ` (${environment})` : ''}`,
+    ];
+    for (const k of applied) lines.push(`✓ ${k}: applied`);
+    for (const k of skipped) lines.push(`• ${k}: skipped`);
+    for (const k of existingKeys) lines.push(`• ${k}: already set`);
+    for (const e of errors) lines.push(`✗ ${e}`);
+
+    return errors.length > 0 && applied.length === 0
+      ? errorContent(lines.join('\n'))
+      : textContent(lines.join('\n'));
+  } catch (err) {
+    return errorContent(err instanceof Error ? err.message : String(err));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // createMcpServer
 // ---------------------------------------------------------------------------
 
@@ -397,39 +517,19 @@ export function formatAskUserQuestionsElicitResult(
  * Returns the McpServer instance — call `connect(transport)` to start serving.
  * Uses dynamic imports for the MCP SDK to avoid TS subpath resolution issues.
  */
-/**
- * Optional test-only DI seam for injecting a mock McpServer. Production
- * callers (`rpc-client.ts`, `mcp-server.ts`) pass nothing; the real SDK
- * class is loaded via dynamic import. Tests for tool handlers
- * (e.g. secure-env-collect.test.ts, #4816) pass a mock so they can
- * intercept the registered handler and drive it directly.
- *
- * The seam is minimal: a single `McpServerCtor` field. Keeping the DI
- * surface small avoids production callers having to know about it.
- */
-export interface CreateMcpServerOptions {
-  McpServerCtor?: new (
-    info: { name: string; version: string },
-    opts: { capabilities: Record<string, unknown> },
-  ) => McpServerInstance;
-}
-
 export async function createMcpServer(
   sessionManager: SessionManager,
-  options: CreateMcpServerOptions = {},
 ): Promise<{
   server: McpServerInstance;
 }> {
-  let McpServer: CreateMcpServerOptions["McpServerCtor"];
-  if (options.McpServerCtor) {
-    McpServer = options.McpServerCtor;
-  } else {
-    // Dynamic import — same workaround as src/mcp-server.ts
-    const mcpMod = await import(`${MCP_PKG}/server/mcp.js`);
-    McpServer = mcpMod.McpServer;
-  }
+  // Dynamic import — same workaround as src/mcp-server.ts
+  const mcpMod = await import(`${MCP_PKG}/server/mcp.js`);
+  const McpServer = mcpMod.McpServer as new (
+    info: { name: string; version: string },
+    opts: { capabilities: Record<string, unknown> },
+  ) => McpServerInstance;
 
-  const server: McpServerInstance = new McpServer!(
+  const server: McpServerInstance = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
     { capabilities: { tools: {}, elicitation: {} } },
   );
@@ -703,109 +803,10 @@ export async function createMcpServer(
       envFilePath: z.string().optional().describe('Path to .env file (dotenv only). Defaults to .env in projectDir.'),
       environment: z.enum(['development', 'preview', 'production']).optional().describe('Target environment (vercel/convex only)'),
     },
-    async (args: Record<string, unknown>) => {
-      const { projectDir, keys, destination, envFilePath, environment } = args as {
-        projectDir: string;
-        keys: Array<{ key: string; hint?: string; guidance?: string[] }>;
-        destination?: 'dotenv' | 'vercel' | 'convex';
-        envFilePath?: string;
-        environment?: 'development' | 'preview' | 'production';
-      };
-
-      try {
-        const resolvedProjectDir = validateProjectDir(projectDir);
-        const resolvedEnvPath = resolveProjectEnvFilePath(resolvedProjectDir, envFilePath ?? '.env');
-
-        // (1) Check which keys already exist
-        const allKeyNames = keys.map((k) => k.key);
-        const existingKeys = await checkExistingEnvKeys(allKeyNames, resolvedEnvPath);
-        const existingSet = new Set(existingKeys);
-        const pendingKeys = keys.filter((k) => !existingSet.has(k.key));
-
-        // If all keys already exist, return immediately
-        if (pendingKeys.length === 0) {
-          const lines = existingKeys.map((k) => `• ${k}: already set`);
-          return textContent(`All ${existingKeys.length} key(s) already set.\n${lines.join('\n')}`);
-        }
-
-        // (2) Build elicitation form — one string field per pending key
-        const properties: Record<string, Record<string, unknown>> = {};
-        const required: string[] = [];
-
-        for (const item of pendingKeys) {
-          const descParts: string[] = [];
-          if (item.hint) descParts.push(`Format: ${item.hint}`);
-          if (item.guidance && item.guidance.length > 0) {
-            descParts.push('How to get this:');
-            item.guidance.forEach((step, i) => descParts.push(`${i + 1}. ${step}`));
-          }
-          descParts.push('Leave empty to skip.');
-
-          properties[item.key] = {
-            type: 'string',
-            title: item.key,
-            description: descParts.join('\n'),
-          };
-          // Don't mark as required — empty string = skip
-        }
-
-        // (3) Elicit input from the MCP client
-        const elicitation = await withElicitTimeout(
-          server.server.elicitInput({
-            message: `Enter values for ${pendingKeys.length} environment variable(s). Values are written directly to the project and never shown to the AI.`,
-            requestedSchema: {
-              type: 'object',
-              properties,
-              required,
-            },
-          }),
-          'secure_env_collect',
-        );
-
-        if (elicitation.action !== 'accept' || !elicitation.content) {
-          return textContent('secure_env_collect was cancelled by user.');
-        }
-
-        // (4) Separate provided vs skipped from form response
-        const provided: Array<{ key: string; value: string }> = [];
-        const skipped: string[] = [];
-
-        for (const item of pendingKeys) {
-          const raw = elicitation.content[item.key];
-          const value = typeof raw === 'string' ? raw.trim() : '';
-          if (value.length > 0) {
-            provided.push({ key: item.key, value });
-          } else {
-            skipped.push(item.key);
-          }
-        }
-
-        // (5) Auto-detect destination if not specified
-        const resolvedDestination = destination ?? detectDestination(resolvedProjectDir);
-
-        // (6) Write secrets to destination
-        const { applied, errors } = await applySecrets(provided, resolvedDestination, {
-          envFilePath: resolvedEnvPath,
-          environment,
-          execFn: defaultExecFn,
-        });
-
-        // (7) Build result — NEVER include secret values
-        const lines: string[] = [
-          `destination: ${resolvedDestination}${!destination ? ' (auto-detected)' : ''}${environment ? ` (${environment})` : ''}`,
-        ];
-        for (const k of applied) lines.push(`✓ ${k}: applied`);
-        for (const k of skipped) lines.push(`• ${k}: skipped`);
-        for (const k of existingKeys) lines.push(`• ${k}: already set`);
-        for (const e of errors) lines.push(`✗ ${e}`);
-
-        return errors.length > 0 && applied.length === 0
-          ? errorContent(lines.join('\n'))
-          : textContent(lines.join('\n'));
-      } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
-      }
-    },
+    async (args: Record<string, unknown>) =>
+      secureEnvCollectHandler(args, (params) =>
+        server.server.elicitInput(params as ElicitRequestFormParams),
+      ),
   );
 
   // =======================================================================

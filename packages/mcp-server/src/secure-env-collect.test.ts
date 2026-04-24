@@ -1,176 +1,113 @@
 // @gsd-build/mcp-server — Behaviour tests for secure_env_collect MCP tool
 //
-// The previous version of this file (#4816) re-implemented the tool
-// handler's filter/format logic inline (5 of 7 tests built the
-// `provided`/`skipped` arrays in the test body, then asserted against
-// their own local construction). None of those tests actually
-// exercised the handler registered in `createMcpServer`.
-//
-// This rewrite uses a DI seam (`CreateMcpServerOptions.McpServerCtor`)
-// to inject a mock McpServer that captures the registered handler.
-// Tests then call the REAL handler with a controllable `elicitInput`
-// and assert on what it returns. If the handler's filter/format code
-// regresses, these tests fail.
+// Drives `secureEnvCollectHandler` directly with a fake `elicitInput`
+// function. No mock McpServer, no DI seam on `createMcpServer` — the
+// handler is an exported top-level function that takes the elicitation
+// callback as a parameter. Production `createMcpServer` wraps it with
+// `server.server.elicitInput`.
 
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   mkdtempSync,
-  mkdirSync,
-  rmSync,
   writeFileSync,
   readFileSync,
+  rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { createMcpServer } from "./server.js";
-import { SessionManager } from "./session-manager.js";
+import { secureEnvCollectHandler, type ElicitInputFn } from "./server.js";
 
-// ─── Mock McpServer — captures registered tool handlers ────────────────
-
-type RegisteredTool = {
-  name: string;
-  description: string;
-  params: Record<string, unknown>;
-  handler: (args: Record<string, unknown>) => Promise<unknown>;
-};
+// ─── Helpers ───────────────────────────────────────────────────────────
 
 type ElicitResponse = {
   action: "accept" | "cancel" | "decline";
   content?: Record<string, unknown>;
 };
 
-interface ToolContent {
+interface ToolContentShape {
   content?: Array<{ type: string; text: string }>;
   isError?: boolean;
 }
-
-function makeMockServerCtor() {
-  const state: {
-    tools: RegisteredTool[];
-    elicitResponse: ElicitResponse;
-    elicitCalls: unknown[];
-  } = {
-    tools: [],
-    elicitResponse: { action: "accept", content: {} },
-    elicitCalls: [],
-  };
-
-  class MockMcpServer {
-    server = {
-      elicitInput: async (req: unknown): Promise<ElicitResponse> => {
-        state.elicitCalls.push(req);
-        return state.elicitResponse;
-      },
-    };
-    tool(
-      name: string,
-      description: string,
-      params: Record<string, unknown>,
-      handler: (args: Record<string, unknown>) => Promise<unknown>,
-    ): void {
-      state.tools.push({ name, description, params, handler });
-    }
-    async connect(): Promise<void> {
-      /* no-op */
-    }
-    async close(): Promise<void> {
-      /* no-op */
-    }
-  }
-
-  return { Ctor: MockMcpServer as never, state };
-}
-
-// ─── Fixture helper ────────────────────────────────────────────────────
 
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), `${prefix}-`));
 }
 
 function textOf(result: unknown): string {
-  const r = result as ToolContent;
+  const r = result as ToolContentShape;
   return (r.content ?? []).map((c) => c.text).join("\n");
+}
+
+/** Build a fake elicitInput that returns a pre-programmed response and records calls. */
+function fakeElicit(response: ElicitResponse): {
+  fn: ElicitInputFn;
+  calls: unknown[];
+} {
+  const calls: unknown[] = [];
+  const fn: ElicitInputFn = async (params) => {
+    calls.push(params);
+    return response;
+  };
+  return { fn, calls };
 }
 
 // ─── Tests ─────────────────────────────────────────────────────────────
 
 describe("secure_env_collect — handler behaviour", () => {
   let tmp: string;
-  let sm: SessionManager;
 
   beforeEach(() => {
     tmp = makeTempDir("sec-collect");
-    sm = new SessionManager();
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     rmSync(tmp, { recursive: true, force: true });
-    await sm.cleanup();
-  });
-
-  it("registers the secure_env_collect tool via createMcpServer", async () => {
-    const { Ctor, state } = makeMockServerCtor();
-    await createMcpServer(sm, { McpServerCtor: Ctor });
-
-    const tool = state.tools.find((t) => t.name === "secure_env_collect");
-    assert.ok(tool, "secure_env_collect should be registered");
-    assert.ok(
-      tool.description.length > 0,
-      "tool should carry a non-empty description",
-    );
-    assert.ok(
-      tool.description.includes("NEVER appear in tool output") ||
-        tool.description.toLowerCase().includes("never"),
-      "description should flag the no-secrets-in-output contract",
-    );
   });
 
   it("short-circuits with 'already set' when every key exists", async () => {
     const envPath = join(tmp, ".env");
     writeFileSync(envPath, "FIRST=1\nSECOND=2\n");
 
-    const { Ctor, state } = makeMockServerCtor();
-    await createMcpServer(sm, { McpServerCtor: Ctor });
-    const tool = state.tools.find((t) => t.name === "secure_env_collect")!;
+    const { fn, calls } = fakeElicit({ action: "accept", content: {} });
 
-    const result = await tool.handler({
-      projectDir: tmp,
-      keys: [{ key: "FIRST" }, { key: "SECOND" }],
-      destination: "dotenv",
-      // envFilePath omitted — handler defaults to '.env' inside projectDir.
-      // Passing an absolute envFilePath trips the realpath-vs-symlink
-      // containment check on macOS tmpdirs (/var vs /private/var).
-    });
+    const result = await secureEnvCollectHandler(
+      {
+        projectDir: tmp,
+        keys: [{ key: "FIRST" }, { key: "SECOND" }],
+        destination: "dotenv",
+        // envFilePath omitted — handler defaults to '.env' inside projectDir.
+        // Passing an absolute envFilePath trips the realpath-vs-symlink
+        // containment check on macOS tmpdirs (/var vs /private/var).
+      },
+      fn,
+    );
 
     const text = textOf(result);
     assert.match(text, /already set/);
     assert.match(text, /FIRST/);
     assert.match(text, /SECOND/);
     // Elicit was NOT called — short-circuit path.
-    assert.equal(state.elicitCalls.length, 0);
+    assert.equal(calls.length, 0);
   });
 
   it("writes provided values to .env and never returns the secret in output", async () => {
     const envPath = join(tmp, ".env");
 
-    const { Ctor, state } = makeMockServerCtor();
-    state.elicitResponse = {
+    const { fn } = fakeElicit({
       action: "accept",
       content: { SEC_KEY_WRITE: "sk-definitely-not-in-output-xyz" },
-    };
-    await createMcpServer(sm, { McpServerCtor: Ctor });
-    const tool = state.tools.find((t) => t.name === "secure_env_collect")!;
-
-    const result = await tool.handler({
-      projectDir: tmp,
-      keys: [{ key: "SEC_KEY_WRITE" }],
-      destination: "dotenv",
-      // envFilePath omitted — handler defaults to '.env' inside projectDir.
-      // Passing an absolute envFilePath trips the realpath-vs-symlink
-      // containment check on macOS tmpdirs (/var vs /private/var).
     });
+
+    const result = await secureEnvCollectHandler(
+      {
+        projectDir: tmp,
+        keys: [{ key: "SEC_KEY_WRITE" }],
+        destination: "dotenv",
+      },
+      fn,
+    );
 
     const text = textOf(result);
     // .env must contain the value.
@@ -192,8 +129,7 @@ describe("secure_env_collect — handler behaviour", () => {
   it("separates empty form fields into 'skipped' without writing them", async () => {
     const envPath = join(tmp, ".env");
 
-    const { Ctor, state } = makeMockServerCtor();
-    state.elicitResponse = {
+    const { fn } = fakeElicit({
       action: "accept",
       content: {
         FILLED_KEY: "real-value",
@@ -202,22 +138,20 @@ describe("secure_env_collect — handler behaviour", () => {
         // Whitespace-only — must also classify as skipped (trim).
         WS_KEY: "   ",
       },
-    };
-    await createMcpServer(sm, { McpServerCtor: Ctor });
-    const tool = state.tools.find((t) => t.name === "secure_env_collect")!;
-
-    const result = await tool.handler({
-      projectDir: tmp,
-      keys: [
-        { key: "FILLED_KEY" },
-        { key: "EMPTY_KEY" },
-        { key: "WS_KEY" },
-      ],
-      destination: "dotenv",
-      // envFilePath omitted — handler defaults to '.env' inside projectDir.
-      // Passing an absolute envFilePath trips the realpath-vs-symlink
-      // containment check on macOS tmpdirs (/var vs /private/var).
     });
+
+    const result = await secureEnvCollectHandler(
+      {
+        projectDir: tmp,
+        keys: [
+          { key: "FILLED_KEY" },
+          { key: "EMPTY_KEY" },
+          { key: "WS_KEY" },
+        ],
+        destination: "dotenv",
+      },
+      fn,
+    );
 
     const text = textOf(result);
     assert.match(text, /FILLED_KEY.*applied/, "FILLED_KEY should be applied");
@@ -243,33 +177,30 @@ describe("secure_env_collect — handler behaviour", () => {
     const envPath = join(tmp, ".env");
     writeFileSync(envPath, "EXISTING_MIX=already-here\n");
 
-    const { Ctor, state } = makeMockServerCtor();
-    state.elicitResponse = {
+    const { fn, calls } = fakeElicit({
       action: "accept",
       content: { NEW_MIX: "new-value", SKIP_MIX: "" },
-    };
-    await createMcpServer(sm, { McpServerCtor: Ctor });
-    const tool = state.tools.find((t) => t.name === "secure_env_collect")!;
-
-    const result = await tool.handler({
-      projectDir: tmp,
-      keys: [
-        { key: "EXISTING_MIX" },
-        { key: "NEW_MIX" },
-        { key: "SKIP_MIX" },
-      ],
-      destination: "dotenv",
-      // envFilePath omitted — handler defaults to '.env' inside projectDir.
-      // Passing an absolute envFilePath trips the realpath-vs-symlink
-      // containment check on macOS tmpdirs (/var vs /private/var).
     });
+
+    const result = await secureEnvCollectHandler(
+      {
+        projectDir: tmp,
+        keys: [
+          { key: "EXISTING_MIX" },
+          { key: "NEW_MIX" },
+          { key: "SKIP_MIX" },
+        ],
+        destination: "dotenv",
+      },
+      fn,
+    );
 
     const text = textOf(result);
     assert.match(text, /EXISTING_MIX.*already set/);
     assert.match(text, /NEW_MIX.*applied/);
     assert.match(text, /SKIP_MIX.*skipped/);
     // Only the new one was elicited for (existing was pre-filtered).
-    assert.equal(state.elicitCalls.length, 1);
+    assert.equal(calls.length, 1);
 
     delete process.env.NEW_MIX;
   });
@@ -277,19 +208,16 @@ describe("secure_env_collect — handler behaviour", () => {
   it("returns a cancellation message when user declines the form", async () => {
     const envPath = join(tmp, ".env");
 
-    const { Ctor, state } = makeMockServerCtor();
-    state.elicitResponse = { action: "cancel" };
-    await createMcpServer(sm, { McpServerCtor: Ctor });
-    const tool = state.tools.find((t) => t.name === "secure_env_collect")!;
+    const { fn } = fakeElicit({ action: "cancel" });
 
-    const result = await tool.handler({
-      projectDir: tmp,
-      keys: [{ key: "CANCELLED_KEY" }],
-      destination: "dotenv",
-      // envFilePath omitted — handler defaults to '.env' inside projectDir.
-      // Passing an absolute envFilePath trips the realpath-vs-symlink
-      // containment check on macOS tmpdirs (/var vs /private/var).
-    });
+    const result = await secureEnvCollectHandler(
+      {
+        projectDir: tmp,
+        keys: [{ key: "CANCELLED_KEY" }],
+        destination: "dotenv",
+      },
+      fn,
+    );
 
     const text = textOf(result);
     assert.match(text, /cancelled/i);
@@ -305,25 +233,20 @@ describe("secure_env_collect — handler behaviour", () => {
   });
 
   it("auto-detects destination from project files when not specified", async () => {
-    // vercel.json in project dir should auto-detect to 'vercel'. Since
-    // we don't have execFn injected to mock vercel CLI calls, use the
-    // dotenv fallback: if no vercel/convex signals, falls back to dotenv.
-    const envPath = join(tmp, ".env");
-
-    const { Ctor, state } = makeMockServerCtor();
-    state.elicitResponse = {
+    // No vercel/convex signals — falls back to dotenv.
+    const { fn } = fakeElicit({
       action: "accept",
       content: { AUTO_DETECT_KEY: "auto-value" },
-    };
-    await createMcpServer(sm, { McpServerCtor: Ctor });
-    const tool = state.tools.find((t) => t.name === "secure_env_collect")!;
-
-    const result = await tool.handler({
-      projectDir: tmp,
-      keys: [{ key: "AUTO_DETECT_KEY" }],
-      // Intentionally omit `destination` — handler should auto-detect.
-      // envFilePath omitted — defaults to '.env' inside projectDir.
     });
+
+    const result = await secureEnvCollectHandler(
+      {
+        projectDir: tmp,
+        keys: [{ key: "AUTO_DETECT_KEY" }],
+        // Intentionally omit `destination` — handler should auto-detect.
+      },
+      fn,
+    );
 
     const text = textOf(result);
     assert.match(
