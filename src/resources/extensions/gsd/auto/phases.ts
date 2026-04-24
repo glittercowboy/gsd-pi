@@ -26,12 +26,12 @@ import {
 import { detectStuck } from "./detect-stuck.js";
 import { runUnit } from "./run-unit.js";
 import { debugLog } from "../debug-logger.js";
-import { PROJECT_FILES } from "../detection.js";
+import { PROJECT_FILES, hasProjectFileInAncestor } from "../detection.js";
 import { MergeConflictError } from "../git-service.js";
 import { setCurrentPhase, clearCurrentPhase } from "../../shared/gsd-phase-state.js";
 import { pauseAutoForProviderError } from "../provider-error-pause.js";
 import { resumeAutoAfterProviderDelay } from "../bootstrap/provider-error-resume.js";
-import { join, basename, dirname, parse as parsePath } from "node:path";
+import { join, basename } from "node:path";
 import { existsSync, cpSync, readdirSync } from "node:fs";
 import {
   logWarning,
@@ -1378,21 +1378,10 @@ export async function runUnitPhase(
     // Monorepo support (#2347): if no project files in the worktree directory,
     // walk parent directories up to the filesystem root. In monorepos,
     // package.json / Cargo.toml etc. live in a parent directory.
-    let hasProjectFileInParent = false;
-    if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle) {
-      let checkDir = dirname(s.basePath);
-      const { root } = parsePath(checkDir);
-      while (checkDir !== root) {
-        // Stop at git repository boundary — ancestors above the repo root
-        // (e.g. ~ or /usr/local) may contain unrelated project files.
-        if (deps.existsSync(join(checkDir, ".git"))) break;
-        if (PROJECT_FILES.some((f) => deps.existsSync(join(checkDir, f)))) {
-          hasProjectFileInParent = true;
-          break;
-        }
-        checkDir = dirname(checkDir);
-      }
-    }
+    const hasProjectFileInParent =
+      !hasProjectFile && !hasSrcDir && !hasXcodeBundle
+        ? hasProjectFileInAncestor(s.basePath, deps.existsSync)
+        : false;
     if (!hasProjectFile && !hasSrcDir && !hasXcodeBundle && !hasProjectFileInParent) {
       // Greenfield projects won't have project files yet — the first task creates them.
       // Log a warning but allow execution to proceed. The .git check above is sufficient

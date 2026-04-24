@@ -39,7 +39,7 @@ import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitig
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { resolveUokFlags } from "./uok/flags.js";
 import { ensurePlanV2Graph, isMissingFinalizedContextResult } from "./uok/plan-v2.js";
-import { detectProjectState } from "./detection.js";
+import { detectProjectState, hasGsdBootstrapArtifacts } from "./detection.js";
 import { showProjectInit, offerMigration } from "./init-wizard.js";
 import { validateDirectory } from "./validate-directory.js";
 import { showConfirm } from "../shared/tui.js";
@@ -1491,9 +1491,7 @@ export async function showSmartEntry(
   // A zombie .gsd/ state (symlink exists but missing PREFERENCES.md and
   // milestones/) must trigger the init wizard, not skip it (#2942).
   const gsdPath = gsdRoot(basePath);
-  const hasBootstrapArtifacts = existsSync(gsdPath)
-    && (existsSync(join(gsdPath, "PREFERENCES.md"))
-        || existsSync(join(gsdPath, "milestones")));
+  const hasBootstrapArtifacts = hasGsdBootstrapArtifacts(gsdPath);
 
   if (!hasBootstrapArtifacts) {
     const detection = detectProjectState(basePath);
