@@ -1215,6 +1215,12 @@ export async function pauseAuto(
   } else if (restoreResult.status === "error") {
     const err = restoreResult.error;
     logWarning("engine", `paused-model restore failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+  } else if (restoreResult.status === "restored") {
+    debugLog("paused-model-restore", {
+      status: "restored",
+      provider: s.originalModelProvider,
+      id: s.originalModelId,
+    });
   }
 
   ctx?.ui.setStatus("gsd-auto", "paused");

@@ -1,6 +1,15 @@
 import type { PausedSessionMetadata } from "../interrupted-session.js";
 import type { StartModel } from "./session.js";
 
+/**
+ * Owns only paused-session model metadata.
+ *
+ * auto.ts decides when pause/resume happens and writes the surrounding
+ * paused-session record. This module snapshots, restores, and backfills the
+ * model fields inside that record. It deliberately accepts missing fields so
+ * paused-session.json files from older GSD versions resume with the current
+ * session model as the fallback.
+ */
 export interface PausedModelSnapshot {
   autoModeStartModel: StartModel | null;
   originalModel: StartModel | null;

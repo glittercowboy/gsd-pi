@@ -1,5 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import {
   snapshotPausedModelMetadata,
@@ -8,7 +12,17 @@ import {
   backfillMissingPausedModelSnapshot,
   attemptRestoreOriginalModelForPausedInteraction,
 } from "../auto/paused-model-snapshot.ts";
-import type { PausedSessionMetadata } from "../interrupted-session.ts";
+import { readPausedSessionMetadata, type PausedSessionMetadata } from "../interrupted-session.ts";
+
+function makeTmpBase(): string {
+  const base = join(tmpdir(), `gsd-paused-model-test-${randomUUID()}`);
+  mkdirSync(join(base, ".gsd", "runtime"), { recursive: true });
+  return base;
+}
+
+function cleanup(base: string): void {
+  try { rmSync(base, { recursive: true, force: true }); } catch { /* best-effort */ }
+}
 
 test("pause metadata snapshot persists model fields without sharing object references", () => {
   const sessionState = {
@@ -52,6 +66,49 @@ test("resume snapshot restoration only accepts valid persisted metadata", () => 
   const invalidRestored = restoreModelSnapshotFromPausedMetadata(invalidMeta);
   assert.equal(invalidRestored.autoModeStartModel, null);
   assert.equal(invalidRestored.originalModel, null);
+});
+
+test("legacy paused-session metadata without model fields resumes with current model fallback", () => {
+  const base = makeTmpBase();
+
+  try {
+    writeFileSync(
+      join(base, ".gsd", "runtime", "paused-session.json"),
+      JSON.stringify({
+        milestoneId: "M001",
+        originalBasePath: base,
+        stepMode: false,
+        pausedAt: new Date().toISOString(),
+      }, null, 2),
+      "utf-8",
+    );
+
+    const meta = readPausedSessionMetadata(base);
+    const restored = restoreModelSnapshotFromPausedMetadata(meta);
+    assert.deepEqual(restored, {
+      autoModeStartModel: null,
+      originalModel: null,
+    });
+
+    const state = {
+      autoModeStartModel: null,
+      originalModelProvider: null,
+      originalModelId: null,
+    };
+    applyPausedModelSnapshot(state, restored);
+    backfillMissingPausedModelSnapshot(state, {
+      provider: "openai",
+      id: "gpt-4.1",
+    });
+
+    assert.deepEqual(state, {
+      autoModeStartModel: { provider: "openai", id: "gpt-4.1" },
+      originalModelProvider: "openai",
+      originalModelId: "gpt-4.1",
+    });
+  } finally {
+    cleanup(base);
+  }
 });
 
 test("resume snapshot apply mutates only when restored values are present", () => {

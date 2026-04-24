@@ -66,9 +66,18 @@ export function resolveAgentEnd(event: AgentEndEvent): void {
 }
 
 /**
- * Cancel the in-flight unit wait without treating it like a completed turn.
- * Used by explicit pause paths (aborted/provider errors) so autoLoop can
- * unwind cleanly instead of classifying the cancellation as a session failure.
+ * Cancel the current unit's pending agent_end wait without treating the turn
+ * like a successful completion.
+ *
+ * Contract:
+ * - Safe to call only from explicit pause paths while an auto unit may be
+ *   awaiting agent_end, currently abort handling and provider-error pause.
+ * - Resolves at most the one in-flight unit promise; it does not mutate
+ *   AutoSession state, release locks, close unit records, or persist pause
+ *   metadata. Callers must still run pauseAuto() or an equivalent owner.
+ * - Safe when no unit is pending: logs a debug no-op and returns.
+ * - Ignored during session switches so a late provider/abort signal cannot
+ *   cancel the next unit's promise.
  */
 export function cancelPendingUnit(reason: "aborted" | "provider-error"): void {
   if (_sessionSwitchInFlight) {
