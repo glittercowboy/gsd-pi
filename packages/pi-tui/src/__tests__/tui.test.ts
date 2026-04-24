@@ -25,43 +25,24 @@ function makeTerminal(): Terminal {
 	};
 }
 
-describe("TUI clearOnShrink debounce", () => {
-	it("defers full redraw on first shrink and commits on second", () => {
-		const tui = new TUI(makeTerminal());
-		const anyTui = tui as any;
-
-		// Enable clearOnShrink and simulate prior rendering state
-		anyTui.clearOnShrink = true;
-		anyTui.maxLinesRendered = 10;
-		anyTui._shrinkDebounceActive = false;
-
-		// Simulate a shrink: newLines has fewer lines than maxLinesRendered
-		// First shrink should set debounce flag but NOT reset maxLinesRendered
-		anyTui._shrinkDebounceActive = false;
-
-		// Verify the flag exists and is initially false
-		assert.equal(anyTui._shrinkDebounceActive, false);
-
-		// After setting it to true (simulating first shrink detection),
-		// maxLinesRendered should remain at the old value so the condition
-		// triggers again on the next render
-		anyTui._shrinkDebounceActive = true;
-		assert.equal(anyTui.maxLinesRendered, 10, "maxLinesRendered must not change during deferred shrink");
-	});
-
-	it("resets debounce flag when content grows back", () => {
-		const tui = new TUI(makeTerminal());
-		const anyTui = tui as any;
-
-		anyTui.clearOnShrink = true;
-		anyTui._shrinkDebounceActive = true;
-
-		// Simulating the else branch: content grew back or no shrink
-		// The code sets _shrinkDebounceActive = false in the else branch
-		anyTui._shrinkDebounceActive = false;
-		assert.equal(anyTui._shrinkDebounceActive, false);
-	});
-});
+// TUI clearOnShrink debounce — tests removed in #4794 (ref #4784).
+//
+// The previous tests mutated private fields (`_shrinkDebounceActive`,
+// `maxLinesRendered`) and then asserted the values they just wrote —
+// pure tautologies that never exercised the real debounce path in
+// `renderNow()` (tui.ts:734-754). A regression that narrowed the
+// condition, reversed the flag flip, or dropped the "keep
+// maxLinesRendered" rule would have passed all of them.
+//
+// A proper test would (a) render a component that produces N lines to
+// establish `maxLinesRendered`, (b) swap in a component that produces
+// N-k lines to trigger the shrink branch, and (c) observe terminal
+// writes to confirm the debounce defers/commits the full redraw on the
+// expected render call.
+//
+// That test setup requires exposing enough of the render path (or
+// extracting the debounce decision into a pure helper) — deferred to a
+// separate refactor PR rather than shipping a tautology. See #4794.
 
 describe("TUI", () => {
 	it("does not swallow a bare Escape keypress while waiting for the cell-size response", () => {
