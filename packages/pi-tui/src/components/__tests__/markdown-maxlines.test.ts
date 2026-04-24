@@ -29,7 +29,10 @@ test("Markdown renders all lines when maxLines is not set", () => {
 	const lines = md.render(80);
 	// Each paragraph produces a line + an inter-paragraph blank line
 	const contentLines = lines.filter((l) => l.trim().length > 0);
-	assert.ok(contentLines.length >= 5, `expected at least 5 content lines, got ${contentLines.length}`);
+	// Verify all 5 content lines are present (not just a lower bound)
+	assert.equal(contentLines.length, 5);
+	assert.ok(contentLines.some((l) => l.includes("Line 1")));
+	assert.ok(contentLines.some((l) => l.includes("Line 5")));
 });
 
 test("Markdown truncates from the top when maxLines is exceeded", () => {
@@ -38,9 +41,11 @@ test("Markdown truncates from the top when maxLines is exceeded", () => {
 	md.maxLines = 3;
 	const lines = md.render(80);
 	assert.ok(lines.length <= 3, `expected at most 3 lines, got ${lines.length}`);
-	// First line should be the ellipsis indicator
+	// First line should contain an ellipsis indicator (not tied to English copy)
 	assert.ok(lines[0].includes("…"), "first line should contain ellipsis indicator");
-	assert.ok(lines[0].includes("above"), "first line should mention lines above");
+	// The remaining lines (after removing the ellipsis line) should include recent content
+	const recentLines = lines.filter((l) => !l.includes("…"));
+	assert.ok(recentLines.some((l) => l.includes("Line 5")), "truncated output should include most recent content");
 });
 
 test("Markdown preserves most recent content when truncating", () => {
@@ -71,5 +76,11 @@ test("Markdown trims trailing empty lines", () => {
 	const lines = md.render(80);
 	// Last line should not be empty (trailing empties are trimmed)
 	const lastLine = lines[lines.length - 1];
-	assert.ok(lastLine.trim().length > 0 || lines.length === 1, "trailing empty lines should be trimmed");
+	// Assert the trimmed invariant directly: if there's content, last line is non-empty;
+	// if only one line exists, it must be the content (no trailing empties)
+	if (lines.length === 1) {
+		assert.ok(lastLine.trim().length > 0, "single-line output must be non-empty");
+	} else {
+		assert.ok(lastLine.trim().length > 0, "last line must not be empty (trailing empties trimmed)");
+	}
 });

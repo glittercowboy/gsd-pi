@@ -28,9 +28,10 @@ describe("CombinedAutocompleteProvider — slash commands", () => {
 		const provider = makeProvider(sampleCommands);
 		const result = provider.getSuggestions(["/se"], 0, 3);
 		assert.ok(result);
-		assert.equal(result!.items.length, 2); // settings, session
+		// /se matches settings and session (2 items) — verify both present, not just count
 		assert.ok(result!.items.some((i) => i.value === "settings"));
 		assert.ok(result!.items.some((i) => i.value === "session"));
+		assert.equal(result!.items.length, 2); // exact count is the contract for this prefix
 	});
 
 	it("returns null when no commands match", () => {
@@ -43,7 +44,9 @@ describe("CombinedAutocompleteProvider — slash commands", () => {
 		const provider = makeProvider(sampleCommands);
 		const result = provider.getSuggestions(["/mod"], 0, 4);
 		assert.ok(result);
-		assert.equal(result!.items[0]?.description, "Select model");
+		// Verify all items have descriptions (not just the first one) — avoids [0] positional coupling
+		assert.ok(result!.items.every((i) => i.description), "all suggestions have descriptions");
+		assert.ok(result!.items.some((i) => i.value === "model"));
 	});
 
 	it("does not trigger slash commands mid-line", () => {
@@ -80,8 +83,9 @@ describe("CombinedAutocompleteProvider — argument completions", () => {
 		const provider = makeProvider(commands);
 		const result = provider.getSuggestions(["/thinking m"], 0, 11);
 		assert.ok(result);
-		assert.equal(result!.items.length, 1);
-		assert.equal(result!.items[0]?.value, "medium");
+		// /thinking m matches only "medium" — verify the expected value is present, not just index
+		assert.ok(result!.items.some((i) => i.value === "medium"));
+		assert.equal(result!.items.length, 1); // exact count is the contract for this prefix
 	});
 
 	it("returns null for commands without argument completions", () => {
@@ -107,7 +111,10 @@ describe("CombinedAutocompleteProvider — argument completions", () => {
 		const provider = makeProvider(commands);
 		const result = provider.getSuggestions(["/test "], 0, 6);
 		assert.ok(result);
-		assert.equal(result!.items.length, 3);
+		// /test with empty prefix returns all 3 subs — verify each is present, not just count
+		assert.ok(result!.items.some((i) => i.value === "start"));
+		assert.ok(result!.items.some((i) => i.value === "stop"));
+		assert.ok(result!.items.some((i) => i.value === "status"));
 	});
 });
 

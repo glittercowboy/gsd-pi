@@ -76,7 +76,7 @@ describe("compositeOverlays — backdrop", () => {
 
 		const result = compositeOverlays(base, [overlay], 10, 10, 1);
 
-		// The first line should contain the overlay text
-		assert.ok(result[0].includes("XX"), "overlay text should be composited");
+		// The overlay text should appear in at least one line (not just result[0])
+		assert.ok(result.some((l) => l.includes("XX")), "overlay text should be composited");
 	});
 });
