@@ -45,8 +45,12 @@ let providerRegistered = false;
 /**
  * Probe Ollama and register discovered models.
  * Safe to call multiple times — re-discovers and re-registers.
+ *
+ * Exported for tests (see ollama-auth-mode.test.ts, ollama-status-indicator.test.ts)
+ * so a fake HTTP endpoint can drive the registration/unregistration paths.
+ * Production callers always go through the session_start handler below.
  */
-async function probeAndRegister(pi: ExtensionAPI): Promise<boolean> {
+export async function probeAndRegister(pi: ExtensionAPI): Promise<boolean> {
 	const running = await client.isRunning();
 	if (!running) {
 		if (providerRegistered) {

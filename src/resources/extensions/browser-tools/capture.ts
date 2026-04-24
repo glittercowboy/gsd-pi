@@ -22,6 +22,18 @@ async function getSharp(): Promise<typeof import("sharp") | null> {
 	}
 	return _sharp;
 }
+
+/**
+ * Test-only seam: override the cached sharp module. Pass `null` to simulate
+ * an environment where the sharp native dep is unavailable; pass `undefined`
+ * to clear the cache and let the next getSharp() call re-import. See
+ * tests/capture-sharp-optional.test.cjs.
+ */
+export function __setSharpForTesting(
+	value: typeof import("sharp") | null | undefined,
+): void {
+	_sharp = value;
+}
 import type { CompactPageState, CompactSelectorState } from "./state.js";
 import { formatCompactStateSummary } from "./utils.js";
 
