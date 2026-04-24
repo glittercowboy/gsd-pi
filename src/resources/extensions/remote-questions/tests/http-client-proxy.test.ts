@@ -130,7 +130,7 @@ describe("apiRequest proxy integration", () => {
     const call = fetchCalls[0];
     assert.equal(call.init.dispatcher, agent, "expected provided agent to be used directly");
 
-    agent.close();
+    await agent.close();
   });
 
   it("throws a clear error when ProxyAgent cannot be created", async () => {
@@ -171,6 +171,6 @@ describe("apiRequest proxy integration", () => {
       },
     );
 
-    agent.close();
+    await agent.close();
   });
 });

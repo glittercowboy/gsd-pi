@@ -114,6 +114,8 @@ export async function apiRequest(
     signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS),
   };
 
+  let agentToClose: ProxyAgent | undefined;
+
   // Use pre-configured agent if provided
   if (agent) {
     init.dispatcher = agent;
@@ -128,6 +130,7 @@ export async function apiRequest(
           ? new ProxyAgent({ uri: proxyUrl, proxyTls: { rejectUnauthorized: false } })
           : new ProxyAgent(proxyUrl);
         init.dispatcher = agent;
+        agentToClose = agent;
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
         throw new Error(`${errorLabel}: Failed to configure proxy: ${errorMessage}`);
@@ -142,7 +145,10 @@ export async function apiRequest(
 
   const response = await fetch(url, init);
 
-  if (response.status === 204) return {};
+  if (response.status === 204) {
+    if (agentToClose) await agentToClose.close().catch(() => {});
+    return {};
+  }
 
   if (!response.ok) {
     const text = await response.text().catch(() => "");
@@ -150,8 +156,11 @@ export async function apiRequest(
       text.length > safeErrorLength
         ? text.slice(0, safeErrorLength) + "…"
         : text;
+    if (agentToClose) await agentToClose.close().catch(() => {});
     throw new Error(`${errorLabel} HTTP ${response.status}: ${safeText}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  if (agentToClose) await agentToClose.close().catch(() => {});
+  return data;
 }

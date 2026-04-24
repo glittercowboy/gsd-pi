@@ -26,7 +26,7 @@ const COMMAND_POLLING_INTERVAL_MS = 5000;
 export function startCommandPolling(
   basePath: string,
   intervalMs = COMMAND_POLLING_INTERVAL_MS,
-): () => void {
+): () => void | Promise<void> {
   const config = resolveRemoteConfig();
   if (!config || config.channel !== "telegram") {
     // Non-Telegram channels have no command polling support — return a no-op cleanup.

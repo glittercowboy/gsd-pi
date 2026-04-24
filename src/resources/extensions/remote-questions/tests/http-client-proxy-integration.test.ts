@@ -84,7 +84,7 @@ describe("apiRequest proxy integration", () => {
       // Expected: TLS handshake fails because proxy tunnel closes immediately
       assert.ok(err instanceof Error, "expected an Error");
     } finally {
-      agent.close();
+      await agent.close();
     }
 
     assert.equal(proxy.requests.length, 1, "expected exactly one proxy request");
@@ -110,7 +110,7 @@ describe("apiRequest proxy integration", () => {
     } catch (err) {
       assert.ok(err instanceof Error, "expected an Error");
     } finally {
-      agent.close();
+      await agent.close();
     }
 
     assert.equal(proxy.requests.length, 1, "expected exactly one proxy request");
