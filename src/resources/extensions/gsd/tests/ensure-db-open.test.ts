@@ -389,7 +389,7 @@ describe('ensure-db-open', () => {
       assert.ok(db, 'adapter should be available after ensureDbOpen');
       assert.equal(
         db.prepare('SELECT MAX(version) as version FROM schema_version').get()?.version,
-        22,
+        23,
         'legacy DB should migrate to current schema version',
       );
 

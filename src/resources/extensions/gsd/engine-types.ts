@@ -38,11 +38,14 @@ export interface DisplayMetadata {
  * - `dispatch` — execute a step
  * - `stop` — halt the loop with a reason and severity
  * - `skip` — nothing to do right now, advance without executing
+ * - `sleep` — pause the loop for `durationMs` milliseconds before re-evaluating
+ *   (used by external-wait probe cycles to avoid tight polling)
  */
 export type EngineDispatchAction =
   | { action: "dispatch"; step: StepContract }
   | { action: "stop"; reason: string; level: "info" | "warning" | "error" }
-  | { action: "skip" };
+  | { action: "skip" }
+  | { action: "sleep"; durationMs: number };
 
 /** Outcome of reconciling state after a step completes. */
 export interface ReconcileResult {

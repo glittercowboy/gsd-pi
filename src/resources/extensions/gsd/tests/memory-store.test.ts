@@ -323,9 +323,9 @@ test('memory-store: schema includes memories table', () => {
   const viewCount = adapter.prepare('SELECT count(*) as cnt FROM active_memories').get();
   assert.deepStrictEqual(viewCount?.['cnt'], 0, 'active_memories view should exist');
 
-  // Verify schema version is 22 (v22 quality_gates DDL fix included)
+  // Verify schema version is 23 (v23 external_waits table)
   const version = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assert.deepStrictEqual(version?.["v"], 22, 'schema version should be 22');
+  assert.deepStrictEqual(version?.["v"], 23, 'schema version should be 23');
 
   closeDatabase();
 });

@@ -6,8 +6,14 @@ import { findMilestoneIds, nextMilestoneId, claimReservedId, getReservedMileston
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { ensureDbOpen } from "./dynamic-tools.js";
 import { StringEnum } from "@gsd/pi-ai";
-import { logError } from "../workflow-logger.js";
+import { logError, logWarning } from "../workflow-logger.js";
 import { getErrorMessage } from "../error-utils.js";
+import { getTask, updateTaskStatus, insertExternalWait, transaction } from "../gsd-db.js";
+import { invalidateStateCache } from "../state.js";
+import { saveJsonFile } from "../json-persistence.js";
+import { resolveTasksDir } from "../paths.js";
+import { join, relative } from "node:path";
+import { mkdirSync, unlinkSync } from "node:fs";
 import {
   executeCompleteMilestone,
   executePlanMilestone,
@@ -1116,4 +1122,193 @@ export function registerDbTools(pi: ExtensionAPI): void {
   };
 
   pi.registerTool(saveGateResultTool);
+
+  // ─── gsd_register_external_wait ──────────────────────────────────────────
+
+  const registerExternalWaitExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const dbOk = await ensureDbOpen();
+    if (!dbOk) {
+      return { content: [{ type: "text" as const, text: "Error: GSD database is not available" }], isError: true, details: { error: "GSD database is not available" } as any };
+    }
+
+    const { milestoneId, sliceId, taskId, pollWhileCommand, successCheck, pollIntervalMs, timeoutMs, contextHint, onTimeout } = params;
+
+    // Validate task exists
+    const task = getTask(milestoneId, sliceId, taskId);
+    if (!task) {
+      return { content: [{ type: "text" as const, text: `Error: task not found — ${milestoneId}/${sliceId}/${taskId}` }], isError: true, details: { error: "task not found" } as any };
+    }
+
+    // Validate task status is 'executing' (R229)
+    if (task.status !== "executing") {
+      return { content: [{ type: "text" as const, text: `Error: task not in executing status (current: ${task.status})` }], isError: true, details: { error: `task not in executing status (current: ${task.status})` } as any };
+    }
+
+    // Runtime validation — reject empty/invalid values before persistence
+    const trimmedCommand = pollWhileCommand.trim();
+    if (!trimmedCommand) {
+      return { content: [{ type: "text" as const, text: "Error: pollWhileCommand must not be empty" }], isError: true, details: { error: "pollWhileCommand empty" } as any };
+    }
+
+    // Max-length validation — prevent absurdly large commands or context from being persisted
+    const MAX_COMMAND_LENGTH = 4096;
+    const MAX_CONTEXT_HINT_LENGTH = 8192;
+    if (trimmedCommand.length > MAX_COMMAND_LENGTH) {
+      return { content: [{ type: "text" as const, text: `Error: pollWhileCommand exceeds max length (${MAX_COMMAND_LENGTH} chars)` }], isError: true, details: { error: "pollWhileCommand too long" } as any };
+    }
+    if (successCheck && successCheck.length > MAX_COMMAND_LENGTH) {
+      return { content: [{ type: "text" as const, text: `Error: successCheck exceeds max length (${MAX_COMMAND_LENGTH} chars)` }], isError: true, details: { error: "successCheck too long" } as any };
+    }
+    if (contextHint && contextHint.length > MAX_CONTEXT_HINT_LENGTH) {
+      return { content: [{ type: "text" as const, text: `Error: contextHint exceeds max length (${MAX_CONTEXT_HINT_LENGTH} chars)` }], isError: true, details: { error: "contextHint too long" } as any };
+    }
+
+    // Command safety validation — reject patterns that indicate destructive intent.
+    // This is defense-in-depth only; the agent already has full shell access. Probe commands
+    // run unattended on a timer, so we gate the most obvious misuse patterns. This is NOT
+    // a security boundary — a determined actor can trivially bypass these patterns. The real
+    // safety boundary is that the agent itself has shell access and probe commands are the
+    // user's/agent's responsibility.
+    const DANGEROUS_PATTERNS = [
+      /\bcurl\b.*\|\s*(ba)?sh\b/i,           // curl ... | sh
+      /\bwget\b.*\|\s*(ba)?sh\b/i,           // wget ... | bash
+      /\brm\s+(-\S+\s+)*-\S*r\S*f/i,        // rm -rf (handles -r -f, --recursive --force, -rf)
+      /\brm\s+--recursive\b/i,               // rm --recursive
+      /\bmkfs\b/i,                             // mkfs
+      /\bdd\b.*\bof\s*=/i,                    // dd of=
+      /\b:>\s*\//,                             // :> /path (truncate)
+      />\s*\/dev\/[^n]/,                       // > /dev/sd* (but not /dev/null)
+    ];
+    for (const pat of DANGEROUS_PATTERNS) {
+      if (pat.test(trimmedCommand)) {
+        return { content: [{ type: "text" as const, text: `Error: pollWhileCommand rejected — matches dangerous pattern: ${pat.source}. Probe commands run unattended; rewrite the command to avoid destructive operations.` }], isError: true, details: { error: "dangerous command pattern", pattern: pat.source } as any };
+      }
+    }
+    if (successCheck) {
+      for (const pat of DANGEROUS_PATTERNS) {
+        if (pat.test(successCheck)) {
+          return { content: [{ type: "text" as const, text: `Error: successCheck rejected — matches dangerous pattern: ${pat.source}. Probe commands run unattended; rewrite the command to avoid destructive operations.` }], isError: true, details: { error: "dangerous successCheck pattern", pattern: pat.source } as any };
+        }
+      }
+    }
+
+    // Log registration (not at warning level — every registration is expected, not anomalous).
+    // Full command is persisted in the JSON probe spec on disk; only log the task path here.
+    logWarning("dispatch", `External wait registered: ${milestoneId}/${sliceId}/${taskId}`);
+
+    if (pollIntervalMs !== undefined && (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 1000)) {
+      return { content: [{ type: "text" as const, text: "Error: pollIntervalMs must be at least 1000 ms (1s)" }], isError: true, details: { error: "invalid pollIntervalMs" } as any };
+    }
+    if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1000)) {
+      return { content: [{ type: "text" as const, text: "Error: timeoutMs must be at least 1000 ms (1s)" }], isError: true, details: { error: "invalid timeoutMs" } as any };
+    }
+    if (pollIntervalMs !== undefined && timeoutMs !== undefined && timeoutMs < pollIntervalMs) {
+      return { content: [{ type: "text" as const, text: "Error: timeoutMs must be >= pollIntervalMs" }], isError: true, details: { error: "timeoutMs < pollIntervalMs" } as any };
+    }
+
+    // Write JSON probe spec FIRST (R215) — filesystem before DB to avoid stranded state
+    const basePath = process.cwd();
+    const resolvedPollInterval = pollIntervalMs ?? 30000;
+    const resolvedTimeout = timeoutMs ?? 86400000;
+    const resolvedOnTimeout = onTimeout ?? "manual-attention";
+    const registeredAt = new Date().toISOString();
+
+    let tasksDir = resolveTasksDir(basePath, milestoneId, sliceId);
+    if (!tasksDir) {
+      const gsdDir = join(basePath, ".gsd");
+      tasksDir = join(gsdDir, "milestones", milestoneId, "slices", sliceId, "tasks");
+      mkdirSync(tasksDir, { recursive: true });
+    }
+    const jsonPath = join(tasksDir, `${taskId}-EXTERNAL-WAIT.json`);
+    try {
+      saveJsonFile(jsonPath, {
+        milestoneId,
+        sliceId,
+        taskId,
+        pollWhileCommand: trimmedCommand,
+        successCheck: successCheck ?? null,
+        pollIntervalMs: resolvedPollInterval,
+        timeoutMs: resolvedTimeout,
+        contextHint: contextHint ?? null,
+        onTimeout: resolvedOnTimeout,
+        registeredAt,
+      });
+    } catch (fileErr) {
+      return { content: [{ type: "text" as const, text: `Error: failed to write probe spec — ${fileErr instanceof Error ? fileErr.message : String(fileErr)}` }], isError: true, details: { error: "probe spec write failed" } as any };
+    }
+
+    // Insert external_waits DB row and update task status atomically (R213, R214, R223)
+    try {
+      transaction(() => {
+        insertExternalWait(milestoneId, sliceId, taskId, trimmedCommand, {
+          successCheck,
+          pollIntervalMs,
+          timeoutMs,
+          contextHint,
+          onTimeout,
+        });
+        updateTaskStatus(milestoneId, sliceId, taskId, "awaiting-external");
+      });
+    } catch (dbErr) {
+      // Transaction rolled back — both operations failed atomically.
+      // Cleanup the JSON file to avoid partial state.
+      try { unlinkSync(jsonPath); } catch (cleanupErr) { logError("db", `Failed to clean up probe spec ${jsonPath}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`); }
+      return { content: [{ type: "text" as const, text: `Error: DB update failed — ${dbErr instanceof Error ? dbErr.message : String(dbErr)}` }], isError: true, details: { error: "db update failed" } as any };
+    }
+
+    // Invalidate state cache
+    invalidateStateCache();
+
+    const relPath = relative(basePath, jsonPath).split("\\").join("/");
+    return {
+      content: [{ type: "text" as const, text: `External wait registered for ${milestoneId}/${sliceId}/${taskId}. Probe spec: ${relPath}` }],
+      isError: false,
+      details: { milestoneId, sliceId, taskId, jsonPath: relPath } as any,
+    };
+  };
+
+  const registerExternalWaitTool = {
+    name: "gsd_register_external_wait",
+    label: "Register External Wait",
+    description:
+      "Register an external wait for a task that is blocked on an external process (CI pipeline, deployment, HPC job, etc.). " +
+      "Creates a probe spec and transitions the task to awaiting-external status.",
+    promptSnippet: "Register an external wait probe for a task blocked on an external process",
+    promptGuidelines: [
+      "Use gsd_register_external_wait when a task must wait for an external process to complete.",
+      "The task must be in 'executing' status — registration is rejected otherwise.",
+      "pollWhileCommand is required — a shell command that probes the external process status. Keep polling while it exits 0; stop when it exits non-zero.",
+      "successCheck is optional — a second-phase shell command for deeper validation after pollWhileCommand signals done.",
+      "onTimeout defaults to 'manual-attention'; set to 'resume-with-failure' to auto-resume on timeout.",
+      'Example SLURM: pollWhileCommand="squeue -j $JOBID | grep -c $JOBID" (exits 0 while job in queue, non-zero when done)',
+      'Example CI: pollWhileCommand="test \\"$(gh run view $RUNID --json status -q .status)\\" != \\"completed\\""',
+      "Exit code convention: exit 0 = keep polling (still running), non-zero = done. The name says it: poll WHILE this command succeeds.",
+    ],
+    parameters: Type.Object({
+      milestoneId: Type.String({ description: "Milestone ID (e.g. M006)" }),
+      sliceId: Type.String({ description: "Slice ID (e.g. S02)" }),
+      taskId: Type.String({ description: "Task ID (e.g. T01)" }),
+      pollWhileCommand: Type.String({ description: "Shell command to probe external process. Exit 0 = keep polling (still running), non-zero = done.", minLength: 1 }),
+      successCheck: Type.Optional(Type.String({ description: "Optional second-phase validation command after pollWhileCommand signals done. Exit 0 = success, non-zero = failure.", minLength: 1 })),
+      pollIntervalMs: Type.Optional(Type.Number({ description: "Probe poll interval in milliseconds (default 30000)", minimum: 1 })),
+      timeoutMs: Type.Optional(Type.Number({ description: "Overall timeout in milliseconds (default 86400000 = 24h)", minimum: 1 })),
+      contextHint: Type.Optional(Type.String({ description: "Human-readable hint about what is being waited on" })),
+      onTimeout: Type.Optional(StringEnum(["manual-attention", "resume-with-failure"], { description: "Action on timeout: manual-attention (default) or resume-with-failure" })),
+    }),
+    execute: registerExternalWaitExecute,
+    renderCall(args: any, theme: any) {
+      let text = theme.fg("toolTitle", theme.bold("register_external_wait "));
+      text += theme.fg("accent", `${args.milestoneId ?? ""}/${args.sliceId ?? ""}/${args.taskId ?? ""}`);
+      return new Text(text, 0, 0);
+    },
+    renderResult(result: any, _options: any, theme: any) {
+      const d = readDetails(result);
+      if (result.isError || d?.error) {
+        return new Text(theme.fg("error", `Error: ${d?.error ?? "unknown"}`), 0, 0);
+      }
+      return new Text(theme.fg("success", `Registered: ${d?.jsonPath ?? ""}`), 0, 0);
+    },
+  };
+
+  pi.registerTool(registerExternalWaitTool);
 }

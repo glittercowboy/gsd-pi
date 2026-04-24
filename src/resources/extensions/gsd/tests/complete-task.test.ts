@@ -109,9 +109,9 @@ console.log('\n=== complete-task: schema v5 migration ===');
 
   const adapter = _getAdapter()!;
 
-  // Verify schema version is current (v22 — quality_gates DDL fix)
+  // Verify schema version is current (v23 — external_waits table)
   const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(versionRow?.['v'], 22, 'schema version should be 22');
+  assertEq(versionRow?.['v'], 23, 'schema version should be 23');
 
   // Verify all 4 new tables exist
   const tables = adapter.prepare(

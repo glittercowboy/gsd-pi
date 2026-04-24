@@ -960,6 +960,22 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
 
   const activeTask: ActiveRef = { id: activeTaskRow.id, title: activeTaskRow.title };
 
+  // ── External wait check ──────────────────────────────────────────
+  // If the active task's status is "awaiting-external", the task is waiting
+  // on an external process (SLURM job, CI pipeline, etc.). Return this phase
+  // so the dispatch rule can run the probe command. Per D026, state derivation
+  // reads only the task status string — the external_waits table is queried
+  // only by the dispatch rule when it needs the probe spec.
+  if (activeTaskRow.status === "awaiting-external") {
+    return {
+      activeMilestone, activeSlice, activeTask,
+      phase: 'awaiting-external', recentDecisions: [], blockers: [],
+      nextAction: `Task ${activeTask.id} is awaiting external process. Probe will check status.`,
+      registry, requirements,
+      progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
+    };
+  }
+
   const tasksDir = resolveTasksDir(basePath, activeMilestone.id, activeSlice.id);
   if (tasksDir && existsSync(tasksDir) && tasks.length > 0) {
     const allFiles = readdirSync(tasksDir).filter(f => f.endsWith(".md"));

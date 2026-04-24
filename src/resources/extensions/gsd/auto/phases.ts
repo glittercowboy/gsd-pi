@@ -945,6 +945,23 @@ export async function runDispatch(
     return { action: "break", reason: "dispatch-stop" };
   }
 
+  if (dispatchResult.action === "sleep") {
+    deps.emitJournalEvent({
+      ts: new Date().toISOString(), flowId: ic.flowId, seq: ic.nextSeq(),
+      eventType: "dispatch-sleep",
+      rule: dispatchResult.matchedRule,
+      data: { durationMs: dispatchResult.durationMs },
+    });
+    // Interruptible sleep: poll s.active every 1s so the loop wakes
+    // promptly when auto-mode is stopped instead of sleeping the full duration.
+    const sleepMs = dispatchResult.durationMs;
+    const start = Date.now();
+    while (Date.now() - start < sleepMs && s.active) {
+      await new Promise(r => setTimeout(r, Math.min(1000, sleepMs - (Date.now() - start))));
+    }
+    return { action: "continue" };
+  }
+
   if (dispatchResult.action !== "dispatch") {
     // Non-dispatch action (e.g. "skip") — re-derive state
     await new Promise((r) => setImmediate(r));
@@ -1482,6 +1499,8 @@ export async function runUnitPhase(
     finalPrompt = `**VERIFICATION FAILED — AUTO-FIX ATTEMPT ${retryCtx.attempt}**\n\nThe verification gate ran after your previous attempt and found failures. Fix these issues before completing the task.\n\n${capped}\n\n---\n\n${finalPrompt}`;
   }
 
+  const hadCrashRecovery = !!s.pendingCrashRecovery;
+  const hadExternalResume = !!s.pendingExternalResume;
   if (s.pendingCrashRecovery) {
     const capped =
       s.pendingCrashRecovery.length > MAX_RECOVERY_CHARS
@@ -1490,7 +1509,19 @@ export async function runUnitPhase(
         : s.pendingCrashRecovery;
     finalPrompt = `${capped}\n\n---\n\n${finalPrompt}`;
     s.pendingCrashRecovery = null;
-  } else if ((s.unitDispatchCount.get(dispatchKey) ?? 0) > 1) {
+  }
+
+  if (s.pendingExternalResume) {
+    const cappedExt =
+      s.pendingExternalResume.length > MAX_RECOVERY_CHARS
+        ? s.pendingExternalResume.slice(0, MAX_RECOVERY_CHARS) +
+          "\n\n[...external resume context truncated]"
+        : s.pendingExternalResume;
+    finalPrompt = `${cappedExt}\n\n---\n\n${finalPrompt}`;
+    s.pendingExternalResume = null;
+  }
+
+  if (!hadCrashRecovery && !hadExternalResume && (s.unitDispatchCount.get(dispatchKey) ?? 0) > 1) {
     const diagnostic = deps.getDeepDiagnostic(s.basePath);
     if (diagnostic) {
       const cappedDiag =
