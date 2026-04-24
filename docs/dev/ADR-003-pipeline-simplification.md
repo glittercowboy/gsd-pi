@@ -200,16 +200,16 @@ For the same 4-slice, 3-task milestone:
 
 **Quality impact:** For most slices, the mechanical summary is sufficient — it aggregates structured frontmatter fields (provides, requires, affects, key_files, key_decisions, patterns_established) from task summaries. For complex slices with important narrative context, the LLM fallback preserves quality.
 
-#### 4. Eliminate reassess-roadmap (make opt-in)
+#### 4. Eliminate reassess-roadmap (make opt-in) — **IMPLEMENTED (#4778)**
 
 **Current:** After every slice completion, a reassess-roadmap session re-reads the ROADMAP and slice summary, then almost always writes "roadmap is fine."
 
 **New:** Reassessment is eliminated by default. The plan-slice agent for the next slice serves as the natural reassessment point — it reads the ROADMAP and prior slice summaries, and can adjust its plan if the ground has shifted.
 
 **What changes:**
-- The reassess-roadmap dispatch rule fires only when the `reassess_after_slice` preference is enabled (default: off, was effectively always-on).
-- The plan-slice prompt gains a reassessment preamble: "Before planning this slice, verify that the roadmap's assumptions still hold given prior slice summaries. If the remaining roadmap needs adjustment, modify it before proceeding."
-- The `checkNeedsReassessment()` function in auto-prompts.ts becomes a preference gate, not a mandatory check.
+- The reassess-roadmap dispatch rule fires only when the `reassess_after_slice` preference is enabled (default: off, was effectively always-on). **Landed:** `auto-dispatch.ts` now defaults `reassess_after_slice` to `false`. Opt-in via explicit `true` or the `burn-max` profile.
+- The plan-slice prompt gains a reassessment preamble: "Before planning this slice, verify that the roadmap's assumptions still hold given prior slice summaries. If the remaining roadmap needs adjustment, modify it before proceeding." **Landed:** `prompts/plan-slice.md` `### Verify Roadmap Assumptions (JIT Reassessment — ADR-003 §4)` with explicit `gsd_reassess_roadmap` tool-call guidance and "bias strongly toward roadmap is fine" instruction.
+- The `checkNeedsReassessment()` function in auto-prompts.ts becomes a preference gate, not a mandatory check. **Landed:** gated by `reassess_after_slice` (default false) in the dispatch rule; function signature unchanged.
 
 **Token savings:** ~1 session per completed non-final slice × (N-1) slices minus those already skipped. For a 4-slice milestone under quality profile: 3 sessions × 12–37K tokens = 36–111K tokens.
 

@@ -281,7 +281,11 @@ describe("RetryHandler — long-context entitlement 429 (#2803)", () => {
 			assert.equal(result, true, "retry should be initiated");
 
 			handler.abortRetry();
-			await new Promise((resolve) => setTimeout(resolve, 10));
+			// Yield the microtask queue so any synchronous continuation
+			// scheduled by abortRetry() settles before we assert. This is
+			// deterministic — no magic-sleep dependency (#4798 / #4784).
+			await Promise.resolve();
+			await Promise.resolve();
 
 			assert.equal(continueFn.mock.calls.length, 0, "cancelled retry must not continue after explicit abort");
 			const endEvents = emittedEvents.filter((e) => e.type === "auto_retry_end");

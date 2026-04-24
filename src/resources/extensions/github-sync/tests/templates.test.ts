@@ -105,9 +105,41 @@ describe("templates", () => {
       assert.ok(comment.includes("duration:"));
     });
 
-    it("handles empty data gracefully", () => {
+    it("handles empty data gracefully — no debug-artifact output", () => {
+      // Previous version only asserted `typeof === 'string'`, which the
+      // function signature already guarantees (tautology).
+      //
+      // The real invariant is: empty input must produce a string that
+      // is safe to post (or skip) without leaking a debug-stringified
+      // object. An empty string IS allowed here — callers are expected
+      // to gate on truthiness before posting ("skip if empty"). What
+      // must NOT happen is leaking 'undefined', '[object Object]',
+      // 'null', or a template-placeholder tell like '{{' / '}}'.
       const comment = formatSummaryComment({});
       assert.equal(typeof comment, "string");
+      assert.doesNotMatch(
+        comment,
+        /^undefined$|^\[object Object\]$|^null$/,
+        "empty-data comment must not be a debug-style stringified artifact",
+      );
+      assert.doesNotMatch(
+        comment,
+        /\{\{\s*\w+\s*\}\}/,
+        "empty-data comment must not leak unsubstituted {{placeholders}}",
+      );
+    });
+
+    it("empty input produces empty comment — callers gate on truthiness", () => {
+      // Sister to the previous test: this locks in the current behaviour
+      // that empty input returns empty string, so a regression that
+      // unexpectedly starts emitting a non-empty default (which would
+      // then post spam comments for every bare-data milestone) fails.
+      const comment = formatSummaryComment({});
+      assert.equal(
+        comment,
+        "",
+        "empty data must return exactly '' so callers can `if (comment)` gate",
+      );
     });
   });
 

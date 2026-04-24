@@ -203,7 +203,9 @@ async function assertTrustedStdioServer(
 	return trustKey;
 }
 
-function getServerConfig(name: string): McpServerConfig | undefined {
+// Exported for tests (see tests/server-name-spaces.test.ts).
+// Production call sites treat this as module-private.
+export function getServerConfig(name: string): McpServerConfig | undefined {
 	const trimmed = name.trim();
 	return readConfigs().find((s) =>
 		s.name === trimmed ||

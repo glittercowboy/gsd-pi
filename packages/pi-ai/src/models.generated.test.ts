@@ -341,4 +341,22 @@ describe("removed models are absent from the registry", () => {
 //
 // If a specific model capability is load-bearing for a feature, the
 // guard for that capability belongs in the feature's own test — not
-// in a "did the generator output what it output" snapshot.
+// in a "did the generator output what it output" snapshot. The
+// GPT-5.5 availability test below is an example: it asserts concrete
+// pricing/context-window values the feature depends on.
+
+describe("GPT-5.5 availability", () => {
+	it("exposes GPT-5.5 through OpenAI API and OpenAI Codex providers", () => {
+		const apiModel = getModel("openai", "gpt-5.5" as any);
+		assert.ok(apiModel, "openai/gpt-5.5 should be present");
+		assert.equal(apiModel.contextWindow, 1000000);
+		assert.equal(apiModel.cost.input, 5);
+		assert.equal(apiModel.cost.output, 30);
+
+		const codexModel = getModel("openai-codex", "gpt-5.5" as any);
+		assert.ok(codexModel, "openai-codex/gpt-5.5 should be present");
+		assert.equal(codexModel.contextWindow, 400000);
+		assert.equal(codexModel.cost.input, 5);
+		assert.equal(codexModel.cost.output, 30);
+	});
+});

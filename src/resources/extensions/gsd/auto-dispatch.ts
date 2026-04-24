@@ -90,6 +90,18 @@ export interface DispatchContext {
   modelRegistry?: MinimalModelRegistry;
 }
 
+type ReassessmentChecker = typeof checkNeedsReassessment;
+
+let reassessmentChecker: ReassessmentChecker = checkNeedsReassessment;
+
+export function setReassessmentCheckerForTest(checker: ReassessmentChecker): () => void {
+  const previous = reassessmentChecker;
+  reassessmentChecker = checker;
+  return () => {
+    reassessmentChecker = previous;
+  };
+}
+
 export interface DispatchRule {
   /** Human-readable name for debugging and test identification */
   name: string;
@@ -371,11 +383,15 @@ export const DISPATCH_RULES: DispatchRule[] = [
     name: "reassess-roadmap (post-completion)",
     match: async ({ state, mid, midTitle, basePath, prefs }) => {
       if (prefs?.phases?.skip_reassess) return null;
-      // Default reassess_after_slice to true — reassessment after slice completion
-      // is essential for roadmap integrity. Opt-out via explicit `false`.
-      const reassessEnabled = prefs?.phases?.reassess_after_slice ?? true;
+      // Default reassess_after_slice to false per ADR-003 §4 — most reassess
+      // units conclude "roadmap is fine" and burn a session for no change.
+      // The plan-slice prompt now carries a reassessment preamble so the
+      // next slice's planner does JIT roadmap verification at zero extra
+      // cost. Opt-in via explicit `reassess_after_slice: true` (e.g.
+      // burn-max profile) when you want the dedicated reassess session.
+      const reassessEnabled = prefs?.phases?.reassess_after_slice ?? false;
       if (!reassessEnabled) return null;
-      const needsReassess = await checkNeedsReassessment(basePath, mid, state);
+      const needsReassess = await reassessmentChecker(basePath, mid, state);
       if (!needsReassess) return null;
       return {
         action: "dispatch",

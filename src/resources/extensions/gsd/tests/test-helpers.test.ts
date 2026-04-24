@@ -1,70 +1,21 @@
 /**
- * Tests for test-helpers.ts — the source-inspection and timing helpers
- * introduced in #4773 / #4774 to replace brittle fixed-byte slice and
- * magic-number sleep patterns in the test suite.
+ * Tests for test-helpers.ts — the timing helpers (waitForCondition,
+ * findLine) used to replace magic-number sleeps and positional line
+ * indexing in the test suite.
+ *
+ * The `extractSourceRegion` helper (introduced in #4773/#4774) is
+ * deliberately NOT tested here. It is the source-grep antipattern that
+ * #4784 names as the root problem; tests against toy fixtures only
+ * legitimize the pattern without validating behaviour. Its test cases
+ * were removed as part of #4834 — callers are being migrated to
+ * behaviour tests one file at a time, after which the helper is slated
+ * for deletion.
  */
 
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { extractSourceRegion, waitForCondition, findLine } from "./test-helpers.ts";
-
-// ─── extractSourceRegion ──────────────────────────────────────────────────
-
-test("extractSourceRegion returns empty string when start anchor missing", () => {
-  assert.equal(extractSourceRegion("const x = 1;", "missing"), "");
-});
-
-test("extractSourceRegion uses explicit end anchor when provided", () => {
-  const src = "START_TOKEN\nbody line\nEND_TOKEN tail";
-  const region = extractSourceRegion(src, "START_TOKEN", "END_TOKEN");
-  assert.ok(region.includes("START_TOKEN"));
-  assert.ok(region.includes("body line"));
-  assert.ok(!region.includes("END_TOKEN"));
-});
-
-test("extractSourceRegion stops at next private method boundary", () => {
-  const src = [
-    "class Foo {",
-    "  private alpha(): void {",
-    "    const a = 1;",
-    "    someCall();",
-    "  }",
-    "",
-    "  private beta(): void {",
-    "    const b = 2;",
-    "  }",
-    "}",
-  ].join("\n");
-
-  // Anchor on alpha's declaration; helper should stop at the next
-  // private method (beta), not on alpha itself.
-  const region = extractSourceRegion(src, "private alpha");
-  assert.ok(region.includes("alpha"));
-  assert.ok(region.includes("someCall()"));
-  assert.ok(!region.includes("beta"));
-});
-
-test("extractSourceRegion stops at next top-level function", () => {
-  const src = [
-    "function alpha() {",
-    "  throw new Error('alpha');",
-    "}",
-    "",
-    "function beta() {",
-    "  return 2;",
-    "}",
-  ].join("\n");
-
-  const region = extractSourceRegion(src, "function alpha");
-  assert.ok(region.includes("throw new Error"));
-  assert.ok(!region.includes("beta"));
-});
-
-test("extractSourceRegion returns to end-of-source when no terminator found", () => {
-  const src = "just one line";
-  assert.equal(extractSourceRegion(src, "just"), "just one line");
-});
+import { waitForCondition, findLine } from "./test-helpers.ts";
 
 // ─── waitForCondition ─────────────────────────────────────────────────────
 

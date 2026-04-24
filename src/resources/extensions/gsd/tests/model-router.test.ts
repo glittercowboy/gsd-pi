@@ -382,7 +382,7 @@ test("#2885: openai-codex standard-tier models are recognized", () => {
 
 test("#2885: openai-codex heavy-tier models are recognized", () => {
   const config = { ...defaultRoutingConfig(), enabled: true };
-  const heavyModels = ["gpt-5", "gpt-5-pro", "gpt-5.1", "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.4", "o4-mini", "o4-mini-deep-research"];
+  const heavyModels = ["gpt-5", "gpt-5-pro", "gpt-5.1", "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.4", "gpt-5.5", "o4-mini", "o4-mini-deep-research"];
   for (const model of heavyModels) {
     const result = resolveModelForComplexity(
       makeClassification("heavy"),

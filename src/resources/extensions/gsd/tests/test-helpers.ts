@@ -60,21 +60,34 @@ export function createTestContext() {
   return { assertEq, assertTrue, assertMatch, assertNoMatch, report };
 }
 
-// ─── Source-inspection helpers ────────────────────────────────────────────────
+// ─── Source-inspection helpers (DEPRECATED — do not add new callers) ──────────
 //
-// Replace brittle fixed-byte slice patterns like `src.slice(idx, idx + 6000)`
-// with structural boundary detection. See #4773, #4774.
+// `extractSourceRegion` was introduced in #4773 / #4774 as a more-durable
+// replacement for hand-rolled `src.slice(idx, idx + N)` patterns. Issue
+// #4784 surfaced that the helper is the wrong target: its use case —
+// testing that an identifier or phrase exists in production source text
+// — is the source-grep antipattern that causes false coverage in the
+// first place. Tests should exercise behaviour (call the function,
+// assert on its return value or observable effects) rather than check
+// whether specific identifier strings remain in source.
+//
+// CONTRIBUTING.md forbids new callers of this helper. Existing callers
+// are being migrated one file at a time; the helper is slated for
+// removal once the last caller is converted.
+//
+// Do not add new callers. If you are tempted to, file an issue
+// describing the behavioural invariant you want to test and we will
+// find a runtime assertion instead.
 
 /**
+ * @deprecated Use a real behaviour test against the function under
+ *   inspection instead. See #4784 and CONTRIBUTING.md > "Test behaviour,
+ *   not source shape". No new callers.
+ *
  * Extract a region of source between a start anchor and either an explicit
  * end anchor or, if none is given, a set of reasonable structural
  * terminators (next `private `/`export `/`function `/`class `/`interface `/
  * `//` section separator). Falls back to end-of-source if none match.
- *
- * Use this instead of `src.slice(startIdx, startIdx + N)` when searching
- * for patterns within a specific method or region — the start anchor is
- * what the caller already has, and the end is determined by structure,
- * not by a magic byte count that breaks under refactors.
  *
  * @param src        The source text.
  * @param startAnchor Literal substring that marks the start of the region.

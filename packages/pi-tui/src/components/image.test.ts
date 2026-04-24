@@ -10,12 +10,17 @@ import { Image } from "./image.js";
 describe("Image component (#3455)", () => {
 	const theme = { fallbackColor: (s: string) => s };
 
-	test("getDimensions returns undefined before resolution", () => {
-		// Pass explicit dimensions to avoid async parsing
+	test("getDimensions returns undefined when constructed without explicit dims", () => {
+		// Previously this test was titled "returns undefined before resolution"
+		// but only asserted `typeof getDimensions === 'function'`. The title
+		// and the assertion had nothing to do with each other (#4794).
+		// Now actually assert the undefined return.
 		const img = new Image("base64data", "image/png", theme, {});
-		// Without explicit dims, getDimensions should be undefined until async resolve
-		// But we can't easily test async here, so verify the method exists
-		assert.equal(typeof img.getDimensions, "function");
+		assert.equal(
+			img.getDimensions(),
+			undefined,
+			"without pre-resolved dims, getDimensions must return undefined until async resolve",
+		);
 	});
 
 	test("getDimensions returns dimensions when provided at construction", () => {

@@ -1,4 +1,4 @@
-import { parseMemoryResponse, _resetExtractionState, buildMemoryLLMCall } from '../memory-extractor.ts';
+import { parseMemoryResponse, buildMemoryLLMCall } from '../memory-extractor.ts';
 import {
   openDatabase,
   closeDatabase,
@@ -157,16 +157,6 @@ test('integration: mixed action lifecycle', () => {
   assert.deepStrictEqual(active[1].id, 'MEM002', 'MEM002 should rank second (0.88)');
 
   closeDatabase();
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// memory-extractor: _resetExtractionState
-// ═══════════════════════════════════════════════════════════════════════════
-
-test('memory-extractor: reset extraction state', () => {
-  // Just verify it doesn't throw
-  _resetExtractionState();
-  assert.ok(true, '_resetExtractionState should not throw');
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

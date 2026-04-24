@@ -337,7 +337,7 @@ function ensureNodeModulesSymlink(agentDir: string): void {
 }
 
 /** Check if any @gsd* scopes exist in internal but not in hoisted node_modules */
-function hasMissingWorkspaceScopes(hoisted: string, internal: string): boolean {
+export function hasMissingWorkspaceScopes(hoisted: string, internal: string): boolean {
   if (!existsSync(internal)) return false
   try {
     for (const entry of readdirSync(internal, { withFileTypes: true })) {
@@ -378,7 +378,7 @@ function reconcileSymlink(link: string, target: string): void {
  * hoisted root (external deps) and internal root (@gsd/* workspace packages).
  * Used for pnpm global installs where @gsd/* isn't hoisted.
  */
-function reconcileMergedNodeModules(
+export function reconcileMergedNodeModules(
   agentNodeModules: string,
   hoisted: string,
   internal: string,
@@ -439,7 +439,7 @@ function reconcileMergedNodeModules(
 }
 
 /** Build a cache fingerprint from packageRoot + sorted entry names of both directories */
-function mergedFingerprint(hoisted: string, internal: string): string {
+export function mergedFingerprint(hoisted: string, internal: string): string {
   try {
     const h = readdirSync(hoisted).sort().join(',')
     const i = readdirSync(internal).sort().join(',')

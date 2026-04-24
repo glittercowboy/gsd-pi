@@ -26,6 +26,51 @@ import type { AssistantMessage, Context, Message } from "@gsd/pi-ai";
 import type { SDKUserMessage } from "../sdk-types.ts";
 
 // ---------------------------------------------------------------------------
+// Env helpers — `GSD_WORKFLOW_MCP_*` save/restore
+//
+// The naive pattern `process.env.X = prev.X` breaks when `prev.X` is
+// undefined: Node coerces the assignment to the literal string
+// "undefined", which then pollutes subsequent tests that read the var
+// and assume it's absent. Issue #4808 documents the resulting bleed.
+//
+// `setWorkflowMcpEnv` returns a `restore()` closure that either
+// re-assigns the previous string value OR `delete`s the key when the
+// original was absent. Call in a try/finally; restore in the finally.
+// ---------------------------------------------------------------------------
+
+const WORKFLOW_MCP_ENV_KEYS = [
+	"GSD_WORKFLOW_MCP_COMMAND",
+	"GSD_WORKFLOW_MCP_NAME",
+	"GSD_WORKFLOW_MCP_ARGS",
+	"GSD_WORKFLOW_MCP_ENV",
+	"GSD_WORKFLOW_MCP_CWD",
+] as const;
+
+type WorkflowMcpEnvKey = (typeof WORKFLOW_MCP_ENV_KEYS)[number];
+
+function setWorkflowMcpEnv(
+	values: Partial<Record<WorkflowMcpEnvKey, string>>,
+): () => void {
+	const prev: Partial<Record<WorkflowMcpEnvKey, string | undefined>> = {};
+	for (const key of WORKFLOW_MCP_ENV_KEYS) {
+		prev[key] = process.env[key];
+	}
+	for (const [key, value] of Object.entries(values)) {
+		process.env[key] = value;
+	}
+	return function restore() {
+		for (const key of WORKFLOW_MCP_ENV_KEYS) {
+			const previous = prev[key];
+			if (previous === undefined) {
+				delete process.env[key];
+			} else {
+				process.env[key] = previous;
+			}
+		}
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Existing tests — exhausted stream fallback (#2575)
 // ---------------------------------------------------------------------------
 
@@ -737,19 +782,14 @@ describe("stream-adapter — session persistence (#2859)", () => {
 	});
 
 	test("buildSdkOptions includes workflow MCP server config when env is set", () => {
-		const prev = {
-			GSD_WORKFLOW_MCP_COMMAND: process.env.GSD_WORKFLOW_MCP_COMMAND,
-			GSD_WORKFLOW_MCP_NAME: process.env.GSD_WORKFLOW_MCP_NAME,
-			GSD_WORKFLOW_MCP_ARGS: process.env.GSD_WORKFLOW_MCP_ARGS,
-			GSD_WORKFLOW_MCP_ENV: process.env.GSD_WORKFLOW_MCP_ENV,
-			GSD_WORKFLOW_MCP_CWD: process.env.GSD_WORKFLOW_MCP_CWD,
-		};
+		const restore = setWorkflowMcpEnv({
+			GSD_WORKFLOW_MCP_COMMAND: "node",
+			GSD_WORKFLOW_MCP_NAME: "gsd-workflow",
+			GSD_WORKFLOW_MCP_ARGS: JSON.stringify(["packages/mcp-server/dist/cli.js"]),
+			GSD_WORKFLOW_MCP_ENV: JSON.stringify({ GSD_CLI_PATH: "/tmp/gsd" }),
+			GSD_WORKFLOW_MCP_CWD: "/tmp/project",
+		});
 		try {
-			process.env.GSD_WORKFLOW_MCP_COMMAND = "node";
-			process.env.GSD_WORKFLOW_MCP_NAME = "gsd-workflow";
-			process.env.GSD_WORKFLOW_MCP_ARGS = JSON.stringify(["packages/mcp-server/dist/cli.js"]);
-			process.env.GSD_WORKFLOW_MCP_ENV = JSON.stringify({ GSD_CLI_PATH: "/tmp/gsd" });
-			process.env.GSD_WORKFLOW_MCP_CWD = "/tmp/project";
 
 			const options = buildSdkOptions("claude-sonnet-4-20250514", "test");
 			const mcpServers = options.mcpServers as Record<string, any>;
@@ -776,28 +816,19 @@ describe("stream-adapter — session persistence (#2859)", () => {
 				"mcp__gsd-workflow__*",
 			]);
 		} finally {
-			process.env.GSD_WORKFLOW_MCP_COMMAND = prev.GSD_WORKFLOW_MCP_COMMAND;
-			process.env.GSD_WORKFLOW_MCP_NAME = prev.GSD_WORKFLOW_MCP_NAME;
-			process.env.GSD_WORKFLOW_MCP_ARGS = prev.GSD_WORKFLOW_MCP_ARGS;
-			process.env.GSD_WORKFLOW_MCP_ENV = prev.GSD_WORKFLOW_MCP_ENV;
-			process.env.GSD_WORKFLOW_MCP_CWD = prev.GSD_WORKFLOW_MCP_CWD;
+			restore();
 		}
 	});
 
 	test("buildSdkOptions auto-approves every tool for custom workflow MCP server names", () => {
-		const prev = {
-			GSD_WORKFLOW_MCP_COMMAND: process.env.GSD_WORKFLOW_MCP_COMMAND,
-			GSD_WORKFLOW_MCP_NAME: process.env.GSD_WORKFLOW_MCP_NAME,
-			GSD_WORKFLOW_MCP_ARGS: process.env.GSD_WORKFLOW_MCP_ARGS,
-			GSD_WORKFLOW_MCP_ENV: process.env.GSD_WORKFLOW_MCP_ENV,
-			GSD_WORKFLOW_MCP_CWD: process.env.GSD_WORKFLOW_MCP_CWD,
-		};
+		const restore = setWorkflowMcpEnv({
+			GSD_WORKFLOW_MCP_COMMAND: "node",
+			GSD_WORKFLOW_MCP_NAME: "custom-workflow",
+			GSD_WORKFLOW_MCP_ARGS: JSON.stringify(["packages/mcp-server/dist/cli.js"]),
+			GSD_WORKFLOW_MCP_ENV: JSON.stringify({ GSD_CLI_PATH: "/tmp/gsd" }),
+			GSD_WORKFLOW_MCP_CWD: "/tmp/project",
+		});
 		try {
-			process.env.GSD_WORKFLOW_MCP_COMMAND = "node";
-			process.env.GSD_WORKFLOW_MCP_NAME = "custom-workflow";
-			process.env.GSD_WORKFLOW_MCP_ARGS = JSON.stringify(["packages/mcp-server/dist/cli.js"]);
-			process.env.GSD_WORKFLOW_MCP_ENV = JSON.stringify({ GSD_CLI_PATH: "/tmp/gsd" });
-			process.env.GSD_WORKFLOW_MCP_CWD = "/tmp/project";
 
 			const options = buildSdkOptions("claude-sonnet-4-20250514", "test");
 			const mcpServers = options.mcpServers as Record<string, any>;
@@ -817,22 +848,16 @@ describe("stream-adapter — session persistence (#2859)", () => {
 				"mcp__custom-workflow__*",
 			]);
 		} finally {
-			process.env.GSD_WORKFLOW_MCP_COMMAND = prev.GSD_WORKFLOW_MCP_COMMAND;
-			process.env.GSD_WORKFLOW_MCP_NAME = prev.GSD_WORKFLOW_MCP_NAME;
-			process.env.GSD_WORKFLOW_MCP_ARGS = prev.GSD_WORKFLOW_MCP_ARGS;
-			process.env.GSD_WORKFLOW_MCP_ENV = prev.GSD_WORKFLOW_MCP_ENV;
-			process.env.GSD_WORKFLOW_MCP_CWD = prev.GSD_WORKFLOW_MCP_CWD;
+			restore();
 		}
 	});
 
 	test("buildSdkOptions auto-discovers bundled MCP server even without env hints", () => {
-		const prev = {
-			GSD_WORKFLOW_MCP_COMMAND: process.env.GSD_WORKFLOW_MCP_COMMAND,
-			GSD_WORKFLOW_MCP_NAME: process.env.GSD_WORKFLOW_MCP_NAME,
-			GSD_WORKFLOW_MCP_ARGS: process.env.GSD_WORKFLOW_MCP_ARGS,
-			GSD_WORKFLOW_MCP_ENV: process.env.GSD_WORKFLOW_MCP_ENV,
-			GSD_WORKFLOW_MCP_CWD: process.env.GSD_WORKFLOW_MCP_CWD,
-		};
+		// Use setWorkflowMcpEnv with no values to save current state;
+		// restore() in finally will put it back correctly (including
+		// deleting any keys that started as undefined — the #4808 bug
+		// the naive `process.env.X = prev.X` pattern introduced).
+		const restore = setWorkflowMcpEnv({});
 		try {
 			delete process.env.GSD_WORKFLOW_MCP_COMMAND;
 			delete process.env.GSD_WORKFLOW_MCP_NAME;
@@ -857,23 +882,15 @@ describe("stream-adapter — session persistence (#2859)", () => {
 			}
 			rmSync(emptyDir, { recursive: true, force: true });
 		} finally {
-			process.env.GSD_WORKFLOW_MCP_COMMAND = prev.GSD_WORKFLOW_MCP_COMMAND;
-			process.env.GSD_WORKFLOW_MCP_NAME = prev.GSD_WORKFLOW_MCP_NAME;
-			process.env.GSD_WORKFLOW_MCP_ARGS = prev.GSD_WORKFLOW_MCP_ARGS;
-			process.env.GSD_WORKFLOW_MCP_ENV = prev.GSD_WORKFLOW_MCP_ENV;
-			process.env.GSD_WORKFLOW_MCP_CWD = prev.GSD_WORKFLOW_MCP_CWD;
+			restore();
 		}
 	});
 
 	test("buildSdkOptions auto-detects local workflow MCP dist CLI when present", () => {
-		const prev = {
-			GSD_WORKFLOW_MCP_COMMAND: process.env.GSD_WORKFLOW_MCP_COMMAND,
-			GSD_WORKFLOW_MCP_NAME: process.env.GSD_WORKFLOW_MCP_NAME,
-			GSD_WORKFLOW_MCP_ARGS: process.env.GSD_WORKFLOW_MCP_ARGS,
-			GSD_WORKFLOW_MCP_ENV: process.env.GSD_WORKFLOW_MCP_ENV,
-			GSD_WORKFLOW_MCP_CWD: process.env.GSD_WORKFLOW_MCP_CWD,
-			GSD_CLI_PATH: process.env.GSD_CLI_PATH,
-		};
+		// GSD_CLI_PATH isn't in WORKFLOW_MCP_ENV_KEYS, so save+restore it
+		// manually around setWorkflowMcpEnv which handles the MCP keys.
+		const prevCliPath = process.env.GSD_CLI_PATH;
+		const restore = setWorkflowMcpEnv({});
 		const originalCwd = process.cwd();
 		const repoDir = mkdtempSync(join(tmpdir(), "claude-mcp-detect-"));
 		try {
@@ -904,23 +921,18 @@ describe("stream-adapter — session persistence (#2859)", () => {
 		} finally {
 			process.chdir(originalCwd);
 			rmSync(repoDir, { recursive: true, force: true });
-			process.env.GSD_WORKFLOW_MCP_COMMAND = prev.GSD_WORKFLOW_MCP_COMMAND;
-			process.env.GSD_WORKFLOW_MCP_NAME = prev.GSD_WORKFLOW_MCP_NAME;
-			process.env.GSD_WORKFLOW_MCP_ARGS = prev.GSD_WORKFLOW_MCP_ARGS;
-			process.env.GSD_WORKFLOW_MCP_ENV = prev.GSD_WORKFLOW_MCP_ENV;
-			process.env.GSD_WORKFLOW_MCP_CWD = prev.GSD_WORKFLOW_MCP_CWD;
-			process.env.GSD_CLI_PATH = prev.GSD_CLI_PATH;
+			restore();
+			// GSD_CLI_PATH isn't in setWorkflowMcpEnv's scope — restore it here.
+			if (prevCliPath === undefined) {
+				delete process.env.GSD_CLI_PATH;
+			} else {
+				process.env.GSD_CLI_PATH = prevCliPath;
+			}
 		}
 	});
 
 	test("buildSdkOptions preserves runtime callbacks such as onElicitation", () => {
-		const prev = {
-			GSD_WORKFLOW_MCP_COMMAND: process.env.GSD_WORKFLOW_MCP_COMMAND,
-			GSD_WORKFLOW_MCP_NAME: process.env.GSD_WORKFLOW_MCP_NAME,
-			GSD_WORKFLOW_MCP_ARGS: process.env.GSD_WORKFLOW_MCP_ARGS,
-			GSD_WORKFLOW_MCP_ENV: process.env.GSD_WORKFLOW_MCP_ENV,
-			GSD_WORKFLOW_MCP_CWD: process.env.GSD_WORKFLOW_MCP_CWD,
-		};
+		const restore = setWorkflowMcpEnv({});
 		const onElicitation = async () => ({ action: "decline" as const });
 		try {
 			delete process.env.GSD_WORKFLOW_MCP_COMMAND;
@@ -931,11 +943,7 @@ describe("stream-adapter — session persistence (#2859)", () => {
 			const options = buildSdkOptions("claude-sonnet-4-20250514", "test", undefined, { onElicitation });
 			assert.equal(options.onElicitation, onElicitation);
 		} finally {
-			process.env.GSD_WORKFLOW_MCP_COMMAND = prev.GSD_WORKFLOW_MCP_COMMAND;
-			process.env.GSD_WORKFLOW_MCP_NAME = prev.GSD_WORKFLOW_MCP_NAME;
-			process.env.GSD_WORKFLOW_MCP_ARGS = prev.GSD_WORKFLOW_MCP_ARGS;
-			process.env.GSD_WORKFLOW_MCP_ENV = prev.GSD_WORKFLOW_MCP_ENV;
-			process.env.GSD_WORKFLOW_MCP_CWD = prev.GSD_WORKFLOW_MCP_CWD;
+			restore();
 		}
 	});
 });

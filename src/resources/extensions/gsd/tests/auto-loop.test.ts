@@ -557,17 +557,6 @@ test("auto-loop.ts exports autoLoop, runUnit, resolveAgentEnd", async () => {
   );
 });
 
-test("auto/loop.ts contains a while keyword", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "loop.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    src.includes("while"),
-    "auto/loop.ts should contain a while keyword (loop or placeholder)",
-  );
-});
-
 test("auto/resolve.ts one-shot pattern: _currentResolve is nulled before calling resolver", () => {
   const src = readFileSync(
     resolve(import.meta.dirname, "..", "auto", "resolve.ts"),

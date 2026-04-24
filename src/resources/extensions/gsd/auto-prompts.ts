@@ -36,6 +36,7 @@ import { readPhaseAnchor, formatAnchorForPrompt } from "./phase-anchor.js";
 import { logWarning } from "./workflow-logger.js";
 import { inlineGraphSubgraph } from "./graph-context.js";
 import { buildExtractionStepsBlock } from "./commands-extract-learnings.js";
+import { warnIfManifestHasMissingSkills } from "./skill-manifest.js";
 
 // ─── Preamble Cap ─────────────────────────────────────────────────────────────
 
@@ -704,8 +705,14 @@ export function buildSkillActivationBlock(params: {
   extraContext?: string[];
   taskPlanContent?: string | null;
   preferences?: GSDPreferences;
+  /**
+   * Unit type dispatching this prompt. When provided, skills are filtered
+   * through the per-unit-type manifest (see `skill-manifest.ts`). Unknown
+   * or omitted values retain the pre-manifest behavior (all skills eligible).
+   */
+  unitType?: string;
 }): string {
-  const prefs = params.preferences ?? loadEffectiveGSDPreferences()?.preferences;
+  const prefs = params.preferences ?? loadEffectiveGSDPreferences(params.base)?.preferences;
   const contextTokens = tokenizeSkillContext(
     params.milestoneId,
     params.milestoneTitle,
@@ -715,8 +722,22 @@ export function buildSkillActivationBlock(params: {
     params.taskTitle,
   );
 
-  const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
+  const loaded = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
+
+  // Skill activation here is driven entirely by explicit sources
+  // (always_use_skills, prefer_skills, skill_rules, task-plan skills_used).
+  // Every match is an explicit user/project intent and must not be dropped
+  // by the unit-type manifest — user intent is stronger signal than
+  // defaults. The manifest's real home is the skill catalog rendering
+  // layer (pi-coding-agent `formatSkillsForPrompt`); that wiring is tracked
+  // as the "load-time short-circuit" follow-up to RFC #4779.
+  //
+  // `unitType` stays plumbed so the strict-mode warning can surface
+  // manifest entries that reference uninstalled skills, and so the
+  // activation-block site is ready to opt in once PR B lands.
+  const visibleSkills = loaded;
   const installedNames = new Set(visibleSkills.map(skill => normalizeSkillReference(skill.name)));
+  warnIfManifestHasMissingSkills(params.unitType, installedNames);
   const avoided = new Set(resolvePreferenceSkillNames(prefs?.avoid_skills ?? [], params.base));
   const matched = new Set<string>();
 
@@ -1157,6 +1178,7 @@ export async function buildResearchMilestonePrompt(mid: string, midTitle: string
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "research-milestone",
     }),
     ...buildSkillDiscoveryVars(),
   });
@@ -1235,6 +1257,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "plan-milestone",
     }),
     ...buildSkillDiscoveryVars(),
   });
@@ -1313,6 +1336,7 @@ export async function buildResearchSlicePrompt(
       sliceId: sid,
       sliceTitle: sTitle,
       extraContext: [inlinedContext, depContent],
+      unitType: "research-slice",
     }),
     ...buildSkillDiscoveryVars(),
   });
@@ -1417,6 +1441,7 @@ async function renderSlicePrompt(options: {
       sliceId: sid,
       sliceTitle: sTitle,
       extraContext: [inlinedContext, depContent],
+      unitType: promptTemplate,
     }),
     ...extraVars,
   });
@@ -1862,6 +1887,7 @@ export async function buildCompleteMilestonePrompt(
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "complete-milestone",
     }),
   });
 }
@@ -2002,6 +2028,7 @@ export async function buildValidateMilestonePrompt(
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "validate-milestone",
     }),
   });
 }
@@ -2084,6 +2111,7 @@ export async function buildReplanSlicePrompt(
       sliceId: sid,
       sliceTitle: sTitle,
       extraContext: [inlinedContext, captureContext],
+      unitType: "replan-slice",
     }),
   });
 }
@@ -2122,6 +2150,7 @@ export async function buildRunUatPrompt(
       milestoneId: mid,
       sliceId,
       extraContext: [inlinedContext],
+      unitType: "run-uat",
     }),
   });
 }
@@ -2189,6 +2218,7 @@ export async function buildReassessRoadmapPrompt(
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext, deferredCaptures],
+      unitType: "reassess-roadmap",
     }),
   });
 }

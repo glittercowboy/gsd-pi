@@ -514,6 +514,23 @@ export const OPENAI_MODELS = {
 			contextWindow: 272000,
 			maxTokens: 128000,
 		} satisfies Model<"openai-responses">,
+		"gpt-5.5": {
+			id: "gpt-5.5",
+			name: "GPT-5.5",
+			api: "openai-responses",
+			provider: "openai",
+			baseUrl: "https://api.openai.com/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 5,
+				output: 30,
+				cacheRead: 0.5,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		} satisfies Model<"openai-responses">,
 		"gpt-5.4-mini": {
 			id: "gpt-5.4-mini",
 			name: "GPT-5.4 mini",

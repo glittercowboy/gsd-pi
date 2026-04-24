@@ -39,6 +39,10 @@ function findModel(registry: ModelRegistry, provider: string, id: string): Model
 	return registry.getAvailable().find((m) => m.provider === provider && m.id === id);
 }
 
+function availableModelIds(registry: ModelRegistry): Set<string> {
+	return new Set(registry.getAvailable().map((model) => `${model.provider}/${model.id}`));
+}
+
 function makeModel(provider: string, id: string, api: string): Model<Api> {
 	return {
 		id,
@@ -93,6 +97,22 @@ function createStreamSpy(): {
 // ─── Registration ─────────────────────────────────────────────────────────────
 
 describe("ModelRegistry authMode — registration", () => {
+	it("includes GPT-5.5 in the authenticated all-models menu backing list", () => {
+		const registry = createInMemoryRegistry({
+			openai: { type: "api_key", key: "sk-test" },
+			"openai-codex": {
+				type: "oauth",
+				access: "codex-access",
+				refresh: "codex-refresh",
+				expires: Date.now() + 60_000,
+			},
+		});
+
+		const ids = availableModelIds(registry);
+		assert.ok(ids.has("openai/gpt-5.5"), "all-models menu backing list should include openai/gpt-5.5");
+		assert.ok(ids.has("openai-codex/gpt-5.5"), "all-models menu backing list should include openai-codex/gpt-5.5");
+	});
+
 	it("registers externalCli provider with streamSimple and without apiKey/oauth", () => {
 		const registry = createRegistry();
 		const spy = createStreamSpy();

@@ -387,32 +387,44 @@ describe("formatArtifactTimestamp", () => {
 // ---------------------------------------------------------------------------
 
 describe("EVALUATE_HELPERS_SOURCE", () => {
-	it("is a parseable string (valid JavaScript)", () => {
-		assert.doesNotThrow(() => {
-			new Function(EVALUATE_HELPERS_SOURCE);
-		});
-	});
+	// Behaviour test: executing the source in a Node vm sandbox must
+	// populate a `window.__pi` namespace with every expected helper.
+	// No source grep — we actually run the code and verify the resulting
+	// object shape.
+	it("executing the source assigns all expected helpers to window.__pi", () => {
+		const vm = require("node:vm");
+		const expectedFunctions = [
+			"cssPath",
+			"simpleHash",
+			"isVisible",
+			"isEnabled",
+			"inferRole",
+			"accessibleName",
+			"isInteractiveEl",
+			"domPath",
+			"selectorHints",
+		];
 
-	const expectedFunctions = [
-		"cssPath",
-		"simpleHash",
-		"isVisible",
-		"isEnabled",
-		"inferRole",
-		"accessibleName",
-		"isInteractiveEl",
-		"domPath",
-		"selectorHints",
-	];
+		// Playwright evaluates the source in a page context where `window`
+		// exists, so the helpers attach to `window.__pi`. Provide a minimal
+		// window stub in a vm context so we avoid polluting the test globals.
+		const sandbox = { window: {} };
+		const script = new vm.Script(EVALUATE_HELPERS_SOURCE);
+		script.runInNewContext(sandbox, { timeout: 1000 });
 
-	for (const fnName of expectedFunctions) {
-		it(`contains assignment for pi.${fnName}`, () => {
-			assert.ok(
-				EVALUATE_HELPERS_SOURCE.includes(`pi.${fnName} = function`),
-				`Expected pi.${fnName} = function assignment in source`,
+		assert.ok(
+			sandbox.window.__pi && typeof sandbox.window.__pi === "object",
+			"executing EVALUATE_HELPERS_SOURCE must assign window.__pi",
+		);
+
+		for (const fnName of expectedFunctions) {
+			assert.equal(
+				typeof sandbox.window.__pi[fnName],
+				"function",
+				`window.__pi.${fnName} must be a function after executing the source`,
 			);
-		});
-	}
+		}
+	});
 });
 
 // ---------------------------------------------------------------------------

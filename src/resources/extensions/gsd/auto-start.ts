@@ -146,6 +146,35 @@ export async function openProjectDbIfPresent(basePath: string): Promise<void> {
  *
  * Returns a summary of actions taken for the caller to surface via notify.
  */
+/**
+ * Decide which survivor-branch recovery action bootstrapAutoSession must
+ * run for the current (hasSurvivorBranch, phase) combination. Extracted
+ * from the inline chain at `bootstrapAutoSession` (around line 604) so
+ * the decision table is testable without constructing a full session.
+ *
+ * - `none`     — no survivor, or phase doesn't call for recovery. Fall
+ *                through to normal bootstrap flow.
+ * - `discuss`  — survivor + phase=needs-discussion (#1726). Route to
+ *                showSmartEntry.
+ * - `finalize` — survivor + phase=complete (#2358). Run mergeAndExit to
+ *                merge the milestone branch and clear the worktree.
+ *
+ * Any other phase with a survivor (pre-planning, planning, executing…)
+ * returns `none` — the caller continues its normal flow and the
+ * survivor branch participates in whatever auto-mode happens next.
+ */
+export type SurvivorAction = "none" | "discuss" | "finalize";
+
+export function decideSurvivorAction(
+  hasSurvivorBranch: boolean,
+  phase: string | null | undefined,
+): SurvivorAction {
+  if (!hasSurvivorBranch) return "none";
+  if (phase === "needs-discussion") return "discuss";
+  if (phase === "complete") return "finalize";
+  return "none";
+}
+
 export function auditOrphanedMilestoneBranches(
   basePath: string,
   isolationMode: "worktree" | "branch" | "none",
@@ -575,7 +604,7 @@ export async function bootstrapAutoSession(
     // The worktree/branch was created but the milestone only has CONTEXT-DRAFT.md.
     // Route to the interactive discussion handler instead of falling through to
     // auto-mode, which would immediately stop with "needs discussion".
-    if (hasSurvivorBranch && state.phase === "needs-discussion") {
+    if (decideSurvivorAction(hasSurvivorBranch, state.phase) === "discuss") {
       const { showSmartEntry } = await import("./guided-flow.js");
       await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
 
@@ -601,7 +630,9 @@ export async function bootstrapAutoSession(
     // The milestone artifacts were written but finalization (merge, worktree
     // cleanup) never ran. Run mergeAndExit to finalize, then re-derive state
     // so the normal "all milestones complete" or "next milestone" path runs.
-    if (hasSurvivorBranch && state.phase === "complete") {
+    // Re-evaluate via the helper — the discuss branch above may have cleared
+    // hasSurvivorBranch after a successful promotion.
+    if (decideSurvivorAction(hasSurvivorBranch, state.phase) === "finalize") {
       const mid = state.activeMilestone!.id;
       ctx.ui.notify(
         `Milestone ${mid} is complete but branch/worktree was not finalized. Running merge now.`,
