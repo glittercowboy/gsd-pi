@@ -42,7 +42,8 @@ export interface DisplayMetadata {
 export type EngineDispatchAction =
   | { action: "dispatch"; step: StepContract }
   | { action: "stop"; reason: string; level: "info" | "warning" | "error" }
-  | { action: "skip" };
+  | { action: "skip" }
+  | { action: "sleep"; durationMs: number };
 
 /** Outcome of reconciling state after a step completes. */
 export interface ReconcileResult {

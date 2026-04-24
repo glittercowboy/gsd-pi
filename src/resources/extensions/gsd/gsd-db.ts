@@ -180,7 +180,7 @@ function openRawDb(path: string): unknown {
   return new Database(path);
 }
 
-const SCHEMA_VERSION = 22;
+const SCHEMA_VERSION = 23;
 
 function indexExists(db: DbAdapter, name: string): boolean {
   return !!db.prepare(
@@ -556,6 +556,27 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
         PRIMARY KEY (trace_id, turn_id)
       )
     `);
+
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS external_waits (
+        milestone_id TEXT NOT NULL,
+        slice_id TEXT NOT NULL,
+        task_id TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'waiting',
+        poll_while_command TEXT NOT NULL,
+        success_check TEXT,
+        poll_interval_ms INTEGER NOT NULL DEFAULT 30000,
+        timeout_ms INTEGER NOT NULL DEFAULT 86400000,
+        context_hint TEXT,
+        on_timeout TEXT NOT NULL DEFAULT 'manual-attention',
+        probe_failure_count INTEGER NOT NULL DEFAULT 0,
+        registered_at TEXT NOT NULL,
+        resolved_at TEXT,
+        PRIMARY KEY (milestone_id, slice_id, task_id),
+        FOREIGN KEY (milestone_id, slice_id, task_id) REFERENCES tasks(milestone_id, slice_id, id) ON DELETE CASCADE
+      )
+    `);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_external_waits_milestone_status ON external_waits(milestone_id, status)");
 
     db.exec("CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(superseded_by)");
 
@@ -1232,6 +1253,34 @@ function migrateSchema(db: DbAdapter): void {
       });
     }
 
+    if (currentVersion < 23) {
+      // External process wait mechanism (#4340): table for tracking long-running
+      // external processes (SLURM jobs, CI pipelines) that auto-mode should poll.
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS external_waits (
+          milestone_id TEXT NOT NULL,
+          slice_id TEXT NOT NULL,
+          task_id TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'waiting',
+          poll_while_command TEXT NOT NULL,
+          success_check TEXT,
+          poll_interval_ms INTEGER NOT NULL DEFAULT 30000,
+          timeout_ms INTEGER NOT NULL DEFAULT 86400000,
+          context_hint TEXT,
+          on_timeout TEXT NOT NULL DEFAULT 'manual-attention',
+          probe_failure_count INTEGER NOT NULL DEFAULT 0,
+          registered_at TEXT NOT NULL,
+          resolved_at TEXT,
+          PRIMARY KEY (milestone_id, slice_id, task_id),
+          FOREIGN KEY (milestone_id, slice_id, task_id) REFERENCES tasks(milestone_id, slice_id, id) ON DELETE CASCADE
+        )
+      `);
+      db.exec("CREATE INDEX IF NOT EXISTS idx_external_waits_milestone_status ON external_waits(milestone_id, status)");
+      db.prepare("INSERT INTO schema_version (version, applied_at) VALUES (:version, :applied_at)").run({
+        ":version": 23,
+        ":applied_at": new Date().toISOString(),
+      });
+    }
     db.exec("COMMIT");
   } catch (err) {
     db.exec("ROLLBACK");
@@ -2624,6 +2673,92 @@ export function getSliceTaskCounts(milestoneId: string, sliceId: string): { tota
   ).get({ ":mid": milestoneId, ":sid": sliceId });
   if (!row) return { total: 0, done: 0, pending: 0 };
   return { total: (row["total"] as number) ?? 0, done: (row["done"] as number) ?? 0, pending: (row["pending"] as number) ?? 0 };
+}
+
+// ─── External Waits ──────────────────────────────────────────────────────
+
+/** Retrieve the external_waits row for a specific task, or null if none exists. */
+export function getExternalWait(milestoneId: string, sliceId: string, taskId: string): Record<string, unknown> | null {
+  if (!currentDb) return null;
+  const row = currentDb.prepare(
+    "SELECT * FROM external_waits WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid",
+  ).get({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId });
+  return row ?? null;
+}
+
+/** Insert (or replace) an external_waits row with full probe configuration. */
+export function insertExternalWait(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+  pollWhileCommand: string,
+  opts?: {
+    successCheck?: string;
+    pollIntervalMs?: number;
+    timeoutMs?: number;
+    contextHint?: string;
+    onTimeout?: string;
+  },
+): void {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  const o = opts ?? {};
+  currentDb.prepare(
+    `INSERT OR REPLACE INTO external_waits
+       (milestone_id, slice_id, task_id, poll_while_command, success_check,
+        poll_interval_ms, timeout_ms, context_hint, on_timeout,
+        status, probe_failure_count, registered_at)
+     VALUES (:mid, :sid, :tid, :cmd, :sc, :pi, :tm, :ch, :ot, 'waiting', 0, :ra)`,
+  ).run({
+    ":mid": milestoneId,
+    ":sid": sliceId,
+    ":tid": taskId,
+    ":cmd": pollWhileCommand,
+    ":sc": o.successCheck ?? null,
+    ":pi": o.pollIntervalMs ?? 30000,
+    ":tm": o.timeoutMs ?? 86400000,
+    ":ch": o.contextHint ?? null,
+    ":ot": o.onTimeout ?? "manual-attention",
+    ":ra": new Date().toISOString(),
+  });
+}
+
+/** Increment the probe_failure_count for a specific external wait. */
+export function incrementProbeFailureCount(milestoneId: string, sliceId: string, taskId: string): void {
+  if (!currentDb) return;
+  currentDb.prepare(
+    "UPDATE external_waits SET probe_failure_count = probe_failure_count + 1 WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid",
+  ).run({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId });
+}
+
+/** Update the status (and optionally resolved_at) for a specific external wait. */
+export function updateExternalWaitStatus(
+  milestoneId: string,
+  sliceId: string,
+  taskId: string,
+  status: string,
+  resolvedAt?: string,
+): void {
+  if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+  const ra = resolvedAt ?? (status === "resolved" || status === "timed-out" ? new Date().toISOString() : null);
+  currentDb.prepare(
+    "UPDATE external_waits SET status = :status, resolved_at = :ra WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid",
+  ).run({ ":status": status, ":ra": ra, ":mid": milestoneId, ":sid": sliceId, ":tid": taskId });
+}
+
+/** Reset the probe_failure_count to 0 for a specific external wait. */
+export function resetProbeFailureCount(milestoneId: string, sliceId: string, taskId: string): void {
+  if (!currentDb) return;
+  currentDb.prepare(
+    "UPDATE external_waits SET probe_failure_count = 0 WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid",
+  ).run({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId });
+}
+
+/** Get all external_waits rows with status='waiting' for a given milestone. */
+export function getAllWaitingExternalWaits(milestoneId: string): Record<string, unknown>[] {
+  if (!currentDb) return [];
+  return currentDb.prepare(
+    "SELECT * FROM external_waits WHERE milestone_id = :mid AND status = 'waiting'",
+  ).all({ ":mid": milestoneId }) as Record<string, unknown>[];
 }
 
 // ─── Slice Dependencies (junction table) ─────────────────────────────────
