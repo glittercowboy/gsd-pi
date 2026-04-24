@@ -309,6 +309,11 @@ describe("gsd_register_external_wait — optional fields", () => {
  * Simulate the handler's execution sequence. This replicates what
  * registerExternalWaitExecute does internally, since the handler is a
  * closure inside registerDbTools and cannot be imported directly.
+ *
+ * NOTE: This must stay in sync with the real handler in db-tools.ts.
+ * It includes the same validation gates (task existence, status, command
+ * emptiness, dangerous patterns, interval/timeout minimums, max-length)
+ * and the same file-before-DB ordering.
  */
 function simulateHandlerFlow(
   basePath: string,
@@ -337,7 +342,60 @@ function simulateHandlerFlow(
     return { isError: true, errorMsg: `task not in executing status (current: ${task.status})` };
   }
 
-  // Step 3: Write JSON probe spec FIRST (file before DB)
+  // Step 3: Runtime validation — matches real handler
+  const trimmedCommand = pollWhileCommand.trim();
+  if (!trimmedCommand) {
+    return { isError: true, errorMsg: "pollWhileCommand empty" };
+  }
+
+  const MAX_COMMAND_LENGTH = 4096;
+  const MAX_CONTEXT_HINT_LENGTH = 8192;
+  if (trimmedCommand.length > MAX_COMMAND_LENGTH) {
+    return { isError: true, errorMsg: "pollWhileCommand too long" };
+  }
+  if (successCheck && successCheck.length > MAX_COMMAND_LENGTH) {
+    return { isError: true, errorMsg: "successCheck too long" };
+  }
+  if (contextHint && contextHint.length > MAX_CONTEXT_HINT_LENGTH) {
+    return { isError: true, errorMsg: "contextHint too long" };
+  }
+
+  // Dangerous command pattern validation (mirrors db-tools.ts DANGEROUS_PATTERNS)
+  const DANGEROUS_PATTERNS = [
+    /\bcurl\b.*\|\s*(ba)?sh\b/i,
+    /\bwget\b.*\|\s*(ba)?sh\b/i,
+    /\brm\s+(-\S+\s+)*-\S*r\S*f/i,
+    /\brm\s+--recursive\b/i,
+    /\bmkfs\b/i,
+    /\bdd\b.*\bof\s*=/i,
+    /\b:>\s*\//,
+    />\s*\/dev\/[^n]/,
+  ];
+  for (const pat of DANGEROUS_PATTERNS) {
+    if (pat.test(trimmedCommand)) {
+      return { isError: true, errorMsg: `dangerous command pattern: ${pat.source}` };
+    }
+  }
+  if (successCheck) {
+    for (const pat of DANGEROUS_PATTERNS) {
+      if (pat.test(successCheck)) {
+        return { isError: true, errorMsg: `dangerous successCheck pattern: ${pat.source}` };
+      }
+    }
+  }
+
+  // Interval/timeout validation (mirrors real handler)
+  if (pollIntervalMs !== undefined && (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 1000)) {
+    return { isError: true, errorMsg: "invalid pollIntervalMs" };
+  }
+  if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1000)) {
+    return { isError: true, errorMsg: "invalid timeoutMs" };
+  }
+  if (pollIntervalMs !== undefined && timeoutMs !== undefined && timeoutMs < pollIntervalMs) {
+    return { isError: true, errorMsg: "timeoutMs < pollIntervalMs" };
+  }
+
+  // Step 4: Write JSON probe spec FIRST (file before DB)
   const resolvedPollInterval = pollIntervalMs ?? 30000;
   const resolvedTimeout = timeoutMs ?? 86400000;
   const resolvedOnTimeout = onTimeout ?? "manual-attention";
@@ -350,7 +408,7 @@ function simulateHandlerFlow(
   const jsonPath = join(tasksDir, `${taskId}-EXTERNAL-WAIT.json`);
   try {
     saveJsonFile(jsonPath, {
-      milestoneId, sliceId, taskId, pollWhileCommand,
+      milestoneId, sliceId, taskId, pollWhileCommand: trimmedCommand,
       successCheck: successCheck ?? null,
       pollIntervalMs: resolvedPollInterval,
       timeoutMs: resolvedTimeout,
@@ -362,9 +420,9 @@ function simulateHandlerFlow(
     return { isError: true, errorMsg: "probe spec write failed" };
   }
 
-  // Step 4: Insert DB row + update task status
+  // Step 5: Insert DB row + update task status atomically
   try {
-    insertExternalWait(milestoneId, sliceId, taskId, pollWhileCommand, {
+    insertExternalWait(milestoneId, sliceId, taskId, trimmedCommand, {
       successCheck, pollIntervalMs, timeoutMs, contextHint, onTimeout,
     });
     updateTaskStatus(milestoneId, sliceId, taskId, "awaiting-external");

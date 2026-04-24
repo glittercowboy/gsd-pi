@@ -8,7 +8,7 @@ import { ensureDbOpen } from "./dynamic-tools.js";
 import { StringEnum } from "@gsd/pi-ai";
 import { logError, logWarning } from "../workflow-logger.js";
 import { getErrorMessage } from "../error-utils.js";
-import { getTask, updateTaskStatus, insertExternalWait } from "../gsd-db.js";
+import { getTask, updateTaskStatus, insertExternalWait, transaction } from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
 import { saveJsonFile } from "../json-persistence.js";
 import { resolveTasksDir } from "../paths.js";
@@ -1150,13 +1150,30 @@ export function registerDbTools(pi: ExtensionAPI): void {
       return { content: [{ type: "text" as const, text: "Error: pollWhileCommand must not be empty" }], isError: true, details: { error: "pollWhileCommand empty" } as any };
     }
 
-    // Command safety validation — reject patterns that indicate injection or destructive intent.
-    // This is defense-in-depth; the agent already has shell access, but probe commands run
-    // unattended on a timer, so we gate obvious misuse patterns.
+    // Max-length validation — prevent absurdly large commands or context from being persisted
+    const MAX_COMMAND_LENGTH = 4096;
+    const MAX_CONTEXT_HINT_LENGTH = 8192;
+    if (trimmedCommand.length > MAX_COMMAND_LENGTH) {
+      return { content: [{ type: "text" as const, text: `Error: pollWhileCommand exceeds max length (${MAX_COMMAND_LENGTH} chars)` }], isError: true, details: { error: "pollWhileCommand too long" } as any };
+    }
+    if (successCheck && successCheck.length > MAX_COMMAND_LENGTH) {
+      return { content: [{ type: "text" as const, text: `Error: successCheck exceeds max length (${MAX_COMMAND_LENGTH} chars)` }], isError: true, details: { error: "successCheck too long" } as any };
+    }
+    if (contextHint && contextHint.length > MAX_CONTEXT_HINT_LENGTH) {
+      return { content: [{ type: "text" as const, text: `Error: contextHint exceeds max length (${MAX_CONTEXT_HINT_LENGTH} chars)` }], isError: true, details: { error: "contextHint too long" } as any };
+    }
+
+    // Command safety validation — reject patterns that indicate destructive intent.
+    // This is defense-in-depth only; the agent already has full shell access. Probe commands
+    // run unattended on a timer, so we gate the most obvious misuse patterns. This is NOT
+    // a security boundary — a determined actor can trivially bypass these patterns. The real
+    // safety boundary is that the agent itself has shell access and probe commands are the
+    // user's/agent's responsibility.
     const DANGEROUS_PATTERNS = [
       /\bcurl\b.*\|\s*(ba)?sh\b/i,           // curl ... | sh
       /\bwget\b.*\|\s*(ba)?sh\b/i,           // wget ... | bash
-      /\brm\s+-[a-z]*r[a-z]*f/i,             // rm -rf
+      /\brm\s+(-\S+\s+)*-\S*r\S*f/i,        // rm -rf (handles -r -f, --recursive --force, -rf)
+      /\brm\s+--recursive\b/i,               // rm --recursive
       /\bmkfs\b/i,                             // mkfs
       /\bdd\b.*\bof\s*=/i,                    // dd of=
       /\b:>\s*\//,                             // :> /path (truncate)
@@ -1175,14 +1192,15 @@ export function registerDbTools(pi: ExtensionAPI): void {
       }
     }
 
-    // Log every registration with full command for auditability
-    logWarning("dispatch", `External wait registration: ${milestoneId}/${sliceId}/${taskId} pollWhileCommand=${JSON.stringify(trimmedCommand)}${successCheck ? ` successCheck=${JSON.stringify(successCheck)}` : ""}`);
+    // Log registration (not at warning level — every registration is expected, not anomalous).
+    // Full command is persisted in the JSON probe spec on disk; only log the task path here.
+    logWarning("dispatch", `External wait registered: ${milestoneId}/${sliceId}/${taskId}`);
 
-    if (pollIntervalMs !== undefined && (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 1)) {
-      return { content: [{ type: "text" as const, text: "Error: pollIntervalMs must be a positive integer" }], isError: true, details: { error: "invalid pollIntervalMs" } as any };
+    if (pollIntervalMs !== undefined && (!Number.isInteger(pollIntervalMs) || pollIntervalMs < 1000)) {
+      return { content: [{ type: "text" as const, text: "Error: pollIntervalMs must be at least 1000 ms (1s)" }], isError: true, details: { error: "invalid pollIntervalMs" } as any };
     }
-    if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1)) {
-      return { content: [{ type: "text" as const, text: "Error: timeoutMs must be a positive integer" }], isError: true, details: { error: "invalid timeoutMs" } as any };
+    if (timeoutMs !== undefined && (!Number.isInteger(timeoutMs) || timeoutMs < 1000)) {
+      return { content: [{ type: "text" as const, text: "Error: timeoutMs must be at least 1000 ms (1s)" }], isError: true, details: { error: "invalid timeoutMs" } as any };
     }
     if (pollIntervalMs !== undefined && timeoutMs !== undefined && timeoutMs < pollIntervalMs) {
       return { content: [{ type: "text" as const, text: "Error: timeoutMs must be >= pollIntervalMs" }], isError: true, details: { error: "timeoutMs < pollIntervalMs" } as any };
@@ -1219,18 +1237,21 @@ export function registerDbTools(pi: ExtensionAPI): void {
       return { content: [{ type: "text" as const, text: `Error: failed to write probe spec — ${fileErr instanceof Error ? fileErr.message : String(fileErr)}` }], isError: true, details: { error: "probe spec write failed" } as any };
     }
 
-    // Insert external_waits DB row and update task status (R213, R214, R223)
+    // Insert external_waits DB row and update task status atomically (R213, R214, R223)
     try {
-      insertExternalWait(milestoneId, sliceId, taskId, trimmedCommand, {
-        successCheck,
-        pollIntervalMs,
-        timeoutMs,
-        contextHint,
-        onTimeout,
+      transaction(() => {
+        insertExternalWait(milestoneId, sliceId, taskId, trimmedCommand, {
+          successCheck,
+          pollIntervalMs,
+          timeoutMs,
+          contextHint,
+          onTimeout,
+        });
+        updateTaskStatus(milestoneId, sliceId, taskId, "awaiting-external");
       });
-      updateTaskStatus(milestoneId, sliceId, taskId, "awaiting-external");
     } catch (dbErr) {
-      // Cleanup the JSON file to avoid partial state
+      // Transaction rolled back — both operations failed atomically.
+      // Cleanup the JSON file to avoid partial state.
       try { unlinkSync(jsonPath); } catch (cleanupErr) { logError("db", `Failed to clean up probe spec ${jsonPath}: ${cleanupErr instanceof Error ? cleanupErr.message : String(cleanupErr)}`); }
       return { content: [{ type: "text" as const, text: `Error: DB update failed — ${dbErr instanceof Error ? dbErr.message : String(dbErr)}` }], isError: true, details: { error: "db update failed" } as any };
     }

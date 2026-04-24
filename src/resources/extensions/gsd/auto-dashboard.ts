@@ -184,7 +184,7 @@ export function describeNextUnit(state: GSDState): { label: string; description:
     case "evaluating-gates":
       return { label: `Evaluate gates for ${sid}: ${sTitle}`, description: "Parallel quality gate assessment before execution." };
     case "awaiting-external":
-      return { label: `Awaiting external process for ${tid}: ${tTitle}`, description: "Task is waiting on an external job; probe will check status." };
+      return { label: `Awaiting external process for ${tid ?? "unknown"}: ${tTitle ?? "untitled"}`, description: "Task is waiting on an external job; probe will check status." };
     default:
       return { label: "Continue", description: "Execute the next step." };
   }

@@ -15,13 +15,55 @@ import type { UatType } from "./files.js";
 import type { MinimalModelRegistry } from "./context-budget.js";
 import { loadFile, extractUatType, loadActiveOverrides } from "./files.js";
 import { isDbAvailable, getMilestoneSlices, getPendingGates, markAllGatesOmitted, getMilestone, updateMilestoneStatus, getExternalWait, incrementProbeFailureCount, updateExternalWaitStatus, resetProbeFailureCount, getAllWaitingExternalWaits, updateTaskStatus } from "./gsd-db.js";
-import { exec } from "node:child_process";
+import { exec, type ExecException } from "node:child_process";
 import { isClosedStatus } from "./status-guards.js";
 
 /** Platform-appropriate shell for probe commands. Unix → /bin/sh, Windows → %COMSPEC% or cmd.exe. */
 const probeShell = process.platform === "win32"
   ? (process.env.COMSPEC || "cmd.exe")
   : "/bin/sh";
+
+/**
+ * Infrastructure exit codes that indicate the probe command itself failed to
+ * run (shell not found, permission denied, command not found) — as opposed to
+ * the probed process signalling completion via a non-zero exit.
+ */
+const INFRA_FAILURE_CODES = new Set([126, 127]);
+
+/** Redact tokens, passwords, signed URLs, and long hex/base64 secrets from a string. */
+function sanitizeForLog(value: string): string {
+  // Mask environment variable assignments with secret-bearing names
+  let result = value.replace(
+    /\b(token|password|secret|api_key|apikey|auth|credential|bearer|signing)[=:]\s*\S+/gi,
+    (match) => match.slice(0, match.indexOf("=") + 1 || match.indexOf(":") + 1) + "***",
+  );
+  // Mask long hex strings (>= 32 chars, likely tokens/hashes)
+  result = result.replace(/\b[0-9a-f]{32,}\b/gi, "***");
+  // Mask long base64-ish strings (>= 40 chars with base64 alphabet)
+  result = result.replace(/\b[A-Za-z0-9+/=_-]{40,}\b/g, "***");
+  // Mask URLs with signed query parameters
+  result = result.replace(/(https?:\/\/\S+[?&])(sig|token|key|signature|auth|credential)=[^&\s]+/gi, "$1$2=***");
+  return result;
+}
+
+/**
+ * Build the `pendingExternalResume` carry-forward string for the session.
+ * Centralised to avoid three near-identical copy-paste templates drifting.
+ */
+function buildResumeContext(
+  kind: "success" | "failure" | "timeout",
+  opts: { contextHint: string; timeoutMs?: number; registeredAt?: string; failureContext?: string },
+): string {
+  const hint = opts.contextHint ? `\n\nContext from registration: ${opts.contextHint}` : "";
+  switch (kind) {
+    case "success":
+      return `**EXTERNAL WAIT RESOLVED — TASK RESUMING**\n\nThe external process you submitted has completed successfully.${hint}\n\nContinue with the task.`;
+    case "failure":
+      return `**EXTERNAL WAIT RESOLVED — JOB FAILED**\n\nThe external process completed but the success check failed.${hint}\n\nFailure details:\n${opts.failureContext ?? ""}\n\nInvestigate the failure, adjust parameters if needed, and either fix the issue or escalate.`;
+    case "timeout":
+      return `**EXTERNAL WAIT TIMED OUT — RESUMING WITH FAILURE**\n\nThe external process timed out after ${opts.timeoutMs}ms (registered ${opts.registeredAt}).${hint}\n\nThe onTimeout policy is "resume-with-failure" — investigate the timeout, adjust parameters if needed, and either retry or escalate.`;
+  }
+}
 import { extractVerdict, isAcceptableUatVerdict } from "./verdict-parser.js";
 
 import {
@@ -772,7 +814,7 @@ export const DISPATCH_RULES: DispatchRule[] = [
           invalidateStateCache();
           const contextHint = (waitRow.context_hint as string) || "";
           if (ctx.session) {
-            ctx.session.pendingExternalResume = `**EXTERNAL WAIT TIMED OUT — RESUMING WITH FAILURE**\n\nThe external process timed out after ${timeoutMs}ms (registered ${registeredAt}).${contextHint ? `\n\nContext from registration: ${contextHint}` : ""}\n\nThe onTimeout policy is "resume-with-failure" — investigate the timeout, adjust parameters if needed, and either retry or escalate.`;
+            ctx.session.pendingExternalResume = buildResumeContext("timeout", { contextHint, timeoutMs, registeredAt });
           }
           return { action: "skip" as const };
         }
@@ -805,18 +847,38 @@ export const DISPATCH_RULES: DispatchRule[] = [
       // Probe timeout: use pollInterval (capped between 30s-120s) so slow external systems have time to respond
       const probeTimeoutMs = Math.max(30000, Math.min(pollIntervalMs, 120000));
       try {
-        const { exitCode, killed, stdout } = await new Promise<{ exitCode: number | null; killed: boolean; stdout: string }>((resolve) => {
-          exec(pollWhileCommand, { timeout: probeTimeoutMs, shell: probeShell }, (err, stdout, _stderr) => {
+        const { exitCode, killed, stdout, infraFailure } = await new Promise<{ exitCode: number | null; killed: boolean; stdout: string; infraFailure: boolean }>((resolve) => {
+          exec(pollWhileCommand, { timeout: probeTimeoutMs, shell: probeShell }, (err: ExecException | null, stdout, _stderr) => {
             if (err) {
-              resolve({ exitCode: (err as any).code ?? null, killed: !!(err as any).killed, stdout: stdout || "" });
+              const code = err.code ?? null;
+              const isInfra = INFRA_FAILURE_CODES.has(code as number) || /ENOENT|EACCES/.test(err.message);
+              resolve({ exitCode: code, killed: !!err.killed, stdout: stdout || "", infraFailure: isInfra });
             } else {
-              resolve({ exitCode: 0, killed: false, stdout: stdout || "" });
+              resolve({ exitCode: 0, killed: false, stdout: stdout || "", infraFailure: false });
             }
           });
         });
 
-        // ── Probe execution log (includes full command for audit trail) ──
-        try { appendFileSync(logPath, JSON.stringify({ ts: new Date().toISOString(), event: "probe", command: pollWhileCommand, exitCode, stdout: stdout.slice(0, 500), killed }) + "\n"); } catch (logErr) { logWarning("dispatch", `Failed to write external wait log: ${logErr instanceof Error ? logErr.message : String(logErr)}`); }
+        // ── Probe execution log (sanitized — no secrets in command/stdout) ──
+        try { appendFileSync(logPath, JSON.stringify({ ts: new Date().toISOString(), event: "probe", command: sanitizeForLog(pollWhileCommand), exitCode, stdout: sanitizeForLog(stdout.slice(0, 500)), killed, infraFailure }) + "\n"); } catch (logErr) { logWarning("dispatch", `Failed to write external wait log: ${logErr instanceof Error ? logErr.message : String(logErr)}`); }
+
+        // Infrastructure failure (command not found, permission denied, shell missing) —
+        // treat as probe failure, NOT as "job completed"
+        if (infraFailure) {
+          incrementProbeFailureCount(mid, sid, tid);
+          const updated = getExternalWait(mid, sid, tid);
+          if (updated && (updated.probe_failure_count as number) >= 3) {
+            updateTaskStatus(mid, sid, tid, "manual-attention");
+            updateExternalWaitStatus(mid, sid, tid, "timed-out");
+            invalidateStateCache();
+            return {
+              action: "stop" as const,
+              reason: `Probe for ${tid} failed 3 times (infrastructure error, exit ${exitCode}). Escalating to manual attention.`,
+              level: "warning" as const,
+            };
+          }
+          return { action: "sleep" as const, durationMs: computeMinPoll(), matchedRule: "awaiting-external → probe" };
+        }
 
         if (killed) {
           incrementProbeFailureCount(mid, sid, tid);
@@ -849,12 +911,12 @@ export const DISPATCH_RULES: DispatchRule[] = [
         if (successCheck) {
           try {
             const scResult = await new Promise<{ exitCode: number | null; stdout: string; stderr: string }>((resolve) => {
-              exec(successCheck, { timeout: 30000, shell: probeShell }, (err, scStdout, scStderr) => {
-                if (err) resolve({ exitCode: (err as any).code ?? 1, stdout: scStdout || "", stderr: scStderr || "" });
+              exec(successCheck, { timeout: 30000, shell: probeShell }, (err: ExecException | null, scStdout, scStderr) => {
+                if (err) resolve({ exitCode: err.code ?? 1, stdout: scStdout || "", stderr: scStderr || "" });
                 else resolve({ exitCode: 0, stdout: scStdout || "", stderr: scStderr || "" });
               });
             });
-            try { appendFileSync(logPath, JSON.stringify({ ts: new Date().toISOString(), event: "successCheck", exitCode: scResult.exitCode, stdout: scResult.stdout.slice(0, 500) }) + "\n"); } catch (logErr) { logWarning("dispatch", `Failed to write external wait log: ${logErr instanceof Error ? logErr.message : String(logErr)}`); }
+            try { appendFileSync(logPath, JSON.stringify({ ts: new Date().toISOString(), event: "successCheck", exitCode: scResult.exitCode, stdout: sanitizeForLog(scResult.stdout.slice(0, 500)) }) + "\n"); } catch (logErr) { logWarning("dispatch", `Failed to write external wait log: ${logErr instanceof Error ? logErr.message : String(logErr)}`); }
             if (scResult.exitCode !== 0) {
               jobSucceeded = false;
               failureContext = `Exit code: ${scResult.exitCode}\nStderr: ${scResult.stderr.slice(0, 1000)}`;
@@ -873,11 +935,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
 
         // ── Carry-forward context ─────────────────────────────────
         if (ctx.session) {
-          if (jobSucceeded) {
-            ctx.session.pendingExternalResume = `**EXTERNAL WAIT RESOLVED — TASK RESUMING**\n\nThe external process you submitted has completed successfully.${contextHint ? `\n\nContext from registration: ${contextHint}` : ""}\n\nContinue with the task.`;
-          } else {
-            ctx.session.pendingExternalResume = `**EXTERNAL WAIT RESOLVED — JOB FAILED**\n\nThe external process completed but the success check failed.${contextHint ? `\n\nContext from registration: ${contextHint}` : ""}\n\nFailure details:\n${failureContext}\n\nInvestigate the failure, adjust parameters if needed, and either fix the issue or escalate.`;
-          }
+          ctx.session.pendingExternalResume = jobSucceeded
+            ? buildResumeContext("success", { contextHint })
+            : buildResumeContext("failure", { contextHint, failureContext });
         }
 
         return { action: "skip" as const };

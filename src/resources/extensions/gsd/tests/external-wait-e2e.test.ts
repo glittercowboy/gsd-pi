@@ -203,7 +203,7 @@ beforeEach(() => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("Scenario 1: Multi-cycle happy path (R230, R231)", () => {
-  test("stateful POSIX probe: exit 0 twice (still running), exit 1 third (done) → resume with contextHint", async () => {
+  test("stateful POSIX probe: exit 0 twice (still running), exit 1 third (done) → resume with contextHint", { skip: process.platform === "win32" ? "POSIX-only test — shell probe uses /bin/sh" : undefined }, async () => {
     const tmpBase = mkdtempSync(join(tmpdir(), "gsd-e2e-multi-"));
     base = tmpBase;
     const gsdDir = join(tmpBase, ".gsd");

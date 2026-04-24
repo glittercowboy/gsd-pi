@@ -23,6 +23,7 @@ import {
   insertTask,
   updateTaskStatus,
   getExternalWait,
+  insertExternalWait,
   incrementProbeFailureCount,
 } from "../gsd-db.ts";
 
@@ -158,21 +159,12 @@ function writeProbeSpec(
   );
 }
 
-// Raw DB access for test fixture setup (no insertExternalWait export in gsd-db)
-// Use node:sqlite (built-in since Node 22) — no npm dependency needed
-import { DatabaseSync } from "node:sqlite";
-
-let rawDb: InstanceType<typeof DatabaseSync> | null = null;
-
-function getRawDb(basePath: string): InstanceType<typeof DatabaseSync> {
-  if (!rawDb) {
-    rawDb = new DatabaseSync(join(basePath, ".gsd", "gsd.db"));
-  }
-  return rawDb;
-}
-
+/**
+ * Insert an external_waits row using the production API, with optional
+ * pre-set failure count via incrementProbeFailureCount.
+ */
 function insertExternalWaitRow(
-  basePath: string,
+  _basePath: string,
   opts: {
     milestoneId: string;
     sliceId: string;
@@ -183,35 +175,15 @@ function insertExternalWaitRow(
     probeFailureCount?: number;
   },
 ): void {
-  const db = getRawDb(basePath);
-  db.prepare(
-    `INSERT INTO external_waits
-       (milestone_id, slice_id, task_id, status, poll_while_command, poll_interval_ms,
-        timeout_ms, probe_failure_count, registered_at)
-     VALUES (:mid, :sid, :tid, 'waiting', :cmd, :poll, :timeout, :failCount, :now)`,
-  ).run({
-    mid: opts.milestoneId,
-    sid: opts.sliceId,
-    tid: opts.taskId,
-    cmd: opts.pollWhileCommand,
-    poll: opts.pollIntervalMs ?? 30000,
-    timeout: opts.timeoutMs ?? 86400000,
-    failCount: opts.probeFailureCount ?? 0,
-    now: new Date().toISOString(),
+  insertExternalWait(opts.milestoneId, opts.sliceId, opts.taskId, opts.pollWhileCommand, {
+    pollIntervalMs: opts.pollIntervalMs,
+    timeoutMs: opts.timeoutMs,
   });
-}
-
-function setProbeFailureCount(
-  basePath: string,
-  mid: string,
-  sid: string,
-  tid: string,
-  count: number,
-): void {
-  const db = getRawDb(basePath);
-  db.prepare(
-    "UPDATE external_waits SET probe_failure_count = :count WHERE milestone_id = :mid AND slice_id = :sid AND task_id = :tid",
-  ).run({ count, mid, sid, tid });
+  // Pre-set failure count if needed (production API only exposes increment)
+  const targetCount = opts.probeFailureCount ?? 0;
+  for (let i = 0; i < targetCount; i++) {
+    incrementProbeFailureCount(opts.milestoneId, opts.sliceId, opts.taskId);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -219,7 +191,6 @@ function setProbeFailureCount(
 // ═══════════════════════════════════════════════════════════════════════════
 
 afterEach(() => {
-  try { rawDb?.close(); rawDb = null; } catch { /* ignore */ }
   try { closeDatabase(); } catch { /* may not be open */ }
   if (base) {
     rmSync(base, { recursive: true, force: true });
@@ -237,13 +208,11 @@ beforeEach(() => {
 
 describe("external_waits DB table", () => {
   test("table exists after migration", () => {
-    const { basePath } = createFixture();
-    const db = getRawDb(basePath);
-    const row = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'external_waits'",
-    ).get() as { name: string } | undefined;
-    assert.ok(row, "external_waits table should exist");
-    assert.equal(row.name, "external_waits");
+    createFixture();
+    // Prove the table exists by calling getExternalWait — it returns null for
+    // a missing row but would throw if the table didn't exist.
+    const result = getExternalWait("M001", "S01", "T01");
+    assert.equal(result, null, "should return null for nonexistent row");
   });
 
   test("insert and read round-trip via getExternalWait", () => {
@@ -391,8 +360,9 @@ describe("dispatch rule probe execution", () => {
     assert.equal(result.action, "skip");
   });
 
-  // Slow test: uses `sleep 35` to trigger the 30s probe timeout. ~35s runtime.
+  // Slow test: uses a long-running Node process to trigger the 30s probe timeout. ~35s runtime.
   // Skip in fast CI with FAST_CI=1 env var.
+  const longSleepCmd = `${process.execPath} -e "setTimeout(()=>{},35000)"`;
   const skipSlow = process.env.FAST_CI === "1";
   test("probe timeout increments failure count", { timeout: 40000, skip: skipSlow }, async () => {
     const { basePath } = createFixture();
@@ -401,11 +371,11 @@ describe("dispatch rule probe execution", () => {
       milestoneId: "M001",
       sliceId: "S01",
       taskId: "T01",
-      pollWhileCommand: "sleep 35",
+      pollWhileCommand: longSleepCmd,
       pollIntervalMs: 10000,
       probeFailureCount: 0,
     });
-    writeProbeSpec(basePath, "M001", "S01", "T01", "sleep 35");
+    writeProbeSpec(basePath, "M001", "S01", "T01", longSleepCmd);
     invalidateAllCaches();
 
     const ctx = buildDispatchCtx(basePath, "M001", {
@@ -424,7 +394,7 @@ describe("dispatch rule probe execution", () => {
     assert.equal(row.probe_failure_count, 1);
   });
 
-  // Slow test: uses `sleep 35` to trigger the 30s probe timeout. ~35s runtime.
+  // Slow test: uses a long-running Node process to trigger the 30s probe timeout. ~35s runtime.
   test("3-strike escalation → stop action", { timeout: 40000, skip: skipSlow }, async () => {
     const { basePath } = createFixture();
     updateTaskStatus("M001", "S01", "T01", "awaiting-external");
@@ -432,11 +402,11 @@ describe("dispatch rule probe execution", () => {
       milestoneId: "M001",
       sliceId: "S01",
       taskId: "T01",
-      pollWhileCommand: "sleep 35",
+      pollWhileCommand: longSleepCmd,
       pollIntervalMs: 10000,
       probeFailureCount: 2, // Already at 2, timeout will push to 3
     });
-    writeProbeSpec(basePath, "M001", "S01", "T01", "sleep 35");
+    writeProbeSpec(basePath, "M001", "S01", "T01", longSleepCmd);
     invalidateAllCaches();
 
     const ctx = buildDispatchCtx(basePath, "M001", {

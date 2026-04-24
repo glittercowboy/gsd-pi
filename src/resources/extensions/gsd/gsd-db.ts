@@ -3009,6 +3009,24 @@ export function reconcileWorktreeDb(
           LEFT JOIN tasks m ON m.milestone_id = w.milestone_id AND m.slice_id = w.slice_id AND m.id = w.id
         `).run());
 
+        // Merge external_waits — preserve probe state so dispatch resumes polling after reconcile.
+        // Uses INSERT OR REPLACE: worktree state wins (it has the most recent probe data).
+        try {
+          adapter.prepare(`
+            INSERT OR REPLACE INTO external_waits (
+              milestone_id, slice_id, task_id, status, poll_while_command, success_check,
+              poll_interval_ms, timeout_ms, context_hint, on_timeout,
+              probe_failure_count, registered_at, resolved_at
+            )
+            SELECT milestone_id, slice_id, task_id, status, poll_while_command, success_check,
+                   poll_interval_ms, timeout_ms, context_hint, on_timeout,
+                   probe_failure_count, registered_at, resolved_at
+            FROM wt.external_waits
+          `).run();
+        } catch {
+          // Table may not exist in older worktree databases — skip gracefully
+        }
+
         // Merge memories — keep worktree-learned insights
         merged.memories = countChanges(adapter.prepare(`
           INSERT OR REPLACE INTO memories (

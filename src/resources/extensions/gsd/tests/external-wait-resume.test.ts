@@ -27,6 +27,7 @@ import {
   insertExternalWait,
   updateExternalWaitStatus,
   resetProbeFailureCount,
+  incrementProbeFailureCount,
   getAllWaitingExternalWaits,
   getTask,
 } from "../gsd-db.ts";
@@ -427,14 +428,9 @@ describe("Probe failure count reset (R227)", () => {
       pollWhileCommand: "exit 0", // still running
     });
 
-    // Pre-set probe_failure_count to 2 via DB helper
-    // Use node:sqlite raw access like S01 tests for direct manipulation
-    const { DatabaseSync } = await import("node:sqlite");
-    const rawDb = new DatabaseSync(join(basePath, ".gsd", "gsd.db"));
-    rawDb.prepare(
-      "UPDATE external_waits SET probe_failure_count = 2 WHERE milestone_id = 'M001' AND slice_id = 'S01' AND task_id = 'T01'",
-    ).run();
-    rawDb.close();
+    // Pre-set probe_failure_count to 2 via production API (increment twice)
+    incrementProbeFailureCount("M001", "S01", "T01");
+    incrementProbeFailureCount("M001", "S01", "T01");
 
     // Verify pre-condition
     const beforeWait = getExternalWait("M001", "S01", "T01");
