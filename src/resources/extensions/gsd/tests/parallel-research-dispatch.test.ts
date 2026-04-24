@@ -235,7 +235,11 @@ describe("buildParallelResearchSlicesPrompt", () => {
       base,
     );
 
-    assert.match(prompt, /3/, "prompt should include slice count 3");
+    assert.match(
+      prompt,
+      /\b3\b[^.\n]{0,40}\bslices?\b/i,
+      "prompt should include slice count 3 in slice context",
+    );
     assert.match(prompt, /Alpha slice title/);
     assert.match(prompt, /Beta slice title/);
     assert.match(prompt, /Gamma slice title/);
@@ -267,10 +271,13 @@ describe("buildParallelResearchSlicesPrompt", () => {
     );
 
     // Escalation: on second failure the agent must write a BLOCKER
-    // rather than loop.
+    // rather than loop. Bare /blocker/i is too permissive — require
+    // retry/failure context within the same sentence so a stray
+    // "blocker" elsewhere in the ~10KB prompt cannot satisfy the
+    // assertion.
     assert.match(
       prompt,
-      /blocker/i,
+      /blocker[^.?!]{0,100}(second|retry|fail)|(second|retry|fail)[^.?!]{0,100}blocker/i,
       "rendered prompt should instruct writing a BLOCKER on repeated failure",
     );
 
