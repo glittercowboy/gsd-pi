@@ -1,6 +1,12 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { processStreamChunk } from "../stream-process/index.ts";
+// Import via the compiled package export (matches the convention in
+// xxhash.test.mjs). Importing the raw `.ts` source only worked when Node
+// was invoked with --experimental-strip-types; under the standard test
+// runner it fails with "does not provide an export named X". The npm
+// test script builds the package before running tests, so the compiled
+// export resolves correctly.
+import { processStreamChunk } from "@gsd/native/stream-process";
 
 describe("processStreamChunk", () => {
   test("processes a single chunk without state", () => {
