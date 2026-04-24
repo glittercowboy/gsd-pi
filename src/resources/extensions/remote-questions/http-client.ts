@@ -143,24 +143,25 @@ export async function apiRequest(
     init.body = JSON.stringify(body);
   }
 
-  const response = await fetch(url, init);
+  try {
+    const response = await fetch(url, init);
 
-  if (response.status === 204) {
+    if (response.status === 204) {
+      return {};
+    }
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      const safeText =
+        text.length > safeErrorLength
+          ? text.slice(0, safeErrorLength) + "…"
+          : text;
+      throw new Error(`${errorLabel} HTTP ${response.status}: ${safeText}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } finally {
     if (agentToClose) await agentToClose.close().catch(() => {});
-    return {};
   }
-
-  if (!response.ok) {
-    const text = await response.text().catch(() => "");
-    const safeText =
-      text.length > safeErrorLength
-        ? text.slice(0, safeErrorLength) + "…"
-        : text;
-    if (agentToClose) await agentToClose.close().catch(() => {});
-    throw new Error(`${errorLabel} HTTP ${response.status}: ${safeText}`);
-  }
-
-  const data = await response.json();
-  if (agentToClose) await agentToClose.close().catch(() => {});
-  return data;
 }
