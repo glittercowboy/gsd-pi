@@ -13,7 +13,7 @@ import { loadFile, saveFile } from "./files.js";
 import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
 import { parseRoadmapSlices } from "./roadmap-slices.js";
 import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
-import { buildSkillActivationBlock } from "./auto-prompts.js";
+import { buildDiscussMilestonePrompt, buildSkillActivationBlock } from "./auto-prompts.js";
 import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { startAutoDetached } from "./auto.js";
@@ -38,8 +38,8 @@ import { isInheritedRepo } from "./repo-identity.js";
 import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitignore.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { resolveUokFlags } from "./uok/flags.js";
-import { ensurePlanV2Graph } from "./uok/plan-v2.js";
-import { detectProjectState } from "./detection.js";
+import { ensurePlanV2Graph, isMissingFinalizedContextResult } from "./uok/plan-v2.js";
+import { detectProjectState, hasGsdBootstrapArtifacts } from "./detection.js";
 import { showProjectInit, offerMigration } from "./init-wizard.js";
 import { validateDirectory } from "./validate-directory.js";
 import { showConfirm } from "../shared/tui.js";
@@ -93,24 +93,29 @@ function needsPlanV2Gate(state: GSDState): boolean {
     || state.phase === "completing-milestone";
 }
 
+type PlanV2GateDecision = "pass" | "recover-missing-context" | "block";
+
 function runPlanV2Gate(
   ctx: ExtensionContext,
   basePath: string,
   state: GSDState,
-): boolean {
+): PlanV2GateDecision {
   const prefs = loadEffectiveGSDPreferences()?.preferences;
   const uokFlags = resolveUokFlags(prefs);
-  if (!uokFlags.planV2 || !needsPlanV2Gate(state)) return true;
+  if (!uokFlags.planV2 || !needsPlanV2Gate(state)) return "pass";
   const compiled = ensurePlanV2Graph(basePath, state);
   if (!compiled.ok) {
+    if (isMissingFinalizedContextResult(compiled)) {
+      return "recover-missing-context";
+    }
     const reason = compiled.reason ?? "plan-v2 compilation failed";
     ctx.ui.notify(
       `Plan gate failed-closed: ${reason}. Complete plan/discuss artifacts before execution.\n\nIf this keeps happening, try: /gsd doctor heal`,
       "error",
     );
-    return false;
+    return "block";
   }
-  return true;
+  return "pass";
 }
 
 // ─── Commit Instruction Helpers ──────────────────────────────────────────────
@@ -825,8 +830,13 @@ export async function showHeadlessMilestoneCreation(
   // Set pending auto start (auto-mode triggers on "Milestone X ready." via checkAutoStartAfterDiscuss)
   pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, createdAt: Date.now() });
 
-  // Dispatch — headless milestone creation is a planning activity
-  await dispatchWorkflow(pi, prompt, "gsd-run", ctx, "plan-milestone");
+  // Dispatch as discuss-milestone. The LLM writes PROJECT.md, REQUIREMENTS.md,
+  // and CONTEXT.md, then calls gsd_plan_milestone — this is semantically the
+  // discuss path, just non-interactive. Using "plan-milestone" here caused
+  // model/tool routing to skip discuss-flow tool scoping and
+  // `checkAutoStartAfterDiscuss` guardrails that rely on the
+  // "discuss-"-prefixed unitType.
+  await dispatchWorkflow(pi, prompt, "gsd-run", ctx, "discuss-milestone");
 }
 
 
@@ -1481,9 +1491,7 @@ export async function showSmartEntry(
   // A zombie .gsd/ state (symlink exists but missing PREFERENCES.md and
   // milestones/) must trigger the init wizard, not skip it (#2942).
   const gsdPath = gsdRoot(basePath);
-  const hasBootstrapArtifacts = existsSync(gsdPath)
-    && (existsSync(join(gsdPath, "PREFERENCES.md"))
-        || existsSync(join(gsdPath, "milestones")));
+  const hasBootstrapArtifacts = hasGsdBootstrapArtifacts(gsdPath);
 
   if (!hasBootstrapArtifacts) {
     const detection = detectProjectState(basePath);
@@ -1573,7 +1581,8 @@ export async function showSmartEntry(
     logWarning("guided", `STATE.md rebuild failed: ${(err as Error).message}`);
   }
 
-  if (!runPlanV2Gate(ctx, basePath, state)) return;
+  const planV2GateDecision = runPlanV2Gate(ctx, basePath, state);
+  if (planV2GateDecision === "block") return;
 
   if (!state.activeMilestone?.id) {
     // Guard: if a discuss session is already in flight, don't re-inject the prompt.
@@ -1660,6 +1669,23 @@ export async function showSmartEntry(
 
   const milestoneId = state.activeMilestone.id;
   const milestoneTitle = state.activeMilestone.title;
+
+  if (planV2GateDecision === "recover-missing-context") {
+    pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId, step: stepMode, createdAt: Date.now() });
+    await dispatchWorkflow(
+      pi,
+      await buildDiscussMilestonePrompt(
+        milestoneId,
+        milestoneTitle,
+        basePath,
+        getStructuredQuestionsAvailability(pi, ctx),
+      ),
+      "gsd-discuss",
+      ctx,
+      "discuss-milestone",
+    );
+    return;
+  }
 
   // ── All milestones complete → New milestone ──────────────────────────
   if (state.phase === "complete") {

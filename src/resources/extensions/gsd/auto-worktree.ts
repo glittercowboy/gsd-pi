@@ -1683,6 +1683,7 @@ export function mergeMilestoneToMain(
     if (shelterRestored) return;
     shelterRestored = true;
     if (shelteredDirs.length === 0) return;
+    let restoreFailed = false;
     for (const dirName of shelteredDirs) {
       const src = join(shelterDir, dirName);
       // If the shelter source is missing the restore cannot proceed for this
@@ -1700,8 +1701,16 @@ export function mergeMilestoneToMain(
         mkdirSync(milestonesDir, { recursive: true });
         cpSync(src, join(milestonesDir, dirName), { recursive: true, force: true });
       } catch (err) { /* best-effort */
-        logError("worktree", `shelter restore failed: ${err instanceof Error ? err.message : String(err)}`);
+        restoreFailed = true;
+        logError("worktree", `shelter restore failed (${dirName}): ${err instanceof Error ? err.message : String(err)}`);
       }
+    }
+    // Preserve the shelter if any per-entry restore failed — it is the only
+    // surviving copy of the queued milestone dirs (sources were deleted during
+    // shelter). Deleting it here would permanently lose those files (#2505).
+    if (restoreFailed) {
+      logWarning("worktree", `shelter retained at ${shelterDir} — manual recovery required for unrestored entries`);
+      return;
     }
     if (existsSync(shelterDir)) {
       try { rmSync(shelterDir, { recursive: true, force: true }); } catch (err) { /* best-effort */

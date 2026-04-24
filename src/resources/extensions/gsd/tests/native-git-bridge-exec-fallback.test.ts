@@ -18,54 +18,12 @@ import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { nativeIsRepo, nativeCommit, nativeResetHard } from "../native-git-bridge.js";
 
-// ─── Static analysis ──────────────────────────────────────────────────────
-// Verify the fallback paths of the three affected functions do not call the
-// raw execSync() string-command variant. Replacing all execFileSync( tokens
-// first ensures we match only the bare execSync( form.
-
-const SRC_PATH = join(import.meta.dirname, "..", "native-git-bridge.ts");
-
-function extractFunctionBody(src: string, fnName: string): string {
-  const idx = src.indexOf(`export function ${fnName}`);
-  if (idx === -1) throw new Error(`${fnName} not found in source`);
-  return src.slice(idx, idx + 1500);
-}
-
-function hasRawExecSync(body: string): boolean {
-  const withoutFileSync = body.replace(/execFileSync\(/g, "__FILESYNC__");
-  return withoutFileSync.includes("execSync(");
-}
-
-describe("native-git-bridge #4180: fallback paths use execFileSync not execSync", () => {
-  const src = readFileSync(SRC_PATH, "utf-8");
-
-  test("nativeIsRepo fallback does not use raw execSync", () => {
-    const body = extractFunctionBody(src, "nativeIsRepo");
-    assert.equal(
-      hasRawExecSync(body),
-      false,
-      "nativeIsRepo fallback must use execFileSync to avoid cmd.exe PATH failures on Windows",
-    );
-  });
-
-  test("nativeCommit fallback does not use raw execSync", () => {
-    const body = extractFunctionBody(src, "nativeCommit");
-    assert.equal(
-      hasRawExecSync(body),
-      false,
-      "nativeCommit fallback must use execFileSync to avoid cmd.exe PATH failures on Windows",
-    );
-  });
-
-  test("nativeResetHard fallback does not use raw execSync", () => {
-    const body = extractFunctionBody(src, "nativeResetHard");
-    assert.equal(
-      hasRawExecSync(body),
-      false,
-      "nativeResetHard fallback must use execFileSync to avoid cmd.exe PATH failures on Windows",
-    );
-  });
-});
+// Note: prior static-analysis tests that scanned native-git-bridge.ts for
+// the raw shell-spawn pattern were removed under #4827 — the integration
+// tests below already exercise the fallback path end-to-end with the native
+// module disabled (GSD_ENABLE_NATIVE_GSD_GIT unset). Any cmd.exe PATH
+// regression on Windows surfaces through a real fallback failure, not a
+// grep miss in source text.
 
 // ─── Integration tests ────────────────────────────────────────────────────
 // Verify correct runtime behaviour through the fallback path (native module

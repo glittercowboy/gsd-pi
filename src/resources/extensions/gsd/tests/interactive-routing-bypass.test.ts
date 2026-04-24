@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -62,7 +63,7 @@ describe("interactive routing bypass (#3962)", () => {
     );
     // The function should check isAutoMode before routing synthesis
     const fnIdx = modelSelectionSrc.indexOf("function resolvePreferredModelConfig");
-    const fnBody = modelSelectionSrc.slice(fnIdx, fnIdx + 900);
+    const fnBody = extractSourceRegion(modelSelectionSrc, "function resolvePreferredModelConfig");
     assert.ok(
       fnBody.includes("isAutoMode"),
       "resolvePreferredModelConfig should accept isAutoMode parameter",
@@ -137,8 +138,13 @@ describe("model downgrade notifications always visible (#3962)", () => {
     const escalatedIdx = modelSelectionSrc.indexOf("if (escalated)");
     assert.ok(escalatedIdx > 0, "escalation block should exist");
 
-    // Get the block from "if (escalated)" to the next closing brace pattern
-    const block = modelSelectionSrc.slice(escalatedIdx, escalatedIdx + 400);
+    // Get the block from "if (escalated)" to the next distinctive marker
+    // (the capability-override loading that immediately follows).
+    const block = extractSourceRegion(
+      modelSelectionSrc,
+      "if (escalated)",
+      "// Load user capability overrides",
+    );
     assert.ok(
       block.includes("Tier escalation:"),
       "escalation block should contain the notification",

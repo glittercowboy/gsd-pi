@@ -723,7 +723,7 @@ export async function resolveClaudePermissionMode(
 		);
 		return "bypassPermissions";
 	}
-	return "acceptEdits";
+	return "bypassPermissions";
 }
 
 // NOTE: These helpers intentionally mirror @gsd/pi-ai anthropic-shared
@@ -783,21 +783,25 @@ export function buildSdkOptions(
 ): Record<string, unknown> {
 	const { reasoning, ...sdkExtraOptions } = extraOptions;
 	const mcpServers = buildWorkflowMcpServers();
-	const permissionMode = overrides?.permissionMode ?? "acceptEdits";
-	const disallowedTools = ["AskUserQuestion"];
-	// Pre-authorize the safe built-ins and every registered workflow MCP
-	// server's tools. `acceptEdits` mode (the interactive default) only
-	// auto-approves file edits — Read/Glob/Grep, basic shell inspection, and
-	// every `mcp__gsd-workflow__*` call still surface as "This command
-	// requires approval" and block GSD actions (#4099).
+	const permissionMode = overrides?.permissionMode ?? "bypassPermissions";
+	// Globally unblock all tools. Users reported that the `acceptEdits` default
+	// plus a narrow allowlist silently declined most Bash/Agent/WebFetch calls
+	// when `extensionUIContext` wasn't threaded through. Default to
+	// bypassPermissions and an empty disallow list so every tool — including
+	// `AskUserQuestion` and every `mcp__*` workflow tool — is auto-approved.
+	// Opt back into gated mode with GSD_CLAUDE_CODE_PERMISSION_MODE=acceptEdits.
+	const disallowedTools: string[] = [];
 	const allowedTools = [
 		"Read",
 		"Write",
 		"Edit",
 		"Glob",
 		"Grep",
-		"Bash(ls:*)",
-		"Bash(pwd)",
+		"Bash",
+		"Agent",
+		"WebFetch",
+		"WebSearch",
+		"AskUserQuestion",
 		...(mcpServers ? Object.keys(mcpServers).map((serverName) => `mcp__${serverName}__*`) : []),
 	];
 	const supportsAdaptive = modelSupportsAdaptiveThinking(modelId);

@@ -875,6 +875,17 @@ const nonEmptyStringArray = (field: string) =>
 // empty/whitespace fields at parse time. Without this, MCP callers pass "" for
 // the heavy planning fields, Zod accepts it, and the executor rejects one
 // field per call — forcing the agent into a retry loop to discover every gap.
+//
+// #4759 follow-up: the four heavy fields are Zod-optional because sketch
+// slices (isSketch=true) legitimately omit them, but they are REQUIRED for
+// every other slice. The conditional requirement is invisible in the JSON
+// Schema `required` array, so callers can only discover it from the
+// descriptions or by hitting the runtime superRefine below. The `.describe()`
+// calls below make that contract unmistakable in the tool schema sent to
+// agents; the superRefine enforces it at parse time.
+const HEAVY_FIELD_DESCRIBE = (field: string) =>
+  `${field} for this slice. REQUIRED unless isSketch=true (sketch slices defer this to refine-slice).`;
+
 const planMilestoneSliceSchema = z.object({
   sliceId: nonEmptyString("sliceId"),
   title: nonEmptyString("title"),
@@ -883,14 +894,16 @@ const planMilestoneSliceSchema = z.object({
   demo: nonEmptyString("demo"),
   goal: nonEmptyString("goal"),
   // ADR-011: heavy planning fields are optional for sketch slices; required for full slices.
-  successCriteria: z.string().optional(),
-  proofLevel: z.string().optional(),
-  integrationClosure: z.string().optional(),
-  observabilityImpact: z.string().optional(),
+  successCriteria: z.string().optional().describe(HEAVY_FIELD_DESCRIBE("successCriteria")),
+  proofLevel: z.string().optional().describe(HEAVY_FIELD_DESCRIBE("proofLevel")),
+  integrationClosure: z.string().optional().describe(HEAVY_FIELD_DESCRIBE("integrationClosure")),
+  observabilityImpact: z.string().optional().describe(HEAVY_FIELD_DESCRIBE("observabilityImpact")),
   // ADR-011 sketch-then-refine fields.
-  isSketch: z.boolean().optional().describe("ADR-011: true marks this slice as a sketch awaiting refine-slice expansion"),
+  isSketch: z.boolean().optional().describe("ADR-011: true marks this slice as a sketch awaiting refine-slice expansion. When true, successCriteria/proofLevel/integrationClosure/observabilityImpact may be omitted and sketchScope becomes required."),
   sketchScope: z.string().optional().describe("ADR-011: 2-3 sentence scope boundary, required when isSketch=true"),
-}).superRefine((slice, ctx) => {
+}).describe(
+  "Planned slice. For full slices (isSketch omitted or false): successCriteria, proofLevel, integrationClosure, and observabilityImpact are all required. For sketch slices (isSketch=true): those four fields may be omitted, but sketchScope is required.",
+).superRefine((slice, ctx) => {
   if (slice.isSketch === true) {
     if (typeof slice.sketchScope !== "string" || slice.sketchScope.trim().length === 0) {
       ctx.addIssue({

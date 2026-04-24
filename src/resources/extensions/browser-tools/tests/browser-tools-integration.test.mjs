@@ -12,76 +12,25 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { chromium } from "playwright";
-import { readFileSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(__dirname, "..");
 
 // ---------------------------------------------------------------------------
-// Source extraction — get the IIFE strings we need for injection
+// Source loading — import the IIFE builders directly via jiti.
+// The test-only named exports in tools/intent.ts and tools/forms.ts exist
+// exactly so this test can call the real, in-tree builders. No brace
+// walking, no regex stripping — a refactor of the signatures just updates
+// the import surface, not the test.
 // ---------------------------------------------------------------------------
 
-// 1. EVALUATE_HELPERS_SOURCE — exported constant, extract via jiti
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const jiti = require("jiti")(__dirname, { interopDefault: true, debug: false });
 const { EVALUATE_HELPERS_SOURCE } = jiti("../evaluate-helpers.ts");
-
-// 2. Intent scoring — module-private buildIntentScoringScript.
-//    Extract the function from source, wrap it, and eval to get the builder.
-const intentSource = readFileSync(resolve(ROOT, "tools/intent.ts"), "utf-8");
-
-function extractBuildIntentScoringScript() {
-  // Match the function body: starts with "function buildIntentScoringScript"
-  // and returns a template literal string. We extract up to the matching closing brace.
-  const startMarker = "function buildIntentScoringScript(intent: string, scope?: string): string {";
-  const startIdx = intentSource.indexOf(startMarker);
-  if (startIdx === -1) throw new Error("Could not find buildIntentScoringScript in intent.ts");
-
-  // Walk from start, counting braces to find the end
-  let depth = 0;
-  let foundFirst = false;
-  let endIdx = startIdx;
-  for (let i = startIdx; i < intentSource.length; i++) {
-    if (intentSource[i] === "{") { depth++; foundFirst = true; }
-    if (intentSource[i] === "}") depth--;
-    if (foundFirst && depth === 0) { endIdx = i + 1; break; }
-  }
-
-  let fnBody = intentSource.slice(startIdx, endIdx);
-  // Strip TypeScript type annotations
-  fnBody = fnBody.replace(/\(intent:\s*string,\s*scope\?:\s*string\):\s*string/, "(intent, scope)");
-  return new Function("return " + fnBody)();
-}
-
-const buildIntentScoringScript = extractBuildIntentScoringScript();
-
-// 3. Form analysis — module-private buildFormAnalysisScript.
-const formsSource = readFileSync(resolve(ROOT, "tools/forms.ts"), "utf-8");
-
-function extractBuildFormAnalysisScript() {
-  const startMarker = "function buildFormAnalysisScript(selector?: string): string {";
-  const startIdx = formsSource.indexOf(startMarker);
-  if (startIdx === -1) throw new Error("Could not find buildFormAnalysisScript in forms.ts");
-
-  let depth = 0;
-  let foundFirst = false;
-  let endIdx = startIdx;
-  for (let i = startIdx; i < formsSource.length; i++) {
-    if (formsSource[i] === "{") { depth++; foundFirst = true; }
-    if (formsSource[i] === "}") depth--;
-    if (foundFirst && depth === 0) { endIdx = i + 1; break; }
-  }
-
-  let fnBody = formsSource.slice(startIdx, endIdx);
-  // Strip TypeScript type annotation
-  fnBody = fnBody.replace(/\(selector\?:\s*string\):\s*string/, "(selector)");
-  return new Function("return " + fnBody)();
-}
-
-const buildFormAnalysisScript = extractBuildFormAnalysisScript();
+const { buildIntentScoringScript } = jiti("../tools/intent.ts");
+const { buildFormAnalysisScript } = jiti("../tools/forms.ts");
 
 // ---------------------------------------------------------------------------
 // Browser lifecycle

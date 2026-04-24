@@ -127,20 +127,36 @@ describe("CombinedAutocompleteProvider — argument completions", () => {
 });
 
 describe("CombinedAutocompleteProvider — @ file prefix extraction", () => {
-	it("detects @ at start of line", () => {
+	it("detects @ at start of line and returns a valid suggestion shape", () => {
 		const provider = makeProvider();
-		// @ triggers fuzzy file search — we can't test the actual file results
-		// but we can test that getSuggestions returns null (no files in /tmp matching)
-		// rather than crashing
 		const result = provider.getSuggestions(["@nonexistent_xyz"], 0, 16);
-		// May return null or empty — the key thing is it doesn't crash
-		assert.ok(result === null || result.items.length >= 0);
+		// Either null (nothing matched) or a well-formed {items: Array, prefix: string}
+		// shape. Previous version's `result.items.length >= 0` was a tautology —
+		// array length is always ≥ 0; the whole expression could never fail.
+		if (result !== null) {
+			assert.ok(Array.isArray(result.items), "result.items must be an array");
+			// The @-prefix extraction strips the leading @ — prefix should be
+			// the raw text without the trigger character.
+			assert.equal(typeof result.prefix, "string", "prefix must be a string");
+			assert.ok(
+				!result.prefix.startsWith("@"),
+				`prefix must have the @ trigger stripped, got: ${JSON.stringify(result.prefix)}`,
+			);
+		}
 	});
 
-	it("detects @ after space", () => {
+	it("detects @ after space and returns a valid suggestion shape", () => {
 		const provider = makeProvider();
 		const result = provider.getSuggestions(["check @nonexistent_xyz"], 0, 22);
-		assert.ok(result === null || result.items.length >= 0);
+		if (result !== null) {
+			assert.ok(Array.isArray(result.items), "result.items must be an array");
+			assert.equal(typeof result.prefix, "string", "prefix must be a string");
+			// The prefix must NOT include the word "check" that came before the @.
+			assert.ok(
+				!result.prefix.includes("check"),
+				`prefix must not include text before the @, got: ${JSON.stringify(result.prefix)}`,
+			);
+		}
 	});
 
 	it("returns null for bare @ with no query to avoid full tree walk (#1824)", () => {

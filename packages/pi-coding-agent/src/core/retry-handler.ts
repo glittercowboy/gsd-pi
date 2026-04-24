@@ -18,6 +18,7 @@ import type { ModelRegistry } from "./model-registry.js";
 import type { SettingsManager } from "./settings-manager.js";
 import { sleep } from "../utils/sleep.js";
 import type { AgentSessionEvent } from "./agent-session.js";
+import { RETRYABLE_ERROR_RE } from "./retryable-error-regex.js";
 
 /** Dependencies injected from AgentSession into RetryHandler */
 export interface RetryHandlerDeps {
@@ -111,14 +112,7 @@ export class RetryHandler {
 		const contextWindow = this._deps.getModel()?.contextWindow ?? 0;
 		if (isContextOverflow(message, contextWindow)) return false;
 
-		const err = message.errorMessage;
-		// "temporarily backed off" is intentionally excluded: it is an internally-
-		// generated error from getApiKey() when credentials are in a backoff window.
-		// Re-entering the retry handler for that message creates a cascade of empty
-		// error entries in the session file, breaking resume (#3429).
-		return /overloaded|rate.?limit|too many requests|402|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|requires more credits|can only afford|insufficient credits|not enough credits|extra usage is required|(?:out of|no) extra usage|third.party.*draw from extra|third.party.*not.*available/i.test(
-			err,
-		);
+		return RETRYABLE_ERROR_RE.test(message.errorMessage);
 	}
 
 	/**

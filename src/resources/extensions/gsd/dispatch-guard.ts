@@ -6,26 +6,8 @@ import { parseUnitId } from "./unit-id.js";
 import { isDbAvailable, getMilestoneSlices, getMilestone } from "./gsd-db.js";
 import { parseRoadmap } from "./parsers-legacy.js";
 import { isClosedStatus } from "./status-guards.js";
+import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 import { readFileSync } from "node:fs";
-
-/**
- * Detect failure-path milestone SUMMARY content (#4663 sibling to #4658).
- * A failure SUMMARY must not let the dispatch guard treat an active
- * milestone as complete. The markers mirror those produced by
- * writeBlockerPlaceholder and the "verification FAILED" retry path.
- *
- * This is intentionally a minimal local detector so this fix does not
- * depend on PR #4660's `classifyMilestoneSummaryContent`. It can migrate
- * to the shared classifier once that lands.
- */
-function isFailureMilestoneSummary(content: string): boolean {
-  return (
-    /(?:^|\n)\s*#\s*BLOCKER\b/i.test(content) ||
-    /auto-mode recovery failed/i.test(content) ||
-    /verification\s+failed/i.test(content) ||
-    /\bnot complete\b/i.test(content)
-  );
-}
 
 const SLICE_DISPATCH_TYPES = new Set([
   "research-slice",
@@ -86,7 +68,7 @@ export function getPriorSliceCompletionBlocker(
     if (summaryPath) {
       let summaryContent: string | null = null;
       try { summaryContent = readFileSync(summaryPath, "utf-8"); } catch { /* ignore */ }
-      if (!summaryContent || !isFailureMilestoneSummary(summaryContent)) {
+      if (!summaryContent || classifyMilestoneSummaryContent(summaryContent) !== "failure") {
         continue;
       }
     }

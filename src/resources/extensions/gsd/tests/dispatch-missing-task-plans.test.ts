@@ -57,6 +57,17 @@ function scaffoldSlicePlan(basePath: string, mid: string, sid: string): void {
   ].join("\n"));
 }
 
+function scaffoldMilestoneContext(basePath: string, mid: string): void {
+  const dir = join(basePath, ".gsd", "milestones", mid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${mid}-CONTEXT.md`), [
+    `# ${mid}: Test Milestone`,
+    "",
+    "Context for dispatch recovery tests.",
+    "",
+  ].join("\n"));
+}
+
 function scaffoldTaskPlan(basePath: string, mid: string, sid: string, tid: string): void {
   const dir = join(basePath, ".gsd", "milestones", mid, "slices", sid, "tasks");
   mkdirSync(dir, { recursive: true });
@@ -76,6 +87,7 @@ test("dispatch: missing task plan triggers plan-slice (not stop) — issue #909"
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
   // Slice plan exists with tasks, but tasks/ directory is empty
+  scaffoldMilestoneContext(tmp, "M002");
   scaffoldSlicePlan(tmp, "M002", "S03");
 
   const ctx = makeContext(tmp);
@@ -92,6 +104,7 @@ test("dispatch: present task plan proceeds to execute-task normally", async (t) 
   const tmp = mkdtempSync(join(tmpdir(), "gsd-909-ok-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
+  scaffoldMilestoneContext(tmp, "M002");
   scaffoldSlicePlan(tmp, "M002", "S03");
   scaffoldTaskPlan(tmp, "M002", "S03", "T01");
 
@@ -111,6 +124,7 @@ test("dispatch: plan-slice recovery loop — second call after plan-slice still 
   const tmp = mkdtempSync(join(tmpdir(), "gsd-909-loop-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
+  scaffoldMilestoneContext(tmp, "M002");
   scaffoldSlicePlan(tmp, "M002", "S03");
 
   const ctx = makeContext(tmp);

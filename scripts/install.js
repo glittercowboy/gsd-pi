@@ -400,10 +400,24 @@ async function installRtk() {
     printStep('RTK installed', `v${RTK_VERSION}`)
   } catch (err) {
     stopSpinner()
-    printWarn('RTK', err.message)
+    printWarn('RTK', describeFetchError(err))
   } finally {
     rmSync(tempRoot, { recursive: true, force: true })
   }
+}
+
+// Surface the underlying cause when Node's native fetch throws a generic
+// "fetch failed" for pre-response network errors (DNS, connect, TLS,
+// socket). Without this, CI logs show only the bare message and every
+// network-failure class collapses to a single indistinguishable line.
+function describeFetchError(err) {
+  const base = err?.message || String(err)
+  const cause = err?.cause
+  if (!cause) return base
+  const code = cause.code || cause.errno
+  const causeMsg = cause.message || ''
+  const detail = code ? `${code}${causeMsg && causeMsg !== code ? ` — ${causeMsg}` : ''}` : causeMsg
+  return detail ? `${base} (${detail})` : base
 }
 
 // ── Step: Link workspace packages (postinstall from tarball) ───────────────

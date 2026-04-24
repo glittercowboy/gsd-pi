@@ -4,8 +4,9 @@ import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     ctx.ui.notify(
-      "google_search has moved to @gsd-extensions/google-search. " +
-      "Install: gsd extensions install @gsd-extensions/google-search",
+      "google_search is being extracted to @gsd-extensions/google-search " +
+      "(not yet published to npm). This stub will be replaced once the " +
+      "package is available. No action needed for now.",
       "warning",
     );
   });

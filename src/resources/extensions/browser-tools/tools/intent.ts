@@ -37,7 +37,11 @@ type Intent = (typeof INTENTS)[number];
  * Uses window.__pi utilities (injected via addInitScript) for element
  * metadata — no inline redeclarations.
  */
-function buildIntentScoringScript(intent: string, scope?: string): string {
+// Exported for tests only (see tests/browser-tools-integration.test.mjs).
+// Keep this function treated as module-private for production call sites —
+// the only legitimate external caller is the Playwright-driven integration
+// suite that needs to evaluate the returned IIFE against real DOM.
+export function buildIntentScoringScript(intent: string, scope?: string): string {
 	const scopeSelector = JSON.stringify(scope ?? null);
 
 	return `(() => {

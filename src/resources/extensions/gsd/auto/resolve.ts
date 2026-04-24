@@ -122,6 +122,10 @@ export function _resetPendingResolve(): void {
   _sessionSwitchInFlight = false;
 }
 
+export function _hasPendingResolveForTest(): boolean {
+  return _currentResolve !== null;
+}
+
 /**
  * No-op for backward compatibility with tests that previously set the
  * active session. The module no longer holds a session reference.

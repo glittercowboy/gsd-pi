@@ -2,7 +2,7 @@ import { type Component, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.js";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
 import { theme } from "../theme/theme.js";
-import { providerDisplayName } from "./model-selector.js";
+import { providerAuthBadge, providerDisplayName } from "./model-selector.js";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -199,13 +199,22 @@ export class FooterComponent implements Component {
 				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
 		}
 
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
+		// Prepend the provider in parentheses if there are multiple providers and there's enough room.
+		// Include the auth mode so users can tell at a glance whether the active model is
+		// API-key-backed, OAuth-backed, or delegated to a third-party CLI.
 		let rightSide = rightSideWithoutProvider;
 		if (this.footerData.getAvailableProviderCount() > 1 && displayModel) {
-			rightSide = `(${providerDisplayName(displayModel.provider)}) ${rightSideWithoutProvider}`;
+			const authMode = this.session.modelRegistry.getProviderAuthMode(displayModel.provider);
+			const authLabel = providerAuthBadge(authMode);
+			const providerLabel = providerDisplayName(displayModel.provider);
+			const parenthetical = authLabel ? `${providerLabel} · ${authLabel}` : providerLabel;
+			rightSide = `(${parenthetical}) ${rightSideWithoutProvider}`;
 			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
-				rightSide = rightSideWithoutProvider;
+				// Too wide: drop the auth suffix first, then fall back to no parenthetical.
+				rightSide = `(${providerLabel}) ${rightSideWithoutProvider}`;
+				if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
+					rightSide = rightSideWithoutProvider;
+				}
 			}
 		}
 

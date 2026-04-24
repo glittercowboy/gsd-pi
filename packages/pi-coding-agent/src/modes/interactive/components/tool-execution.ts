@@ -66,6 +66,21 @@ function parseMcpToolName(name: string): { server: string; tool: string } | null
 	return { server: rest.slice(0, delim), tool: rest.slice(delim + 2) };
 }
 
+/**
+ * Prettify a raw tool name for display. Prefers the registered `label`
+ * ("Complete Slice") when available; otherwise strips a leading `gsd_`
+ * prefix and converts snake_case to Title Case.
+ */
+function prettifyToolName(name: string, label?: string): string {
+	if (label && label.trim().length > 0) return label;
+	const stripped = name.replace(/^gsd_/, "");
+	if (stripped.length === 0) return name;
+	return stripped
+		.split("_")
+		.map((word) => (word.length === 0 ? word : word[0].toUpperCase() + word.slice(1)))
+		.join(" ");
+}
+
 type ToolFrameTone = "pending" | "success" | "error";
 
 function trimOuterBlankLines(lines: string[]): string[] {
@@ -131,15 +146,19 @@ function formatCompactArgs(args: unknown, expanded: boolean): string {
 
 	const allPrimitive = entries.every(([, value]) => {
 		const t = typeof value;
-		if (t === "number" || t === "boolean") return true;
-		if (t === "string") return (value as string).length <= COMPACT_ARG_VALUE_LIMIT;
-		return value == null;
+		return t === "number" || t === "boolean" || t === "string" || value == null;
 	});
 
 	if (allPrimitive) {
 		return entries
 			.map(([key, value]) => {
-				if (typeof value === "string") return `${key}=${JSON.stringify(value)}`;
+				if (typeof value === "string") {
+					const truncated =
+						!expanded && value.length > COMPACT_ARG_VALUE_LIMIT
+							? `${value.slice(0, COMPACT_ARG_VALUE_LIMIT - 1)}…`
+							: value;
+					return `${key}=${JSON.stringify(truncated)}`;
+				}
 				if (value == null) return `${key}=null`;
 				return `${key}=${String(value)}`;
 			})
@@ -526,7 +545,7 @@ export class ToolExecutionComponent extends Container {
 		const parsed = parseMcpToolName(this.toolName);
 		const frameLabel = parsed
 			? `Tool ${parsed.server}·${parsed.tool}`
-			: `Tool ${this.normalizedToolName || this.toolName || "unknown"}`;
+			: `Tool ${prettifyToolName(this.toolName, this.toolDefinition?.label) || "unknown"}`;
 		const framed = renderToolFrame(lines, frameWidth, {
 			label: frameLabel,
 			status: frameStatus,
@@ -570,12 +589,30 @@ export class ToolExecutionComponent extends Container {
 					}
 				} catch {
 					// Fall back to default on error
-					this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+					this.contentBox.addChild(
+						new Text(
+							theme.fg(
+								"toolTitle",
+								theme.bold(prettifyToolName(this.toolName, this.toolDefinition?.label)),
+							),
+							0,
+							0,
+						),
+					);
 					customRendererHasContent = true;
 				}
 			} else {
-				// No custom renderCall, show tool name
-				this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+				// No custom renderCall, show prettified tool name
+				this.contentBox.addChild(
+					new Text(
+						theme.fg(
+							"toolTitle",
+							theme.bold(prettifyToolName(this.toolName, this.toolDefinition?.label)),
+						),
+						0,
+						0,
+					),
+				);
 				customRendererHasContent = true;
 			}
 
@@ -1126,7 +1163,9 @@ export class ToolExecutionComponent extends Container {
 			// cleanly. GSD-registered MCP tools have already had their prefix
 			// stripped upstream in partial-builder.ts and won't reach this branch.
 			const parsed = parseMcpToolName(this.toolName);
-			const displayName = parsed ? parsed.tool : this.toolName;
+			const displayName = parsed
+				? parsed.tool
+				: prettifyToolName(this.toolName, this.toolDefinition?.label);
 			const serverPrefix = parsed ? theme.fg("muted", `${parsed.server}\u00b7`) : "";
 			text = serverPrefix + theme.fg("toolTitle", theme.bold(displayName));
 

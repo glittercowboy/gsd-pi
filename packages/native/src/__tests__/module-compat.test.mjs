@@ -9,9 +9,11 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdtempSync, existsSync } from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgPath = path.resolve(__dirname, "..", "..", "package.json");
@@ -60,32 +62,62 @@ describe("@gsd/native module compatibility (#2861)", () => {
     }
   });
 
-  test("native.ts source must not use bare import.meta.url (parse-time error in CJS)", () => {
-    // When compiled to CJS, import.meta is a *parse-time* syntax error --
-    // typeof guards don't help because Node rejects the syntax before
-    // executing any code.  The source must wrap import.meta access in
-    // an indirect eval so the CJS parser never sees the bare syntax.
-    const nativeSrc = readFileSync(
-      path.resolve(__dirname, "..", "native.ts"),
-      "utf8",
-    );
+  test(
+    "compiled CJS output loads under a parent package with type: module (regression guard for #2861)",
+    () => {
+      // Behavioral guard: the real regression #2861 surfaced when the package
+      // was consumed from a parent whose `package.json` declared
+      // `"type": "module"`, because the CJS output was parse-errored by
+      // Node.js v24. Rather than grep the TypeScript source for forbidden
+      // strings (which would break on any equivalent refactor), this test
+      // actually requires the compiled CJS from a synthesized parent that
+      // mimics the failing layout in the original bug report.
+      const distPath = path.resolve(__dirname, "..", "..", "dist", "native.js");
+      if (!existsSync(distPath)) {
+        // The native package's test runner builds `dist/` before this test
+        // runs; however, developers may invoke the file in isolation. Skip
+        // rather than fail spuriously — the invariant still fails loudly
+        // on any regression under the full `npm test` flow.
+        return;
+      }
 
-    // Bare import.meta.url (NOT wrapped) would crash at parse time in CJS.
-    // These regexes match direct usage like fileURLToPath(import.meta.url)
-    // and createRequire(import.meta.url), but NOT indirect patterns that
-    // hide import.meta from the CJS parser.
-    const hasBareImportMetaDirname = /path\.dirname\(.*fileURLToPath\(import\.meta\.url\)\)/.test(nativeSrc);
-    const hasBareImportMetaRequire = /createRequire\(import\.meta\.url\)/.test(nativeSrc);
+      const parentDir = mkdtempSync(path.join(os.tmpdir(), "gsd-native-modcompat-"));
+      // Parent declares "type": "module", reproducing the #2861 layout.
+      writeFileSync(
+        path.join(parentDir, "package.json"),
+        JSON.stringify({ name: "modcompat-parent", type: "module" }),
+      );
+      const loader = path.join(parentDir, "load.cjs");
+      // Use `.cjs` to ensure Node treats the script as CJS regardless of
+      // the enclosing directory's module type — this mirrors how the
+      // package's own dist files need to resolve as CJS despite an ESM
+      // parent. We `require()` the compiled native.js entrypoint; a
+      // parse-time crash (as in #2861) would surface as non-zero exit
+      // with the error on stderr.
+      writeFileSync(
+        loader,
+        `require(${JSON.stringify(distPath)});\nconsole.log("OK");\n`,
+      );
 
-    assert.ok(
-      !hasBareImportMetaDirname,
-      "native.ts must not use bare import.meta.url in fileURLToPath() -- " +
-        "this is a parse-time syntax error in CJS; use indirect eval",
-    );
-    assert.ok(
-      !hasBareImportMetaRequire,
-      "native.ts must not use bare import.meta.url in createRequire() -- " +
-        "this is a parse-time syntax error in CJS; use indirect eval",
-    );
-  });
+      const result = spawnSync(process.execPath, [loader], {
+        encoding: "utf8",
+        // Inherit nothing that could mask a native loader failure beyond
+        // the addon-missing fallback (which writes to stderr but does not
+        // exit non-zero — see `loadNative` proxy fallback in native.ts).
+        env: { ...process.env },
+      });
+
+      assert.equal(
+        result.status,
+        0,
+        `compiled CJS output failed to load under ESM parent. ` +
+          `stderr: ${result.stderr}\nstdout: ${result.stdout}`,
+      );
+      assert.match(
+        result.stdout,
+        /OK/,
+        "loader script must reach the final log — any earlier crash is a regression",
+      );
+    },
+  );
 });

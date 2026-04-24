@@ -31,6 +31,10 @@ describe("supportsServiceTier", () => {
     assert.equal(supportsServiceTier("vibeproxy-openai/gpt-5.4"), true);
   });
 
+  test("returns false for gpt-5.5 until service_tier payload support is verified", () => {
+    assert.equal(supportsServiceTier("gpt-5.5"), false);
+  });
+
   test("returns false for provider-only identifier without gpt-5.4 model suffix", () => {
     assert.equal(supportsServiceTier("vibeproxy-openai"), false);
   });

@@ -81,46 +81,14 @@ try {
     );
   }
 
-  // ═══ Verify the BUG scenario: omitting recoveryAttempts carries it over ═══
-
-  {
-    console.log("\n=== #2322: demonstrates bug — omitting recoveryAttempts carries it over ===");
-
-    const unitType = "execute-task";
-    const unitId = "M001/S01/T02";
-    const startedAt1 = Date.now() - 10000;
-
-    // First dispatch
-    writeUnitRuntimeRecord(base, unitType, unitId, startedAt1, {
-      phase: "dispatched",
-    });
-
-    // Timeout bumps recoveryAttempts to 1
-    writeUnitRuntimeRecord(base, unitType, unitId, startedAt1, {
-      recoveryAttempts: 1,
-      lastRecoveryReason: "hard",
-    });
-
-    // Re-dispatch WITHOUT resetting recoveryAttempts (the bug)
-    const startedAt2 = Date.now();
-    writeUnitRuntimeRecord(base, unitType, unitId, startedAt2, {
-      phase: "dispatched",
-      wrapupWarningSent: false,
-      timeoutAt: null,
-      lastProgressAt: startedAt2,
-      progressCount: 0,
-      lastProgressKind: "dispatch",
-      // recoveryAttempts: NOT included — this is the bug
-    });
-
-    const afterBuggyRedispatch = readUnitRuntimeRecord(base, unitType, unitId);
-    // This DEMONSTRATES the bug: recoveryAttempts is still 1
-    assertEq(
-      afterBuggyRedispatch?.recoveryAttempts,
-      1,
-      "BUG DEMO: recoveryAttempts carries over when not explicitly reset",
-    );
-  }
+  // Note (#4837): the previous "BUG DEMO" block was tautological — it only
+  // asserted that writeUnitRuntimeRecord merges partial updates into the
+  // stored record (which is the function's documented behaviour and is
+  // already covered by unit-runtime.test.ts). Proving merge semantics here
+  // added zero coverage of the #2322 fix. The first block above verifies the
+  // fix itself (explicit recoveryAttempts: 0 on re-dispatch resets the
+  // counter); the block below verifies the end-to-end budget-reset
+  // invariant.
 
   // ═══ Hard timeout maxRecoveryAttempts=1 — second dispatch must get full budget ═══
 

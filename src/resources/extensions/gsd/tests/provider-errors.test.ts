@@ -13,7 +13,12 @@ import { fileURLToPath } from "node:url";
 import { classifyError, isTransient, isTransientNetworkError } from "../error-classifier.ts";
 import { pauseAutoForProviderError } from "../provider-error-pause.ts";
 import { resumeAutoAfterProviderDelay } from "../bootstrap/provider-error-resume.ts";
+import { MAX_TRANSIENT_AUTO_RESUMES } from "../bootstrap/agent-end-recovery.ts";
 import { getNextFallbackModel } from "../preferences.ts";
+// Zero-import module — imported by path rather than through the package
+// barrel to avoid pulling the full AgentSession / @gsd/pi-ai dep graph into
+// this unit test (see #4837).
+import { RETRYABLE_ERROR_RE } from "../../../../../packages/pi-coding-agent/src/core/retryable-error-regex.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -404,6 +409,8 @@ test("resumeAutoAfterProviderDelay restarts paused auto-mode from the recorded b
         stepMode: true,
         basePath: "/tmp/project",
       }),
+      resetTransientRetryState: () => {},
+      resetSessionTimeoutState: () => {},
       startAuto: async (_ctx, _pi, base, verboseMode, options) => {
         startCalls.push({ base, verboseMode, step: options?.step });
       },
@@ -428,6 +435,8 @@ test("resumeAutoAfterProviderDelay does not double-start when auto-mode is alrea
         stepMode: false,
         basePath: "/tmp/project",
       }),
+      resetTransientRetryState: () => {},
+      resetSessionTimeoutState: () => {},
       startAuto: async () => {
         startCalls += 1;
       },
@@ -458,6 +467,8 @@ test("resumeAutoAfterProviderDelay leaves auto paused when no base path is avail
         stepMode: false,
         basePath: "",
       }),
+      resetTransientRetryState: () => {},
+      resetSessionTimeoutState: () => {},
       startAuto: async () => {
         startCalls += 1;
       },
@@ -471,6 +482,39 @@ test("resumeAutoAfterProviderDelay leaves auto paused when no base path is avail
       message: "Provider error recovery delay elapsed, but no paused auto-mode base path was available. Leaving auto-mode paused.",
       level: "warning",
     },
+  ]);
+});
+
+test("resumeAutoAfterProviderDelay resets provider retry state before restarting auto-mode", async () => {
+  const calls: string[] = [];
+
+  const result = await resumeAutoAfterProviderDelay(
+    {} as any,
+    { ui: { notify() {} } } as any,
+    {
+      getSnapshot: () => ({
+        active: false,
+        paused: true,
+        stepMode: false,
+        basePath: "/tmp/project",
+      }),
+      resetTransientRetryState: () => {
+        calls.push("reset-transient");
+      },
+      resetSessionTimeoutState: () => {
+        calls.push("reset-session-timeout");
+      },
+      startAuto: async () => {
+        calls.push("start-auto");
+      },
+    },
+  );
+
+  assert.equal(result, "resumed");
+  assert.deepEqual(calls, [
+    "reset-transient",
+    "reset-session-timeout",
+    "start-auto",
   ]);
 });
 
@@ -567,31 +611,6 @@ test("resetTransientRetryState is exported from agent-end-recovery.ts", () => {
   );
 });
 
-test("provider-error-resume.ts calls resetTransientRetryState before startAuto", () => {
-  const src = readFileSync(join(__dirname, "..", "bootstrap", "provider-error-resume.ts"), "utf-8");
-  assert.ok(
-    src.includes("resetTransientRetryState"),
-    "provider-error-resume.ts must import and call resetTransientRetryState",
-  );
-  // Ensure reset is called BEFORE startAuto — order matters
-  const resetIdx = src.indexOf("resetTransientRetryState()");
-  const startIdx = src.indexOf("await deps.startAuto(");
-  assert.ok(
-    resetIdx !== -1 && startIdx !== -1 && resetIdx < startIdx,
-    "resetTransientRetryState() must be called before deps.startAuto()",
-  );
-  // Session timeout counter must also be reset before startAuto
-  assert.ok(
-    src.includes("resetSessionTimeoutState"),
-    "provider-error-resume.ts must import and call resetSessionTimeoutState",
-  );
-  const sessionResetIdx = src.indexOf("resetSessionTimeoutState()");
-  assert.ok(
-    sessionResetIdx !== -1 && startIdx !== -1 && sessionResetIdx < startIdx,
-    "resetSessionTimeoutState() must be called before deps.startAuto()",
-  );
-});
-
 // ── Fix 2: Session creation timeout treated as transient in phases.ts ───────
 
 test("phases.ts handles timeout session-creation failures with pause instead of stopAuto", () => {
@@ -670,13 +689,12 @@ test("phases.ts resets session timeout counter on successful unit completion", (
 // ── Fix 3: MAX_TRANSIENT_AUTO_RESUMES raised to 8 ───────────────────────────
 
 test("MAX_TRANSIENT_AUTO_RESUMES is at least 8 for sustained overload resilience", () => {
-  const src = readFileSync(join(__dirname, "..", "bootstrap", "agent-end-recovery.ts"), "utf-8");
-  const match = src.match(/MAX_TRANSIENT_AUTO_RESUMES\s*=\s*(\d+)/);
-  assert.ok(match, "MAX_TRANSIENT_AUTO_RESUMES must be defined");
-  const value = Number(match![1]);
+  // Import the real constant rather than regex-scraping the source literal —
+  // this way the assertion cannot silently drift if the symbol is renamed or
+  // the value is moved. See #4837.
   assert.ok(
-    value >= 8,
-    `MAX_TRANSIENT_AUTO_RESUMES must be >= 8 for sustained overload resilience, got ${value}`,
+    MAX_TRANSIENT_AUTO_RESUMES >= 8,
+    `MAX_TRANSIENT_AUTO_RESUMES must be >= 8 for sustained overload resilience, got ${MAX_TRANSIENT_AUTO_RESUMES}`,
   );
 });
 
@@ -724,20 +742,22 @@ test("classifyError: 'context window' with 'exceed' is transient server", () => 
 // ── agent-session retryable regex handles server_error (#1166) ──────────────
 
 test("agent-session retryable error regex matches server_error (underscore)", () => {
-  // This regex is extracted from _isRetryableError in agent-session.ts.
-  // It must match both "server error" (space) and "server_error" (underscore)
-  // to properly classify Codex streaming errors as retryable.
-  // "temporarily backed off" intentionally excluded — see #3429
-  const retryableRegex = /overloaded|rate.?limit|too many requests|429|500|502|503|504|service.?unavailable|server.?error|internal.?error|connection.?error|connection.?refused|other side closed|fetch failed|upstream.?connect|reset before headers|terminated|retry delay|network.?(?:is\s+)?unavailable|credentials.*expired|extra usage is required/i;
+  // Import the real regex from the retry-handler so this test can never
+  // silently drift from runtime behaviour. The regex must match both
+  // "server error" (space) and "server_error" (underscore) to properly
+  // classify Codex streaming errors as retryable.
+  // "temporarily backed off" is intentionally excluded — see #3429 / #4837.
 
   // server_error (with underscore — Codex streaming error format)
-  assert.ok(retryableRegex.test("Codex server_error: An error occurred"));
+  assert.ok(RETRYABLE_ERROR_RE.test("Codex server_error: An error occurred"));
   // server error (with space — traditional HTTP error format)
-  assert.ok(retryableRegex.test("server error occurred"));
+  assert.ok(RETRYABLE_ERROR_RE.test("server error occurred"));
   // internal_error (with underscore)
-  assert.ok(retryableRegex.test("internal_error: something went wrong"));
+  assert.ok(RETRYABLE_ERROR_RE.test("internal_error: something went wrong"));
   // internal error (with space)
-  assert.ok(retryableRegex.test("internal error"));
+  assert.ok(RETRYABLE_ERROR_RE.test("internal error"));
   // non-retryable errors must not match
-  assert.ok(!retryableRegex.test("model not found"));
+  assert.ok(!RETRYABLE_ERROR_RE.test("model not found"));
+  // "temporarily backed off" must NOT be matched (intentional exclusion #3429)
+  assert.ok(!RETRYABLE_ERROR_RE.test("temporarily backed off"));
 });

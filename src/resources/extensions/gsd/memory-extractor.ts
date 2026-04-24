@@ -18,7 +18,10 @@ import type { MemoryAction } from './memory-store.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type LLMCallFn = (system: string, user: string) => Promise<string>;
+export type LLMCallFn = ((system: string, user: string) => Promise<string>) & {
+  /** Promise resolving once the provider API key has been fetched (for tests). */
+  apiKeyReady?: Promise<string | undefined>;
+};
 
 // ─── Concurrency Guard ──────────────────────────────────────────────────────
 
@@ -92,8 +95,9 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
     // which returns undefined for OAuth users (Claude Max / Claude Pro).
     // See: https://github.com/gsd-build/gsd-2/issues/2959
     const resolvedKeyPromise = ctx.modelRegistry.getApiKey(selectedModel).catch(() => undefined);
-
-    return async (system: string, user: string): Promise<string> => {
+    // Expose on the returned fn so tests can await resolution deterministically
+    // (avoids arbitrary setTimeout polling for an internal microtask).
+    const llmCall = async (system: string, user: string): Promise<string> => {
       const { completeSimple } = await import('@gsd/pi-ai');
       const resolvedApiKey = await resolvedKeyPromise;
       const result: AssistantMessage = await completeSimple(selectedModel, {
@@ -111,6 +115,10 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
         .map(c => c.text);
       return textParts.join('');
     };
+    // Attach the in-flight API-key resolution so tests (and callers) can
+    // `await llmCall.apiKeyReady` rather than relying on setTimeout polling.
+    (llmCall as LLMCallFn & { apiKeyReady?: Promise<string | undefined> }).apiKeyReady = resolvedKeyPromise;
+    return llmCall;
   } catch {
     return null;
   }

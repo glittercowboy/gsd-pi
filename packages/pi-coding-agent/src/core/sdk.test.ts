@@ -3,7 +3,8 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { CredentialCooldownError } from "./sdk.js";
+import { canRestoreSessionModel, CredentialCooldownError } from "./sdk.js";
+import type { Model } from "@gsd/pi-ai";
 
 // ─── CredentialCooldownError ──────────────────────────────────────────────────
 
@@ -85,5 +86,28 @@ describe("CredentialCooldownError", () => {
 		const plain = { code: err.code, retryAfterMs: err.retryAfterMs, message: err.message };
 		assert.equal(plain.code, "AUTH_COOLDOWN");
 		assert.equal(plain.retryAfterMs, 15_000);
+	});
+});
+
+describe("canRestoreSessionModel", () => {
+	const model = {
+		provider: "claude-code",
+		id: "claude-sonnet",
+	} as Model<any>;
+
+	it("allows keyless external providers when the provider is request-ready", () => {
+		const registry = {
+			isProviderRequestReady: (provider: string) => provider === "claude-code",
+		};
+
+		assert.equal(canRestoreSessionModel(registry, model), true);
+	});
+
+	it("blocks restore when the provider is not request-ready", () => {
+		const registry = {
+			isProviderRequestReady: () => false,
+		};
+
+		assert.equal(canRestoreSessionModel(registry, model), false);
 	});
 });

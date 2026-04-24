@@ -12,6 +12,8 @@ type AutoResumeSnapshot = Pick<AutoDashboardData, "active" | "paused" | "stepMod
 
 export interface ProviderErrorResumeDeps {
   getSnapshot(): AutoResumeSnapshot;
+  resetTransientRetryState(): void;
+  resetSessionTimeoutState(): void;
   startAuto(
     ctx: ExtensionCommandContext,
     pi: ExtensionAPI,
@@ -23,6 +25,8 @@ export interface ProviderErrorResumeDeps {
 
 const defaultDeps: ProviderErrorResumeDeps = {
   getSnapshot: () => getAutoDashboardData(),
+  resetTransientRetryState,
+  resetSessionTimeoutState,
   startAuto,
 };
 
@@ -47,8 +51,8 @@ export async function resumeAutoAfterProviderDelay(
   // Reset retry counters before restarting — without this, counters
   // accumulate across pause/resume cycles and permanently lock out
   // auto-resume after their respective MAX thresholds.
-  resetTransientRetryState();
-  resetSessionTimeoutState();
+  deps.resetTransientRetryState();
+  deps.resetSessionTimeoutState();
 
   await deps.startAuto(
     ctx as ExtensionCommandContext,

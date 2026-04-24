@@ -653,15 +653,72 @@ export function containsTypeScriptSyntax(source: string): boolean {
  * are compiled once and reused across all extensions.
  */
 let _extensionLoaderJiti: ReturnType<typeof createJiti> | null = null;
+// Tracks every extension-module path that jiti has compiled through the shared
+// singleton so resetExtensionLoaderCache() can also evict Node's global
+// require.cache entries for those modules. jiti stores compiled modules under
+// `nativeRequire.cache[filename]` when `moduleCache: true`, so a new singleton
+// still returns the stale cached module on re-import without this eviction.
+const _loadedExtensionPaths = new Set<string>();
+const _extensionRequire = createRequire(import.meta.url);
 
 /**
  * Reset the shared jiti singleton so the next call to getExtensionLoaderJiti()
  * creates a fresh instance.  This prevents memory leaks in long-running daemon
  * processes (every loaded module stays cached forever) and ensures stale modules
  * are not returned when extension source changes on disk.
+ *
+ * #3616: resetting the singleton alone is insufficient — jiti stores compiled
+ * modules in Node's global require.cache when `moduleCache: true`, which is
+ * shared across singletons. We also evict cached entries for every extension
+ * path we've previously loaded so the next import recompiles from disk.
  */
 export function resetExtensionLoaderCache(): void {
 	_extensionLoaderJiti = null;
+	// Build a set of exact cache keys we expect (raw path, resolved path,
+	// realpath) AND a set of (basename, containing-directory) pairs so we
+	// can also catch entries that jiti/Node wrote under a canonicalized
+	// form (Windows drive-letter case, separator swap, UNC prefix, symlink
+	// resolution). require.cache is shared across all createRequire
+	// instances for CJS, so iterating any instance's cache covers jiti's
+	// internal `nativeRequire.cache` writes.
+	const exact = new Set<string>();
+	const signatures = new Set<string>();
+	const makeSignature = (p: string): string => {
+		const normalized = p.replace(/\\/g, "/").toLowerCase();
+		const slash = normalized.lastIndexOf("/");
+		const base = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+		// Use the trailing two path segments as the signature — unique
+		// enough to avoid collisions in typical filesystems while tolerating
+		// drive-letter / separator variations that differ in the prefix.
+		const parent = slash >= 0 ? normalized.slice(0, slash) : "";
+		const parentSlash = parent.lastIndexOf("/");
+		const parentSeg = parentSlash >= 0 ? parent.slice(parentSlash + 1) : parent;
+		return `${parentSeg}/${base}`;
+	};
+	for (const raw of _loadedExtensionPaths) {
+		exact.add(raw);
+		try {
+			exact.add(_extensionRequire.resolve(raw));
+		} catch {
+			// unresolvable — fall through; signature scan may still hit it
+		}
+		try {
+			exact.add(fs.realpathSync(raw));
+		} catch {
+			// file may have been deleted already; ignore
+		}
+		signatures.add(makeSignature(raw));
+	}
+	for (const key of Object.keys(_extensionRequire.cache)) {
+		if (exact.has(key) || signatures.has(makeSignature(key))) {
+			try {
+				delete _extensionRequire.cache[key];
+			} catch {
+				// require.cache is best-effort; ignore failures (e.g. frozen cache).
+			}
+		}
+	}
+	_loadedExtensionPaths.clear();
 }
 
 function getExtensionLoaderJiti() {
@@ -696,6 +753,7 @@ async function loadExtensionModule(extensionPath: string) {
 	const jiti = getExtensionLoaderJiti();
 
 	const module = await jiti.import(extensionPath, { default: true });
+	_loadedExtensionPaths.add(extensionPath);
 	const factory = module as ExtensionFactory;
 	return typeof factory !== "function" ? undefined : factory;
 }

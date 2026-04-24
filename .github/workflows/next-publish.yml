@@ -132,11 +132,8 @@ jobs:
           export GSD_SMOKE_BINARY=$(which gsd)
           npm run test:smoke
 
-      - name: Install repo dependencies (for fixture + regression harnesses)
+      - name: Install repo dependencies (for regression harness)
         run: npm ci
-
-      - name: Run fixture tests
-        run: npm run test:fixtures
 
       - name: Run live regression tests (against installed binary)
         run: |

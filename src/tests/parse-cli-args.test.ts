@@ -3,7 +3,7 @@
 
 import test, { describe } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseCliArgs } from '../cli-web-branch.ts'
+import { buildHeadlessAutoArgs, parseCliArgs } from '../cli-web-branch.ts'
 
 function parse(...args: string[]) {
   return parseCliArgs(['node', 'gsd', ...args])
@@ -22,6 +22,21 @@ describe('parseCliArgs — modes', () => {
 
   test('ignores unknown mode values', () => {
     assert.equal(parse('--mode', 'bogus').mode, undefined)
+  })
+})
+
+describe('buildHeadlessAutoArgs', () => {
+  test('preserves auto positional args without a model override', () => {
+    const args = buildHeadlessAutoArgs({ messages: ['auto', 'next'] })
+    assert.deepEqual(args, ['auto', 'next'])
+  })
+
+  test('forwards --model before auto positional args', () => {
+    const args = buildHeadlessAutoArgs({
+      model: 'claude-code/sonnet',
+      messages: ['auto', 'next'],
+    })
+    assert.deepEqual(args, ['--model', 'claude-code/sonnet', 'auto', 'next'])
   })
 })
 

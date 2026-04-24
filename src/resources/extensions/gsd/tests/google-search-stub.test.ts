@@ -85,8 +85,10 @@ test("google-search stub: session_start warning contains package name", async (_
   );
 });
 
-test("google-search stub: session_start warning contains install command", async (_t) => {
-  // STUB-01: warning includes "gsd extensions install"
+test("google-search stub: session_start warning explains package is not yet published", async (_t) => {
+  // STUB-01: stub must NOT advise `gsd extensions install` — the replacement
+  // package is not yet on npm, so that command would 404. The message must
+  // explain the extraction is in progress and no user action is required.
   const mod = await import("../../google-search/index.ts");
   const stubFn = mod.default;
 
@@ -115,7 +117,15 @@ test("google-search stub: session_start warning contains install command", async
   await capturedHandler!({}, mockCtx);
 
   assert.ok(
-    capturedMessage?.includes("gsd extensions install"),
-    `Expected message to include "gsd extensions install", got: "${capturedMessage}"`,
+    !capturedMessage?.includes("gsd extensions install"),
+    `Expected message NOT to include unpublished install command, got: "${capturedMessage}"`,
+  );
+  assert.ok(
+    capturedMessage?.includes("not yet published"),
+    `Expected message to include "not yet published", got: "${capturedMessage}"`,
+  );
+  assert.ok(
+    capturedMessage?.includes("No action needed"),
+    `Expected message to include "No action needed", got: "${capturedMessage}"`,
   );
 });

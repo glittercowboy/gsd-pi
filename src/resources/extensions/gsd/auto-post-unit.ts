@@ -618,6 +618,87 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           clearReactiveState(s.basePath, mid, sid);
         }
       });
+
+      // #4765 — slice-cadence collapse. When `git.collapse_cadence: "slice"`
+      // is set, squash-merge the slice's commits from the milestone branch
+      // onto main right here, so orphan risk shrinks from milestone-size to
+      // slice-size. Only runs in worktree isolation mode — the feature needs
+      // a milestone branch to squash from.
+      let sliceMergeStopped = false;
+      await runSafely("postUnit", "slice-cadence-merge", async () => {
+        const prefsResult = loadEffectiveGSDPreferences(s.basePath);
+        const prefs = prefsResult?.preferences;
+        const { getCollapseCadence, mergeSliceToMain } = await import("./slice-cadence.js");
+        if (getCollapseCadence(prefs) !== "slice") return;
+        if (prefs?.git?.isolation !== "worktree") return;
+        if (s.isolationDegraded) return;
+
+        const projectRoot = s.originalBasePath || s.basePath;
+        const { milestone: mid, slice: sid } = parseUnitId(unit.id);
+        if (!mid || !sid) return;
+
+        // Record the milestone start SHA before the first slice merge, so
+        // resquashMilestoneOnMain has a target at milestone completion.
+        // Resolve main branch dynamically — hard-coding "main" breaks repos
+        // that use "master" or a custom default branch.
+        if (!s.milestoneStartShas.has(mid)) {
+          try {
+            const { nativeDetectMainBranch } = await import("./native-git-bridge.js");
+            const mainBranch = nativeDetectMainBranch(projectRoot);
+            const { execFileSync } = await import("node:child_process");
+            const sha = execFileSync("git", ["rev-parse", mainBranch], {
+              cwd: projectRoot, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8",
+            }).trim();
+            if (sha) s.milestoneStartShas.set(mid, sha);
+          } catch (err) {
+            logWarning("engine", `slice-cadence: failed to record milestone start SHA: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
+
+        try {
+          const result = mergeSliceToMain(projectRoot, mid, sid);
+          if (result.skipped) {
+            logWarning("engine", `slice-cadence: merge skipped for ${sid} — ${result.skippedReason}`);
+            return;
+          }
+          ctx.ui.notify(
+            `slice-cadence: ${sid} merged to main (${result.durationMs}ms).`,
+            "info",
+          );
+        } catch (err) {
+          const { MergeConflictError } = await import("./git-service.js");
+          if (err instanceof MergeConflictError) {
+            ctx.ui.notify(
+              `slice-cadence merge conflict in ${sid}: ${err.conflictedFiles.join(", ")}. ` +
+              `Resolve manually on main and run \`/gsd auto\` to resume.`,
+              "error",
+            );
+            // Stop auto AND signal the outer postUnit flow to exit early.
+            // Without the flag, subsequent hooks (triage, rogue detection,
+            // DB writes) would keep running against a conflicted main
+            // checkout after the loop was already told to stop.
+            const { stopAuto } = await import("./auto.js");
+            await stopAuto(ctx, undefined, `slice-merge-conflict on ${sid}`);
+            sliceMergeStopped = true;
+            return;
+          }
+          logError("engine", `slice-cadence merge failed for ${sid}`, {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          // Non-conflict failures (dirty main, rev-walk error, etc.) can
+          // leave the checkout in an unexpected state. Stop auto-mode so
+          // the next slice doesn't dispatch on top of it.
+          const { stopAuto } = await import("./auto.js");
+          await stopAuto(ctx, undefined, `slice-merge-error on ${sid}`);
+          sliceMergeStopped = true;
+        }
+      });
+      // Exit early after stopAuto so the rest of post-unit processing
+      // (triage, rogue detection, hook dispatch, DB writes) doesn't run
+      // against a conflicted main checkout. Return "dispatched" to match
+      // the convention used by other stop/pauseAuto paths in this function
+      // (see signal handling earlier: stop/pause also return "dispatched").
+      if (sliceMergeStopped) return "dispatched";
     }
 
     // Post-triage: execute actionable resolutions

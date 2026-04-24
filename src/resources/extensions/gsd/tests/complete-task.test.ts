@@ -14,6 +14,7 @@ import {
   getTask,
   getSliceTasks,
   insertVerificationEvidence,
+  SCHEMA_VERSION,
 } from '../gsd-db.ts';
 import { handleCompleteTask } from '../tools/complete-task.ts';
 
@@ -99,19 +100,22 @@ function makeValidParams() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// complete-task: Schema v5 migration
+// complete-task: Fresh DB is migrated to the current schema version
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== complete-task: schema v5 migration ===');
+console.log('\n=== complete-task: fresh DB migrates to current schema version ===');
 {
   const dbPath = tempDbPath();
   openDatabase(dbPath);
 
   const adapter = _getAdapter()!;
 
-  // Verify schema version is current (v22 — quality_gates DDL fix)
+  // Verify schema version matches the current source-of-truth constant.
+  // Asserting against SCHEMA_VERSION (not a hardcoded number) keeps this
+  // green across migration bumps while still catching a
+  // "fresh-DB-was-not-migrated" regression.
   const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(versionRow?.['v'], 22, 'schema version should be 22');
+  assertEq(versionRow?.['v'], SCHEMA_VERSION, 'fresh DB should be migrated to current SCHEMA_VERSION');
 
   // Verify all 4 new tables exist
   const tables = adapter.prepare(

@@ -3,16 +3,11 @@
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Type } from "@sinclair/typebox";
 import { agentLoop, MAX_CONSECUTIVE_VALIDATION_FAILURES } from "./agent-loop.js";
 import type { AgentContext, AgentLoopConfig, AgentTool, AgentEvent, AgentMessage } from "./types.js";
 import { AssistantMessageEventStream, EventStream } from "@gsd/pi-ai";
 import type { AssistantMessage, AssistantMessageEvent, Model } from "@gsd/pi-ai";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 describe("agent-loop — pauseTurn handling (#2869)", () => {
 	it("continues to a second assistant turn when stopReason is pauseTurn", async () => {
@@ -75,16 +70,11 @@ describe("agent-loop — pauseTurn handling (#2869)", () => {
 		assert.deepEqual(seenLastRoles, ["user", "assistant"], "second turn must continue from the paused assistant state");
 	});
 
-	it("pauseTurn is in the StopReason union type", () => {
-		// Read the pi-ai types to ensure pauseTurn is a valid StopReason
-		const typesPath = join(__dirname, "..", "..", "pi-ai", "src", "types.ts");
-		const typesSource = readFileSync(typesPath, "utf-8");
-		assert.match(
-			typesSource,
-			/["']pauseTurn["']/,
-			'StopReason type must include "pauseTurn"',
-		);
-	});
+	// The behavioural test above ("continues to a second assistant turn …")
+	// already exercises `stopReason: "pauseTurn"` at the type level (TS won't
+	// compile without the union member) and at runtime (the stream emits it
+	// and the loop acts on it). A separate source-text grep added nothing.
+	// Deleted per #4797.
 
 	it("uses provider-supplied external tool results instead of the placeholder", async () => {
 		const externalMessage = makeAssistantMessage({

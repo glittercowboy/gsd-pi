@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const sourceFile = join(__dirname, "..", "auto-start.ts");
@@ -37,7 +38,7 @@ describe("auto-start cleanStaleRuntimeUnits DB gating (#4663)", () => {
   test("cleanStaleRuntimeUnits predicate consults DB status when available", () => {
     const cleanIdx = source.indexOf("cleanStaleRuntimeUnits(");
     assert.ok(cleanIdx > -1);
-    const snippet = source.slice(cleanIdx, cleanIdx + 600);
+    const snippet = extractSourceRegion(source, "cleanStaleRuntimeUnits(");
     assert.match(
       snippet,
       /isDbAvailable\(\)/,
@@ -53,7 +54,7 @@ describe("auto-start cleanStaleRuntimeUnits DB gating (#4663)", () => {
   test("cleanStaleRuntimeUnits predicate still falls back to SUMMARY-file when DB unavailable", () => {
     const cleanIdx = source.indexOf("cleanStaleRuntimeUnits(");
     assert.ok(cleanIdx > -1);
-    const snippet = source.slice(cleanIdx, cleanIdx + 600);
+    const snippet = extractSourceRegion(source, "cleanStaleRuntimeUnits(");
     assert.match(
       snippet,
       /resolveMilestoneFile\(base,\s*mid,\s*["']SUMMARY["']\)/,

@@ -56,14 +56,22 @@ describe("preview column rendering", () => {
     assert.ok(hasContent, "At least one rendered line should have visible content");
   });
 
-  it("Markdown component renders code blocks", () => {
+  it("Markdown component renders code blocks — preserves the source text", () => {
     const mdTheme = getMarkdownTheme();
     const md = new Markdown("```ts\nconst x = 1;\n```", 1, 0, mdTheme);
     const lines = md.render(40);
     assert.ok(lines.length > 0);
     const joined = lines.join("\n");
-    // The rendered output should contain the code content somewhere
-    assert.ok(joined.includes("const") || joined.includes("x"), "Code block content should be present");
+    // Previous assertion was `includes("const") || includes("x")` — the
+    // `x` branch matched any ANSI rendering incidentally containing the
+    // letter (box borders, tab markers, even fallbackColor's `x` token),
+    // making it a near-tautology. Assert on a distinctive combined
+    // source fragment so a regression that silently swallows the code
+    // block body actually fails.
+    assert.ok(
+      joined.includes("const") && joined.includes("x = 1"),
+      `rendered code block must preserve source tokens. got:\n${joined}`,
+    );
   });
 
   it("Markdown component respects width constraint", () => {

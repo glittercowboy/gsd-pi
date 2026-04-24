@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { invalidateAllCaches } from "../cache.ts";
+import { extractSourceRegion } from "./test-helpers.ts";
 import {
   openDatabase,
   closeDatabase,
@@ -160,7 +161,7 @@ describe("cache.ts must not re-import clearArtifacts into invalidateAllCaches", 
   test("invalidateAllCaches does not call clearArtifacts", () => {
     const fnIdx = src.indexOf("function invalidateAllCaches");
     assert.ok(fnIdx !== -1);
-    const body = src.slice(fnIdx, fnIdx + 1000);
+    const body = extractSourceRegion(src, "function invalidateAllCaches", { fromIdx: fnIdx });
     assert.ok(
       !/\bclearArtifacts\s*\(/.test(body),
       "invalidateAllCaches must not call clearArtifacts() — it wipes the write-through store",

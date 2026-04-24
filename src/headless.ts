@@ -12,7 +12,7 @@
  *   11 — cancelled (SIGINT/SIGTERM received)
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolve } from 'node:path'
 import { ChildProcess } from 'node:child_process'
@@ -729,7 +729,14 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
   // Signal handling
   const signalHandler = () => {
-    process.stderr.write('\n[headless] Interrupted, stopping child process...\n')
+    // Use writeSync on fd 2 to guarantee the Interrupted marker reaches
+    // consumers before process.exit() truncates pending async writes.
+    try {
+      writeSync(2, '\n[headless] Interrupted, stopping child process...\n')
+    } catch {
+      // Fallback to async write if fd 2 is somehow unavailable.
+      process.stderr.write('\n[headless] Interrupted, stopping child process...\n')
+    }
     interrupted = true
     exitCode = EXIT_CANCELLED
     // Kill child process — don't await, just fire and exit.
@@ -746,8 +753,20 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     }
     process.exit(exitCode)
   }
-  process.on('SIGINT', signalHandler)
-  process.on('SIGTERM', signalHandler)
+  // Use prependListener so our handler runs before pi-coding-agent's
+  // LSP-client module-load SIGINT handler, which calls process.exit(0)
+  // and would otherwise short-circuit our exit-code-11 contract.
+  process.prependListener('SIGINT', signalHandler)
+  process.prependListener('SIGTERM', signalHandler)
+  // Emit a deterministic readiness marker so test harnesses can wait for
+  // the SIGINT handler to be live before sending a signal. writeSync on
+  // fd 2 avoids any pipe-buffering race between the marker and subsequent
+  // signal delivery.
+  try {
+    writeSync(2, '[headless] signal-handlers-ready\n')
+  } catch {
+    process.stderr.write('[headless] signal-handlers-ready\n')
+  }
 
   // Start the RPC session
   try {

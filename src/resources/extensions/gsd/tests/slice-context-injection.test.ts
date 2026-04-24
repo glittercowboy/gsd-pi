@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const autoPromptsPath = join(__dirname, "..", "auto-prompts.ts");
@@ -32,7 +33,7 @@ describe("slice CONTEXT.md injection into prompt builders (#3452)", () => {
       assert.ok(fnStart !== -1, `${builder} should exist in auto-prompts.ts`);
 
       // Get a reasonable chunk after the function start
-      const chunk = source.slice(fnStart, fnStart + 3000);
+      const chunk = extractSourceRegion(source, `export async function ${builder}`);
 
       // ADR-011: buildPlanSlicePrompt / buildRefineSlicePrompt now delegate to
       // a shared helper (renderSlicePrompt) that performs the slice CONTEXT
@@ -42,7 +43,7 @@ describe("slice CONTEXT.md injection into prompt builders (#3452)", () => {
         ? (() => {
             const helperStart = source.indexOf("async function renderSlicePrompt");
             assert.ok(helperStart !== -1, "renderSlicePrompt helper must exist");
-            return source.slice(helperStart, helperStart + 3000);
+            return extractSourceRegion(source, "async function renderSlicePrompt");
           })()
         : chunk;
 

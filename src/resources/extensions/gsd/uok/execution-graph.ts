@@ -12,6 +12,14 @@ export interface ExecutionGraphResult {
   conflicts: Array<{ nodeA: string; nodeB: string; file: string }>;
 }
 
+export interface ExecutionGraphSnapshot {
+  capturedAt: string;
+  phase: "before-unit" | "after-unit";
+  nodes: UokGraphNode[];
+  order: string[];
+  conflicts: Array<{ nodeA: string; nodeB: string; file: string }>;
+}
+
 export type ExecutionNodeHandler = (node: UokGraphNode) => Promise<void>;
 
 export interface ConflictFreeBatchInput {
@@ -111,6 +119,20 @@ export function buildSidecarQueueNodes(queue: SidecarItem[]): UokGraphNode[] {
     dependsOn: index > 0 ? [`sidecar-${String(index - 1).padStart(4, "0")}:${queue[index - 1].kind}:${queue[index - 1].unitType}:${queue[index - 1].unitId}`] : [],
     metadata: { index },
   }));
+}
+
+export function buildExecutionGraphSnapshot(
+  nodes: UokGraphNode[],
+  phase: ExecutionGraphSnapshot["phase"],
+): ExecutionGraphSnapshot {
+  const sorted = topologicalSort(nodes);
+  return {
+    capturedAt: new Date().toISOString(),
+    phase,
+    nodes: sorted,
+    order: sorted.map((node) => node.id),
+    conflicts: detectFileConflicts(nodes),
+  };
 }
 
 export async function scheduleSidecarQueue(queue: SidecarItem[]): Promise<SidecarItem[]> {

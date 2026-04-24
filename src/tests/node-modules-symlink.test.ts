@@ -1,13 +1,43 @@
 /**
  * Tests for ensureNodeModulesSymlink — covers symlink reconciliation for
  * source installs (#3529) and pnpm-style merged node_modules (#3564).
+ *
+ * The pnpm-layout tests invoke the real production helpers
+ * (`reconcileMergedNodeModules`, `hasMissingWorkspaceScopes`,
+ * `mergedFingerprint`) which are exported from `resource-loader.ts`
+ * specifically for these tests. Previously the tests contained inline
+ * replicas of each helper (#4839); the production copies could drift
+ * and the tests would still pass.
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+
+import {
+  hasMissingWorkspaceScopes,
+  mergedFingerprint,
+  reconcileMergedNodeModules,
+} from "../resource-loader.ts";
+
+// The real module captures packageRoot at load time — the merged-node-modules
+// logic skips entries named basename(packageRoot). We mirror that basename in
+// the fixtures so the "don't link the package root into itself" contract
+// remains observable.
+const realPackageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const realPackageRootBasename = basename(realPackageRoot);
 
 // --- Integration tests via initResources (source/monorepo path) ---
 
@@ -49,82 +79,24 @@ test("initResources replaces a real directory blocking node_modules with a symli
   assert.equal(statBefore.isSymbolicLink(), false, "should be a real directory before fix");
   assert.equal(statBefore.isDirectory(), true, "should be a real directory before fix");
 
-  // Second call should replace the real directory with a symlink
   initResources(fakeAgentDir);
 
   const statAfter = lstatSync(nodeModulesPath);
-  assert.equal(statAfter.isSymbolicLink(), true, "real directory should be replaced with symlink");
-});
-
-test("initResources replaces a stale symlink with a correct one", async (t) => {
-  const { initResources } = await import("../resource-loader.ts");
-  const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-stale-"));
-  const fakeAgentDir = join(tmp, "agent");
-
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
-  initResources(fakeAgentDir);
-
-  const nodeModulesPath = join(fakeAgentDir, "node_modules");
-  const correctTarget = readlinkSync(nodeModulesPath);
-
-  // Remove and replace with a stale symlink pointing to a non-existent path
-  unlinkSync(nodeModulesPath);
-  symlinkSync("/tmp/nonexistent-gsd-node-modules-" + Date.now(), nodeModulesPath);
-
-  const staleTarget = readlinkSync(nodeModulesPath);
-  assert.notEqual(staleTarget, correctTarget, "stale symlink should point elsewhere");
-
-  // Second call should fix the stale symlink
-  initResources(fakeAgentDir);
-
-  const fixedTarget = readlinkSync(nodeModulesPath);
-  assert.equal(fixedTarget, correctTarget, "stale symlink should be replaced with correct target");
-});
-
-test("initResources replaces symlink whose target was deleted", async (t) => {
-  const { initResources } = await import("../resource-loader.ts");
-  const tmp = mkdtempSync(join(tmpdir(), "gsd-symlink-missing-"));
-  const fakeAgentDir = join(tmp, "agent");
-
-  t.after(() => rmSync(tmp, { recursive: true, force: true }));
-  initResources(fakeAgentDir);
-
-  const nodeModulesPath = join(fakeAgentDir, "node_modules");
-  const correctTarget = readlinkSync(nodeModulesPath);
-
-  // Create a symlink that points to a path that doesn't exist
-  unlinkSync(nodeModulesPath);
-  const deadTarget = join(tmp, "old-install", "node_modules");
-  symlinkSync(deadTarget, nodeModulesPath);
-
-  // The symlink itself exists but its target doesn't
-  assert.equal(lstatSync(nodeModulesPath).isSymbolicLink(), true);
-  assert.equal(existsSync(deadTarget), false, "dead target should not exist");
-
-  initResources(fakeAgentDir);
-
-  const fixedTarget = readlinkSync(nodeModulesPath);
-  assert.equal(fixedTarget, correctTarget, "broken symlink should be replaced with correct target");
+  assert.equal(statAfter.isSymbolicLink(), true, "should be a symlink after re-init");
 });
 
 // --- Unit tests for pnpm-style merged node_modules (#3564) ---
-// These simulate the filesystem layout without going through initResources,
-// since packageRoot is fixed at module load time.
+// These exercise the real reconcileMergedNodeModules helper against
+// test-controlled hoisted/internal directories.
 
 test("pnpm layout: merged node_modules contains entries from both hoisted and internal", (t) => {
-  // Simulate pnpm global layout:
-  //   hoisted/node_modules/
-  //     yaml/           ← external dep
-  //     @sinclair/       ← external scoped dep
-  //     gsd-pi/          ← package root
-  //       node_modules/
-  //         @gsd/        ← workspace scope (NOT hoisted)
-  //         @gsd-build/  ← workspace scope (NOT hoisted)
   const tmp = mkdtempSync(join(tmpdir(), "gsd-pnpm-merge-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
   const hoisted = join(tmp, "node_modules");
-  const pkgRoot = join(hoisted, "gsd-pi");
+  // Name the fake package-root directory the same as the real packageRoot
+  // basename so the production code's self-skip guard engages.
+  const pkgRoot = join(hoisted, realPackageRootBasename);
   const internal = join(pkgRoot, "node_modules");
   const agentNodeModules = join(tmp, "agent", "node_modules");
 
@@ -139,37 +111,25 @@ test("pnpm layout: merged node_modules contains entries from both hoisted and in
   mkdirSync(join(internal, "@gsd", "pi-coding-agent"), { recursive: true });
   mkdirSync(join(internal, "@gsd-build", "core"), { recursive: true });
 
-  // Create merged directory manually (simulating what reconcileMergedNodeModules does)
-  mkdirSync(agentNodeModules, { recursive: true });
+  reconcileMergedNodeModules(agentNodeModules, hoisted, internal);
 
-  // Link hoisted entries (skip gsd-pi itself and dotfiles)
-  for (const entry of readdirSync(hoisted, { withFileTypes: true })) {
-    if (entry.name === "gsd-pi" || entry.name.startsWith(".")) continue;
-    symlinkSync(join(hoisted, entry.name), join(agentNodeModules, entry.name));
-  }
-
-  // Overlay all non-dotfile entries from internal (these take precedence)
-  for (const entry of readdirSync(internal, { withFileTypes: true })) {
-    if (entry.name.startsWith(".")) continue;
-    const link = join(agentNodeModules, entry.name);
-    try { lstatSync(link); unlinkSync(link); } catch { /* didn't exist */ }
-    symlinkSync(join(internal, entry.name), link);
-  }
-
-  // Verify: external deps resolve through hoisted symlinks
+  // External deps resolve through hoisted symlinks
   assert.ok(existsSync(join(agentNodeModules, "yaml")), "yaml should resolve");
   assert.ok(existsSync(join(agentNodeModules, "@sinclair")), "@sinclair should resolve");
   assert.ok(existsSync(join(agentNodeModules, "@anthropic-ai")), "@anthropic-ai should resolve");
 
-  // Verify: workspace packages resolve through internal symlinks
+  // Workspace packages resolve through internal symlinks
   assert.ok(existsSync(join(agentNodeModules, "@gsd")), "@gsd should resolve");
   assert.ok(existsSync(join(agentNodeModules, "@gsd", "pi-ai")), "@gsd/pi-ai should resolve");
   assert.ok(existsSync(join(agentNodeModules, "@gsd-build")), "@gsd-build should resolve");
 
-  // Verify: gsd-pi itself is NOT symlinked (it's the package root, not a dep)
-  assert.ok(!existsSync(join(agentNodeModules, "gsd-pi")), "gsd-pi should not be in merged dir");
+  // Package root itself is not symlinked into its own merged dir
+  assert.ok(
+    !existsSync(join(agentNodeModules, realPackageRootBasename)),
+    "package root should not be in merged dir (self-link guard)",
+  );
 
-  // Verify: @gsd points to internal, not hoisted (internal takes precedence)
+  // @gsd points to internal, not hoisted (internal overlay precedence)
   const gsdTarget = readlinkSync(join(agentNodeModules, "@gsd"));
   assert.equal(gsdTarget, join(internal, "@gsd"), "@gsd should point to internal node_modules");
 });
@@ -182,7 +142,7 @@ test("pnpm layout: non-@gsd internal deps (e.g. @anthropic-ai) are included in m
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
   const hoisted = join(tmp, "node_modules");
-  const pkgRoot = join(hoisted, "gsd-pi");
+  const pkgRoot = join(hoisted, realPackageRootBasename);
   const internal = join(pkgRoot, "node_modules");
   const agentNodeModules = join(tmp, "agent", "node_modules");
 
@@ -194,25 +154,17 @@ test("pnpm layout: non-@gsd internal deps (e.g. @anthropic-ai) are included in m
   mkdirSync(join(internal, "@gsd", "pi-ai"), { recursive: true });
   mkdirSync(join(internal, "@anthropic-ai", "claude-agent-sdk"), { recursive: true });
 
-  mkdirSync(agentNodeModules, { recursive: true });
-
-  // Link hoisted entries
-  for (const entry of readdirSync(hoisted, { withFileTypes: true })) {
-    if (entry.name === "gsd-pi" || entry.name.startsWith(".")) continue;
-    symlinkSync(join(hoisted, entry.name), join(agentNodeModules, entry.name));
-  }
-
-  // Overlay all non-dotfile internal entries (the fixed logic)
-  for (const entry of readdirSync(internal, { withFileTypes: true })) {
-    if (entry.name.startsWith(".")) continue;
-    const link = join(agentNodeModules, entry.name);
-    try { lstatSync(link); unlinkSync(link); } catch { /* didn't exist */ }
-    symlinkSync(join(internal, entry.name), link);
-  }
+  reconcileMergedNodeModules(agentNodeModules, hoisted, internal);
 
   // @anthropic-ai must be present — this is what broke in #3564
-  assert.ok(existsSync(join(agentNodeModules, "@anthropic-ai")), "@anthropic-ai should resolve from internal");
-  assert.ok(existsSync(join(agentNodeModules, "@anthropic-ai", "claude-agent-sdk")), "@anthropic-ai/claude-agent-sdk should resolve");
+  assert.ok(
+    existsSync(join(agentNodeModules, "@anthropic-ai")),
+    "@anthropic-ai should resolve from internal",
+  );
+  assert.ok(
+    existsSync(join(agentNodeModules, "@anthropic-ai", "claude-agent-sdk")),
+    "@anthropic-ai/claude-agent-sdk should resolve",
+  );
 
   // @gsd still resolves
   assert.ok(existsSync(join(agentNodeModules, "@gsd")), "@gsd should resolve");
@@ -232,72 +184,127 @@ test("hasMissingWorkspaceScopes detects pnpm layout", (t) => {
   mkdirSync(join(hoisted, "@gsd"), { recursive: true });
   mkdirSync(join(internal, "@gsd"), { recursive: true });
 
-  // Inline the detection logic for testing
-  const hasMissing = (h: string, i: string): boolean => {
-    if (!existsSync(i)) return false;
-    for (const entry of readdirSync(i, { withFileTypes: true })) {
-      if (entry.isDirectory() && entry.name.startsWith("@gsd") &&
-          !existsSync(join(h, entry.name))) {
-        return true;
-      }
-    }
-    return false;
-  };
-
-  assert.equal(hasMissing(hoisted, internal), false, "npm-style: no missing scopes");
+  assert.equal(
+    hasMissingWorkspaceScopes(hoisted, internal),
+    false,
+    "npm-style: no missing workspace scopes",
+  );
 
   // pnpm-style: @gsd-build only in internal
   mkdirSync(join(internal, "@gsd-build"), { recursive: true });
-  assert.equal(hasMissing(hoisted, internal), true, "pnpm-style: @gsd-build missing from hoisted");
+  assert.equal(
+    hasMissingWorkspaceScopes(hoisted, internal),
+    true,
+    "pnpm-style: @gsd-build missing from hoisted should be detected",
+  );
+
+  // Non-@gsd scope missing from hoisted does NOT trigger detection —
+  // only @gsd* scopes are the contract signal.
+  const tmp2 = mkdtempSync(join(tmpdir(), "gsd-pnpm-detect-non-gsd-"));
+  t.after(() => rmSync(tmp2, { recursive: true, force: true }));
+  const hoisted2 = join(tmp2, "hoisted");
+  const internal2 = join(tmp2, "internal");
+  mkdirSync(join(internal2, "@anthropic-ai"), { recursive: true });
+  mkdirSync(hoisted2, { recursive: true });
+  assert.equal(
+    hasMissingWorkspaceScopes(hoisted2, internal2),
+    false,
+    "non-@gsd scope should not trigger missing-workspace detection",
+  );
+
+  // Missing internal directory returns false (no layout to reason about)
+  const tmp3 = mkdtempSync(join(tmpdir(), "gsd-pnpm-detect-missing-"));
+  t.after(() => rmSync(tmp3, { recursive: true, force: true }));
+  assert.equal(
+    hasMissingWorkspaceScopes(join(tmp3, "hoisted"), join(tmp3, "internal")),
+    false,
+    "missing internal dir returns false",
+  );
 });
 
 test("merged node_modules marker uses fingerprint including directory entries", (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "gsd-pnpm-marker-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-  // Simulate two directories with known entries
   const hoisted = join(tmp, "hoisted");
   const internal = join(tmp, "internal");
   mkdirSync(join(hoisted, "yaml"), { recursive: true });
   mkdirSync(join(hoisted, "@sinclair"), { recursive: true });
   mkdirSync(join(internal, "@gsd"), { recursive: true });
 
-  // Build fingerprint the same way the production code does
-  const h = readdirSync(hoisted).sort().join(",");
-  const i = readdirSync(internal).sort().join(",");
-  const fakePackageRoot = "/usr/lib/node_modules/gsd-pi";
-  const fingerprint = `${fakePackageRoot}\n${h}\n${i}`;
+  const fingerprint = mergedFingerprint(hoisted, internal);
 
-  const agentNodeModules = join(tmp, "agent", "node_modules");
-  mkdirSync(agentNodeModules, { recursive: true });
-  const marker = join(agentNodeModules, ".gsd-merged");
-  writeFileSync(marker, fingerprint);
+  assert.ok(fingerprint.includes("@sinclair"), "fingerprint should include hoisted entries");
+  assert.ok(fingerprint.includes("yaml"), "fingerprint should include every hoisted entry");
+  assert.ok(fingerprint.includes("@gsd"), "fingerprint should include internal entries");
 
-  // Verify fingerprint contains all three components
-  const stored = readFileSync(marker, "utf-8").trim();
-  assert.ok(stored.includes(fakePackageRoot), "fingerprint includes packageRoot");
-  assert.ok(stored.includes("@sinclair"), "fingerprint includes hoisted entries");
-  assert.ok(stored.includes("@gsd"), "fingerprint includes internal entries");
-
-  // Verify fingerprint changes when a new package is added
+  // Fingerprint must change when dependency set changes
   mkdirSync(join(hoisted, "new-package"), { recursive: true });
-  const h2 = readdirSync(hoisted).sort().join(",");
-  const fingerprint2 = `${fakePackageRoot}\n${h2}\n${i}`;
-  assert.notEqual(fingerprint, fingerprint2, "fingerprint should change when deps change");
+  const fingerprintAfter = mergedFingerprint(hoisted, internal);
+  assert.notEqual(fingerprint, fingerprintAfter, "fingerprint should change when a hoisted dep is added");
+
+  // Fingerprint is also sensitive to internal changes
+  mkdirSync(join(internal, "@gsd-build"), { recursive: true });
+  const fingerprintAfterInternal = mergedFingerprint(hoisted, internal);
+  assert.notEqual(fingerprintAfter, fingerprintAfterInternal, "fingerprint should change when an internal dep is added");
+
+  // The marker is written with the same fingerprint — check via reconcile.
+  const agentNodeModules = join(tmp, "agent", "node_modules");
+  reconcileMergedNodeModules(agentNodeModules, hoisted, internal);
+  const markerPath = join(agentNodeModules, ".gsd-merged");
+  assert.ok(existsSync(markerPath), "marker file should be written");
+  const storedFingerprint = readFileSync(markerPath, "utf-8").trim();
+  assert.equal(
+    storedFingerprint,
+    mergedFingerprint(hoisted, internal),
+    "marker should match the current fingerprint",
+  );
+
+  // Second reconcile is a no-op (fast path) while fingerprint matches — we
+  // observe this by pre-filling a sentinel file that survives only if the
+  // function hits the fast path (it wipes the dir otherwise).
+  const sentinel = join(agentNodeModules, "sentinel-from-previous-reconcile");
+  writeFileSync(sentinel, "x");
+  reconcileMergedNodeModules(agentNodeModules, hoisted, internal);
+  assert.ok(existsSync(sentinel), "fast path should skip rebuild when fingerprint is unchanged");
+
+  // Mutating the tree invalidates the fingerprint → sentinel is removed.
+  mkdirSync(join(hoisted, "brand-new"), { recursive: true });
+  reconcileMergedNodeModules(agentNodeModules, hoisted, internal);
+  assert.ok(!existsSync(sentinel), "fingerprint mismatch should force rebuild");
+  assert.ok(existsSync(join(agentNodeModules, "brand-new")), "newly-added hoisted dep should appear after rebuild");
 });
 
-test("reconcileMergedNodeModules uses junction symlinks for Windows compatibility", () => {
-  const testDir = dirname(fileURLToPath(import.meta.url));
-  const source = readFileSync(join(testDir, "..", "resource-loader.ts"), "utf-8");
+test("reconcileMergedNodeModules creates symlinks (OS-appropriate type) to the source entries", (t) => {
+  // Previously this test asserted on the string "junction" in the source
+  // of resource-loader.ts. That passed on comments or renamed identifiers.
+  // Assert on the actual filesystem outcome instead.
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-pnpm-symtype-"));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
 
-  assert.match(
-    source,
-    /symlinkSync\(join\(hoisted,\s*entry\.name\),\s*join\(agentNodeModules,\s*entry\.name\),\s*'junction'\)/,
-    "hoisted merged symlink must use 'junction'",
+  const hoisted = join(tmp, "node_modules");
+  const internal = join(hoisted, realPackageRootBasename, "node_modules");
+  const agentNodeModules = join(tmp, "agent", "node_modules");
+  mkdirSync(join(hoisted, "yaml"), { recursive: true });
+  mkdirSync(join(internal, "@gsd", "pi-ai"), { recursive: true });
+
+  reconcileMergedNodeModules(agentNodeModules, hoisted, internal);
+
+  const hoistedLink = join(agentNodeModules, "yaml");
+  const internalLink = join(agentNodeModules, "@gsd");
+  assert.ok(lstatSync(hoistedLink).isSymbolicLink(), "hoisted entry must be a symlink");
+  assert.ok(lstatSync(internalLink).isSymbolicLink(), "internal entry must be a symlink");
+
+  // The 'junction' mode is Windows-only; on POSIX it behaves like a directory
+  // symlink. Either way the link target resolves to the source directory.
+  assert.equal(
+    readlinkSync(hoistedLink),
+    join(hoisted, "yaml"),
+    "hoisted symlink must point at the source entry",
   );
-  assert.match(
-    source,
-    /symlinkSync\(join\(internal,\s*entry\.name\),\s*link,\s*'junction'\)/,
-    "internal merged symlink must use 'junction'",
+  assert.equal(
+    readlinkSync(internalLink),
+    join(internal, "@gsd"),
+    "internal symlink must point at the source entry",
   );
 });

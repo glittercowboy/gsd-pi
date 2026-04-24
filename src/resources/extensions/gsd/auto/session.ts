@@ -178,6 +178,12 @@ export class AutoSession {
    *  stopAuto does not attempt the same merge a second time (#2645). */
   milestoneMergedInPhases = false;
 
+  // #4765 — slice-cadence collapse: main-branch SHAs at the moment each
+  // milestone's first slice merge began. Used by resquashMilestoneOnMain at
+  // milestone completion to collapse N slice commits into one. Cleared when
+  // the milestone finishes (or resquash runs).
+  milestoneStartShas: Map<string, string> = new Map();
+
   // ── Dispatch circuit breakers ──────────────────────────────────────
   rewriteAttemptCount = 0;
   /** Tracks consecutive bootstrap attempts that found phase === "complete".
@@ -299,6 +305,7 @@ export class AutoSession {
     this.lastGitActionStatus = null;
     this.isolationDegraded = false;
     this.milestoneMergedInPhases = false;
+    this.milestoneStartShas = new Map();
     this.checkpointSha = null;
 
     // Signal handler

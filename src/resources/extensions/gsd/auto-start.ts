@@ -45,6 +45,7 @@ import {
   nativeBranchListMerged,
   nativeBranchDelete,
   nativeWorktreeRemove,
+  nativeCommitCountBetween,
 } from "./native-git-bridge.js";
 import { GitServiceImpl } from "./git-service.js";
 import {
@@ -55,6 +56,7 @@ import {
 import { getAutoWorktreePath, isInAutoWorktree } from "./auto-worktree.js";
 import { readResourceVersion, cleanStaleRuntimeUnits } from "./auto-worktree.js";
 import { worktreePath as getWorktreeDir, isInsideWorktreesDir } from "./worktree-manager.js";
+import { emitWorktreeOrphaned } from "./worktree-telemetry.js";
 import { initMetrics } from "./metrics.js";
 import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
@@ -62,6 +64,7 @@ import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactiv
 import { snapshotSkills } from "./skill-discovery.js";
 import { isDbAvailable, getMilestone, openDatabase, getDbStatus } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
+import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 
 import {
   debugLog,
@@ -75,6 +78,7 @@ import type { AutoSession } from "./auto/session.js";
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -142,6 +146,35 @@ export async function openProjectDbIfPresent(basePath: string): Promise<void> {
  *
  * Returns a summary of actions taken for the caller to surface via notify.
  */
+/**
+ * Decide which survivor-branch recovery action bootstrapAutoSession must
+ * run for the current (hasSurvivorBranch, phase) combination. Extracted
+ * from the inline chain at `bootstrapAutoSession` (around line 604) so
+ * the decision table is testable without constructing a full session.
+ *
+ * - `none`     — no survivor, or phase doesn't call for recovery. Fall
+ *                through to normal bootstrap flow.
+ * - `discuss`  — survivor + phase=needs-discussion (#1726). Route to
+ *                showSmartEntry.
+ * - `finalize` — survivor + phase=complete (#2358). Run mergeAndExit to
+ *                merge the milestone branch and clear the worktree.
+ *
+ * Any other phase with a survivor (pre-planning, planning, executing…)
+ * returns `none` — the caller continues its normal flow and the
+ * survivor branch participates in whatever auto-mode happens next.
+ */
+export type SurvivorAction = "none" | "discuss" | "finalize";
+
+export function decideSurvivorAction(
+  hasSurvivorBranch: boolean,
+  phase: string | null | undefined,
+): SurvivorAction {
+  if (!hasSurvivorBranch) return "none";
+  if (phase === "needs-discussion") return "discuss";
+  if (phase === "complete") return "finalize";
+  return "none";
+}
+
 export function auditOrphanedMilestoneBranches(
   basePath: string,
   isolationMode: "worktree" | "branch" | "none",
@@ -185,10 +218,60 @@ export function auditOrphanedMilestoneBranches(
     const milestoneId = branch.replace(/^milestone\//, "");
     const milestone = getMilestone(milestoneId);
 
-    // Only audit completed milestones
-    if (!milestone || milestone.status !== "complete") continue;
+    if (!milestone) continue;
 
     const isMerged = mergedBranches.has(branch);
+
+    // #4762 — in-progress milestone branch with unmerged commits ahead of
+    // main. This is the pre-completion orphan case: auto-mode exited without
+    // completing the milestone (pause, stop, crash, merge error, blocker) and
+    // work is stranded on the branch or in the worktree. Data safety first:
+    // we never delete or touch; we just surface a warning so the user knows
+    // where to look.
+    //
+    // Gate on isClosedStatus so we only warn about genuinely open milestones.
+    // Parked/other closed statuses go through the legacy complete/unmerged
+    // path below where appropriate.
+    if (!isClosedStatus(milestone.status)) {
+      if (isMerged) continue; // nothing to recover
+      let commitsAhead = 0;
+      try {
+        commitsAhead = nativeCommitCountBetween(basePath, mainBranch, branch);
+      } catch {
+        // Rev-walk failure — skip rather than noise
+        continue;
+      }
+      if (commitsAhead === 0) continue;
+
+      const wtDir = getWorktreeDir(basePath, milestoneId);
+      const wtDirExists = existsSync(wtDir);
+      const wtSuffix = wtDirExists
+        ? ` Worktree directory at .gsd/worktrees/${milestoneId}/ holds the live work.`
+        : "";
+      warnings.push(
+        `Branch ${branch} has ${commitsAhead} commit(s) ahead of ${mainBranch} for in-progress milestone ${milestoneId}.` +
+        wtSuffix +
+        ` Run \`/gsd auto\` to resume, or merge manually if abandoning.`,
+      );
+
+      // #4764 telemetry
+      try {
+        emitWorktreeOrphaned(basePath, milestoneId, {
+          reason: "in-progress-unmerged",
+          commitsAhead,
+          worktreeDirExists: wtDirExists,
+        });
+      } catch (err) {
+        logWarning("engine", `worktree-orphaned telemetry failed for ${milestoneId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      continue;
+    }
+
+    // Only the "complete" status participates in the merged/unmerged cleanup
+    // paths below — other closed statuses (parked, etc.) are intentionally
+    // left alone.
+    if (milestone.status !== "complete") continue;
 
     if (isMerged) {
       // Branch is merged — safe to delete branch and clean up worktree dir
@@ -234,6 +317,16 @@ export function auditOrphanedMilestoneBranches(
         `Branch ${branch} exists for completed milestone ${milestoneId} but is NOT merged into ${mainBranch}. ` +
         `This may contain unmerged work. Merge manually or run \`/gsd health --fix\` to resolve.`,
       );
+
+      // #4764 telemetry
+      try {
+        emitWorktreeOrphaned(basePath, milestoneId, {
+          reason: "complete-unmerged",
+          worktreeDirExists: existsSync(getWorktreeDir(basePath, milestoneId)),
+        });
+      } catch (err) {
+        logWarning("engine", `worktree-orphaned telemetry failed for ${milestoneId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
@@ -439,7 +532,13 @@ export async function bootstrapAutoSession(
           const row = getMilestone(mid);
           return !!row && isClosedStatus(row.status);
         }
-        return !!resolveMilestoneFile(base, mid, "SUMMARY");
+        const summaryFile = resolveMilestoneFile(base, mid, "SUMMARY");
+        if (!summaryFile) return false;
+        try {
+          return classifyMilestoneSummaryContent(readFileSync(summaryFile, "utf-8")) !== "failure";
+        } catch {
+          return false;
+        }
       },
     );
 
@@ -505,7 +604,7 @@ export async function bootstrapAutoSession(
     // The worktree/branch was created but the milestone only has CONTEXT-DRAFT.md.
     // Route to the interactive discussion handler instead of falling through to
     // auto-mode, which would immediately stop with "needs discussion".
-    if (hasSurvivorBranch && state.phase === "needs-discussion") {
+    if (decideSurvivorAction(hasSurvivorBranch, state.phase) === "discuss") {
       const { showSmartEntry } = await import("./guided-flow.js");
       await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
 
@@ -531,7 +630,9 @@ export async function bootstrapAutoSession(
     // The milestone artifacts were written but finalization (merge, worktree
     // cleanup) never ran. Run mergeAndExit to finalize, then re-derive state
     // so the normal "all milestones complete" or "next milestone" path runs.
-    if (hasSurvivorBranch && state.phase === "complete") {
+    // Re-evaluate via the helper — the discuss branch above may have cleared
+    // hasSurvivorBranch after a successful promotion.
+    if (decideSurvivorAction(hasSurvivorBranch, state.phase) === "finalize") {
       const mid = state.activeMilestone!.id;
       ctx.ui.notify(
         `Milestone ${mid} is complete but branch/worktree was not finalized. Running merge now.`,

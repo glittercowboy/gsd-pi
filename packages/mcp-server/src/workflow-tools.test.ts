@@ -712,6 +712,91 @@ export const executeTaskComplete = async (params, projectDir) => {
     }
   });
 
+  it("gsd_plan_milestone rejects a full slice with missing heavy fields via a behavioral round-trip", async () => {
+    // Behavioral guard for the full-vs-sketch conditional. The original
+    // regression (invisible "required unless isSketch" requirement) is
+    // surfaced to users through two distinct runtime channels:
+    //   1. A parse-time rejection when the tool is called with empty heavy
+    //      fields on a non-sketch slice (no isSketch=true).
+    //   2. An acceptance when isSketch=true + sketchScope is supplied and
+    //      heavy fields are omitted.
+    // Both arms are exercised below against the live handler — any schema
+    // refactor that preserves the user-observable contract (rejection +
+    // acceptance) passes, and any refactor that breaks the contract
+    // fails, regardless of whether internal `.describe()` prose changes.
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const milestoneTool = server.tools.find((t) => t.name === "gsd_plan_milestone");
+      assert.ok(milestoneTool, "milestone planning tool should be registered");
+
+      // Arm 1: full slice (isSketch omitted) with the heavy fields missing
+      // must reject and name ALL four fields so the agent can self-correct.
+      let fullError: unknown;
+      try {
+        await milestoneTool!.handler({
+          projectDir: base,
+          milestoneId: "M001",
+          title: "Full slice path",
+          vision: "Behavioral test for isSketch conditional.",
+          slices: [
+            {
+              sliceId: "S01",
+              title: "Heavy slice",
+              risk: "medium",
+              depends: [],
+              demo: "Demo.",
+              goal: "Goal.",
+              // heavy fields intentionally omitted
+            },
+          ],
+        });
+      } catch (err) {
+        fullError = err;
+      }
+      assert.ok(fullError, "a non-sketch slice without heavy fields must reject");
+      const fullMsg = fullError instanceof Error ? fullError.message : String(fullError);
+      for (const field of ["successCriteria", "proofLevel", "integrationClosure", "observabilityImpact"]) {
+        assert.ok(
+          fullMsg.includes(field),
+          `rejection must name ${field} so agents can recover without a second round-trip; got: ${fullMsg}`,
+        );
+      }
+
+      // Arm 2: sketch slice (isSketch=true + sketchScope) with heavy fields
+      // omitted must be accepted — proving the conditional is live. Assert
+      // success directly rather than just checking a thrown message omits
+      // the heavy-field names: a generic failure would otherwise silently
+      // pass this arm.
+      const sketchResult = await milestoneTool!.handler({
+        projectDir: base,
+        milestoneId: "M002",
+        title: "Sketch slice path",
+        vision: "Behavioral test for isSketch conditional.",
+        slices: [
+          {
+            sliceId: "S01",
+            title: "Sketch slice",
+            risk: "medium",
+            depends: [],
+            demo: "Demo.",
+            goal: "Goal.",
+            isSketch: true,
+            sketchScope: "Two-sentence scope. Boundary defined.",
+          },
+        ],
+      });
+      assert.match(
+        (sketchResult as any).content[0].text as string,
+        /Planned milestone M002/,
+        "sketch slice with isSketch=true must be accepted by the handler",
+      );
+    } finally {
+      cleanup(base);
+    }
+  });
+
   it("gsd_plan_milestone requires sketchScope when isSketch=true and skips heavy fields", async () => {
     const base = makeTmpBase();
     try {

@@ -116,6 +116,12 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/require-tests.sh
 
+      - name: Reject source-grep tests
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/check-source-grep-tests.sh
+
   build:
     timeout-minutes: 15
     needs: detect-changes

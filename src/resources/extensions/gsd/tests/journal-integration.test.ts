@@ -21,6 +21,13 @@ import type { IterationContext, LoopState, PreDispatchData, IterationData } from
 import type { SessionLockStatus } from "../session-lock.js";
 import { runDispatch, runUnitPhase, runPreDispatch, runFinalize } from "../auto/phases.js";
 import { readUnitRuntimeRecord } from "../unit-runtime.js";
+import {
+  closeDatabase,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+} from "../gsd-db.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -642,6 +649,63 @@ test("terminal event is emitted on blocked state", async () => {
   assert.equal(terminalEvents.length, 1);
   assert.equal((terminalEvents[0].data as any).reason, "blocked");
   assert.deepEqual((terminalEvents[0].data as any).blockers, ["Missing API key"]);
+});
+
+test("#4671: plan-v2 missing CONTEXT.md reaches dispatch recovery instead of pausing", async () => {
+  const basePath = mkdtempSync(join(tmpdir(), "gsd-4671-predispatch-"));
+  mkdirSync(join(basePath, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
+  openDatabase(join(basePath, ".gsd", "gsd.db"));
+  try {
+    insertMilestone({ id: "M001", title: "Test", status: "active" });
+    insertSlice({
+      id: "S01",
+      milestoneId: "M001",
+      title: "Slice 1",
+      status: "in_progress",
+      sequence: 1,
+    });
+    insertTask({
+      id: "T01",
+      milestoneId: "M001",
+      sliceId: "S01",
+      title: "Task 1",
+      status: "pending",
+      keyFiles: ["src/task.ts"],
+      sequence: 1,
+    });
+
+    let pauseCalls = 0;
+    const capture = createEventCapture();
+    const deps = makeMockDeps(capture, {
+      pauseAuto: async () => { pauseCalls++; },
+      deriveState: async () => ({
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Test", status: "active" },
+        activeSlice: { id: "S01", title: "Slice 1" },
+        activeTask: { id: "T01", title: "Task 1" },
+        registry: [{ id: "M001", status: "active" }],
+        blockers: [],
+        recentDecisions: [],
+        nextAction: "dispatch",
+      }) as any,
+    });
+    const ic = makeIC(deps, {
+      prefs: { uok: { plan_v2: { enabled: true } } } as any,
+    });
+    ic.s.basePath = basePath;
+
+    const result = await runPreDispatch(ic, {
+      recentUnits: [],
+      stuckRecoveryAttempts: 0,
+      consecutiveFinalizeTimeouts: 0,
+    });
+
+    assert.equal(result.action, "next");
+    assert.equal(pauseCalls, 0, "missing CONTEXT.md should be handled by dispatch recovery, not plan gate pause");
+  } finally {
+    closeDatabase();
+    rmSync(basePath, { recursive: true, force: true });
+  }
 });
 
 test("milestone-transition event is emitted when milestone changes", async () => {

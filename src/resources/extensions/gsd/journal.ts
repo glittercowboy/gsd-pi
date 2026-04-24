@@ -50,7 +50,17 @@ export type JournalEventType =
   | "worktree-skip"
   | "worktree-merge-start"
   | "worktree-merge-failed"
-  | "artifact-verification-retry";
+  | "artifact-verification-retry"
+  // #4764 — worktree lifespan / divergence telemetry
+  | "worktree-created"
+  | "worktree-merged"
+  | "worktree-orphaned"
+  | "auto-exit"
+  | "worktree-sync"
+  | "canonical-root-redirect"
+  // #4765 — slice-cadence collapse
+  | "slice-merged"
+  | "milestone-resquash";
 
 /** A single structured event in the journal. */
 export interface JournalEntry {

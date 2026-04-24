@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import type { AutoSession } from "./session.js";
 import { NEW_SESSION_TIMEOUT_MS } from "./session.js";
 import type { UnitResult } from "./types.js";
-import { _setCurrentResolve, _setSessionSwitchInFlight } from "./resolve.js";
+import { _clearCurrentResolve, _setCurrentResolve, _setSessionSwitchInFlight } from "./resolve.js";
 import {
   getCurrentTurnGeneration,
   runWithTurnGeneration,
@@ -148,6 +148,7 @@ export async function runUnit(
       }
 
       if (!ready) {
+        _clearCurrentResolve();
         return {
           status: "cancelled",
           errorContext: {

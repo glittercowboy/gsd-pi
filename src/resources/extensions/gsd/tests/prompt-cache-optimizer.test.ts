@@ -64,6 +64,18 @@ describe("prompt-cache-optimizer: classifySection", () => {
     assert.equal(classifySection("overrides"), "semi-static");
   });
 
+  // Regression: issue #4719 — KNOWLEDGE falls through to dynamic default.
+  // Knowledge content is reused across all tasks within a milestone, so it
+  // must be classified as semi-static to qualify for prefix caching when the
+  // cache optimizer is wired into the prompt path.
+  it("classifies knowledge as semi-static (issue #4719)", () => {
+    assert.equal(classifySection("knowledge"), "semi-static");
+  });
+
+  it("classifies project-knowledge as semi-static (issue #4719)", () => {
+    assert.equal(classifySection("project-knowledge"), "semi-static");
+  });
+
   it("classifies task-plan as dynamic", () => {
     assert.equal(classifySection("task-plan"), "dynamic");
   });

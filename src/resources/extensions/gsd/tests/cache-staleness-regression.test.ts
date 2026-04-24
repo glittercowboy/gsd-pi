@@ -69,11 +69,11 @@ describe("cache-staleness-regression", () => {
       ].join('\n');
       writeMilestoneFile(base, 'M001', 'ROADMAP', roadmap);
 
-      // Step 3: WITHOUT invalidation, the old state might be cached
-      // The state cache has a 100ms TTL, so wait just past it
-      await new Promise(r => setTimeout(r, 150));
-
-      // Step 4: Invalidate and re-derive — should see the new roadmap
+      // Step 3: Explicit invalidation — this is the #1240 fix path. We
+      // do NOT rely on the 100ms TTL here; the production code calls
+      // invalidateAllCaches() / invalidateStateCache() immediately after
+      // writing planning files, so the next deriveState() must see the
+      // new roadmap without any wall-clock wait.
       invalidateAllCaches();
       invalidateStateCache();
       const state2 = await deriveState(base);
@@ -100,10 +100,8 @@ describe("cache-staleness-regression", () => {
       // Simulate: discussion completes, CONTEXT.md is written
       writeMilestoneFile(base, 'M001', 'CONTEXT', '# M001: Test\n\nFull context after discussion.\n');
 
-      // Wait past TTL
-      await new Promise(r => setTimeout(r, 150));
-
-      // Without invalidation, we'd still see 'needs-discussion'
+      // Explicit invalidation is the production fix path for #1249 —
+      // no wall-clock wait needed.
       invalidateAllCaches();
       invalidateStateCache();
       const state2 = await deriveState(base);
@@ -116,7 +114,7 @@ describe("cache-staleness-regression", () => {
     }
   });
 
-  test("state cache TTL: fresh reads after 100ms", async () => {
+  test("state cache TTL: within window returns cached; past window re-derives", async () => {
     const base = createBase();
     try {
       writeMilestoneFile(base, 'M001', 'CONTEXT', '# M001\n\nDesc.\n');
@@ -126,7 +124,7 @@ describe("cache-staleness-regression", () => {
       const state1 = await deriveState(base);
       assert.strictEqual(state1.phase, 'pre-planning', 'initial: pre-planning');
 
-      // Write roadmap immediately
+      // Write roadmap immediately — no invalidation
       writeMilestoneFile(base, 'M001', 'ROADMAP', [
         '# M001: Test',
         '',
@@ -136,18 +134,19 @@ describe("cache-staleness-regression", () => {
         '',
       ].join('\n'));
 
-      // Immediately after writing (within 100ms TTL), the cache might be stale
+      // Within the TTL window, deriveState() must return the cached
+      // pre-planning state — this is the "cached" half of the TTL
+      // contract and the reason invalidateStateCache() exists.
       const state2 = await deriveState(base);
-      // This MAY still show pre-planning if within TTL — that's expected behavior
+      assert.strictEqual(state2.phase, 'pre-planning', 'within TTL: cached pre-planning is returned');
 
-      // Wait past TTL
+      // Past the TTL + explicit parse-cache flush, the fresh derive must
+      // see the new roadmap. invalidateAllCaches() is required because
+      // the file-parse cache is independent of the state TTL.
       await new Promise(r => setTimeout(r, 150));
-
-      // ALSO invalidate parse cache (not just state cache)
       invalidateAllCaches();
-      invalidateStateCache();
       const state3 = await deriveState(base);
-      assert.strictEqual(state3.phase, 'planning', 'after TTL expiry + invalidation → planning');
+      assert.strictEqual(state3.phase, 'planning', 'past TTL: re-derive sees new roadmap');
     } finally {
       cleanup(base);
     }
@@ -194,7 +193,6 @@ describe("cache-staleness-regression", () => {
         '- [ ] **T02: Second Task** `est:1h`',
       ].join('\n'));
 
-      await new Promise(r => setTimeout(r, 150));
       invalidateAllCaches();
       invalidateStateCache();
       const state2 = await deriveState(base);
@@ -242,7 +240,6 @@ describe("cache-staleness-regression", () => {
         '- [x] **T01: Task** `est:1h`',
       ].join('\n'));
 
-      await new Promise(r => setTimeout(r, 150));
       invalidateAllCaches();
       invalidateStateCache();
       const state2 = await deriveState(base);
@@ -282,7 +279,6 @@ describe("cache-staleness-regression", () => {
         '',
       ].join('\n'));
 
-      await new Promise(r => setTimeout(r, 150));
       invalidateAllCaches();
       invalidateStateCache();
       const state2 = await deriveState(base);

@@ -6,6 +6,13 @@
  * Two tests:
  * 1. Auto-mode files must have zero empty catch blocks (fully migrated).
  * 2. All GSD files must not use raw stderr/console in catch blocks.
+ *
+ * Implementation note (#4836): the previous implementation walked every
+ * `{` / `}` character in the source to infer catch-block boundaries. That
+ * ignored string literals, template interpolations, regexes, and comments,
+ * producing both false positives and false negatives. The current
+ * implementation uses the TypeScript compiler API to walk real
+ * `CatchClause` nodes, so lexical accidents cannot flip the verdict.
  */
 
 import { describe, test } from "node:test";
@@ -13,6 +20,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const gsdDir = join(__dirname, "..");
@@ -73,12 +81,6 @@ const MIGRATED_FILES = new Set([
   "auto-verification.ts",
 ]);
 
-/** Patterns that indicate a catch block already uses workflow-logger */
-const LOGGER_PATTERNS = [
-  /logWarning\s*\(/,
-  /logError\s*\(/,
-];
-
 function getAutoModeFiles(): string[] {
   const files: string[] = [];
 
@@ -124,103 +126,61 @@ function getGsdSourceFiles(): string[] {
   return files;
 }
 
-/**
- * Scan a file for empty catch blocks — catches whose body contains
- * only whitespace and/or comments but no executable statements.
- */
-function findEmptyCatches(filePath: string): Array<{ line: number; text: string }> {
+function parseSourceFile(filePath: string): ts.SourceFile {
   const content = readFileSync(filePath, "utf-8");
-  const lines = content.split("\n");
-  const results: Array<{ line: number; text: string }> = [];
+  return ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, /*setParentNodes*/ true, ts.ScriptKind.TS);
+}
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+function forEachCatchClause(sf: ts.SourceFile, visit: (cc: ts.CatchClause) => void): void {
+  const walk = (node: ts.Node): void => {
+    if (ts.isCatchClause(node)) visit(node);
+    ts.forEachChild(node, walk);
+  };
+  walk(sf);
+}
 
-    // Match catch block opening
-    if (!/\}\s*catch\s*(\([^)]*\))?\s*\{/.test(line)) continue;
-
-    // Inline single-line catch: } catch { ... }
-    const inlineMatch = line.match(/\}\s*catch\s*(\([^)]*\))?\s*\{(.*)\}\s*;?\s*$/);
-    if (inlineMatch) {
-      const body = inlineMatch[2].trim();
-      const stripped = body.replace(/\/\*.*?\*\//g, "").replace(/\/\/.*/g, "").trim();
-      if (!stripped) {
-        results.push({ line: i + 1, text: line.trim() });
-      }
-      continue;
+/**
+ * A catch block is "empty" if its Block has zero statements. Comments
+ * inside the block are trivia and are not Statement nodes, so a
+ * comment-only body still counts as empty — matching the intent of the
+ * old regex check but without its lexical blind spots.
+ */
+function findEmptyCatches(filePath: string): Array<{ line: number }> {
+  const sf = parseSourceFile(filePath);
+  const results: Array<{ line: number }> = [];
+  forEachCatchClause(sf, (cc) => {
+    if (cc.block.statements.length === 0) {
+      const { line } = sf.getLineAndCharacterOfPosition(cc.getStart(sf));
+      results.push({ line: line + 1 });
     }
-
-    // Multi-line catch — scan until matching }
-    let j = i + 1;
-    let depth = 1;
-    const bodyLines: string[] = [];
-    while (j < lines.length && depth > 0) {
-      for (const ch of lines[j]) {
-        if (ch === "{") depth++;
-        else if (ch === "}") depth--;
-      }
-      bodyLines.push(lines[j].trim());
-      j++;
-    }
-
-    const meaningful = bodyLines.slice(0, -1).filter(
-      (l) => l && !l.startsWith("//") && !l.startsWith("/*") && !l.startsWith("*") && l !== "}",
-    );
-
-    if (meaningful.length === 0) {
-      results.push({ line: i + 1, text: line.trim() });
-    }
-  }
-
+  });
   return results;
 }
 
 /**
- * Scan a file for catch blocks that use raw process.stderr.write or
- * console.error/warn instead of workflow-logger.
+ * A catch block uses "raw stderr/console" if its body text calls
+ * process.stderr.write or console.error/warn *and* does NOT also call
+ * logWarning / logError.
+ *
+ * We test against the block's statement subtree text — derived from the
+ * AST node range, not a naive substring of the whole file — so string
+ * literals outside the block can never leak into the decision.
  */
-function findRawStderrCatches(filePath: string): Array<{ line: number; text: string }> {
-  const content = readFileSync(filePath, "utf-8");
-  const lines = content.split("\n");
-  const results: Array<{ line: number; text: string }> = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!/\}\s*catch\s*(\([^)]*\))?\s*\{/.test(line)) continue;
-
-    // Inline single-line catch
-    const inlineMatch = line.match(/\}\s*catch\s*(\([^)]*\))?\s*\{(.*)\}\s*;?\s*$/);
-    if (inlineMatch) {
-      const body = inlineMatch[2];
-      if (!LOGGER_PATTERNS.some((p) => p.test(body))) {
-        if (/process\.stderr\.write/.test(body) || /console\.(error|warn)/.test(body)) {
-          results.push({ line: i + 1, text: line.trim() });
-        }
-      }
-      continue;
+function findRawStderrCatches(filePath: string): Array<{ line: number }> {
+  const sf = parseSourceFile(filePath);
+  const results: Array<{ line: number }> = [];
+  forEachCatchClause(sf, (cc) => {
+    const bodyText = cc.block.getText(sf);
+    const usesLogger = /\blogWarning\s*\(|\blogError\s*\(/.test(bodyText);
+    if (usesLogger) return;
+    if (
+      /\bprocess\.stderr\.write\b/.test(bodyText) ||
+      /\bconsole\.(?:error|warn)\b/.test(bodyText)
+    ) {
+      const { line } = sf.getLineAndCharacterOfPosition(cc.getStart(sf));
+      results.push({ line: line + 1 });
     }
-
-    // Multi-line catch
-    let j = i + 1;
-    let depth = 1;
-    const bodyLines: string[] = [];
-    while (j < lines.length && depth > 0) {
-      for (const ch of lines[j]) {
-        if (ch === "{") depth++;
-        else if (ch === "}") depth--;
-      }
-      bodyLines.push(lines[j]);
-      j++;
-    }
-
-    const bodyText = bodyLines.slice(0, -1).join("\n");
-    if (!LOGGER_PATTERNS.some((p) => p.test(bodyText))) {
-      if (/process\.stderr\.write/.test(bodyText) || /console\.(error|warn)/.test(bodyText)) {
-        results.push({ line: i + 1, text: line.trim() });
-      }
-    }
-  }
-
+  });
   return results;
 }
 
@@ -248,7 +208,7 @@ describe("workflow-logger coverage (#3348)", () => {
 
       const empties = findEmptyCatches(file);
       for (const empty of empties) {
-        violations.push(`${rel}:${empty.line} — ${empty.text}`);
+        violations.push(`${rel}:${empty.line}`);
       }
     }
 
@@ -271,7 +231,7 @@ describe("workflow-logger coverage (#3348)", () => {
 
       const issues = findRawStderrCatches(file);
       for (const issue of issues) {
-        violations.push(`${rel}:${issue.line} — ${issue.text}`);
+        violations.push(`${rel}:${issue.line}`);
       }
     }
 

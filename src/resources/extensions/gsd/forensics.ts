@@ -35,11 +35,12 @@ import { getAutoWorktreePath } from "./auto-worktree.js";
 import { loadEffectiveGSDPreferences, loadGlobalGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 import { showNextAction } from "../shared/tui.js";
 import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./commands-prefs-wizard.js";
+import { summarizeWorktreeTelemetry, percentile, type WorktreeTelemetrySummary } from "./worktree-telemetry.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export interface ForensicAnomaly {
-  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace" | "journal-stuck" | "journal-guard-block" | "journal-rapid-iterations" | "journal-worktree-failure";
+  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace" | "journal-stuck" | "journal-guard-block" | "journal-rapid-iterations" | "journal-worktree-failure" | "worktree-orphan" | "worktree-unmerged-exit";
   severity: "info" | "warning" | "error";
   unitType?: string;
   unitId?: string;
@@ -113,6 +114,8 @@ interface ForensicReport {
   recentUnits: { type: string; id: string; cost: number; duration: number; model: string; finishedAt: number }[];
   journalSummary: JournalSummary | null;
   activityLogMeta: ActivityLogMeta | null;
+  /** #4764 — worktree lifespan / divergence telemetry aggregates. */
+  worktreeTelemetry: WorktreeTelemetrySummary | null;
 }
 
 // ─── Duplicate Detection ──────────────────────────────────────────────────────
@@ -337,6 +340,16 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   detectCrash(crashLock, anomalies);
   detectDoctorIssues(doctorIssues, anomalies);
   detectErrorTraces(unitTraces, anomalies);
+
+  // 11b. #4764 — worktree lifecycle telemetry
+  let worktreeTelemetry: WorktreeTelemetrySummary | null = null;
+  try {
+    worktreeTelemetry = summarizeWorktreeTelemetry(basePath);
+    detectWorktreeOrphans(worktreeTelemetry, anomalies);
+  } catch {
+    // Telemetry is best-effort — do not let an aggregator failure block the
+    // rest of the forensic report.
+  }
   detectJournalAnomalies(journalSummary, anomalies);
 
   return {
@@ -356,6 +369,7 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
     recentUnits,
     journalSummary,
     activityLogMeta,
+    worktreeTelemetry,
   };
 }
 
@@ -783,6 +797,51 @@ function detectMissingArtifacts(completedKeys: string[], basePath: string, activ
   }
 }
 
+/**
+ * #4764 — surface worktree lifecycle and orphan signals in the forensic report.
+ *
+ * Consumes only the aggregated summary (not raw journal events) to respect
+ * the forensics memory-bloat guard in forensics-journal.test.ts — per-event
+ * detail stays in the journal itself where the LLM can query it on demand.
+ */
+function detectWorktreeOrphans(
+  summary: WorktreeTelemetrySummary,
+  anomalies: ForensicAnomaly[],
+): void {
+  // 1. Orphan aggregate — severity depends on reason. In-progress orphans are
+  // the #4761 consumer-side signal (live work sitting on an unmerged branch).
+  for (const [reason, count] of Object.entries(summary.orphansByReason)) {
+    if (count <= 0) continue;
+    const severity: ForensicAnomaly["severity"] =
+      reason === "in-progress-unmerged" ? "warning" : "info";
+    anomalies.push({
+      type: "worktree-orphan",
+      severity,
+      summary: `${count} worktree orphan(s) detected (${reason})`,
+      details:
+        reason === "in-progress-unmerged"
+          ? "Auto-mode exited without completing a milestone; live work sits on an unmerged milestone branch. Run `/gsd auto` to resume, or merge manually."
+          : reason === "complete-unmerged"
+            ? "A completed milestone's branch was never merged back to main. Run `/gsd health --fix` to resolve."
+            : `Reason: ${reason}.`,
+    });
+  }
+
+  // 2. Auto-exit producer signal — #4761's upstream cause.
+  if (summary.exitsWithUnmergedWork > 0) {
+    const reasonBreakdown = Object.entries(summary.exitsByReason)
+      .filter(([, n]) => n > 0)
+      .map(([r, n]) => `${r}=${n}`)
+      .join(", ");
+    anomalies.push({
+      type: "worktree-unmerged-exit",
+      severity: "warning",
+      summary: `${summary.exitsWithUnmergedWork} auto-exit(s) left milestone work unmerged`,
+      details: `Exit reasons: ${reasonBreakdown || "(none)"} · Producer-side signal for #4761-class orphans. Inspect .gsd/journal/*.jsonl with eventType:"auto-exit" for per-exit detail.`,
+    });
+  }
+}
+
 function detectCrash(crashLock: LockData | null, anomalies: ForensicAnomaly[]): void {
   if (!crashLock) return;
   if (isLockProcessAlive(crashLock)) return; // Process still running, not a crash
@@ -972,6 +1031,40 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
     sections.push(``);
   }
 
+  // #4764 — Worktree telemetry summary
+  if (report.worktreeTelemetry) {
+    const t = report.worktreeTelemetry;
+    const p50 = percentile(t.mergeDurationsMs, 0.5);
+    const p95 = percentile(t.mergeDurationsMs, 0.95);
+    sections.push(`## Worktree Telemetry`, ``);
+    sections.push(`- Worktrees created: ${t.worktreesCreated}`);
+    sections.push(`- Worktrees merged: ${t.worktreesMerged}`);
+    sections.push(`- Orphans detected: ${t.orphansDetected}`);
+    if (t.orphansDetected > 0) {
+      const breakdown = Object.entries(t.orphansByReason)
+        .map(([r, n]) => `${r}=${n}`).join(", ");
+      sections.push(`  - By reason: ${breakdown}`);
+    }
+    sections.push(`- Merge conflicts: ${t.mergeConflicts}`);
+    if (t.mergeDurationsMs.length > 0) {
+      sections.push(`- Merge duration p50 / p95: ${p50 ?? "-"} / ${p95 ?? "-"} ms (n=${t.mergeDurationsMs.length})`);
+    }
+    sections.push(`- Auto-exits leaving unmerged work: ${t.exitsWithUnmergedWork}`);
+    if (Object.keys(t.exitsByReason).length > 0) {
+      const breakdown = Object.entries(t.exitsByReason)
+        .sort((a, b) => b[1] - a[1])
+        .map(([r, n]) => `${r}=${n}`).join(", ");
+      sections.push(`  - Exit reasons: ${breakdown}`);
+    }
+    sections.push(`- Canonical-root redirects (#4761 fix fired): ${t.canonicalRedirects}`);
+    // #4765 slice-cadence counters
+    if (t.slicesMerged + t.sliceMergeConflicts + t.milestoneResquashes > 0) {
+      sections.push(`- Slices merged: ${t.slicesMerged} · Slice merge conflicts: ${t.sliceMergeConflicts}`);
+      sections.push(`- Milestone re-squashes: ${t.milestoneResquashes}`);
+    }
+    sections.push(``);
+  }
+
   // Journal summary
   if (report.journalSummary) {
     const js = report.journalSummary;
@@ -1115,6 +1208,30 @@ function formatReportForPrompt(report: ForensicReport): string {
     sections.push(`- Total tokens: ${formatTokenCount(totals.tokens.total)}`);
     sections.push(`- Total duration: ${formatDuration(totals.duration)}`);
     sections.push("");
+  }
+
+  // #4764 — worktree telemetry (compact prompt form)
+  if (report.worktreeTelemetry) {
+    const t = report.worktreeTelemetry;
+    const hasSignal =
+      t.worktreesCreated + t.worktreesMerged + t.orphansDetected +
+      t.exitsWithUnmergedWork + t.canonicalRedirects +
+      t.slicesMerged + t.milestoneResquashes > 0;
+    if (hasSignal) {
+      sections.push("### Worktree Telemetry");
+      sections.push(`- Created: ${t.worktreesCreated} · Merged: ${t.worktreesMerged} · Conflicts: ${t.mergeConflicts}`);
+      sections.push(`- Orphans: ${t.orphansDetected} · Unmerged exits: ${t.exitsWithUnmergedWork} · Redirects (#4761): ${t.canonicalRedirects}`);
+      if (t.orphansDetected > 0) {
+        const breakdown = Object.entries(t.orphansByReason)
+          .map(([r, n]) => `${r}=${n}`).join(", ");
+        sections.push(`- Orphan reasons: ${breakdown}`);
+      }
+      // #4765 — slice-cadence counters (only shown when the feature was exercised)
+      if (t.slicesMerged + t.sliceMergeConflicts + t.milestoneResquashes > 0) {
+        sections.push(`- Slices merged: ${t.slicesMerged} · Slice conflicts: ${t.sliceMergeConflicts} · Re-squashes: ${t.milestoneResquashes}`);
+      }
+      sections.push("");
+    }
   }
 
   // Activity log metadata

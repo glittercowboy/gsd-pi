@@ -808,8 +808,30 @@ describe('withElicitTimeout', () => {
   });
 
   it('clears the timer when the promise resolves (no dangling timer)', async () => {
-    const start = Date.now();
-    await withElicitTimeout(Promise.resolve('done'), 'test', 50);
-    assert.ok(Date.now() - start < 40, 'should not wait for the timeout');
+    // Spy on clearTimeout directly. `unhandledRejection` is not a reliable
+    // proxy: Node does not flag losing-promise rejections from a settled
+    // Promise.race as unhandled, so the absence of a stray rejection does
+    // not actually prove clearTimeout ran. Asserting the spy was invoked
+    // tests the cleanup contract directly.
+    const originalClearTimeout = globalThis.clearTimeout;
+    let clearCalls = 0;
+    let lastClearedId: unknown = undefined;
+    globalThis.clearTimeout = ((id: Parameters<typeof originalClearTimeout>[0]) => {
+      clearCalls++;
+      lastClearedId = id;
+      return originalClearTimeout(id);
+    }) as typeof clearTimeout;
+
+    try {
+      const value = await withElicitTimeout(Promise.resolve('done'), 'test', 50_000);
+      assert.equal(value, 'done');
+      assert.ok(
+        clearCalls >= 1,
+        `clearTimeout should run on resolve path; calls=${clearCalls}`,
+      );
+      assert.ok(lastClearedId !== undefined, 'clearTimeout should be called with the timer id');
+    } finally {
+      globalThis.clearTimeout = originalClearTimeout;
+    }
   });
 });

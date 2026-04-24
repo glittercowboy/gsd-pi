@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const autoSrc = readFileSync(join(import.meta.dirname, "..", "auto.ts"), "utf-8");
 const phasesSrc = readFileSync(join(import.meta.dirname, "..", "auto", "phases.ts"), "utf-8");
@@ -20,7 +21,7 @@ test("stopAuto restores original thinking level", () => {
 test("runUnitPhase threads captured thinking level into selectAndApplyModel", () => {
   const callIdx = phasesSrc.indexOf("deps.selectAndApplyModel(");
   assert.ok(callIdx > -1, "phases.ts should call selectAndApplyModel");
-  const callBlock = phasesSrc.slice(callIdx, callIdx + 600);
+  const callBlock = extractSourceRegion(phasesSrc, "deps.selectAndApplyModel(");
   assert.ok(
     callBlock.includes("s.autoModeStartThinkingLevel"),
     "runUnitPhase should pass autoModeStartThinkingLevel to selectAndApplyModel",
@@ -30,7 +31,7 @@ test("runUnitPhase threads captured thinking level into selectAndApplyModel", ()
 test("hook model override preserves captured thinking level", () => {
   const hookIdx = phasesSrc.indexOf("const hookModelOverride = sidecarItem?.model ?? iterData.hookModelOverride;");
   assert.ok(hookIdx > -1, "phases.ts should include hook model override handling");
-  const hookBlock = phasesSrc.slice(hookIdx, hookIdx + 600);
+  const hookBlock = extractSourceRegion(phasesSrc, "const hookModelOverride = sidecarItem?.model ?? iterData.hookModelOverride;");
   assert.ok(
     hookBlock.includes("pi.setThinkingLevel(s.autoModeStartThinkingLevel)"),
     "hook model override should re-apply captured thinking level after setModel",

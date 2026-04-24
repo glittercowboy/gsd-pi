@@ -5,6 +5,7 @@ import {
   selectConflictFreeBatch,
   selectReactiveDispatchBatch,
   buildSidecarQueueNodes,
+  buildExecutionGraphSnapshot,
   scheduleSidecarQueue,
 } from "../uok/execution-graph.ts";
 
@@ -66,4 +67,19 @@ test("uok execution graph sidecar scheduler preserves deterministic queue order"
     scheduled.map((item) => item.unitId),
     queue.map((item) => item.unitId),
   );
+});
+
+test("uok execution graph snapshot captures deterministic order and conflicts", () => {
+  const snapshot = buildExecutionGraphSnapshot(
+    [
+      { id: "b", kind: "unit", dependsOn: ["a"], writes: ["src/shared.ts"] },
+      { id: "a", kind: "unit", dependsOn: [], writes: ["src/a.ts"] },
+      { id: "c", kind: "verification", dependsOn: [], writes: ["src/shared.ts"] },
+    ],
+    "before-unit",
+  );
+
+  assert.equal(snapshot.phase, "before-unit");
+  assert.deepEqual(snapshot.order, ["a", "b", "c"]);
+  assert.ok(snapshot.conflicts.some((c) => c.file === "src/shared.ts"));
 });

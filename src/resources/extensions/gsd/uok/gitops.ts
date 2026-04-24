@@ -54,7 +54,11 @@ export function writeTurnGitTransaction(args: GitTxArgs): void {
   );
 }
 
-export function writeTurnCloseoutGitRecord(basePath: string, record: TurnCloseoutRecord): void {
+export function writeTurnCloseoutGitRecord(
+  basePath: string,
+  record: TurnCloseoutRecord,
+  metadata?: Record<string, unknown>,
+): void {
   writeTurnGitTransaction({
     basePath,
     traceId: record.traceId,
@@ -67,6 +71,7 @@ export function writeTurnCloseoutGitRecord(basePath: string, record: TurnCloseou
     status: record.failureClass === "git" ? "failed" : "ok",
     error: record.failureClass === "git" ? "git closeout failure" : undefined,
     metadata: {
+      ...(metadata ?? {}),
       turnStatus: record.status,
       finishedAt: record.finishedAt,
       activityFile: record.activityFile,

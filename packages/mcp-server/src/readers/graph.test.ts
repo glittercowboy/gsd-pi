@@ -160,9 +160,28 @@ describe('buildGraph', () => {
     assert.ok(graph.nodes.length > 0, `Expected nodes, got ${graph.nodes.length}`);
   });
 
-  it('returns edgeCount >= 0 (valid graph structure)', async () => {
+  it('produces a non-empty set of edges for a project with artifacts', async () => {
+    // Previous `edgeCount >= 0` was a pure tautology. For a project
+    // with STATE/KNOWLEDGE/LEARNINGS/milestone artifacts, the graph
+    // builder wires relationships between the derived nodes — observed
+    // empirically to produce ≥ 3 edges for the standard fixture.
     const graph = await buildGraph(projectDir);
-    assert.ok(graph.edges.length >= 0);
+    assert.ok(
+      graph.edges.length > 0,
+      `expected edges for a project with artifacts. nodes=${graph.nodes.length}, edges=${graph.edges.length}`,
+    );
+    // Every edge must reference nodes that actually exist in the graph.
+    const nodeIds = new Set(graph.nodes.map((n) => n.id));
+    for (const edge of graph.edges) {
+      assert.ok(
+        nodeIds.has(edge.from),
+        `edge.from="${edge.from}" must reference an existing node`,
+      );
+      assert.ok(
+        nodeIds.has(edge.to),
+        `edge.to="${edge.to}" must reference an existing node`,
+      );
+    }
   });
 
   it('includes builtAt ISO timestamp', async () => {
@@ -175,16 +194,25 @@ describe('buildGraph', () => {
     const badProject = tmpProject();
     // Write a corrupt/minimal STATE.md that is technically valid but empty
     writeFixture(badProject, '.gsd/STATE.md', 'not valid gsd state at all \0\0\0');
-    // Should not throw
+    // Don't throw, and don't lose the well-formed builtAt timestamp
+    // (which previous `graph.nodes.length >= 0` tautology ignored).
     const graph = await buildGraph(badProject);
-    assert.ok(graph.nodes.length >= 0);
+    assert.ok(Array.isArray(graph.nodes), "nodes must be an array");
+    assert.ok(Array.isArray(graph.edges), "edges must be an array");
+    assert.ok(
+      !Number.isNaN(Date.parse(graph.builtAt)),
+      "builtAt must be a valid ISO-8601 timestamp even when artifact is unparseable",
+    );
     rmSync(badProject, { recursive: true, force: true });
   });
 
   it('returns empty graph for project with no .gsd/ directory', async () => {
     const emptyProject = tmpProject();
     const graph = await buildGraph(emptyProject);
-    assert.ok(graph.nodes.length >= 0); // no throw
+    // Previous `graph.nodes.length >= 0` was a tautology. The real
+    // contract for a .gsd-less project: truly empty graph.
+    assert.deepEqual(graph.nodes, [], "nodes must be empty for .gsd-less project");
+    assert.deepEqual(graph.edges, [], "edges must be empty for .gsd-less project");
     assert.equal(typeof graph.builtAt, 'string');
     rmSync(emptyProject, { recursive: true, force: true });
   });
@@ -286,10 +314,21 @@ describe('buildGraph — LEARNINGS.md parsing', () => {
     const badProject = tmpProject();
     mkdirSync(join(badProject, '.gsd', 'milestones', 'M002'), { recursive: true });
     writeLearningsFixture(badProject, 'M002', '\0\0\0 not valid yaml or markdown \0\0\0');
-    // Must not throw
+    // Must not throw AND must not produce garbage learning nodes from
+    // the binary contents (previous `nodes.length >= 0` tautology
+    // allowed either outcome).
     const graph = await buildGraph(badProject);
-    assert.ok(graph.nodes.length >= 0);
+    assert.ok(Array.isArray(graph.nodes));
     assert.equal(typeof graph.builtAt, 'string');
+    const m002LearningNodes = graph.nodes.filter(
+      (n) => n.id.includes('M002') && n.type !== 'milestone',
+    );
+    assert.equal(
+      m002LearningNodes.length,
+      0,
+      "malformed LEARNINGS.md must not produce any non-milestone nodes " +
+        `(got: ${JSON.stringify(m002LearningNodes.map((n) => n.id))})`,
+    );
     rmSync(badProject, { recursive: true, force: true });
   });
 
@@ -333,9 +372,20 @@ missing_artifacts: []
   it('does not crash when LEARNINGS.md is missing entirely', async () => {
     const noLearningsProject = tmpProject();
     mkdirSync(join(noLearningsProject, '.gsd', 'milestones', 'M004'), { recursive: true });
-    // No LEARNINGS.md file written
+    // No LEARNINGS.md file written. Previous tautology (nodes.length >= 0)
+    // passed regardless of whether the graph was structurally valid;
+    // assert real shape + no-learnings outcome.
     const graph = await buildGraph(noLearningsProject);
-    assert.ok(graph.nodes.length >= 0);
+    assert.ok(Array.isArray(graph.nodes));
+    assert.equal(typeof graph.builtAt, 'string');
+    const learningNodes = graph.nodes.filter(
+      (n) => n.type === 'decision' || n.type === 'lesson' || n.type === 'pattern' || n.type === 'surprise',
+    );
+    assert.equal(
+      learningNodes.length,
+      0,
+      `no LEARNINGS.md → no learning nodes (got: ${JSON.stringify(learningNodes.map((n) => n.id))})`,
+    );
     rmSync(noLearningsProject, { recursive: true, force: true });
   });
 });
@@ -485,9 +535,15 @@ describe('graphQuery', () => {
     );
   });
 
-  it('budget trims AMBIGUOUS edges first', async () => {
+  it('budget trims AMBIGUOUS edges first — keeps INFERRED edge when budget only forces one drop', async () => {
+    // Previous version only asserted the seed node remained — the test
+    // title claimed AMBIGUOUS was trimmed first but never checked.
+    // applyBudget (graph.ts:685) drops AMBIGUOUS edges first, then
+    // INFERRED, then hard-trims to seed-only. Budget here is in tokens
+    // (nodes × 20 + edges × 10). With 3 nodes (60) + 2 edges (20) = 80,
+    // a budget of 70 forces exactly the AMBIGUOUS-edge drop and stops
+    // (70 > 70 is false), leaving the INFERRED edge intact.
     const gsdRoot = join(projectDir, '.gsd');
-    // Write a graph with mixed confidence edges
     const mixedGraph: KnowledgeGraph = {
       builtAt: new Date().toISOString(),
       nodes: [
@@ -502,10 +558,26 @@ describe('graphQuery', () => {
     };
     await writeGraph(gsdRoot, mixedGraph);
 
-    // With a very small budget, AMBIGUOUS edges should be trimmed first
-    const result = await graphQuery(projectDir, 'seed node budget', 10);
-    // At minimum, the seed node itself should be present
-    assert.ok(result.nodes.some((n) => n.id === 'n1'), 'Seed node should be in result');
+    const result = await graphQuery(projectDir, 'seed node budget', 70);
+    assert.ok(result.nodes.some((n) => n.id === 'n1'), "seed must remain");
+
+    const hasAmbiguousEdge = result.edges.some(
+      (e) => e.from === 'n1' && e.to === 'n2' && e.confidence === 'AMBIGUOUS',
+    );
+    const hasInferredEdge = result.edges.some(
+      (e) => e.from === 'n1' && e.to === 'n3' && e.confidence === 'INFERRED',
+    );
+
+    assert.equal(
+      hasAmbiguousEdge,
+      false,
+      "AMBIGUOUS edge must be trimmed FIRST when budget is tight",
+    );
+    assert.equal(
+      hasInferredEdge,
+      true,
+      "INFERRED edge must survive when budget only forces the AMBIGUOUS drop",
+    );
 
     // Restore the original graph
     const originalGraph = await buildGraph(projectDir);

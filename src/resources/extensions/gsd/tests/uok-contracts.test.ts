@@ -3,12 +3,16 @@ import assert from "node:assert/strict";
 
 import type {
   AuditEventEnvelope,
+  UokDispatchEnvelope,
   GateResult,
   TurnContract,
   TurnResult,
   UokNodeKind,
+  WriteRecord,
+  WriterToken,
 } from "../uok/contracts.ts";
 import { buildAuditEnvelope } from "../uok/audit.ts";
+import { buildDispatchEnvelope, explainDispatch } from "../uok/dispatch-envelope.ts";
 
 test("uok contracts serialize/deserialize turn envelopes", () => {
   const contract: TurnContract = {
@@ -83,4 +87,51 @@ test("uok audit envelope includes trace/turn/causality fields", () => {
   assert.equal(event.turnId, "turn-xyz");
   assert.equal(event.causedBy, "turn-start");
   assert.equal(event.payload.status, "completed");
+});
+
+test("uok dispatch envelope carries scheduler reason and constraints", () => {
+  const envelope: UokDispatchEnvelope = buildDispatchEnvelope({
+    action: "dispatch",
+    node: {
+      kind: "unit",
+      dependsOn: ["plan-gate"],
+      reads: ["M001-ROADMAP.md"],
+      writes: ["M001/S01/T01-SUMMARY.md"],
+    },
+    unitType: "execute-task",
+    unitId: "M001/S01/T01",
+    prompt: "do work",
+    reasonCode: "dependency",
+    summary: "all dependencies are closed and output path is available",
+    evidence: { readyTaskCount: 1 },
+  });
+
+  assert.equal(envelope.nodeKind, "unit");
+  assert.equal(envelope.reason.reasonCode, "dependency");
+  assert.deepEqual(envelope.constraints?.dependsOn, ["plan-gate"]);
+  assert.ok(explainDispatch(envelope).includes("execute-task M001/S01/T01"));
+});
+
+test("uok writer records serialize sequence metadata", () => {
+  const token: WriterToken = {
+    tokenId: "token-1",
+    traceId: "trace-1",
+    turnId: "turn-1",
+    acquiredAt: new Date().toISOString(),
+    owner: "uok",
+  };
+
+  const record: WriteRecord = {
+    writerToken: token,
+    sequence: { traceId: token.traceId, turnId: token.turnId, sequence: 7 },
+    category: "audit",
+    operation: "append",
+    path: ".gsd/audit/events.jsonl",
+    ts: new Date().toISOString(),
+  };
+
+  const roundTrip = JSON.parse(JSON.stringify(record)) as WriteRecord;
+  assert.equal(roundTrip.writerToken.tokenId, "token-1");
+  assert.equal(roundTrip.sequence.sequence, 7);
+  assert.equal(roundTrip.category, "audit");
 });
