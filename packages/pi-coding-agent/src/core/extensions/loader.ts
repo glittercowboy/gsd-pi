@@ -674,28 +674,43 @@ const _extensionRequire = createRequire(import.meta.url);
  */
 export function resetExtensionLoaderCache(): void {
 	_extensionLoaderJiti = null;
-	// Build the set of cache keys to evict. We've stored raw paths as handed
-	// to jiti, but jiti / Node may key require.cache under a canonicalized
-	// form (drive-letter case, symlink-resolved, different separator on
-	// Windows). Evict every known variant plus any require.cache entry that
-	// case-insensitively matches a tracked path.
-	const variants = new Set<string>();
+	// Build a set of exact cache keys we expect (raw path, resolved path,
+	// realpath) AND a set of (basename, containing-directory) pairs so we
+	// can also catch entries that jiti/Node wrote under a canonicalized
+	// form (Windows drive-letter case, separator swap, UNC prefix, symlink
+	// resolution). require.cache is shared across all createRequire
+	// instances for CJS, so iterating any instance's cache covers jiti's
+	// internal `nativeRequire.cache` writes.
+	const exact = new Set<string>();
+	const signatures = new Set<string>();
+	const makeSignature = (p: string): string => {
+		const normalized = p.replace(/\\/g, "/").toLowerCase();
+		const slash = normalized.lastIndexOf("/");
+		const base = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+		// Use the trailing two path segments as the signature — unique
+		// enough to avoid collisions in typical filesystems while tolerating
+		// drive-letter / separator variations that differ in the prefix.
+		const parent = slash >= 0 ? normalized.slice(0, slash) : "";
+		const parentSlash = parent.lastIndexOf("/");
+		const parentSeg = parentSlash >= 0 ? parent.slice(parentSlash + 1) : parent;
+		return `${parentSeg}/${base}`;
+	};
 	for (const raw of _loadedExtensionPaths) {
-		variants.add(raw);
+		exact.add(raw);
 		try {
-			variants.add(_extensionRequire.resolve(raw));
+			exact.add(_extensionRequire.resolve(raw));
 		} catch {
-			// unresolvable — fall through; case-insensitive scan below may still hit it
+			// unresolvable — fall through; signature scan may still hit it
 		}
 		try {
-			variants.add(fs.realpathSync(raw));
+			exact.add(fs.realpathSync(raw));
 		} catch {
 			// file may have been deleted already; ignore
 		}
+		signatures.add(makeSignature(raw));
 	}
-	const lowerTargets = new Set([..._loadedExtensionPaths].map((p) => p.toLowerCase()));
 	for (const key of Object.keys(_extensionRequire.cache)) {
-		if (variants.has(key) || lowerTargets.has(key.toLowerCase())) {
+		if (exact.has(key) || signatures.has(makeSignature(key))) {
 			try {
 				delete _extensionRequire.cache[key];
 			} catch {

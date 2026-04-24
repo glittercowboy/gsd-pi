@@ -10,7 +10,7 @@
 // invalidation, the second reload would re-register the stale name.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
@@ -82,6 +82,14 @@ describe("#3616 — DefaultResourceLoader.reload() invalidates extension module 
 
 		// v2 — overwrite the source on disk with a different tool name.
 		writeExtensionWithToolName(extPath, "probe_v2");
+		// Bump mtime explicitly so file-stat–based cache strategies (jiti's
+		// moduleCache consults Node's require.cache, which some runtimes
+		// tiebreak on mtime) always see "newer than last seen". On Windows
+		// NTFS + node the default fs mtime resolution can silently collapse
+		// two writes in the same tick to an identical mtime — that fooled
+		// the Windows CI run on #3616.
+		const futureTime = new Date(Date.now() + 5000);
+		utimesSync(extPath, futureTime, futureTime);
 
 		await loader.reload();
 
