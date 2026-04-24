@@ -66,19 +66,32 @@ export function usesAnthropicBearerAuth(provider: Model<"anthropic-messages">["p
 	return provider === "alibaba-coding-plan" || provider === "minimax" || provider === "minimax-cn";
 }
 
-function hasBearerAuthorizationHeader(model: Model<"anthropic-messages">): boolean {
+export function hasBearerAuthorizationHeader(model: Model<"anthropic-messages">): boolean {
 	const authHeader = model.headers?.Authorization ?? model.headers?.authorization;
 	return typeof authHeader === "string" && authHeader.trim().toLowerCase().startsWith("bearer ");
 }
 
-async function createClient(
+/**
+ * Pure builder for the `new Anthropic(...)` constructor config.
+ *
+ * Exists as a separate function so tests can assert the three routing
+ * decisions (auth mode, base URL resolution, beta header list) without
+ * booting the real Anthropic SDK. Used by `createClient` below — must
+ * stay in lock-step with it.
+ */
+export function buildAnthropicClientConfig(
 	model: Model<"anthropic-messages">,
 	apiKey: string,
 	interleavedThinking: boolean,
 	optionsHeaders?: Record<string, string>,
 	dynamicHeaders?: Record<string, string>,
-): Promise<{ client: Anthropic; isOAuthToken: boolean }> {
-	const AnthropicClass = await getAnthropicClass();
+): {
+	apiKey: string | null;
+	authToken: string | undefined;
+	baseURL: string;
+	dangerouslyAllowBrowser: true;
+	defaultHeaders: Record<string, string>;
+} {
 	// Adaptive thinking models (Opus 4.6, Sonnet 4.6) have interleaved thinking built-in.
 	// The beta header is deprecated on Opus 4.6 and redundant on Sonnet 4.6, so skip it.
 	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model.id);
@@ -90,7 +103,7 @@ async function createClient(
 			betaFeatures.push("interleaved-thinking-2025-05-14");
 		}
 
-		const client = new AnthropicClass({
+		return {
 			apiKey: null,
 			authToken: apiKey,
 			baseURL: resolveAnthropicBaseUrl(model),
@@ -105,9 +118,7 @@ async function createClient(
 				dynamicHeaders,
 				optionsHeaders,
 			),
-		});
-
-		return { client, isOAuthToken: false };
+		};
 	}
 
 	// Skip beta headers for providers that don't support fine-grained-tool-streaming.
@@ -126,7 +137,7 @@ async function createClient(
 	// API key auth (Anthropic OAuth removed per TOS compliance — use API keys or Claude CLI)
 	// Some Anthropic-compatible providers require Bearer auth instead of x-api-key.
 	const usesBearerAuth = usesAnthropicBearerAuth(model.provider) || hasBearerAuthorizationHeader(model);
-	const client = new AnthropicClass({
+	return {
 		apiKey: usesBearerAuth ? null : apiKey,
 		authToken: usesBearerAuth ? apiKey : undefined,
 		baseURL: resolveAnthropicBaseUrl(model),
@@ -140,8 +151,19 @@ async function createClient(
 			model.headers,
 			optionsHeaders,
 		),
-	});
+	};
+}
 
+async function createClient(
+	model: Model<"anthropic-messages">,
+	apiKey: string,
+	interleavedThinking: boolean,
+	optionsHeaders?: Record<string, string>,
+	dynamicHeaders?: Record<string, string>,
+): Promise<{ client: Anthropic; isOAuthToken: boolean }> {
+	const AnthropicClass = await getAnthropicClass();
+	const config = buildAnthropicClientConfig(model, apiKey, interleavedThinking, optionsHeaders, dynamicHeaders);
+	const client = new AnthropicClass(config);
 	return { client, isOAuthToken: false };
 }
 

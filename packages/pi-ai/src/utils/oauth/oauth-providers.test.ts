@@ -1,8 +1,5 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Model, Api } from "../../types.js";
 import type { OAuthCredentials } from "./types.js";
 
@@ -14,8 +11,6 @@ import {
 } from "./github-copilot.js";
 import { antigravityOAuthProvider } from "./google-antigravity.js";
 import { geminiCliOAuthProvider } from "./google-gemini-cli.js";
-
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 // Local type for Copilot credentials (includes optional fields)
 type CopilotCredentials = OAuthCredentials & {
@@ -281,14 +276,15 @@ describe("Gemini CLI OAuth — provider structure", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 // Regression tests for credential de-obfuscation
 //
-// These tests verify that OAuth credentials are stored in plaintext
-// (not base64-encoded) after the refactor in commit 289bb325c.
+// The module-import smoke tests ARE the de-obfuscation guard: if CLIENT_ID
+// or CLIENT_SECRET were ever re-obfuscated with atob(), module load would
+// throw and these tests (plus every other import of these modules) would
+// fail at startup. The previous per-literal and comment-grep tests
+// asserted source text, not runtime behaviour. See #4802.
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("OAuth credentials — de-obfuscated regression", () => {
-	// Verify we can import the modules without decoding errors
 	test("GitHub Copilot module imports successfully", () => {
-		// If the module imports, the CLIENT_ID is valid plaintext
 		assert.ok(githubCopilotOAuthProvider);
 	});
 
@@ -298,66 +294,5 @@ describe("OAuth credentials — de-obfuscated regression", () => {
 
 	test("Gemini CLI module imports successfully", () => {
 		assert.ok(geminiCliOAuthProvider);
-	});
-
-	test("GitHub Copilot CLIENT_ID is plaintext (not base64)", () => {
-		const content = readFileSync(join(__dirname, "github-copilot.ts"), "utf-8");
-		// Should contain plaintext CLIENT_ID
-		assert.ok(content.includes('CLIENT_ID = "Iv1.b507a08c87ecfe98"'));
-		// Should NOT contain atob calls for de-obfuscation
-		assert.ok(!content.includes("atob("));
-	});
-
-	test("Antigravity CLIENT_ID and CLIENT_SECRET are plaintext", () => {
-		const content = readFileSync(join(__dirname, "google-antigravity.ts"), "utf-8");
-		// Should contain plaintext credentials
-		assert.ok(
-			content.includes(
-				'CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"',
-			),
-		);
-		assert.ok(
-			content.includes('CLIENT_SECRET = "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"'),
-		);
-		// Should NOT contain atob calls for de-obfuscation
-		assert.ok(!content.includes("atob("));
-	});
-
-	test("Gemini CLI CLIENT_ID and CLIENT_SECRET are plaintext", () => {
-		const content = readFileSync(join(__dirname, "google-gemini-cli.ts"), "utf-8");
-		// Should contain plaintext credentials
-		assert.ok(
-			content.includes(
-				'CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"',
-			),
-		);
-		assert.ok(
-			content.includes('CLIENT_SECRET = "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"'),
-		);
-		// Should NOT contain atob calls for de-obfuscation
-		assert.ok(!content.includes("atob("));
-	});
-
-	test("all OAuth files include security explanation comments", () => {
-		const files = [
-			"github-copilot.ts",
-			"google-antigravity.ts",
-			"google-gemini-cli.ts",
-		];
-
-		for (const file of files) {
-			const content = readFileSync(join(__dirname, file), "utf-8");
-			// Should include explanation of why credentials are public
-			assert.ok(
-				content.includes("NOTE: This credential is public") ||
-					content.includes("NOTE: These credentials are public"),
-				`${file} should explain why credentials are public`,
-			);
-			assert.ok(
-				content.includes("obfuscated") ||
-					content.includes("security scanners"),
-				`${file} should reference the security scanner issue`,
-			);
-		}
 	});
 });

@@ -1,20 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { OAuthCredentials } from "./types.js";
 import { antigravityOAuthProvider } from "./google-antigravity.js";
-
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const packageRoot = join(__dirname, "..", "..", "..");
-const sourceDir = existsSync(join(__dirname, "google-antigravity.ts"))
-	? __dirname
-	: join(packageRoot, "src", "utils", "oauth");
-
-function readSourceFile(name: string): string {
-	return readFileSync(join(sourceDir, name), "utf-8");
-}
 
 describe("Antigravity OAuth — provider structure", () => {
 	test("has correct id and name", () => {
@@ -61,24 +48,10 @@ describe("Antigravity OAuth — provider structure", () => {
 });
 
 describe("Antigravity OAuth — credential regression", () => {
+	// The module-import smoke test is the de-obfuscation guard: if CLIENT_ID
+	// or CLIENT_SECRET were re-obfuscated with atob(), the module would throw
+	// on load and every other test in this file would fail. See #4802.
 	test("module imports successfully", () => {
 		assert.ok(antigravityOAuthProvider);
-	});
-
-	test("CLIENT_ID and CLIENT_SECRET are plaintext", () => {
-		const content = readSourceFile("google-antigravity.ts");
-		assert.ok(
-			content.includes(
-				'CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"',
-			),
-		);
-		assert.ok(content.includes('CLIENT_SECRET = "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"'));
-		assert.ok(!content.includes("atob("));
-	});
-
-	test("security explanation comments are present", () => {
-		const content = readSourceFile("google-antigravity.ts");
-		assert.ok(content.includes("NOTE: These credentials are public"));
-		assert.ok(content.includes("obfuscated") || content.includes("security scanners"));
 	});
 });

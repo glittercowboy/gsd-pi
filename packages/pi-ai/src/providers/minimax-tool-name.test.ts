@@ -12,31 +12,65 @@
  */
 import test, { describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { convertMessages } from "./anthropic-shared.js";
-import type { AssistantMessage } from "../types.js";
+import { buildAnthropicClientConfig } from "./anthropic.js";
+import type { AssistantMessage, Model } from "../types.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(__dirname, "anthropic.ts"), "utf-8");
+const FGTS_BETA = "fine-grained-tool-streaming-2025-05-14";
+
+function makeAnthropicModel(provider: Model<"anthropic-messages">["provider"]): Model<"anthropic-messages"> {
+	return {
+		id: `test-${provider}`,
+		api: "anthropic-messages",
+		provider,
+		baseUrl: "https://api.example.com",
+		reasoning: false,
+		input: ["text"],
+		name: `${provider} model`,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 100_000,
+		maxTokens: 8_192,
+	} as Model<"anthropic-messages">;
+}
+
+function getBetaHeader(
+	provider: Model<"anthropic-messages">["provider"],
+): string | undefined {
+	const config = buildAnthropicClientConfig(makeAnthropicModel(provider), "some-key", false);
+	return config.defaultHeaders["anthropic-beta"];
+}
 
 describe("MiniMax fine-grained-tool-streaming exclusion (#4538)", () => {
-	test("minimax is excluded from fine-grained-tool-streaming-2025-05-14 beta", () => {
-		// The skipBetaHeaders flag must include minimax so it never receives the
-		// fine-grained-tool-streaming beta that causes empty tool names.
-		assert.match(
-			source,
-			/skipBetaHeaders.*minimax/s,
-			"minimax must be included in skipBetaHeaders to suppress fine-grained-tool-streaming",
+	test("minimax receives no anthropic-beta header (fine-grained-tool-streaming suppressed)", () => {
+		const beta = getBetaHeader("minimax");
+		assert.ok(
+			beta === undefined || !beta.includes(FGTS_BETA),
+			`minimax must not receive ${FGTS_BETA}; got anthropic-beta = ${JSON.stringify(beta)}`,
 		);
 	});
 
-	test("minimax-cn is excluded from fine-grained-tool-streaming-2025-05-14 beta", () => {
-		assert.match(
-			source,
-			/skipBetaHeaders.*minimax-cn/s,
-			"minimax-cn must be included in skipBetaHeaders to suppress fine-grained-tool-streaming",
+	test("minimax-cn receives no anthropic-beta header (fine-grained-tool-streaming suppressed)", () => {
+		const beta = getBetaHeader("minimax-cn");
+		assert.ok(
+			beta === undefined || !beta.includes(FGTS_BETA),
+			`minimax-cn must not receive ${FGTS_BETA}; got anthropic-beta = ${JSON.stringify(beta)}`,
+		);
+	});
+
+	test("alibaba-coding-plan also suppresses fine-grained-tool-streaming (same bug class)", () => {
+		const beta = getBetaHeader("alibaba-coding-plan");
+		assert.ok(
+			beta === undefined || !beta.includes(FGTS_BETA),
+			`alibaba-coding-plan must not receive ${FGTS_BETA}; got anthropic-beta = ${JSON.stringify(beta)}`,
+		);
+	});
+
+	test("regular anthropic provider still receives the fine-grained-tool-streaming beta", () => {
+		// Sanity check — skipping the beta is specific to bug-class providers.
+		const beta = getBetaHeader("anthropic");
+		assert.ok(
+			beta?.includes(FGTS_BETA),
+			`anthropic provider should still opt into ${FGTS_BETA}; got anthropic-beta = ${JSON.stringify(beta)}`,
 		);
 	});
 });

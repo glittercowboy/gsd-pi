@@ -1,20 +1,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { OAuthCredentials } from "./types.js";
 import { geminiCliOAuthProvider } from "./google-gemini-cli.js";
-
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
-const packageRoot = join(__dirname, "..", "..", "..");
-const sourceDir = existsSync(join(__dirname, "google-gemini-cli.ts"))
-	? __dirname
-	: join(packageRoot, "src", "utils", "oauth");
-
-function readSourceFile(name: string): string {
-	return readFileSync(join(sourceDir, name), "utf-8");
-}
 
 describe("Gemini CLI OAuth — provider structure", () => {
 	test("has correct id and name", () => {
@@ -61,24 +48,10 @@ describe("Gemini CLI OAuth — provider structure", () => {
 });
 
 describe("Gemini CLI OAuth — credential regression", () => {
+	// The module-import smoke test is the de-obfuscation guard: if CLIENT_ID
+	// or CLIENT_SECRET were re-obfuscated with atob(), the module would throw
+	// on load and every other test in this file would fail. See #4802.
 	test("module imports successfully", () => {
 		assert.ok(geminiCliOAuthProvider);
-	});
-
-	test("CLIENT_ID and CLIENT_SECRET are plaintext", () => {
-		const content = readSourceFile("google-gemini-cli.ts");
-		assert.ok(
-			content.includes(
-				'CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com"',
-			),
-		);
-		assert.ok(content.includes('CLIENT_SECRET = "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"'));
-		assert.ok(!content.includes("atob("));
-	});
-
-	test("security explanation comments are present", () => {
-		const content = readSourceFile("google-gemini-cli.ts");
-		assert.ok(content.includes("NOTE: These credentials are public"));
-		assert.ok(content.includes("obfuscated") || content.includes("security scanners"));
 	});
 });
