@@ -222,39 +222,40 @@ test("headless exits with code 11 after SIGINT", async (t) => {
     tmpDir,
   );
 
-  // Wait for stderr output confirming the process has started — the SIGINT
-  // handler is registered synchronously before `client.start()` in
-  // runHeadlessOnce(), so once the child has reached the point of writing
-  // anything to stderr, the handler is live. Poll deterministically rather
-  // than fixed-sleep.
+  // Wait for the explicit signal-handlers-ready marker that runHeadlessOnce()
+  // emits to stderr immediately after registering the SIGINT handler. Earlier
+  // stderr lines (extension load warnings, phase banners) come from before
+  // the handler is registered, so matching the first byte is unsafe. Poll
+  // deterministically rather than fixed-sleep.
+  const READY_MARKER = "[headless] signal-handlers-ready";
   let stderrSoFar = "";
   child.stderr!.on("data", (chunk: Buffer) => {
     stderrSoFar += chunk.toString();
   });
   const readyDeadline = Date.now() + 15_000;
-  while (stderrSoFar.length === 0 && Date.now() < readyDeadline) {
+  while (!stderrSoFar.includes(READY_MARKER) && Date.now() < readyDeadline) {
     if (child.exitCode !== null) break;
     await new Promise((r) => setTimeout(r, 25));
   }
 
-  // If the child exited without ever emitting stderr, the test environment
-  // prevented the child from reaching the SIGINT-handler registration (e.g.
-  // an existing gsd session forced an immediate auto-mode conflict exit).
+  // If the child exited without ever emitting the ready marker, the test
+  // environment prevented the child from reaching SIGINT-handler registration
+  // (e.g. an existing gsd session forced an immediate auto-mode conflict exit).
   // Skip explicitly rather than silently passing via a 0|1|11 branch.
-  if (child.exitCode !== null && stderrSoFar.length === 0) {
+  if (child.exitCode !== null && !stderrSoFar.includes(READY_MARKER)) {
     const earlyResult = await resultPromise;
     t.skip(
-      `headless exited (code=${earlyResult.code}) before writing any stderr — ` +
+      `headless exited (code=${earlyResult.code}) before signal handler registration — ` +
       `cannot assert SIGINT contract in this environment.\n` +
       `stdout: ${earlyResult.stdout.slice(0, 200)}\n` +
       `stderr: ${earlyResult.stderr.slice(0, 200)}`,
     );
     return;
   }
-  if (stderrSoFar.length === 0) {
+  if (!stderrSoFar.includes(READY_MARKER)) {
     child.kill("SIGKILL");
     await resultPromise;
-    assert.fail("headless produced no stderr within 15s — SIGINT handler cannot be confirmed live");
+    assert.fail("headless did not emit signal-handlers-ready within 15s — SIGINT handler cannot be confirmed live");
   }
 
   // Handler is live. SIGINT must produce exit code 11 and the Interrupted

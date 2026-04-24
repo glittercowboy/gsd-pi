@@ -748,6 +748,10 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   }
   process.on('SIGINT', signalHandler)
   process.on('SIGTERM', signalHandler)
+  // Emit a deterministic readiness marker so test harnesses can wait for
+  // the SIGINT handler to be live before sending a signal. Writing to
+  // stderr avoids mixing with stdout JSON output modes.
+  process.stderr.write('[headless] signal-handlers-ready\n')
 
   // Start the RPC session
   try {
