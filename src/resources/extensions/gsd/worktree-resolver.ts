@@ -20,6 +20,7 @@ import type { AutoSession } from "./auto/session.js";
 import { debugLog } from "./debug-logger.js";
 import { MergeConflictError } from "./git-service.js";
 import { emitJournalEvent } from "./journal.js";
+import { emitWorktreeCreated, emitWorktreeMerged } from "./worktree-telemetry.js";
 
 // ─── Dependency Interface ──────────────────────────────────────────────────
 
@@ -290,6 +291,13 @@ export class WorktreeResolver {
         eventType: "worktree-enter",
         data: { milestoneId, wtPath, created: !existingPath },
       });
+      // #4764 — record creation/enter as a lifecycle event so the telemetry
+      // aggregator can pair it with the eventual worktree-merged event.
+      try {
+        emitWorktreeCreated(this.s.originalBasePath || this.s.basePath, milestoneId, {
+          reason: existingPath ? "enter-milestone" : "create-milestone",
+        });
+      } catch { /* silent */ }
       ctx.notify(`Entered worktree for ${milestoneId} at ${wtPath}`, "info");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -398,6 +406,10 @@ export class WorktreeResolver {
   mergeAndExit(milestoneId: string, ctx: NotifyCtx): void {
     this.validateMilestoneId(milestoneId);
 
+    // #4764 — telemetry: record start timestamp so we can emit merge duration.
+    const mergeStartedAt = new Date().toISOString();
+    const mergeStartMs = Date.now();
+
     // If worktree creation failed earlier, skip merge — work is on current branch (#2483)
     if (this.s.isolationDegraded) {
       debugLog("WorktreeResolver", {
@@ -451,6 +463,18 @@ export class WorktreeResolver {
     } else if (mode === "branch") {
       this._mergeBranchMode(milestoneId, ctx);
     }
+
+    // #4764 — record merge completion (success path reaches here). Failure
+    // paths throw out of _merge* before reaching this line, so the absence
+    // of worktree-merged pairs with a prior worktree-created flags an
+    // orphan in the aggregator.
+    try {
+      emitWorktreeMerged(this.s.originalBasePath || this.s.basePath, milestoneId, {
+        reason: "milestone-complete",
+        startedAt: mergeStartedAt,
+        durationMs: Date.now() - mergeStartMs,
+      });
+    } catch { /* silent */ }
   }
 
   /** Worktree-mode merge: read roadmap, merge, teardown, reset paths. */

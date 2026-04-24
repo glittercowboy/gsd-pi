@@ -37,6 +37,7 @@ import {
   nativeWorktreePrune,
   nativeWorktreeRemove,
 } from "./native-git-bridge.js";
+import { emitCanonicalRootRedirect } from "./worktree-telemetry.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -164,6 +165,10 @@ export function resolveCanonicalMilestoneRoot(
   // A directory without .git is a stale leftover from a prior crash and
   // must not be trusted as a read source.
   if (!existsSync(join(wtPath, ".git"))) return basePath;
+
+  // #4764 — record the redirect so we can measure how often the #4761 fix
+  // would have mattered. Best-effort; emit is silent on any failure.
+  try { emitCanonicalRootRedirect(basePath, milestoneId, wtPath); } catch { /* silent */ }
 
   return wtPath;
 }

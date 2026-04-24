@@ -56,6 +56,7 @@ import {
 import { getAutoWorktreePath, isInAutoWorktree } from "./auto-worktree.js";
 import { readResourceVersion, cleanStaleRuntimeUnits } from "./auto-worktree.js";
 import { worktreePath as getWorktreeDir, isInsideWorktreesDir } from "./worktree-manager.js";
+import { emitWorktreeOrphaned } from "./worktree-telemetry.js";
 import { initMetrics } from "./metrics.js";
 import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
@@ -208,7 +209,8 @@ export function auditOrphanedMilestoneBranches(
       if (commitsAhead === 0) continue;
 
       const wtDir = getWorktreeDir(basePath, milestoneId);
-      const wtSuffix = existsSync(wtDir)
+      const wtDirExists = existsSync(wtDir);
+      const wtSuffix = wtDirExists
         ? ` Worktree directory at .gsd/worktrees/${milestoneId}/ holds the live work.`
         : "";
       warnings.push(
@@ -216,6 +218,16 @@ export function auditOrphanedMilestoneBranches(
         wtSuffix +
         ` Run \`/gsd auto\` to resume, or merge manually if abandoning.`,
       );
+
+      // #4764 telemetry
+      try {
+        emitWorktreeOrphaned(basePath, milestoneId, {
+          reason: "in-progress-unmerged",
+          commitsAhead,
+          worktreeDirExists: wtDirExists,
+        });
+      } catch { /* silent */ }
+
       continue;
     }
 
@@ -263,6 +275,14 @@ export function auditOrphanedMilestoneBranches(
         `Branch ${branch} exists for completed milestone ${milestoneId} but is NOT merged into ${mainBranch}. ` +
         `This may contain unmerged work. Merge manually or run \`/gsd health --fix\` to resolve.`,
       );
+
+      // #4764 telemetry
+      try {
+        emitWorktreeOrphaned(basePath, milestoneId, {
+          reason: "complete-unmerged",
+          worktreeDirExists: existsSync(getWorktreeDir(basePath, milestoneId)),
+        });
+      } catch { /* silent */ }
     }
   }
 
