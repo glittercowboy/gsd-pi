@@ -103,6 +103,9 @@ test("waitForCondition returns the truthy value (not just true)", async () => {
     n++;
     return n >= 3 ? { ready: true, iteration: n } : null;
   }, { intervalMs: 5 });
+  // The helper only resolves when the condition returns a truthy value, so
+  // result cannot be null here. Assert it and narrow for the follow-ups.
+  assert.ok(result, "waitForCondition must resolve with a truthy value, not null");
   assert.equal(result.ready, true);
   assert.equal(result.iteration, 3);
 });
