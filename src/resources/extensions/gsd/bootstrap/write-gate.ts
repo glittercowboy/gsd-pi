@@ -136,7 +136,7 @@ function persistWriteGateSnapshot(basePath: string = process.cwd()): void {
   if (!shouldPersistWriteGateSnapshot()) return;
   const path = writeGateSnapshotPath(basePath);
   mkdirSync(join(basePath, ".gsd", "runtime"), { recursive: true });
-  const tempPath = `${path}.tmp`;
+  const tempPath = `${path}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
   writeFileSync(tempPath, JSON.stringify(currentWriteGateSnapshot(), null, 2), "utf-8");
   try {
     renameSync(tempPath, path);
