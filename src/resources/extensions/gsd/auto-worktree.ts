@@ -1461,7 +1461,12 @@ function popStashSafely(basePath: string): void {
       encoding: "utf-8",
     });
     return;
-  } catch {
+  } catch (err) {
+    debugLog("popStashSafely", {
+      basePath,
+      phase: "stash-pop-conflicted",
+      error: err instanceof Error ? err.message : String(err),
+    });
     // Pop conflicted — auto-resolve ALL conflicts by accepting HEAD
   }
 
@@ -1475,7 +1480,13 @@ function popStashSafely(basePath: string): void {
           encoding: "utf-8",
         });
         nativeAddPaths(basePath, [f]);
-      } catch {
+      } catch (err) {
+        debugLog("popStashSafely", {
+          basePath,
+          phase: "checkout-head-failed",
+          file: f,
+          error: err instanceof Error ? err.message : String(err),
+        });
         nativeRmForce(basePath, [f]);
       }
     }
@@ -1491,7 +1502,13 @@ function popStashSafely(basePath: string): void {
       stdio: ["ignore", "pipe", "pipe"],
       encoding: "utf-8",
     });
-  } catch { /* stash may already be consumed */ }
+  } catch (err) {
+    debugLog("popStashSafely", {
+      basePath,
+      phase: "stash-drop-skipped",
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
 }
 
 /**
@@ -1516,7 +1533,12 @@ export function ensureCleanWorkingTree(basePath: string): { stashed: boolean; cl
       encoding: "utf-8",
     });
     cleaned.push("discarded .gsd/ tracked changes");
-  } catch {
+  } catch (err) {
+    debugLog("ensureCleanWorkingTree", {
+      basePath,
+      phase: "discard-gsd-skipped",
+      error: err instanceof Error ? err.message : String(err),
+    });
     // .gsd/ may not exist in HEAD — that's fine
   }
 
@@ -1541,12 +1563,29 @@ export function ensureCleanWorkingTree(basePath: string): { stashed: boolean; cl
     return { stashed: false, cleaned };
   }
 
+  // On Windows, SQLite holds mandatory file locks on the gsd.db WAL/SHM
+  // sidecars while the connection is open. `git stash --include-untracked`
+  // walks those files and fails with EBUSY (#4704). Close the DB before
+  // stashing so Windows releases the handles; reopen after. No-op on POSIX,
+  // where advisory locks don't block git.
+  const needsDbCycle = process.platform === "win32" && isDbAvailable();
+  const dbPathToReopen = needsDbCycle ? getDbPath() : null;
+  let dbClosed = false;
+  if (needsDbCycle) {
+    try {
+      closeDatabase();
+      dbClosed = true;
+    } catch (err) {
+      logWarning("worktree", `pre-clean db close failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   // Step 3: Stash dirty files including untracked (matches pre-#3141 behavior)
   let stashed = false;
   try {
     execFileSync(
       "git",
-      ["stash", "push", "-m", `gsd: pre-merge clean state`],
+      ["stash", "push", "--include-untracked", "-m", `gsd: pre-merge clean state`],
       { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
     );
     stashed = true;
@@ -1589,6 +1628,14 @@ export function ensureCleanWorkingTree(basePath: string): { stashed: boolean; cl
       );
     }
     cleaned.push("abort+reset succeeded");
+  } finally {
+    if (dbClosed && dbPathToReopen) {
+      try {
+        openDatabase(dbPathToReopen);
+      } catch (err) {
+        logWarning("worktree", `post-clean db reopen failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   debugLog("ensureCleanWorkingTree", { basePath, stashed, cleaned });
@@ -1907,41 +1954,14 @@ export function mergeMilestoneToMain(
   // Uses ensureCleanWorkingTree() escalation ladder: discard .gsd/ → stash →
   // abort+reset → throw. The abort+reset step also clears stale MERGE_HEAD
   // artifacts that would otherwise block `git merge --squash` (#2912).
-  //
-  // On Windows, SQLite holds mandatory file locks on the gsd.db WAL/SHM
-  // sidecars while the connection is open. `git stash --include-untracked`
-  // walks those files and fails with EBUSY (#4704). Close the DB before
-  // cleaning so Windows releases the handles; reopen after. No-op on POSIX,
-  // where advisory locks don't block git.
-  const needsDbCycle = process.platform === "win32" && isDbAvailable();
-  const dbPathToReopen = needsDbCycle ? getDbPath() : null;
-  if (needsDbCycle) {
-    try {
-      closeDatabase();
-    } catch (err) {
-      logWarning("worktree", `pre-clean db close failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
   let stashed = false;
   let cleanResult: { stashed: boolean; cleaned: string[] };
   try {
     cleanResult = ensureCleanWorkingTree(originalBasePath_);
   } catch (err) {
-    if (needsDbCycle && dbPathToReopen) {
-      try { openDatabase(dbPathToReopen); } catch { /* best-effort */ }
-    }
     restoreShelter();
     process.chdir(previousCwd);
     throw err;
-  }
-
-  if (needsDbCycle && dbPathToReopen) {
-    try {
-      openDatabase(dbPathToReopen);
-    } catch (err) {
-      logWarning("worktree", `post-clean db reopen failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
   }
 
   stashed = cleanResult.stashed;

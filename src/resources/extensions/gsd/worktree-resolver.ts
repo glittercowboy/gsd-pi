@@ -709,9 +709,12 @@ export class WorktreeResolver {
         if (restoredCwd) this.restoreToProjectRoot();
         throw err;
       }
+
+      this.restoreToProjectRoot();
+      throw err;
     }
 
-    // Always restore basePath and rebuild — whether merge succeeded or failed
+    // Always restore basePath and rebuild after successful merge or skip paths.
     this.restoreToProjectRoot();
     debugLog("WorktreeResolver", {
       action: "mergeAndExit",
