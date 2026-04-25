@@ -431,7 +431,7 @@ Continue from step 2.
       cleanup(base1);
     }
 
-    // Case B: S01 depends on nonexistent S99 → truly blocked
+    // Case B: S01 depends on nonexistent S99 -> fallback picks best available slice
     const base2 = createFixtureBase();
     try {
       writeRoadmap(base2, 'M001', `# M001: Test Milestone
@@ -446,9 +446,8 @@ Continue from step 2.
 
       const state2 = await deriveState(base2);
 
-      assert.deepStrictEqual(state2.phase, 'blocked', 'blocked-B: phase is blocked');
-      assert.deepStrictEqual(state2.activeSlice, null, 'blocked-B: activeSlice is null');
-      assert.ok(state2.blockers.length > 0, 'blocked-B: blockers array is non-empty');
+      assert.deepStrictEqual(state2.phase, 'planning', 'blocked-B: phase is planning (fallback picks S01)');
+      assert.deepStrictEqual(state2.activeSlice?.id, 'S01', 'blocked-B: activeSlice is S01 via fallback');
     } finally {
       cleanup(base2);
     }
@@ -925,6 +924,35 @@ slice: S01
       assert.deepStrictEqual(m001Entry, undefined, 'ghost+real: M001 not in registry');
       assert.deepStrictEqual(state.registry.length, 1, 'ghost+real: registry has 1 entry');
       assert.deepStrictEqual(state.registry[0]?.status, 'active', 'ghost+real: M002 is active');
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  // ─── Test: queued milestone with worktree not flagged as ghost (#2921) ──
+  test('queued milestone with worktree not flagged as ghost (#2921)', async () => {
+    const base = createFixtureBase();
+    try {
+      // Create a milestone directory with only an empty slices subdir — no content files.
+      // This would normally be a ghost, but it has a worktree directory.
+      const milestoneDir = join(base, '.gsd', 'milestones', 'M002');
+      mkdirSync(join(milestoneDir, 'slices'), { recursive: true });
+
+      // Create a worktree directory for M002, simulating an active worktree
+      const worktreeDir = join(base, '.gsd', 'worktrees', 'M002');
+      mkdirSync(worktreeDir, { recursive: true });
+
+      // isGhostMilestone should return false because the worktree exists
+      assert.ok(!isGhostMilestone(base, 'M002'), 'M002 with worktree should NOT be a ghost');
+
+      // Also create a completed M001 so deriveState has something before M002
+      writeMilestoneSummary(base, 'M001', '# M001 Summary\n\nDone.');
+
+      const state = await deriveState(base);
+      // M002 should appear in the registry (not filtered as ghost)
+      const m002Entry = state.registry.find(e => e.id === 'M002');
+      assert.ok(m002Entry !== undefined, 'M002 should be in registry when worktree exists');
+      assert.deepStrictEqual(state.activeMilestone?.id, 'M002', 'M002 should be active milestone');
     } finally {
       cleanup(base);
     }

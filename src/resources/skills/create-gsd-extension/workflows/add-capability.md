@@ -14,7 +14,7 @@ Read the reference file for the specific capability being added:
 ## Step 1: Identify the Extension
 
 Locate the existing extension file. Check:
-- `~/.gsd/agent/extensions/` (global)
+- `~/.pi/agent/extensions/` (global community extensions)
 - `.gsd/extensions/` (project-local)
 
 Read the current extension code to understand its structure.
@@ -28,7 +28,7 @@ If the extension needs new imports, add them at the top of the file.
 ## Step 3: Handle Structural Changes
 
 **Single file → Directory**: If the extension is outgrowing a single file:
-1. Create `~/.gsd/agent/extensions/my-extension/`
+1. Create `~/.pi/agent/extensions/my-extension/`
 2. Move the file to `index.ts`
 3. Extract helpers to separate files
 

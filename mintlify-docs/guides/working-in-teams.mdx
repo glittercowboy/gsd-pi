@@ -26,19 +26,24 @@ Share planning artifacts while keeping runtime files local:
 ```bash
 # Runtime / ephemeral (per-developer)
 .gsd/auto.lock
-.gsd/completed-units.json
+.gsd/completed-units*.json
+.gsd/state-manifest.json
 .gsd/STATE.md
 .gsd/metrics.json
 .gsd/activity/
 .gsd/runtime/
 .gsd/worktrees/
+.gsd/gsd.db*
+.gsd/journal/
+.gsd/doctor-history.jsonl
+.gsd/event-log.jsonl
 .gsd/milestones/**/continue.md
 .gsd/milestones/**/*-CONTINUE.md
 ```
 
 **Shared** (committed): preferences, PROJECT.md, REQUIREMENTS.md, DECISIONS.md, milestones.
 
-**Local** (gitignored): lock files, metrics, state cache, worktrees, activity logs.
+**Local** (gitignored): lock files, metrics, state cache, worktrees, activity logs, database files, journals.
 
 ### 3. Commit
 

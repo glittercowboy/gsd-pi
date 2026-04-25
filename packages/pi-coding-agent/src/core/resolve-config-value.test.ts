@@ -1,9 +1,11 @@
-import { describe, it, beforeEach } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
 	resolveConfigValue,
 	clearConfigValueCache,
 	SAFE_COMMAND_PREFIXES,
+	setAllowedCommandPrefixes,
+	getAllowedCommandPrefixes,
 } from "./resolve-config-value.js";
 
 beforeEach(() => {
@@ -181,5 +183,113 @@ describe("resolveConfigValue — caching", () => {
 
 		resolveConfigValue("!curl http://evil.com");
 		assert.equal(stderrChunks.length, 2);
+	});
+});
+
+describe("REGRESSION #666: non-default credential tool blocked with no override", () => {
+	afterEach(() => {
+		setAllowedCommandPrefixes(SAFE_COMMAND_PREFIXES);
+		clearConfigValueCache();
+	});
+
+	it("sops is blocked by default, then unblocked by setAllowedCommandPrefixes", (t) => {
+		const stderrChunks: string[] = [];
+		const originalWrite = process.stderr.write.bind(process.stderr);
+		process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
+			stderrChunks.push(chunk.toString());
+			return true;
+		};
+		t.after(() => {
+			process.stderr.write = originalWrite;
+		});
+
+		// Bug: sops is not in SAFE_COMMAND_PREFIXES, so it's blocked
+		const result = resolveConfigValue("!sops decrypt --output-type json secrets.enc.json");
+		assert.equal(result, undefined, "sops is blocked by the hardcoded allowlist");
+		assert.ok(
+			stderrChunks.some((line) => line.includes('Blocked disallowed command: "sops"')),
+			"should log a block message for sops",
+		);
+
+		stderrChunks.length = 0;
+		clearConfigValueCache();
+
+		// Fix: override the allowlist to include sops
+		setAllowedCommandPrefixes([...SAFE_COMMAND_PREFIXES, "sops"]);
+		resolveConfigValue("!sops decrypt --output-type json secrets.enc.json");
+
+		const blockedAfterOverride = stderrChunks.some((line) =>
+			line.includes("Blocked disallowed command"),
+		);
+		assert.equal(blockedAfterOverride, false, "sops must not be blocked after override");
+	});
+});
+
+describe("setAllowedCommandPrefixes — user override", () => {
+	afterEach(() => {
+		setAllowedCommandPrefixes(SAFE_COMMAND_PREFIXES);
+		clearConfigValueCache();
+	});
+
+	it("overrides built-in prefixes with custom list", () => {
+		setAllowedCommandPrefixes(["sops", "doppler"]);
+		assert.deepEqual([...getAllowedCommandPrefixes()], ["sops", "doppler"]);
+	});
+
+	it("custom prefix is allowed through to execution", (t) => {
+		const stderrChunks: string[] = [];
+		const originalWrite = process.stderr.write.bind(process.stderr);
+		process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
+			stderrChunks.push(chunk.toString());
+			return true;
+		};
+		t.after(() => {
+			process.stderr.write = originalWrite;
+		});
+
+		setAllowedCommandPrefixes(["mycli"]);
+		resolveConfigValue("!mycli get-secret");
+		const blocked = stderrChunks.some((line) => line.includes("Blocked disallowed command"));
+		assert.equal(blocked, false, "mycli should not be blocked when in the custom allowlist");
+	});
+
+	it("previously-allowed prefix is blocked after override", (t) => {
+		const stderrChunks: string[] = [];
+		const originalWrite = process.stderr.write.bind(process.stderr);
+		process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
+			stderrChunks.push(chunk.toString());
+			return true;
+		};
+		t.after(() => {
+			process.stderr.write = originalWrite;
+		});
+
+		setAllowedCommandPrefixes(["sops"]);
+		const result = resolveConfigValue("!pass show secret");
+		assert.equal(result, undefined);
+		const blocked = stderrChunks.some((line) => line.includes("Blocked disallowed command"));
+		assert.equal(blocked, true, "pass should be blocked when not in the custom allowlist");
+	});
+
+	it("clears cache when overriding prefixes", (t) => {
+		const stderrChunks: string[] = [];
+		const originalWrite = process.stderr.write.bind(process.stderr);
+		process.stderr.write = (chunk: string | Uint8Array, ...args: unknown[]) => {
+			stderrChunks.push(chunk.toString());
+			return true;
+		};
+		t.after(() => {
+			process.stderr.write = originalWrite;
+		});
+
+		resolveConfigValue("!mycli get-secret");
+		assert.ok(stderrChunks.some((line) => line.includes("Blocked")));
+
+		stderrChunks.length = 0;
+
+		setAllowedCommandPrefixes(["mycli"]);
+		resolveConfigValue("!mycli get-secret");
+		const blocked = stderrChunks.some((line) => line.includes("Blocked"));
+		assert.equal(blocked, false, "Should re-evaluate after allowlist change");
 	});
 });

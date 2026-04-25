@@ -52,6 +52,18 @@ export interface SessionLockStatus {
   recovered?: boolean;
 }
 
+interface ProperLockfileApi {
+  lockSync(
+    path: string,
+    options?: {
+      realpath?: boolean;
+      stale?: number;
+      update?: number;
+      onCompromised?: () => void;
+    },
+  ): () => void;
+}
+
 // ─── Module State ───────────────────────────────────────────────────────────
 
 /** Release function from proper-lockfile — calling it releases the OS lock. */
@@ -277,9 +289,9 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
     unitStartedAt: new Date().toISOString(),
   };
 
-  let lockfile: typeof import("proper-lockfile");
+  let lockfile: ProperLockfileApi;
   try {
-    lockfile = _require("proper-lockfile") as typeof import("proper-lockfile");
+    lockfile = _require("proper-lockfile") as ProperLockfileApi;
   } catch {
     // proper-lockfile not available — fall back to PID-based check
     return acquireFallbackLock(basePath, lp, lockData);
@@ -287,6 +299,20 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
 
   const gsdDir = gsdRoot(basePath);
   const lockTarget = effectiveLockTarget(gsdDir);
+
+  // #3218: Pre-flight stale lock cleanup — if the .lock/ directory exists but
+  // no auto.lock metadata is present (or the PID is dead), remove the lock
+  // directory before attempting acquisition. This prevents the 30-min stale
+  // window from blocking /gsd after crashes, SIGKILL, or laptop sleep.
+  const lockDir = lockTarget + ".lock";
+  if (existsSync(lockDir)) {
+    const existingData = readExistingLockData(lp);
+    const isOrphan = !existingData || (existingData.pid && !isPidAlive(existingData.pid));
+    if (isOrphan) {
+      try { rmSync(lockDir, { recursive: true, force: true }); } catch { /* best-effort */ }
+      try { if (existsSync(lp)) unlinkSync(lp); } catch { /* best-effort */ }
+    }
+  }
 
   try {
     // Try to acquire an exclusive OS-level lock on the lock target.
@@ -344,9 +370,11 @@ export function acquireSessionLock(basePath: string): SessionLockResult {
       }
     }
 
+    // #3218: Provide actionable workaround when lock recovery fails
+    const lockDirPath = lockTarget + ".lock";
     const reason = existingPid
       ? `Another auto-mode session (PID ${existingPid}) appears to be running.\nStop it with \`kill ${existingPid}\` before starting a new session.`
-      : `Another auto-mode session is already running on this project.`;
+      : `Another auto-mode session lock is stuck on this project.\nRun: rm -rf "${lockDirPath}" && rm -f "${lp}"`;
 
     return { acquired: false, reason, existingPid };
   }

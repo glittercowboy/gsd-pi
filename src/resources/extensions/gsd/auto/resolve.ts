@@ -11,6 +11,7 @@
 import type { UnitResult, AgentEndEvent, ErrorContext } from "./types.js";
 import type { AutoSession } from "./session.js";
 import { debugLog } from "../debug-logger.js";
+import { bumpTurnGeneration } from "./turn-epoch.js";
 
 // ─── Per-unit one-shot promise state ────────────────────────────────────────
 //
@@ -68,17 +69,41 @@ export function isSessionSwitchInFlight(): boolean {
   return _sessionSwitchInFlight;
 }
 
+// ─── bumpAndResolveSynthetic ────────────────────────────────────────────────
+
+/**
+ * Bump the turn epoch and synthetically resolve the pending unit promise —
+ * the exact sequence timeout recovery must perform when it advances past a
+ * timed-out unit. Using this helper enforces the invariant "bump iff we are
+ * actually superseding the turn" so a future caller cannot resolve without
+ * bumping (orphaned writes leak) or bump without resolving (next turn starts
+ * already stale).
+ *
+ * NOT to be used for steering retries that keep the same turn alive — those
+ * do not supersede the turn and must not bump.
+ */
+export function bumpAndResolveSynthetic(reason: string): void {
+  bumpTurnGeneration(reason);
+  resolveAgentEnd({ messages: [], _synthetic: reason } as unknown as AgentEndEvent);
+}
+
 // ─── resolveAgentEndCancelled ─────────────────────────────────────────────────
 
 /**
  * Force-resolve the pending unit promise with { status: "cancelled" }.
  *
- * Used by pauseAuto, handleAgentEnd early-return, and supervision catch
+ * Used by pauseAuto and supervision catch
  * blocks to ensure the autoLoop is never stuck awaiting a promise that
  * will never resolve. Safe to call when no resolver is pending (no-op).
  */
 export function resolveAgentEndCancelled(errorContext?: ErrorContext): void {
   if (_currentResolve) {
+    // Cancellation supersedes the in-flight turn the same way timeout
+    // recovery does — bump the turn epoch so any lingering writes from the
+    // cancelled turn drop themselves.
+    bumpTurnGeneration(
+      `cancelled:${errorContext?.category ?? "unknown"}`,
+    );
     debugLog("resolveAgentEndCancelled", { status: "resolving-cancelled" });
     const r = _currentResolve;
     _currentResolve = null;
@@ -95,6 +120,10 @@ export function resolveAgentEndCancelled(errorContext?: ErrorContext): void {
 export function _resetPendingResolve(): void {
   _currentResolve = null;
   _sessionSwitchInFlight = false;
+}
+
+export function _hasPendingResolveForTest(): boolean {
+  return _currentResolve !== null;
 }
 
 /**

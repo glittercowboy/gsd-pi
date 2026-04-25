@@ -28,16 +28,19 @@ import { deriveState } from "./state.js";
 import { isAutoActive } from "./auto.js";
 import { loadPrompt } from "./prompt-loader.js";
 import { gsdRoot } from "./paths.js";
+import { isDbAvailable, getAllMilestones, getMilestoneSlices, getSliceTasks } from "./gsd-db.js";
+import { isClosedStatus } from "./status-guards.js";
 import { formatDuration } from "../shared/format-utils.js";
 import { getAutoWorktreePath } from "./auto-worktree.js";
 import { loadEffectiveGSDPreferences, loadGlobalGSDPreferences, getGlobalGSDPreferencesPath } from "./preferences.js";
 import { showNextAction } from "../shared/tui.js";
 import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./commands-prefs-wizard.js";
+import { summarizeWorktreeTelemetry, percentile, type WorktreeTelemetrySummary } from "./worktree-telemetry.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface ForensicAnomaly {
-  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace" | "journal-stuck" | "journal-guard-block" | "journal-rapid-iterations" | "journal-worktree-failure";
+export interface ForensicAnomaly {
+  type: "stuck-loop" | "cost-spike" | "timeout" | "missing-artifact" | "crash" | "doctor-issue" | "error-trace" | "journal-stuck" | "journal-guard-block" | "journal-rapid-iterations" | "journal-worktree-failure" | "worktree-orphan" | "worktree-unmerged-exit";
   severity: "info" | "warning" | "error";
   unitType?: string;
   unitId?: string;
@@ -85,6 +88,15 @@ interface JournalSummary {
   fileCount: number;
 }
 
+interface DbCompletionCounts {
+  milestones: number;
+  milestonesTotal: number;
+  slices: number;
+  slicesTotal: number;
+  tasks: number;
+  tasksTotal: number;
+}
+
 interface ForensicReport {
   gsdVersion: string;
   timestamp: string;
@@ -95,24 +107,29 @@ interface ForensicReport {
   unitTraces: UnitTrace[];
   metrics: MetricsLedger | null;
   completedKeys: string[];
+  dbCompletionCounts: DbCompletionCounts | null;
   crashLock: LockData | null;
   doctorIssues: DoctorIssue[];
   anomalies: ForensicAnomaly[];
   recentUnits: { type: string; id: string; cost: number; duration: number; model: string; finishedAt: number }[];
   journalSummary: JournalSummary | null;
   activityLogMeta: ActivityLogMeta | null;
+  /** #4764 — worktree lifespan / divergence telemetry aggregates. */
+  worktreeTelemetry: WorktreeTelemetrySummary | null;
 }
 
 // ─── Duplicate Detection ──────────────────────────────────────────────────────
 
 const DEDUP_PROMPT_SECTION = `
-## Duplicate Detection (REQUIRED before issue creation)
+## Pre-Investigation: Duplicate Check (REQUIRED)
 
-Before offering to create a GitHub issue, you MUST search for existing issues and PRs that may already address this bug. This step uses the user's AI tokens for analysis.
+Before reading GSD source code or performing deep analysis, you MUST search for existing issues and PRs that may already address this bug. This avoids wasting tokens on already-fixed bugs.
 
 ### Search Steps
 
-1. **Search closed issues** for similar keywords from your diagnosis:
+Use keywords from the user's problem description and the anomaly summaries in the forensic report above.
+
+1. **Search closed issues** for similar keywords:
    \`\`\`
    gh issue list --repo gsd-build/gsd-2 --state closed --search "<keywords from root cause>" --limit 20
    \`\`\`
@@ -129,20 +146,16 @@ Before offering to create a GitHub issue, you MUST search for existing issues an
 
 ### Analysis
 
-For each result, compare it against your root-cause diagnosis:
+For each result, compare it against the user's reported symptoms and the forensic anomalies:
 - Does the issue describe the same code path or file?
-- Does the PR modify the same file:line you identified?
+- Does the PR modify the area related to the reported symptoms?
 - Is the symptom description semantically similar even if keywords differ?
 
-### Present Findings
+### Decision Gate
 
-If you find potential matches, present them to the user:
-
-1. **"Already fixed by PR #X — skip issue creation"** — when a merged PR or closed issue clearly addresses the same root cause. Explain why you believe it matches.
-2. **"Add my findings to existing issue #Y"** — when an open issue exists for the same bug. Use \`gh issue comment #Y --repo gsd-build/gsd-2\` to add forensic evidence.
-3. **"Create new issue anyway"** — when existing results do not cover this specific failure.
-
-Only proceed to issue creation if no matches were found OR the user explicitly chooses "Create new issue anyway".
+- **Merged PR clearly fixes the described symptom** → Report "Already fixed by PR #X" with brief explanation. Skip full investigation.
+- **Open issue matches** → Report "Existing issue #Y covers this." Offer to add forensic evidence. Skip full investigation unless user asks for deeper analysis.
+- **No matches** → Proceed to full investigation below.
 `;
 
 async function writeForensicsDedupPref(ctx: ExtensionCommandContext, enabled: boolean): Promise<void> {
@@ -250,6 +263,9 @@ export async function handleForensics(
     { customType: "gsd-forensics", content, display: false },
     { triggerTurn: true },
   );
+
+  // Persist forensics context so follow-up turns can re-inject it (#2941)
+  writeForensicsMarker(basePath, savedPath, content);
 }
 
 // ─── Report Builder ───────────────────────────────────────────────────────────
@@ -275,8 +291,9 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   // 3. Load metrics
   const metrics = loadLedgerFromDisk(basePath);
 
-  // 4. Load completed keys
+  // 4. Load completed keys (legacy) and DB completion counts
   const completedKeys = loadCompletedKeys(basePath);
+  const dbCompletionCounts = getDbCompletionCounts();
 
   // 5. Check crash lock
   const crashLock = readCrashLock(basePath);
@@ -323,6 +340,16 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
   detectCrash(crashLock, anomalies);
   detectDoctorIssues(doctorIssues, anomalies);
   detectErrorTraces(unitTraces, anomalies);
+
+  // 11b. #4764 — worktree lifecycle telemetry
+  let worktreeTelemetry: WorktreeTelemetrySummary | null = null;
+  try {
+    worktreeTelemetry = summarizeWorktreeTelemetry(basePath);
+    detectWorktreeOrphans(worktreeTelemetry, anomalies);
+  } catch {
+    // Telemetry is best-effort — do not let an aggregator failure block the
+    // rest of the forensic report.
+  }
   detectJournalAnomalies(journalSummary, anomalies);
 
   return {
@@ -335,12 +362,14 @@ export async function buildForensicReport(basePath: string): Promise<ForensicRep
     unitTraces,
     metrics,
     completedKeys,
+    dbCompletionCounts,
     crashLock,
     doctorIssues,
     anomalies,
     recentUnits,
     journalSummary,
     activityLogMeta,
+    worktreeTelemetry,
   };
 }
 
@@ -573,7 +602,31 @@ function gatherActivityLogMeta(basePath: string, activeMilestone?: string | null
   }
 }
 
-// ─── Completed Keys Loader ────────────────────────────────────────────────────
+// ─── Completed Keys Helpers ───────────────────────────────────────────────────
+
+/**
+ * Parse a completed-unit key into { unitType, unitId }.
+ *
+ * Most unit types are a single segment ("execute-task", "complete-slice", …)
+ * so the key format is simply "unitType/unitId". Hook units are the exception:
+ * their type is compound ("hook/<hookName>"), making the key look like
+ * "hook/telegram-progress/M007/S01". Splitting naïvely on the first slash
+ * yields unitType="hook" which bypasses verifyExpectedArtifact()'s
+ * startsWith("hook/") guard and produces false-positive missing-artifact
+ * errors (#2826).
+ *
+ * Returns null for malformed keys (no slash, or hook/ with no second slash).
+ */
+export function splitCompletedKey(key: string): { unitType: string; unitId: string } | null {
+  if (key.startsWith("hook/")) {
+    const secondSlash = key.indexOf("/", 5); // skip past "hook/"
+    if (secondSlash === -1) return null;      // malformed — "hook/" with no hook name
+    return { unitType: key.slice(0, secondSlash), unitId: key.slice(secondSlash + 1) };
+  }
+  const slashIdx = key.indexOf("/");
+  if (slashIdx === -1) return null;
+  return { unitType: key.slice(0, slashIdx), unitId: key.slice(slashIdx + 1) };
+}
 
 function loadCompletedKeys(basePath: string): string[] {
   const file = join(gsdRoot(basePath), "completed-units.json");
@@ -585,15 +638,83 @@ function loadCompletedKeys(basePath: string): string[] {
   return [];
 }
 
+// ─── DB Completion Counts ────────────────────────────────────────────────────
+
+function getDbCompletionCounts(): DbCompletionCounts | null {
+  if (!isDbAvailable()) return null;
+
+  const milestones = getAllMilestones();
+  let completedMilestones = 0;
+  let totalSlices = 0;
+  let completedSlices = 0;
+  let totalTasks = 0;
+  let completedTasks = 0;
+
+  for (const m of milestones) {
+    if (isClosedStatus(m.status)) completedMilestones++;
+
+    const slices = getMilestoneSlices(m.id);
+    for (const s of slices) {
+      totalSlices++;
+      if (isClosedStatus(s.status)) completedSlices++;
+
+      const tasks = getSliceTasks(m.id, s.id);
+      for (const t of tasks) {
+        totalTasks++;
+        if (isClosedStatus(t.status)) completedTasks++;
+      }
+    }
+  }
+
+  return {
+    milestones: completedMilestones,
+    milestonesTotal: milestones.length,
+    slices: completedSlices,
+    slicesTotal: totalSlices,
+    tasks: completedTasks,
+    tasksTotal: totalTasks,
+  };
+}
+
 // ─── Anomaly Detectors ───────────────────────────────────────────────────────
 
-function detectStuckLoops(units: UnitMetrics[], anomalies: ForensicAnomaly[]): void {
-  const counts = new Map<string, number>();
+/**
+ * Detect units that were dispatched multiple times (stuck in a loop).
+ *
+ * Counts distinct dispatches by grouping on (type, id, startedAt) first to
+ * collapse idle-watchdog duplicate snapshots (#1943), then counts unique
+ * startedAt values per type/id to determine actual dispatch count.
+ *
+ * Exported for testability.
+ */
+export function detectStuckLoops(units: UnitMetrics[], anomalies: ForensicAnomaly[]): void {
+  // First, collect unique startedAt values per type/id key, bucketed by
+  // autoSessionKey when available so cross-session recovery does not look
+  // like a within-session stuck loop.
+  const dispatchMap = new Map<string, Map<string, Set<number>>>();
   for (const u of units) {
     const key = `${u.type}/${u.id}`;
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    let sessionBuckets = dispatchMap.get(key);
+    if (!sessionBuckets) {
+      sessionBuckets = new Map();
+      dispatchMap.set(key, sessionBuckets);
+    }
+
+    const sessionKey = u.autoSessionKey ?? "__legacy__";
+    let starts = sessionBuckets.get(sessionKey);
+    if (!starts) {
+      starts = new Set();
+      sessionBuckets.set(sessionKey, starts);
+    }
+    starts.add(u.startedAt);
   }
-  for (const [key, count] of counts) {
+
+  for (const [key, sessionBuckets] of dispatchMap) {
+    const hasSessionAwareData = Array.from(sessionBuckets.keys()).some((sessionKey) => sessionKey !== "__legacy__");
+    const count = hasSessionAwareData
+      ? Math.max(...Array.from(sessionBuckets.values(), (starts) => starts.size))
+      : (sessionBuckets.get("__legacy__")?.size ?? 0);
+
     if (count > 1) {
       const [unitType, ...idParts] = key.split("/");
       anomalies.push({
@@ -602,7 +723,9 @@ function detectStuckLoops(units: UnitMetrics[], anomalies: ForensicAnomaly[]): v
         unitType,
         unitId: idParts.join("/"),
         summary: `Unit ${key} was dispatched ${count} times`,
-        details: `Repeated dispatch suggests the unit completed but its artifacts weren't verified, or the state machine kept returning it.`,
+        details: hasSessionAwareData
+          ? `Repeated dispatch within the same auto session suggests the unit completed but its artifacts were not verified, or the state machine kept returning it. Cross-session recovery runs are ignored.`
+          : `Repeated dispatch suggests the unit completed but its artifacts weren't verified, or the state machine kept returning it.`,
       });
     }
   }
@@ -654,10 +777,9 @@ function detectMissingArtifacts(completedKeys: string[], basePath: string, activ
   const wtBasePath = activeMilestone ? getAutoWorktreePath(basePath, activeMilestone) : null;
 
   for (const key of completedKeys) {
-    const slashIdx = key.indexOf("/");
-    if (slashIdx === -1) continue;
-    const unitType = key.slice(0, slashIdx);
-    const unitId = key.slice(slashIdx + 1);
+    const parsed = splitCompletedKey(key);
+    if (!parsed) continue;
+    const { unitType, unitId } = parsed;
 
     const rootHasArtifact = verifyExpectedArtifact(unitType, unitId, basePath);
     const wtHasArtifact = wtBasePath ? verifyExpectedArtifact(unitType, unitId, wtBasePath) : false;
@@ -672,6 +794,51 @@ function detectMissingArtifacts(completedKeys: string[], basePath: string, activ
         details: `The unit is recorded as completed but verifyExpectedArtifact() returns false at both project root and worktree. The completion state is stale.`,
       });
     }
+  }
+}
+
+/**
+ * #4764 — surface worktree lifecycle and orphan signals in the forensic report.
+ *
+ * Consumes only the aggregated summary (not raw journal events) to respect
+ * the forensics memory-bloat guard in forensics-journal.test.ts — per-event
+ * detail stays in the journal itself where the LLM can query it on demand.
+ */
+function detectWorktreeOrphans(
+  summary: WorktreeTelemetrySummary,
+  anomalies: ForensicAnomaly[],
+): void {
+  // 1. Orphan aggregate — severity depends on reason. In-progress orphans are
+  // the #4761 consumer-side signal (live work sitting on an unmerged branch).
+  for (const [reason, count] of Object.entries(summary.orphansByReason)) {
+    if (count <= 0) continue;
+    const severity: ForensicAnomaly["severity"] =
+      reason === "in-progress-unmerged" ? "warning" : "info";
+    anomalies.push({
+      type: "worktree-orphan",
+      severity,
+      summary: `${count} worktree orphan(s) detected (${reason})`,
+      details:
+        reason === "in-progress-unmerged"
+          ? "Auto-mode exited without completing a milestone; live work sits on an unmerged milestone branch. Run `/gsd auto` to resume, or merge manually."
+          : reason === "complete-unmerged"
+            ? "A completed milestone's branch was never merged back to main. Run `/gsd health --fix` to resolve."
+            : `Reason: ${reason}.`,
+    });
+  }
+
+  // 2. Auto-exit producer signal — #4761's upstream cause.
+  if (summary.exitsWithUnmergedWork > 0) {
+    const reasonBreakdown = Object.entries(summary.exitsByReason)
+      .filter(([, n]) => n > 0)
+      .map(([r, n]) => `${r}=${n}`)
+      .join(", ");
+    anomalies.push({
+      type: "worktree-unmerged-exit",
+      severity: "warning",
+      summary: `${summary.exitsWithUnmergedWork} auto-exit(s) left milestone work unmerged`,
+      details: `Exit reasons: ${reasonBreakdown || "(none)"} · Producer-side signal for #4761-class orphans. Inspect .gsd/journal/*.jsonl with eventType:"auto-exit" for per-exit detail.`,
+    });
   }
 }
 
@@ -864,6 +1031,40 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
     sections.push(``);
   }
 
+  // #4764 — Worktree telemetry summary
+  if (report.worktreeTelemetry) {
+    const t = report.worktreeTelemetry;
+    const p50 = percentile(t.mergeDurationsMs, 0.5);
+    const p95 = percentile(t.mergeDurationsMs, 0.95);
+    sections.push(`## Worktree Telemetry`, ``);
+    sections.push(`- Worktrees created: ${t.worktreesCreated}`);
+    sections.push(`- Worktrees merged: ${t.worktreesMerged}`);
+    sections.push(`- Orphans detected: ${t.orphansDetected}`);
+    if (t.orphansDetected > 0) {
+      const breakdown = Object.entries(t.orphansByReason)
+        .map(([r, n]) => `${r}=${n}`).join(", ");
+      sections.push(`  - By reason: ${breakdown}`);
+    }
+    sections.push(`- Merge conflicts: ${t.mergeConflicts}`);
+    if (t.mergeDurationsMs.length > 0) {
+      sections.push(`- Merge duration p50 / p95: ${p50 ?? "-"} / ${p95 ?? "-"} ms (n=${t.mergeDurationsMs.length})`);
+    }
+    sections.push(`- Auto-exits leaving unmerged work: ${t.exitsWithUnmergedWork}`);
+    if (Object.keys(t.exitsByReason).length > 0) {
+      const breakdown = Object.entries(t.exitsByReason)
+        .sort((a, b) => b[1] - a[1])
+        .map(([r, n]) => `${r}=${n}`).join(", ");
+      sections.push(`  - Exit reasons: ${breakdown}`);
+    }
+    sections.push(`- Canonical-root redirects (#4761 fix fired): ${t.canonicalRedirects}`);
+    // #4765 slice-cadence counters
+    if (t.slicesMerged + t.sliceMergeConflicts + t.milestoneResquashes > 0) {
+      sections.push(`- Slices merged: ${t.slicesMerged} · Slice merge conflicts: ${t.sliceMergeConflicts}`);
+      sections.push(`- Milestone re-squashes: ${t.milestoneResquashes}`);
+    }
+    sections.push(``);
+  }
+
   // Journal summary
   if (report.journalSummary) {
     const js = report.journalSummary;
@@ -894,6 +1095,42 @@ function saveForensicReport(basePath: string, report: ForensicReport, problemDes
 
   writeFileSync(filePath, sections.join("\n"), "utf-8");
   return filePath;
+}
+
+// ─── Forensics Session Marker ────────────────────────────────────────────────
+
+export interface ForensicsMarker {
+  reportPath: string;
+  promptContent: string;
+  createdAt: string;
+}
+
+/**
+ * Write a marker file so that buildBeforeAgentStartResult() can re-inject
+ * the forensics prompt on follow-up turns.  (#2941)
+ */
+export function writeForensicsMarker(basePath: string, reportPath: string, promptContent: string): void {
+  const dir = join(gsdRoot(basePath), "runtime");
+  mkdirSync(dir, { recursive: true });
+  const marker: ForensicsMarker = {
+    reportPath,
+    promptContent,
+    createdAt: new Date().toISOString(),
+  };
+  writeFileSync(join(dir, "active-forensics.json"), JSON.stringify(marker), "utf-8");
+}
+
+/**
+ * Read the active forensics marker, or null if none exists.
+ */
+export function readForensicsMarker(basePath: string): ForensicsMarker | null {
+  const markerPath = join(gsdRoot(basePath), "runtime", "active-forensics.json");
+  if (!existsSync(markerPath)) return null;
+  try {
+    return JSON.parse(readFileSync(markerPath, "utf-8")) as ForensicsMarker;
+  } catch {
+    return null;
+  }
 }
 
 // ─── Prompt Formatter ─────────────────────────────────────────────────────────
@@ -973,6 +1210,30 @@ function formatReportForPrompt(report: ForensicReport): string {
     sections.push("");
   }
 
+  // #4764 — worktree telemetry (compact prompt form)
+  if (report.worktreeTelemetry) {
+    const t = report.worktreeTelemetry;
+    const hasSignal =
+      t.worktreesCreated + t.worktreesMerged + t.orphansDetected +
+      t.exitsWithUnmergedWork + t.canonicalRedirects +
+      t.slicesMerged + t.milestoneResquashes > 0;
+    if (hasSignal) {
+      sections.push("### Worktree Telemetry");
+      sections.push(`- Created: ${t.worktreesCreated} · Merged: ${t.worktreesMerged} · Conflicts: ${t.mergeConflicts}`);
+      sections.push(`- Orphans: ${t.orphansDetected} · Unmerged exits: ${t.exitsWithUnmergedWork} · Redirects (#4761): ${t.canonicalRedirects}`);
+      if (t.orphansDetected > 0) {
+        const breakdown = Object.entries(t.orphansByReason)
+          .map(([r, n]) => `${r}=${n}`).join(", ");
+        sections.push(`- Orphan reasons: ${breakdown}`);
+      }
+      // #4765 — slice-cadence counters (only shown when the feature was exercised)
+      if (t.slicesMerged + t.sliceMergeConflicts + t.milestoneResquashes > 0) {
+        sections.push(`- Slices merged: ${t.slicesMerged} · Slice conflicts: ${t.sliceMergeConflicts} · Re-squashes: ${t.milestoneResquashes}`);
+      }
+      sections.push("");
+    }
+  }
+
   // Activity log metadata
   if (report.activityLogMeta) {
     const meta = report.activityLogMeta;
@@ -1008,8 +1269,16 @@ function formatReportForPrompt(report: ForensicReport): string {
     sections.push("");
   }
 
-  // Completed keys count
-  sections.push(`### Completed Keys: ${report.completedKeys.length}`);
+  // Completion status — prefer DB counts, fall back to legacy completed-units.json
+  if (report.dbCompletionCounts) {
+    const c = report.dbCompletionCounts;
+    sections.push(`### Completion Status (from DB)`);
+    sections.push(`- ${c.milestones}/${c.milestonesTotal} milestones complete`);
+    sections.push(`- ${c.slices}/${c.slicesTotal} slices complete`);
+    sections.push(`- ${c.tasks}/${c.tasksTotal} tasks complete`);
+  } else {
+    sections.push(`### Completed Keys: ${report.completedKeys.length}`);
+  }
   sections.push(`### GSD Version: ${report.gsdVersion}`);
   sections.push(`### Active Milestone: ${report.activeMilestone ?? "none"}`);
   sections.push(`### Active Slice: ${report.activeSlice ?? "none"}`);

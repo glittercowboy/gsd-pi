@@ -26,6 +26,7 @@ import {
 	createCustomMessage,
 } from "./messages.js";
 import { BlobStore, externalizeImageData, isBlobRef, resolveImageData } from "./blob-store.js";
+import { redactSecrets } from "./redact-secrets.js";
 
 /** Inline concurrency limiter to cap parallel async operations. */
 function pLimit(concurrency: number) {
@@ -499,15 +500,18 @@ function prepareForPersistence(obj: unknown, blobStore: BlobStore, key?: string)
 	if (obj === null || obj === undefined) return obj;
 
 	if (typeof obj === "string") {
-		if (obj.length > MAX_PERSIST_CHARS) {
-			// Cryptographic signatures must be preserved exactly or cleared entirely
-			if (key === "thinkingSignature" || key === "thoughtSignature" || key === "textSignature") {
+		// Cryptographic signatures must be preserved byte-exact — never redact or truncate
+		// their contents, only the oversize-clear path below handles them.
+		const isSignature = key === "thinkingSignature" || key === "thoughtSignature" || key === "textSignature";
+		const redacted = isSignature ? obj : redactSecrets(obj);
+		if (redacted.length > MAX_PERSIST_CHARS) {
+			if (isSignature) {
 				return "";
 			}
 			const limit = Math.max(0, MAX_PERSIST_CHARS - TRUNCATION_NOTICE.length);
-			return `${truncateString(obj, limit)}${TRUNCATION_NOTICE}`;
+			return `${truncateString(redacted, limit)}${TRUNCATION_NOTICE}`;
 		}
-		return obj;
+		return redacted;
 	}
 
 	if (Array.isArray(obj)) {
@@ -955,7 +959,7 @@ export class SessionManager {
 
 	private _rewriteFile(): void {
 		if (!this.persist || !this.sessionFile) return;
-		const content = `${this.fileEntries.map((e) => JSON.stringify(e)).join("\n")}\n`;
+		const content = `${this.fileEntries.map((e) => JSON.stringify(prepareForPersistence(e, this.blobStore))).join("\n")}\n`;
 		let release: (() => void) | undefined;
 		try {
 			release = tryAcquireLockSync(this.sessionFile);

@@ -11,21 +11,27 @@ Read [VISION.md](VISION.md) before contributing. It defines what GSD-2 is, what 
 3. **No issue? Create one first** for new features. Bug fixes for obvious problems can skip this step.
 4. **Architectural changes require an RFC.** If your change touches core systems (auto-mode, agent-core, orchestration), open an issue describing your approach and get approval before writing code. We use Architecture Decision Records (ADRs) for significant decisions.
 
+### First-time contributors
+
+We are not a fan of drive-by first-time contributions. If this is your first PR to GSD-2, you **must** open an issue first describing the problem or feature, wait for a maintainer response, and link the issue in your PR. First-time PRs that show up with no prior issue will be closed without review. This is not optional — it exists because triaging unsolicited code from unknown contributors is more expensive than the contribution is worth.
+
+Once you have one merged PR, this requirement no longer applies to you.
+
 ## Branching and commits
 
 Always work on a dedicated branch. Never push directly to `main`.
 
 **Branch naming:** `<type>/<short-description>`
 
-| Type | When to use |
-|------|-------------|
-| `feat/` | New functionality |
-| `fix/` | Bug or defect correction |
+| Type        | When to use                            |
+| ----------- | -------------------------------------- |
+| `feat/`     | New functionality                      |
+| `fix/`      | Bug or defect correction               |
 | `refactor/` | Code restructuring, no behavior change |
-| `test/` | Adding or updating tests |
-| `docs/` | Documentation only |
-| `chore/` | Dependencies, tooling, housekeeping |
-| `ci/` | CI/CD configuration |
+| `test/`     | Adding or updating tests               |
+| `docs/`     | Documentation only                     |
+| `chore/`    | Dependencies, tooling, housekeeping    |
+| `ci/`       | CI/CD configuration                    |
 
 **Commit messages** must follow [Conventional Commits](https://www.conventionalcommits.org/). The commit-msg hook enforces this locally; CI enforces it on push.
 
@@ -140,15 +146,20 @@ See [VISION.md](VISION.md) for the full list of what we won't accept.
 
 The codebase is organized into these areas. All are open to contributions:
 
-| Area | Path | Notes |
-|------|------|-------|
-| Terminal UI | `packages/pi-tui` | Components, themes, rendering |
-| AI/LLM layer | `packages/pi-ai` | Provider integrations, model handling |
-| Agent core | `packages/pi-agent-core` | Agent orchestration — RFC required for changes |
-| Coding agent | `packages/pi-coding-agent` | The main coding agent |
-| GSD extension | `src/resources/extensions/gsd/` | GSD workflow — RFC required for auto-mode |
-| Native bindings | `native/` | Platform-specific native code |
-| CI/Build | `.github/`, `scripts/` | Workflows, build scripts |
+| Area              | Path                            | Notes                                          |
+| ----------------- | ------------------------------- | ---------------------------------------------- |
+| Terminal UI       | `packages/pi-tui`               | Components, themes, rendering                  |
+| AI/LLM layer      | `packages/pi-ai`                | Provider integrations, model handling          |
+| Agent core        | `packages/pi-agent-core`        | Agent orchestration — RFC required for changes |
+| Coding agent      | `packages/pi-coding-agent`      | The main coding agent                          |
+| MCP server        | `packages/mcp-server`           | Project state tools and MCP protocol           |
+| GSD extension     | `src/resources/extensions/gsd/` | GSD workflow — RFC required for auto-mode      |
+| Other extensions  | `src/resources/extensions/`     | Browser, search, voice, MCP client, etc.       |
+| Native engine     | `native/`                       | Rust N-API modules (grep, git, AST, etc.)      |
+| VS Code extension | `vscode-extension/`             | Chat participant, sidebar, RPC integration     |
+| Web interface     | `web/`                          | Browser-based dashboard                        |
+| CI/Build          | `.github/`, `scripts/`          | Workflows, build scripts                       |
+| Documentation     | `docs/`                         | User guides, ADRs, SDK docs                    |
 
 ## Review process
 
@@ -157,6 +168,12 @@ PRs go through automated review first, then human review. To help us review effi
 - Keep PRs focused and reasonably sized. Massive PRs take longer to review and are more likely to be sent back.
 - Respond to review comments. If you disagree, explain why — discussion is welcome.
 - If your PR has been open for a while without review, ping in Discord. We're a small team and things slip.
+
+### 72-hour response policy
+
+Once a maintainer leaves review feedback, you have **72 hours** to respond — either with a code update, a question, or a comment explaining your timeline. We reserve the right to close PRs that go silent past 72 hours. Closed PRs can be reopened once you're ready to engage; we're not trying to throw away your work, we're trying to keep the review queue honest about what's actually moving.
+
+If you know you'll be unavailable, say so in the PR — a one-line "out until Monday" is enough to pause the clock.
 
 ### What reviewers verify
 
@@ -169,6 +186,7 @@ Reading a diff is not the same as verifying a change. Our review standard is exe
 3. **Run the test suite** — run `npm test`. CI status is a signal, not a substitute for local verification.
 4. **Trace root cause for bug fixes** — confirm the diff addresses the root cause described in the issue, not just the symptom.
 5. **Check for a regression test** — bug fixes must include a test that would have caught the original bug. If it's absent, the fix is incomplete.
+6. **Reject source-grep tests** — any test that reads a source file with `readFileSync` (or equivalent) and asserts via regex/string match/AST inspection is not a test. Send it back. See "No source-grep tests" under Testing standards.
 
 Only after completing these steps should a reviewer make claims about correctness.
 
@@ -203,16 +221,24 @@ Do not use `createTestContext()` from `test-helpers.ts` (legacy, being removed).
 // ✅ CORRECT — shared fixture with beforeEach/afterEach
 describe("feature", () => {
   let tmp: string;
-  beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), "test-")); });
-  afterEach(() => { rmSync(tmp, { recursive: true, force: true }); });
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "test-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
 
-  test("case", () => { /* clean test body */ });
+  test("case", () => {
+    /* clean test body */
+  });
 });
 
 // ✅ CORRECT — per-test cleanup with t.after()
 test("case", (t) => {
   const tmp = mkdtempSync(join(tmpdir(), "test-"));
-  t.after(() => { rmSync(tmp, { recursive: true, force: true }); });
+  t.after(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
   // test body
 });
 
@@ -228,6 +254,7 @@ test("case", () => {
 ```
 
 **When to use which:**
+
 - `beforeEach`/`afterEach` — when all tests in a `describe` block share the same setup/teardown pattern
 - `t.after()` — when each test has unique cleanup (different fixtures, env vars, etc.)
 - `try`/`finally` — only inside standalone helper functions that don't have access to the test context `t` (e.g., `withEnv()`, `capture()`)
@@ -256,6 +283,89 @@ const content = `
 
 Bug fixes must include a regression test that fails before the fix and passes after. Write the test first, confirm it fails, then apply the fix. See the `test-first-bugfix` skill.
 
+### No source-grep tests
+
+A test must execute the code under test. Reading a source file with `readFileSync` (or any equivalent) and asserting against its contents with regex, string matching, or AST inspection is **not a test** — it asserts that the code was *written a certain way*, not that it *behaves correctly*. This is pure Goodhart's Law: the metric (test count, coverage) gets satisfied while the actual property (correctness) is untouched.
+
+```typescript
+// ❌ WRONG — source-grep test. Passes if the string exists, regardless of behavior.
+test("handles null input", () => {
+  const source = readFileSync("src/parser.ts", "utf8");
+  assert.match(source, /if \(input === null\)/);
+});
+
+// ❌ WRONG — same anti-pattern with AST or string includes.
+test("exports the function", () => {
+  const source = readFileSync("src/index.ts", "utf8");
+  assert.ok(source.includes("export function parse"));
+});
+
+// ✅ CORRECT — import the code and exercise it.
+import { parse } from "../src/parser.ts";
+test("handles null input", () => {
+  assert.equal(parse(null), undefined);
+});
+```
+
+PRs containing source-grep tests will be sent back. CI enforces this via `scripts/check-source-grep-tests.sh` (wired into the `lint` job) — it scans changed test files for `readFileSync` / `readFile` calls whose path argument points into `src/` or `packages/`. If the code under test is genuinely hard to invoke (e.g., a build script, a CLI entry point), invoke it as a subprocess and assert on its real output — not on its source text.
+
+The narrow exception: tests that legitimately verify *file structure* as the actual product (e.g., a code generator's output, a config-file linter, a script that produces a manifest). In those cases the file contents *are* the behavior. Opt out with a same-line or preceding-line marker:
+
+```typescript
+// allow-source-grep: this test verifies the codegen output, which IS the product
+const generated = readFileSync("packages/codegen/dist/manifest.ts", "utf8");
+assert.match(generated, /export const ROUTES =/);
+```
+
+The reason becomes part of the diff and is visible at review. If you're not sure whether your case qualifies, it doesn't.
+
+### Three recurring defect classes (CodeRabbit themes)
+
+CI enforces three specific patterns that have caused real bugs in merged PRs (see issue #4931). All three are checked by `scripts/check-coderabbit-themes.mjs`.
+
+**1. `Statement#get()` returns `undefined`, not `null`.** better-sqlite3's `Statement#get(…)` returns `undefined` when no row matches. A `!== null` guard passes for `undefined` too (`undefined !== null` is `true`), so the guard is always truthy and downstream property access crashes.
+
+```typescript
+// ❌ WRONG
+const row = stmt.get(id);
+if (row !== null) {
+  use(row.v);  // row is undefined → crash
+}
+
+// ✅ CORRECT
+const row = stmt.get(id);
+if (row != null) { use(row.v); }        // catches both null and undefined
+// or
+if (row === undefined) return null;
+// or
+return row ?? defaultValue;
+```
+
+**2. Attach `once()` listeners BEFORE the triggering syscall.** If the event fires synchronously (fast exit, already-emitted event), a listener attached after the trigger misses it.
+
+```typescript
+// ❌ WRONG — listener can miss sync exit
+proc.kill("SIGINT");
+await new Promise(resolve => proc.once("exit", resolve));
+
+// ✅ CORRECT — listener first, trigger after
+const done = new Promise(resolve => proc.once("exit", resolve));
+proc.kill("SIGINT");
+await done;
+```
+
+**3. `.mjs` importing `.ts` requires `--experimental-strip-types`.** Without the flag (or `--import tsx`, `--loader ts-node`, etc.), Node throws `ERR_UNKNOWN_FILE_EXTENSION`. If your `.mjs` harness imports any `.ts` module, every script that runs it must pass the flag.
+
+```json
+// ❌ WRONG
+"test:tokens": "node --test studio/test/tokens.test.mjs"
+
+// ✅ CORRECT
+"test:tokens": "node --experimental-strip-types --test studio/test/tokens.test.mjs"
+```
+
+**Opt-out marker**: `// allow-coderabbit-theme: <reason>` on the same or preceding line, same convention as `allow-source-grep:`. The reason appears in the diff.
+
 ## Local development
 
 ```bash
@@ -276,6 +386,7 @@ npx tsc --noEmit
 ```
 
 Run `npm run secret-scan:install-hook` once after cloning. It installs two hooks:
+
 - **pre-commit** — blocks commits containing hardcoded secrets or credentials
 - **commit-msg** — validates Conventional Commits format before the commit lands
 

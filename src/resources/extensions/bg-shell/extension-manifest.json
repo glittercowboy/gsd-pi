@@ -8,7 +8,7 @@
   "provides": {
     "tools": ["bg_shell"],
     "commands": ["bg"],
-    "hooks": ["session_shutdown"],
+    "hooks": ["session_shutdown", "session_compact", "session_tree", "session_switch", "before_agent_start", "session_start", "turn_end", "agent_end", "tool_execution_end"],
     "shortcuts": ["Ctrl+Alt+B"]
   }
 }

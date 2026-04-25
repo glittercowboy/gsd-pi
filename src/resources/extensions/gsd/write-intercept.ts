@@ -24,6 +24,9 @@ const BLOCKED_PATTERNS: RegExp[] = [
   /(^|[/\\])\.gsd[/\\]STATE\.md$/i,
   // Also match resolved symlink paths under ~/.gsd/projects/ (Pitfall #6)
   /(^|[/\\])\.gsd[/\\]projects[/\\][^/\\]+[/\\]STATE\.md$/i,
+  // gsd.db and WAL/SHM files — single-writer WAL connection managed by engine (#3625)
+  /(^|[/\\])\.gsd[/\\]gsd\.db(-wal|-shm)?$/i,
+  /(^|[/\\])\.gsd[/\\]projects[/\\][^/\\]+[/\\]gsd\.db(-wal|-shm)?$/i,
 ];
 
 /**
@@ -41,6 +44,12 @@ const BASH_STATE_PATTERNS: RegExp[] = [
   /\bsed\b.*-i.*STATE\.md/i,
   // dd output to STATE.md
   /\bdd\b.*of=\S*STATE\.md/i,
+  // Direct DB access via sqlite3/sql.js/better-sqlite3 targeting gsd.db (#3625)
+  /\b(sqlite3|sql\.js|better-sqlite3|node:sqlite)\b.*gsd\.db/i,
+  /\bgsd\.db\b.*\b(sqlite3|sql\.js|better-sqlite3)\b/i,
+  // Shell writes targeting gsd.db files
+  /[>|]+\s*\S*gsd\.db/i,
+  /\b(cp|mv|dd)\b.*gsd\.db/i,
 ];
 
 /**
@@ -81,7 +90,7 @@ function matchesBlockedPattern(path: string): boolean {
  * Error message returned when an agent attempts to directly write an authoritative .gsd/ state file.
  * Directs the agent to use engine tool calls instead.
  */
-export const BLOCKED_WRITE_ERROR = `Direct writes to .gsd/STATE.md are blocked. Use engine tool calls instead:
+export const BLOCKED_WRITE_ERROR = `Direct writes to .gsd/STATE.md and .gsd/gsd.db are blocked. Use engine tool calls instead:
 - To complete a task: call gsd_complete_task(milestone_id, slice_id, task_id, summary)
 - To complete a slice: call gsd_complete_slice(milestone_id, slice_id, summary, uat_result)
 - To save a decision: call gsd_save_decision(scope, decision, choice, rationale)

@@ -7,12 +7,14 @@
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import { deriveState } from "./state.js";
 import { nativeBranchList, nativeDetectMainBranch, nativeBranchListMerged, nativeBranchDelete, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
+import { logWarning } from "./workflow-logger.js";
 
 export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
   let branches: string[];
   try {
     branches = nativeBranchList(basePath, "gsd/*");
-  } catch {
+  } catch (e) {
+    logWarning("command", `branch list failed: ${(e as Error).message}`);
     ctx.ui.notify("No GSD branches to clean up.", "info");
     return;
   }
@@ -23,7 +25,8 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
   let merged: string[];
   try {
     merged = nativeBranchListMerged(basePath, mainBranch, "gsd/*");
-  } catch {
+  } catch (e) {
+    logWarning("command", `merged branch list failed: ${(e as Error).message}`);
     merged = [];
   }
 
@@ -33,8 +36,8 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
     try {
       nativeBranchDelete(basePath, branch, false);
       deletedMerged++;
-    } catch {
-      /* skip branches that cannot be deleted */
+    } catch (e) {
+      logWarning("command", `branch delete failed for ${branch}: ${(e as Error).message}`);
     }
   }
 
@@ -66,7 +69,7 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
           try {
             nativeBranchDelete(basePath, branch, true);
             deletedStaleMilestones++;
-          } catch { /* non-fatal */ }
+          } catch (e) { logWarning("command", `stale milestone branch delete failed for ${branch}: ${(e as Error).message}`); }
           continue;
         }
       }
@@ -77,7 +80,8 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
       let roadmapContent: string | null = null;
       try {
         roadmapContent = await loadFile(roadmapPath);
-      } catch {
+      } catch (e) {
+        logWarning("command", `loadFile failed for ${roadmapPath}: ${(e as Error).message}`);
         roadmapContent = null;
       }
       if (!roadmapContent) continue;
@@ -85,12 +89,12 @@ export async function handleCleanupBranches(ctx: ExtensionCommandContext, basePa
       try {
         nativeBranchDelete(basePath, branch, true);
         deletedStaleMilestones++;
-      } catch {
-        /* non-fatal */
+      } catch (e) {
+        logWarning("command", `milestone branch delete failed for ${branch}: ${(e as Error).message}`);
       }
     }
-  } catch {
-    /* non-fatal */
+  } catch (e) {
+    logWarning("command", `stale milestone cleanup failed: ${(e as Error).message}`);
   }
 
   const summary: string[] = [];
@@ -122,7 +126,8 @@ export async function handleCleanupSnapshots(ctx: ExtensionCommandContext, baseP
   let refs: string[];
   try {
     refs = nativeForEachRef(basePath, "refs/gsd/snapshots/");
-  } catch {
+  } catch (e) {
+    logWarning("command", `snapshot ref list failed: ${(e as Error).message}`);
     ctx.ui.notify("No snapshot refs to clean up.", "info");
     return;
   }
@@ -147,8 +152,8 @@ export async function handleCleanupSnapshots(ctx: ExtensionCommandContext, baseP
       try {
         nativeUpdateRef(basePath, old);
         pruned++;
-      } catch {
-        /* skip individual failures */
+      } catch (e) {
+        logWarning("command", `snapshot ref update failed for ${old}: ${(e as Error).message}`);
       }
     }
   }
@@ -164,7 +169,8 @@ export async function handleCleanupWorktrees(ctx: ExtensionCommandContext, baseP
   let statuses;
   try {
     statuses = getAllWorktreeHealth(basePath);
-  } catch {
+  } catch (e) {
+    logWarning("command", `worktree health inspection failed: ${(e as Error).message}`);
     ctx.ui.notify("Failed to inspect worktrees.", "error");
     return;
   }
@@ -197,7 +203,8 @@ export async function handleCleanupWorktrees(ctx: ExtensionCommandContext, baseP
         removeWorktree(basePath, wt.name, { deleteBranch: true });
         lines.push(`  ✓ ${wt.name}  removed (branch ${wt.branch} deleted)`);
         removed++;
-      } catch {
+      } catch (e) {
+        logWarning("command", `worktree removal failed for ${wt.name}: ${(e as Error).message}`);
         lines.push(`  ✗ ${wt.name}  failed to remove`);
       }
     }
@@ -246,7 +253,7 @@ export async function handleSkip(unitArg: string, ctx: ExtensionCommandContext, 
     if (fileExists(completedKeysFile)) {
       keys = JSON.parse(readFile(completedKeysFile, "utf-8"));
     }
-  } catch { /* start fresh */ }
+  } catch (e) { logWarning("command", `completed-units.json parse failed: ${(e as Error).message}`); }
 
   // Normalize: accept "execute-task/M001/S01/T03", "M001/S01/T03", or just "T03"
   let skipKey = unitArg;
@@ -371,7 +378,8 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
     hashList = readdirSync(projectsDir, { withFileTypes: true })
       .filter(e => e.isDirectory())
       .map(e => e.name);
-  } catch {
+  } catch (e) {
+    logWarning("command", `readdir failed for project-state directory: ${(e as Error).message}`);
     ctx.ui.notify(`Failed to read project-state directory at ${projectsDir}.`, "error");
     return;
   }
@@ -454,7 +462,8 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
       try {
         fsRmSync(pathJoin(projectsDir, e.hash), { recursive: true, force: true });
         removed++;
-      } catch {
+      } catch (err) {
+        logWarning("command", `project cleanup rm failed for ${e.hash}: ${(err as Error).message}`);
         failed.push(e.hash);
       }
     }
@@ -479,7 +488,7 @@ export async function handleCleanupProjects(args: string, ctx: ExtensionCommandC
  * Prints counts of recovered items and the resulting project phase.
  */
 export async function handleRecover(ctx: ExtensionCommandContext, basePath: string): Promise<void> {
-  const { isDbAvailable: dbAvailable, _getAdapter, transaction: dbTransaction } = await import("./gsd-db.js");
+  const { isDbAvailable: dbAvailable, clearEngineHierarchy, transaction: dbTransaction } = await import("./gsd-db.js");
   const { migrateHierarchyToDb } = await import("./md-importer.js");
   const { invalidateStateCache } = await import("./state.js");
 
@@ -489,12 +498,12 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
   }
 
   try {
-    // 1. Delete + re-populate inside a single transaction for atomicity
-    const db = _getAdapter()!;
+    // 1. Delete + re-populate inside a single transaction for atomicity.
+    //    clearEngineHierarchy() uses transaction() internally but transaction()
+    //    is re-entrant, so wrapping in dbTransaction() keeps the whole
+    //    clear+repopulate atomic.
     const counts = dbTransaction(() => {
-      db.exec("DELETE FROM tasks");
-      db.exec("DELETE FROM slices");
-      db.exec("DELETE FROM milestones");
+      clearEngineHierarchy();
       return migrateHierarchyToDb(basePath);
     });
 
@@ -529,7 +538,7 @@ export async function handleRecover(ctx: ExtensionCommandContext, basePath: stri
     ctx.ui.notify(lines.join("\n"), "success");
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`gsd-recover: failed: ${msg}\n`);
+    logWarning("command", `recover failed: ${msg}`);
     ctx.ui.notify(`gsd recover failed: ${msg}`, "error");
   }
 }

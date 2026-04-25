@@ -2,6 +2,7 @@ import test, { describe } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  formatMcpInitResult,
   formatMcpStatusReport,
   formatMcpServerDetail,
   type McpServerStatus,
@@ -99,5 +100,19 @@ describe("formatMcpServerDetail", () => {
       error: undefined,
     });
     assert.match(result, /disconnected/i);
+  });
+});
+
+describe("formatMcpInitResult", () => {
+  test("shows created message with config path", () => {
+    const result = formatMcpInitResult("created", "/tmp/project/.mcp.json", "/tmp/project");
+    assert.match(result, /created project mcp config/i);
+    assert.match(result, /\/tmp\/project\/\.mcp\.json/);
+    assert.match(result, /claude code/i);
+  });
+
+  test("shows unchanged message when config is current", () => {
+    const result = formatMcpInitResult("unchanged", "/tmp/project/.mcp.json", "/tmp/project");
+    assert.match(result, /already up to date/i);
   });
 });

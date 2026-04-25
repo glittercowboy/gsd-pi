@@ -16,6 +16,7 @@ import {
   insertTask,
   openDatabase,
   transaction,
+  updateSliceStatus,
   _getAdapter,
 } from './gsd-db.js';
 import {
@@ -31,6 +32,7 @@ import {
 import { findMilestoneIds } from './guided-flow.js';
 import { parseRoadmap, parsePlan } from './parsers-legacy.js';
 import { parseContextDependsOn } from './files.js';
+import { logWarning } from './workflow-logger.js';
 
 // ─── DECISIONS.md Parser ───────────────────────────────────────────────────
 
@@ -529,11 +531,6 @@ export function migrateHierarchyToDb(basePath: string): {
     // Ghost milestone: no CONTEXT, ROADMAP, or SUMMARY → skip
     if (!hasRoadmap && !hasContext && !hasSummary) continue;
 
-    // Determine milestone status
-    let milestoneStatus = 'active';
-    if (hasSummary) milestoneStatus = 'complete';
-    else if (hasParked) milestoneStatus = 'parked';
-
     // Determine milestone title from roadmap H1 or CONTEXT heading
     let milestoneTitle = '';
     let roadmapContent: string | null = null;
@@ -542,6 +539,16 @@ export function migrateHierarchyToDb(basePath: string): {
       roadmapContent = readFileSync(roadmapPath!, 'utf-8');
       roadmap = parseRoadmap(roadmapContent);
       milestoneTitle = roadmap.title;
+    }
+
+    // Determine milestone status
+    let milestoneStatus = 'active';
+    if (hasSummary) milestoneStatus = 'complete';
+    else if (hasParked) milestoneStatus = 'parked';
+    // Import milestones with all-done roadmap slices as complete (#3390, #3379)
+    // even when SUMMARY.md is missing — the roadmap checkboxes are authoritative.
+    else if (roadmap && roadmap.slices.length > 0 && roadmap.slices.every(s => s.done)) {
+      milestoneStatus = 'complete';
     }
     if (!milestoneTitle && hasContext) {
       const contextContent = readFileSync(contextPath!, 'utf-8');
@@ -585,7 +592,8 @@ export function migrateHierarchyToDb(basePath: string): {
     // Parse roadmap for slices
     if (!roadmap) continue;
 
-    for (const sliceEntry of roadmap.slices) {
+    for (let si = 0; si < roadmap.slices.length; si++) {
+      const sliceEntry = roadmap.slices[si]!;
       // Per K002: use 'complete' not 'done'
       const sliceStatus = sliceEntry.done ? 'complete' : 'pending';
 
@@ -605,6 +613,7 @@ export function migrateHierarchyToDb(basePath: string): {
         risk: sliceEntry.risk,
         depends: sliceEntry.depends,
         demo: sliceEntry.demo,
+        sequence: si + 1, // Preserve roadmap parse order (#3356)
         planning: {
           goal: plan?.goal ?? '',
         },
@@ -664,11 +673,8 @@ export function migrateHierarchyToDb(basePath: string): {
           return t.done && existsSync(summaryFile);
         });
         if (allTasksDone && hasSliceSummary) {
-          const adapter = _getAdapter();
-          if (adapter) {
-            adapter.prepare(
-              `UPDATE slices SET status = 'complete' WHERE id = :sid AND milestone_id = :mid`,
-            ).run({ ':sid': sliceEntry.id, ':mid': milestoneId });
+          if (_getAdapter()) {
+            updateSliceStatus(milestoneId, sliceEntry.id, 'complete');
             process.stderr.write(
               `gsd-migrate: ${milestoneId}/${sliceEntry.id} all tasks + slice summary complete — upgrading slice to complete\n`,
             );
@@ -712,25 +718,25 @@ export function migrateFromMarkdown(gsdDir: string): {
     try {
       decisions = importDecisions(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping decisions import: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping decisions import: ${(err as Error).message}`);
     }
 
     try {
       requirements = importRequirements(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping requirements import: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping requirements import: ${(err as Error).message}`);
     }
 
     try {
       artifacts = importHierarchyArtifacts(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping artifacts import: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping artifacts import: ${(err as Error).message}`);
     }
 
     try {
       hierarchy = migrateHierarchyToDb(gsdDir);
     } catch (err) {
-      process.stderr.write(`gsd-migrate: skipping hierarchy migration: ${(err as Error).message}\n`);
+      logWarning("migration", `skipping hierarchy migration: ${(err as Error).message}`);
     }
   });
 

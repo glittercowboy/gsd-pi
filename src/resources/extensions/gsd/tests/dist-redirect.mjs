@@ -87,7 +87,26 @@ export function load(url, context, nextLoad) {
         emitDecoratorMetadata: true,
       },
     });
-    return { format: 'module', source: outputText, shortCircuit: true };
+    // Inject CJS-compatible globals (__dirname, __filename, require) so that
+    // workspace packages compiled as ESM can still use them.  This avoids the
+    // need for import.meta.url behind indirect invocation patterns that fail in
+    // CJS and in dynamically-created scopes.
+    // Only inject globals that the source file doesn't already declare itself.
+    const preambleLines = [
+      'import { fileURLToPath as __preamble_fUTP } from "node:url";',
+      'import { dirname as __preamble_dn } from "node:path";',
+      'import { createRequire as __preamble_cR } from "node:module";',
+    ];
+    if (!outputText.includes('const __filename') && !outputText.includes('let __filename')) {
+      preambleLines.push('const __filename = __preamble_fUTP(import.meta.url);');
+    }
+    if (!outputText.includes('const __dirname') && !outputText.includes('let __dirname')) {
+      preambleLines.push('const __dirname = __preamble_dn(__preamble_fUTP(import.meta.url));');
+    }
+    if (!outputText.includes('const require') && !outputText.includes('let require')) {
+      preambleLines.push('const require = __preamble_cR(import.meta.url);');
+    }
+    return { format: 'module', source: preambleLines.join('\n') + '\n' + outputText, shortCircuit: true };
   }
   return nextLoad(url, context);
 }

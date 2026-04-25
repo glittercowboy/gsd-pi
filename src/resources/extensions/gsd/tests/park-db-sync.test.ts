@@ -69,6 +69,24 @@ test("unparkMilestone updates DB status to 'active' (#2694)", () => {
   }
 });
 
+test("unparkMilestone repairs parked DB state when PARKED.md is missing (#3707)", () => {
+  const base = createBase();
+  try {
+    openDatabase(":memory:");
+    insertMilestone({ id: "M001", title: "Test", status: "parked" });
+
+    const unparked = unparkMilestone(base, "M001");
+
+    assert.ok(unparked, "unparkMilestone should recover DB-only parked state");
+    assert.equal(getMilestone("M001")!.status, "active", "DB status should be repaired to active");
+
+    closeDatabase();
+  } finally {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
 test("park/unpark are safe when DB is not available (#2694 guard)", () => {
   const base = createBase();
   try {

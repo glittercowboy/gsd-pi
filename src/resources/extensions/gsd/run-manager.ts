@@ -16,8 +16,9 @@
 import { mkdirSync, writeFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { stringify } from "yaml";
-import { loadDefinition, substituteParams } from "./definition-loader.js";
+import { loadDefinition, loadDefinitionFromFile, substituteParams } from "./definition-loader.js";
 import { initializeGraph, writeGraph, readGraph } from "./graph.js";
+import { resolvePlugin } from "./workflow-plugins.js";
 import type { WorkflowDefinition } from "./definition-loader.js";
 import type { WorkflowGraph } from "./graph.js";
 
@@ -68,47 +69,80 @@ function deriveStatus(graph: WorkflowGraph): "pending" | "running" | "complete" 
 // ─── Public API ──────────────────────────────────────────────────────────
 
 /**
+ * Create a run directory from an explicit definition file path.
+ * Preferred over `createRun` when the caller has already resolved the file
+ * (e.g. via the plugin resolver).
+ */
+export function createRunFromDefinition(
+  basePath: string,
+  defName: string,
+  definitionFile: string,
+  overrides?: Record<string, string>,
+): string {
+  const rawDef = loadDefinitionFromFile(definitionFile);
+  const def: WorkflowDefinition = overrides
+    ? substituteParams(rawDef, overrides)
+    : substituteParams(rawDef);
+
+  const timestamp = makeTimestamp();
+  const runDir = join(basePath, ".gsd", RUNS_DIR, defName, timestamp);
+  mkdirSync(runDir, { recursive: true });
+
+  writeFileSync(join(runDir, "DEFINITION.yaml"), stringify(def), "utf-8");
+
+  const graph = initializeGraph(def);
+  writeGraph(runDir, graph);
+
+  if (overrides && Object.keys(overrides).length > 0) {
+    writeFileSync(
+      join(runDir, "PARAMS.json"),
+      JSON.stringify(overrides, null, 2),
+      "utf-8",
+    );
+  }
+
+  return runDir;
+}
+
+/**
  * Create a new isolated run directory for a workflow definition.
  *
- * 1. Loads the definition from `<basePath>/.gsd/workflow-defs/<defName>.yaml`
- * 2. Applies parameter substitution if overrides are provided
- * 3. Creates `<basePath>/.gsd/workflow-runs/<defName>/<timestamp>/`
- * 4. Writes frozen DEFINITION.yaml, initialized GRAPH.yaml, and optional PARAMS.json
+ * Resolution order:
+ *   1. Plugin resolver (project → global → bundled), YAML format only.
+ *   2. Legacy `.gsd/workflow-defs/<defName>.yaml`.
  *
- * @param basePath — project root directory
- * @param defName — definition filename (without .yaml extension)
- * @param overrides — optional parameter overrides (merged with definition defaults)
- * @returns Full path to the created run directory
- * @throws Error if the definition file doesn't exist or is invalid
+ * Creates `<basePath>/.gsd/workflow-runs/<defName>/<timestamp>/` containing
+ * DEFINITION.yaml (frozen), GRAPH.yaml (initialized), and optional PARAMS.json.
+ *
+ * @throws Error if no matching definition is found anywhere.
  */
 export function createRun(
   basePath: string,
   defName: string,
   overrides?: Record<string, string>,
 ): string {
+  // Try the unified plugin resolver first — honors project/global overrides.
+  const plugin = resolvePlugin(basePath, defName);
+  if (plugin && plugin.format === "yaml") {
+    return createRunFromDefinition(basePath, defName, plugin.path, overrides);
+  }
+
+  // Fall back to legacy `.gsd/workflow-defs/<defName>.yaml`.
   const defsDir = join(basePath, ".gsd", DEFS_DIR);
-
-  // Load and validate the definition
   const rawDef = loadDefinition(defsDir, defName);
-
-  // Apply parameter substitution if overrides provided
   const def: WorkflowDefinition = overrides
     ? substituteParams(rawDef, overrides)
-    : substituteParams(rawDef); // still resolve default params if any
+    : substituteParams(rawDef);
 
-  // Create the run directory
   const timestamp = makeTimestamp();
   const runDir = join(basePath, ".gsd", RUNS_DIR, defName, timestamp);
   mkdirSync(runDir, { recursive: true });
 
-  // Freeze the definition as DEFINITION.yaml
   writeFileSync(join(runDir, "DEFINITION.yaml"), stringify(def), "utf-8");
 
-  // Initialize and write GRAPH.yaml
   const graph = initializeGraph(def);
   writeGraph(runDir, graph);
 
-  // Write PARAMS.json if overrides were provided
   if (overrides && Object.keys(overrides).length > 0) {
     writeFileSync(
       join(runDir, "PARAMS.json"),

@@ -183,3 +183,182 @@ test("secure_env_collect: detectDestination — convex file (not dir) does not t
 		rmSync(tmp, { recursive: true, force: true });
 	}
 });
+
+// ─── Bug #2997: undefined vs null handling ──────────────────────────────────
+
+/**
+ * When ctx.ui.custom() returns undefined (e.g. noOpUIContext, component
+ * disposal, abort), the strict null checks (=== null / !== null) let
+ * undefined slip through as a "provided" value, crashing writeEnvKey
+ * which calls .replace() on it.
+ *
+ * These tests verify the fix: loose equality (== null / != null) so that
+ * both null AND undefined are treated as "skipped".
+ */
+
+// Helper to dynamically load the orchestrator
+async function loadOrchestrator(): Promise<{
+	collectSecretsFromManifest: Function;
+}> {
+	const mod = await import("../../get-secrets-from-user.ts");
+	return { collectSecretsFromManifest: mod.collectSecretsFromManifest };
+}
+
+// Helper to dynamically load files.ts functions
+async function loadFilesExports(): Promise<{
+	formatSecretsManifest: (m: any) => string;
+}> {
+	const mod = await import("../files.ts");
+	return { formatSecretsManifest: mod.formatSecretsManifest };
+}
+
+function makeManifest(entries: Array<{ key: string; status?: string; formatHint?: string; guidance?: string[] }>): any {
+	return {
+		milestone: "M001",
+		generatedAt: "2026-03-12T00:00:00Z",
+		entries: entries.map((e) => ({
+			key: e.key,
+			service: "TestService",
+			dashboardUrl: "",
+			guidance: e.guidance ?? [],
+			formatHint: e.formatHint ?? "",
+			status: e.status ?? "pending",
+			destination: "dotenv",
+		})),
+	};
+}
+
+async function writeManifestFile(dir: string, manifest: any): Promise<string> {
+	const { formatSecretsManifest } = await loadFilesExports();
+	const milestoneDir = join(dir, ".gsd", "milestones", "M001");
+	mkdirSync(milestoneDir, { recursive: true });
+	const filePath = join(milestoneDir, "M001-SECRETS.md");
+	writeFileSync(filePath, formatSecretsManifest(manifest));
+	return filePath;
+}
+
+test("secure_env_collect #2997: undefined from ctx.ui.custom() is treated as skipped, not provided", async (t) => {
+	const { collectSecretsFromManifest } = await loadOrchestrator();
+
+	const tmp = makeTempDir("sec-undefined-test");
+	t.after(() => {
+		rmSync(tmp, { recursive: true, force: true });
+	});
+
+	const manifest = makeManifest([
+		{ key: "SECRET_THAT_RETURNS_UNDEFINED", status: "pending" },
+	]);
+	await writeManifestFile(tmp, manifest);
+
+	let callIndex = 0;
+	const mockCtx = {
+		cwd: tmp,
+		hasUI: true,
+		ui: {
+			// First call is summary screen, second is collect — return undefined
+			// to simulate noOpUIContext or component disposal
+			custom: async (_factory: any) => {
+				callIndex++;
+				if (callIndex <= 1) return null; // summary screen dismiss
+				return undefined; // BUG TRIGGER: should be treated as skipped
+			},
+		},
+	};
+
+	// Before the fix, this crashes with:
+	// "Cannot read properties of undefined (reading 'replace')"
+	const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
+
+	// The undefined-returning key must appear in skipped, not in applied
+	assert.ok(
+		result.skipped.includes("SECRET_THAT_RETURNS_UNDEFINED"),
+		"Key returning undefined should be in skipped list",
+	);
+	assert.ok(
+		!result.applied.includes("SECRET_THAT_RETURNS_UNDEFINED"),
+		"Key returning undefined must NOT be in applied list",
+	);
+});
+
+test("secure_env_collect #2997: null from ctx.ui.custom() is still treated as skipped (regression guard)", async (t) => {
+	const { collectSecretsFromManifest } = await loadOrchestrator();
+
+	const tmp = makeTempDir("sec-null-test");
+	t.after(() => {
+		rmSync(tmp, { recursive: true, force: true });
+	});
+
+	const manifest = makeManifest([
+		{ key: "SECRET_THAT_RETURNS_NULL", status: "pending" },
+	]);
+	await writeManifestFile(tmp, manifest);
+
+	let callIndex = 0;
+	const mockCtx = {
+		cwd: tmp,
+		hasUI: true,
+		ui: {
+			custom: async (_factory: any) => {
+				callIndex++;
+				if (callIndex <= 1) return null; // summary screen dismiss
+				return null; // explicit null skip
+			},
+		},
+	};
+
+	const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
+
+	assert.ok(
+		result.skipped.includes("SECRET_THAT_RETURNS_NULL"),
+		"Key returning null should be in skipped list",
+	);
+	assert.ok(
+		!result.applied.includes("SECRET_THAT_RETURNS_NULL"),
+		"Key returning null must NOT be in applied list",
+	);
+});
+
+test("secure_env_collect: falls back to secure input prompt when custom UI is unavailable", async (t) => {
+	const { collectSecretsFromManifest } = await loadOrchestrator();
+
+	const tmp = makeTempDir("sec-input-fallback-test");
+	t.after(() => {
+		rmSync(tmp, { recursive: true, force: true });
+	});
+
+	const manifest = makeManifest([
+		{ key: "SECRET_FROM_INPUT_FALLBACK", status: "pending", formatHint: "starts with sk-" },
+	]);
+	await writeManifestFile(tmp, manifest);
+
+	let callIndex = 0;
+	const inputCalls: Array<{ title: string; placeholder?: string; opts?: { secure?: boolean } }> = [];
+	const mockCtx = {
+		cwd: tmp,
+		hasUI: true,
+		ui: {
+			custom: async (_factory: any) => {
+				callIndex++;
+				if (callIndex <= 1) return null; // summary screen dismiss
+				return undefined; // collect screen unavailable on this surface
+			},
+			input: async (title: string, placeholder?: string, opts?: { secure?: boolean }) => {
+				inputCalls.push({ title, placeholder, opts });
+				return "  sk-test-fallback-value  ";
+			},
+		},
+	};
+
+	const result = await collectSecretsFromManifest(tmp, "M001", mockCtx as any);
+
+	assert.ok(
+		result.applied.includes("SECRET_FROM_INPUT_FALLBACK"),
+		"Fallback input should collect and apply the key",
+	);
+	assert.ok(
+		!result.skipped.includes("SECRET_FROM_INPUT_FALLBACK"),
+		"Fallback input should not mark the key as skipped",
+	);
+	assert.equal(inputCalls.length, 1, "Fallback input should be requested once");
+	assert.equal(inputCalls[0]?.opts?.secure, true, "Fallback input should request secure entry when supported");
+});

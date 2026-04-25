@@ -703,6 +703,31 @@ Widget description.
   assert.deepStrictEqual(p.tasks[0].title, 'Build the widget', 'em-dash heading T01 title');
 });
 
+test('parsePlan: filename subheadings do not become task ids', () => {
+  const content = `# S15: Filename Headings
+
+**Goal:** Ignore file-reference subheadings inside task descriptions.
+**Demo:** Only real task ids are parsed.
+
+## Tasks
+
+- [ ] **T01: First task** \`est:10m\`
+  Implement the feature.
+
+### constraints.py — \`add_off_request_tiered()\`
+- preserve behavior
+
+### annotations.py — \`annotate()\`
+- keep metadata
+`;
+
+  const p = parsePlan(content);
+  assert.deepStrictEqual(p.tasks.map((task) => task.id), ['T01'], 'filename subheadings should not create extra tasks');
+  assert.deepStrictEqual(p.tasks[0].title, 'First task', 'real task should still parse normally');
+  assert.ok(p.tasks[0].description.includes('preserve behavior'), 'detail lines under filename subheadings should remain attached to the task');
+  assert.ok(p.tasks[0].description.includes('keep metadata'), 'later detail lines should also remain attached to the task');
+});
+
 test('parsePlan: mixed checkbox and heading-style tasks', () => {
   const content = `# S14: Mixed Format
 

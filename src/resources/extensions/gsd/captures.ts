@@ -15,7 +15,7 @@ import { gsdRoot } from "./paths.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-export type Classification = "quick-task" | "inject" | "defer" | "replan" | "note";
+export type Classification = "quick-task" | "inject" | "defer" | "replan" | "note" | "stop" | "backtrack";
 
 export interface CaptureEntry {
   id: string;
@@ -26,6 +26,7 @@ export interface CaptureEntry {
   resolution?: string;
   rationale?: string;
   resolvedAt?: string;
+  resolvedInMilestone?: string;
   executed?: boolean;
 }
 
@@ -41,7 +42,7 @@ export interface TriageResult {
 
 const CAPTURES_FILENAME = "CAPTURES.md";
 const VALID_CLASSIFICATIONS: readonly string[] = [
-  "quick-task", "inject", "defer", "replan", "note",
+  "quick-task", "inject", "defer", "replan", "note", "stop", "backtrack",
 ];
 
 // ─── Path Resolution ──────────────────────────────────────────────────────────
@@ -176,6 +177,7 @@ export function markCaptureResolved(
   classification: Classification,
   resolution: string,
   rationale: string,
+  milestoneId?: string,
 ): void {
   const filePath = resolveCapturesPath(basePath);
   if (!existsSync(filePath)) return;
@@ -206,13 +208,17 @@ export function markCaptureResolved(
     `**Rationale:** ${rationale}`,
     `**Resolved:** ${resolvedAt}`,
   ];
+  if (milestoneId) {
+    newFields.push(`**Milestone:** ${milestoneId}`);
+  }
 
-  // Remove any existing classification/resolution/rationale/resolved fields
+  // Remove any existing classification/resolution/rationale/resolved/milestone fields
   // (in case of re-triage)
   section = section.replace(/\*\*Classification:\*\*\s*.+\n?/g, "");
   section = section.replace(/\*\*Resolution:\*\*\s*.+\n?/g, "");
   section = section.replace(/\*\*Rationale:\*\*\s*.+\n?/g, "");
   section = section.replace(/\*\*Resolved:\*\*\s*.+\n?/g, "");
+  section = section.replace(/\*\*Milestone:\*\*\s*.+\n?/g, "");
 
   // Add new fields after Status line
   section = section.trimEnd() + "\n" + newFields.join("\n") + "\n";
@@ -255,16 +261,137 @@ export function markCaptureExecuted(basePath: string, captureId: string): void {
  * Load resolved captures that have actionable classifications (inject, replan,
  * quick-task) but have NOT yet been executed.
  * These are captures whose resolutions need to be carried out.
+ *
+ * When `currentMilestoneId` is provided, captures resolved in a *different*
+ * milestone are treated as stale and excluded.  This prevents quick-task
+ * captures from a prior milestone re-executing after the underlying issues
+ * were already fixed by planned milestone work (#2872).
+ *
+ * Captures that have no `resolvedInMilestone` (legacy captures resolved before
+ * this field was introduced) are always included for backward compatibility.
  */
-export function loadActionableCaptures(basePath: string): CaptureEntry[] {
+export function loadActionableCaptures(basePath: string, currentMilestoneId?: string): CaptureEntry[] {
   return loadAllCaptures(basePath).filter(
     c =>
       c.status === "resolved" &&
       !c.executed &&
       (c.classification === "inject" ||
         c.classification === "replan" ||
-        c.classification === "quick-task"),
+        c.classification === "quick-task") &&
+      // Staleness gate: exclude captures resolved in a different milestone (#2872)
+      (!currentMilestoneId ||
+        !c.resolvedInMilestone ||
+        c.resolvedInMilestone === currentMilestoneId),
   );
+}
+
+/**
+ * Load unexecuted stop captures — user directives to halt auto-mode.
+ * These are checked in the pre-dispatch guard pipeline (runGuards) to
+ * pause auto-mode before the next unit is dispatched.
+ */
+export function loadStopCaptures(basePath: string): CaptureEntry[] {
+  return loadAllCaptures(basePath).filter(
+    c => c.status === "resolved" && !c.executed &&
+      (c.classification === "stop" || c.classification === "backtrack"),
+  );
+}
+
+/**
+ * Load unexecuted backtrack captures specifically — captures directing
+ * auto-mode to abandon current milestone and return to a previous one.
+ */
+export function loadBacktrackCaptures(basePath: string): CaptureEntry[] {
+  return loadAllCaptures(basePath).filter(
+    c => c.status === "resolved" && !c.executed && c.classification === "backtrack",
+  );
+}
+
+/**
+ * Revert captures that were silenced by non-triage agents.
+ *
+ * When an execute-task or other non-triage agent writes `**Status:** resolved`
+ * to CAPTURES.md, it bypasses the triage pipeline entirely. This function
+ * detects such captures (resolved but missing the Classification field that
+ * triage always writes) and reverts them to pending so the triage sidecar
+ * picks them up properly.
+ *
+ * Returns the number of captures reverted.
+ */
+export function revertExecutorResolvedCaptures(basePath: string): number {
+  const filePath = resolveCapturesPath(basePath);
+  if (!existsSync(filePath)) return 0;
+
+  let content = readFileSync(filePath, "utf-8");
+  let reverted = 0;
+
+  const all = loadAllCaptures(basePath);
+  for (const capture of all) {
+    // A properly triaged capture has both resolved status AND a classification.
+    // An executor-silenced capture has resolved status but NO classification.
+    if (capture.status === "resolved" && !capture.classification) {
+      const sectionRegex = new RegExp(
+        `(### ${escapeRegex(capture.id)}\\n(?:(?!### ).)*?)(?=### |$)`,
+        "s",
+      );
+      const match = sectionRegex.exec(content);
+      if (match) {
+        let section = match[1];
+        section = section.replace(
+          /\*\*Status:\*\*\s*resolved/i,
+          "**Status:** pending",
+        );
+        content = content.replace(sectionRegex, section);
+        reverted++;
+      }
+    }
+  }
+
+  if (reverted > 0) {
+    writeFileSync(filePath, content, "utf-8");
+  }
+
+  return reverted;
+}
+
+/**
+ * Retroactively stamp a capture with a milestone ID.
+ *
+ * Used by executeTriageResolutions() as a safety net when the triage LLM
+ * resolves a capture without writing the **Milestone:** field.  This ensures
+ * the staleness gate in loadActionableCaptures() works correctly even for
+ * captures resolved before the prompt was updated (#2872).
+ */
+export function stampCaptureMilestone(basePath: string, captureId: string, milestoneId: string): void {
+  const filePath = resolveCapturesPath(basePath);
+  if (!existsSync(filePath)) return;
+
+  const content = readFileSync(filePath, "utf-8");
+
+  const sectionRegex = new RegExp(
+    `(### ${escapeRegex(captureId)}\\n(?:(?!### ).)*?)(?=### |$)`,
+    "s",
+  );
+  const match = sectionRegex.exec(content);
+  if (!match) return;
+
+  let section = match[1];
+
+  // Only stamp if not already present
+  if (/\*\*Milestone:\*\*/.test(section)) return;
+
+  // Insert after the Resolved field (or at end of section)
+  const resolvedFieldEnd = section.search(/\*\*Resolved:\*\*\s*.+\n?/);
+  if (resolvedFieldEnd !== -1) {
+    const resolvedMatch = section.match(/\*\*Resolved:\*\*\s*.+\n?/);
+    const insertPos = resolvedFieldEnd + (resolvedMatch?.[0]?.length ?? 0);
+    section = section.slice(0, insertPos) + `**Milestone:** ${milestoneId}\n` + section.slice(insertPos);
+  } else {
+    section = section.trimEnd() + "\n" + `**Milestone:** ${milestoneId}` + "\n";
+  }
+
+  const updated = content.replace(sectionRegex, section);
+  writeFileSync(filePath, updated, "utf-8");
 }
 
 // ─── Parser ───────────────────────────────────────────────────────────────────
@@ -291,6 +418,7 @@ function parseCapturesContent(content: string): CaptureEntry[] {
     const resolution = extractBoldField(body, "Resolution");
     const rationale = extractBoldField(body, "Rationale");
     const resolvedAt = extractBoldField(body, "Resolved");
+    const milestoneId = extractBoldField(body, "Milestone");
     const executedAt = extractBoldField(body, "Executed");
 
     if (!text || !timestamp) continue;
@@ -308,6 +436,7 @@ function parseCapturesContent(content: string): CaptureEntry[] {
       ...(resolution ? { resolution } : {}),
       ...(rationale ? { rationale } : {}),
       ...(resolvedAt ? { resolvedAt } : {}),
+      ...(milestoneId ? { resolvedInMilestone: milestoneId } : {}),
       ...(executedAt ? { executed: true } : {}),
     });
   }

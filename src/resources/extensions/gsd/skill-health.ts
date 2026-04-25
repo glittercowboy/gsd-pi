@@ -207,9 +207,13 @@ export function formatSkillDetail(basePath: string, skillName: string): string {
     lines.push(`  ${date}  ${u.id.padEnd(20)}  ${formatTokenCount(u.tokens.total).padStart(8)} tokens  ${formatCost(u.cost)}`);
   }
 
-  // Check for SKILL.md existence
-  const skillPath = join(homedir(), ".agents", "skills", skillName, "SKILL.md");
-  if (existsSync(skillPath)) {
+  // Check for SKILL.md existence — search both ecosystem and Claude Code directories
+  const candidatePaths = [
+    join(homedir(), ".agents", "skills", skillName, "SKILL.md"),
+    join(homedir(), ".claude", "skills", skillName, "SKILL.md"),
+  ];
+  const skillPath = candidatePaths.find(p => existsSync(p));
+  if (skillPath) {
     const stat = statSync(skillPath);
     lines.push("");
     lines.push(`SKILL.md: ${skillPath}`);

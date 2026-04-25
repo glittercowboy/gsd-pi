@@ -21,6 +21,8 @@ export class Input implements Component, Focusable {
 	public onSubmit?: (value: string) => void;
 	public onEscape?: () => void;
 	public placeholder: string = "";
+	/** When true, render obscured characters instead of the actual value. */
+	public secure: boolean = false;
 
 	/** Focusable interface - set by TUI when focus changes */
 	private _focused: boolean = false;
@@ -446,6 +448,7 @@ export class Input implements Component, Focusable {
 		// Calculate visible window
 		const prompt = "> ";
 		const availableWidth = width - prompt.length;
+		const renderValue = this.secure ? "*".repeat(this.value.length) : this.value;
 
 		if (availableWidth <= 0) {
 			return [prompt];
@@ -466,7 +469,7 @@ export class Input implements Component, Focusable {
 
 		if (this.value.length < availableWidth) {
 			// Everything fits (leave room for cursor at end)
-			visibleText = this.value;
+			visibleText = renderValue;
 		} else {
 			// Need horizontal scrolling
 			// Reserve one character for cursor if it's at the end
@@ -501,17 +504,17 @@ export class Input implements Component, Focusable {
 
 			if (this.cursor < halfWidth) {
 				// Cursor near start
-				visibleText = this.value.slice(0, findValidEnd(scrollWidth));
+				visibleText = renderValue.slice(0, findValidEnd(scrollWidth));
 				cursorDisplay = this.cursor;
 			} else if (this.cursor > this.value.length - halfWidth) {
 				// Cursor near end
 				const start = findValidStart(this.value.length - scrollWidth);
-				visibleText = this.value.slice(start);
+				visibleText = renderValue.slice(start);
 				cursorDisplay = this.cursor - start;
 			} else {
 				// Cursor in middle
 				const start = findValidStart(this.cursor - halfWidth);
-				visibleText = this.value.slice(start, findValidEnd(start + scrollWidth));
+				visibleText = renderValue.slice(start, findValidEnd(start + scrollWidth));
 				cursorDisplay = halfWidth;
 			}
 		}

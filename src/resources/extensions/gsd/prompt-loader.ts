@@ -22,6 +22,36 @@ import { GSDError, GSD_PARSE_ERROR } from "./errors.js";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
+import { logWarning } from "./workflow-logger.js";
+
+type ExistsFn = (path: string) => boolean;
+
+function hasRequiredExtensionAssets(rootDir: string, exists: ExistsFn = existsSync): boolean {
+  return (
+    exists(join(rootDir, "prompts")) &&
+    exists(join(rootDir, "templates", "task-summary.md"))
+  );
+}
+
+export function resolveExtensionDirFromCandidates(
+  moduleDir: string,
+  agentGsdDir: string,
+  exists: ExistsFn = existsSync,
+): string {
+  const moduleUsable = hasRequiredExtensionAssets(moduleDir, exists);
+  const agentUsable = hasRequiredExtensionAssets(agentGsdDir, exists);
+
+  // Prefer the user-local extension tree when both are valid. This avoids
+  // leaking npm/global-install paths into prompts on Windows.
+  if (agentUsable) return agentGsdDir;
+  if (moduleUsable) return moduleDir;
+
+  // Degraded fallback: if required template is missing in both locations,
+  // keep previous behavior and prefer whichever still has prompts/.
+  if (exists(join(moduleDir, "prompts"))) return moduleDir;
+  if (exists(join(agentGsdDir, "prompts"))) return agentGsdDir;
+  return moduleDir;
+}
 
 /**
  * Resolve the GSD extension directory.
@@ -35,20 +65,22 @@ import { homedir } from "node:os";
  */
 function resolveExtensionDir(): string {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
-  if (existsSync(join(moduleDir, "prompts"))) return moduleDir;
-
-  // Fallback: user-local agent directory
   const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
   const agentGsdDir = join(gsdHome, "agent", "extensions", "gsd");
-  if (existsSync(join(agentGsdDir, "prompts"))) return agentGsdDir;
-
-  // Last resort: return the module dir (warmCache will silently handle the miss)
-  return moduleDir;
+  return resolveExtensionDirFromCandidates(moduleDir, agentGsdDir);
 }
 
 const __extensionDir = resolveExtensionDir();
 const promptsDir = join(__extensionDir, "prompts");
 const templatesDir = join(__extensionDir, "templates");
+
+/**
+ * Return the resolved templates directory path for use in prompts.
+ * Avoids hardcoding `~/.gsd/agent/extensions/gsd/templates/` in templates. (#3575)
+ */
+export function getTemplatesDir(): string {
+  return templatesDir;
+}
 
 // Cache all templates eagerly at module load — a running session uses the
 // template versions that were on disk at startup, immune to later overwrites.
@@ -72,7 +104,7 @@ function warmCache(): void {
     // prompts/ may not exist in test environments — lazy loading still works.
     // Emit a diagnostic when running outside tests so wrong-path bugs are visible.
     if (!process.env.VITEST && !process.env.NODE_TEST) {
-      process.stderr.write(`[gsd:prompt-loader] warmCache: prompts dir not found: ${promptsDir}\n`);
+      logWarning("prompt", `warmCache: prompts dir not found: ${promptsDir}`);
     }
   }
 
@@ -87,7 +119,7 @@ function warmCache(): void {
   } catch {
     // templates/ may not exist in test environments — lazy loading still works.
     if (!process.env.VITEST && !process.env.NODE_TEST) {
-      process.stderr.write(`[gsd:prompt-loader] warmCache: templates dir not found: ${templatesDir}\n`);
+      logWarning("prompt", `warmCache: templates dir not found: ${templatesDir}`);
     }
   }
 }
@@ -134,7 +166,15 @@ export function loadPrompt(name: string, vars: Record<string, string> = {}): str
   }
 
   for (const [key, value] of Object.entries(effectiveVars)) {
-    content = content.replaceAll(`{{${key}}}`, value);
+    const safeValue =
+      key === "workingDirectory" && typeof value === "string"
+        ? value.replaceAll("\\", "/")
+        : value;
+
+    // Use split/join instead of replaceAll to avoid JavaScript's special
+    // replacement patterns ($', $`, $&) being interpreted in the value.
+    // See: https://github.com/gsd-build/gsd-2/issues/2968
+    content = content.split(`{{${key}}}`).join(safeValue);
   }
 
   return content.trim();

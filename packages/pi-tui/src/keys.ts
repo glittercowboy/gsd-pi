@@ -309,6 +309,28 @@ const CODEPOINTS = {
 	kpEnter: 57414, // Numpad Enter (Kitty protocol)
 } as const;
 
+const KITTY_PRIVATE_USE_RANGE = { start: 57344, end: 63743 } as const;
+
+const KITTY_KEYPAD_PRINTABLES = new Map<number, string>([
+	[57399, "0"], // KP_0
+	[57400, "1"], // KP_1
+	[57401, "2"], // KP_2
+	[57402, "3"], // KP_3
+	[57403, "4"], // KP_4
+	[57404, "5"], // KP_5
+	[57405, "6"], // KP_6
+	[57406, "7"], // KP_7
+	[57407, "8"], // KP_8
+	[57408, "9"], // KP_9
+	[57409, "."], // KP_DECIMAL
+	[57410, "/"], // KP_DIVIDE
+	[57411, "*"], // KP_MULTIPLY
+	[57412, "-"], // KP_SUBTRACT
+	[57413, "+"], // KP_ADD
+	[57415, "="], // KP_EQUAL
+	[57416, ","], // KP_SEPARATOR
+]);
+
 const ARROW_CODEPOINTS = {
 	up: -1,
 	down: -2,
@@ -1167,6 +1189,16 @@ export function decodeKittyPrintable(data: string): string | undefined {
 	}
 	// Drop control characters or invalid codepoints.
 	if (!Number.isFinite(effectiveCodepoint) || effectiveCodepoint < 32) return undefined;
+
+	const keypadPrintable = KITTY_KEYPAD_PRINTABLES.get(effectiveCodepoint);
+	if (keypadPrintable !== undefined) return keypadPrintable;
+
+	if (
+		effectiveCodepoint >= KITTY_PRIVATE_USE_RANGE.start &&
+		effectiveCodepoint <= KITTY_PRIVATE_USE_RANGE.end
+	) {
+		return undefined;
+	}
 
 	try {
 		return String.fromCodePoint(effectiveCodepoint);

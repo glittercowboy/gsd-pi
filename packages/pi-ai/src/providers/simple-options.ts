@@ -1,9 +1,25 @@
 import type { Api, Model, SimpleStreamOptions, StreamOptions, ThinkingBudgets, ThinkingLevel } from "../types.js";
 
+/**
+ * Compute the default maxTokens for a model when no explicit value is provided.
+ *
+ * The 32 k cap is retained only for native Anthropic models (api === "anthropic-messages")
+ * where the Anthropic API historically rejected higher values. Custom and
+ * Anthropic-compatible models (e.g. OpenAI-completions, Vertex, etc.) use their
+ * declared model.maxTokens directly so that providers with larger output windows
+ * (131 072 tokens, etc.) are not silently capped.
+ */
+export function defaultMaxTokens(model: Model<Api>): number {
+	if (model.api === "anthropic-messages") {
+		return Math.min(model.maxTokens, 32000);
+	}
+	return model.maxTokens;
+}
+
 export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOptions, apiKey?: string): StreamOptions {
 	return {
 		temperature: options?.temperature,
-		maxTokens: options?.maxTokens || Math.min(model.maxTokens, 32000),
+		maxTokens: options?.maxTokens || defaultMaxTokens(model),
 		signal: options?.signal,
 		apiKey: apiKey || options?.apiKey,
 		cacheRetention: options?.cacheRetention,

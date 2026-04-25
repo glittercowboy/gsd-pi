@@ -59,10 +59,11 @@ export class Logger {
   /** End the write stream. Resolves when the stream is fully flushed. */
   close(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      this.stream.end(() => {
-        this.stream.once('close', () => resolve());
-      });
+      // Attach listeners BEFORE triggering end() so a synchronous error
+      // from end() or an immediate 'close' cannot slip past the listener.
+      this.stream.once('close', () => resolve());
       this.stream.once('error', reject);
+      this.stream.end();
     });
   }
 

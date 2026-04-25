@@ -1,12 +1,13 @@
 {
   "id": "google-search",
-  "name": "Google Search",
+  "name": "Google Search (deprecated stub)",
   "version": "1.0.0",
-  "description": "Web search via Google with AI-synthesized answers and source citations",
+  "description": "Deprecation stub. The google_search tool moved to @gsd-extensions/google-search. Install with: gsd extensions install @gsd-extensions/google-search",
   "tier": "bundled",
+  "deprecated": true,
   "requires": { "platform": ">=2.29.0" },
   "provides": {
-    "tools": ["google_search"],
+    "tools": [],
     "hooks": ["session_start"]
   }
 }

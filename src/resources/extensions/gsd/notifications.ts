@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import type { NotificationPreferences } from "./types.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
-import { CmuxClient, emitOsc777Notification, resolveCmuxConfig } from "../cmux/index.js";
+import { sendRemoteNotification } from "../remote-questions/notify.js";
 
 export type NotifyLevel = "info" | "success" | "warning" | "error";
 export type NotificationKind = "complete" | "error" | "budget" | "milestone" | "attention";
@@ -23,24 +23,48 @@ export function sendDesktopNotification(
   message: string,
   level: NotifyLevel = "info",
   kind: NotificationKind = "complete",
+  projectName?: string,
 ): void {
+  // When a projectName is provided and the title is the default "GSD",
+  // replace it with a project-qualified title for multi-project clarity.
+  if (projectName && title === "GSD") {
+    title = formatNotificationTitle(projectName);
+  }
   const loaded = loadEffectiveGSDPreferences()?.preferences;
+
+  // Remote notifications fire independently of desktop preferences.
+  // sendRemoteNotification handles "not configured" gracefully (early return).
+  void sendRemoteNotification(title, message).catch(() => {});
+
   if (!shouldSendDesktopNotification(kind, loaded?.notifications)) return;
 
-  const cmux = resolveCmuxConfig(loaded);
-  if (cmux.notifications) {
-    const delivered = CmuxClient.fromPreferences(loaded).notify(title, message);
-    if (delivered) return;
-    emitOsc777Notification(title, message);
-  }
+  // cmux delivery and desktop delivery are independent — if cmux import or
+  // delivery fails, we must still attempt the native desktop notification.
+  const runCmux = async () => {
+    try {
+      const { CmuxClient, emitOsc777Notification, resolveCmuxConfig } = await import("../cmux/index.js");
+      const cmux = resolveCmuxConfig(loaded);
+      if (cmux.notifications) {
+        const delivered = CmuxClient.fromPreferences(loaded).notify(title, message);
+        if (delivered) return true;
+        emitOsc777Notification(title, message);
+      }
+    } catch {
+      // cmux unavailable — fall through to desktop notification
+    }
+    return false;
+  };
 
-  try {
-    const command = buildDesktopNotificationCommand(process.platform, title, message, level);
-    if (!command) return;
-    execFileSync(command.file, command.args, { timeout: 3000, stdio: "ignore" });
-  } catch {
-    // Non-fatal — desktop notifications are best-effort
-  }
+  void runCmux().then((deliveredByCmux) => {
+    if (deliveredByCmux) return;
+    try {
+      const command = buildDesktopNotificationCommand(process.platform, title, message, level);
+      if (!command) return;
+      execFileSync(command.file, command.args, { timeout: 3000, stdio: "ignore" });
+    } catch {
+      // Non-fatal — desktop notifications are best-effort
+    }
+  }).catch(() => {});
 }
 
 export function shouldSendDesktopNotification(
@@ -62,6 +86,16 @@ export function shouldSendDesktopNotification(
     default:
       return preferences?.on_complete ?? true;
   }
+}
+
+/**
+ * Format a notification title that includes the project name for context.
+ * Returns "GSD — projectName" when a project name is available, otherwise "GSD".
+ */
+export function formatNotificationTitle(projectName?: string): string {
+  const trimmed = projectName?.trim();
+  if (trimmed) return `GSD — ${trimmed}`;
+  return "GSD";
 }
 
 export function buildDesktopNotificationCommand(

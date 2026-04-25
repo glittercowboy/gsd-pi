@@ -1,8 +1,13 @@
 {
   "name": "@gsd/pi-tui",
-  "version": "0.57.1",
+  "version": "2.77.0",
   "description": "Terminal User Interface library (vendored from pi-mono)",
   "type": "module",
+  "gsd": {
+    "linkable": true,
+    "scope": "@gsd",
+    "name": "pi-tui"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

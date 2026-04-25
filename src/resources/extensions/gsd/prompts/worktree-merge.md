@@ -90,9 +90,11 @@ Present a merge plan to the user:
 
 Ask the user to confirm the merge plan before proceeding.
 
+**CRITICAL — Non-bypassable gate:** Do NOT execute any merge commands until the user explicitly approves the merge plan. If `ask_user_questions` fails, errors, returns no response, or the user's response is ambiguous, you MUST re-ask — never rationalize past the block. "No response, I'll proceed with the clean merges," "the plan looks safe, merging," or any other self-authorization is **forbidden**. The gate exists to protect the user's branches; treat a block as an instruction to wait, not an obstacle to work around.
+
 ### Step 4: Execute Merge
 
-Once confirmed, run all commands from `{{mainTreePath}}` (your CWD):
+Once the user has explicitly confirmed, run all commands from `{{mainTreePath}}` (your CWD):
 
 1. Ensure you are on the target branch: `git checkout {{mainBranch}}`
 2. If there are conflicts requiring manual reconciliation, apply the reconciled versions first

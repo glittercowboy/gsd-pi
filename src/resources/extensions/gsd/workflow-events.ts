@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteSync } from "./atomic-write.js";
+import { withFileLockSync } from "./file-lock.js";
+import { logWarning } from "./workflow-logger.js";
 
 // ─── Session ID ───────────────────────────────────────────────────────────
 
@@ -18,10 +20,11 @@ export function getSessionId(): string {
 // ─── Event Types ─────────────────────────────────────────────────────────
 
 export interface WorkflowEvent {
-  cmd: string;           // e.g. "complete_task"
+  v?: number;              // schema version — omitted in v1 (legacy), 2 for current format
+  cmd: string;             // e.g. "complete-task" (canonical: hyphens; legacy: underscores — both accepted by replay)
   params: Record<string, unknown>;
-  ts: string;            // ISO 8601
-  hash: string;          // content hash (hex, 16 chars)
+  ts: string;              // ISO 8601
+  hash: string;            // content hash (hex, 16 chars)
   actor: "agent" | "system";
   actor_name?: string;      // e.g. "executor-agent-01" — caller-provided identity
   trigger_reason?: string;  // e.g. "plan-phase complete" — caller-provided causation
@@ -45,6 +48,7 @@ export function appendEvent(
     .slice(0, 16);
 
   const fullEvent: WorkflowEvent = {
+    v: 2,
     ...event,
     hash,
     session_id: ENGINE_SESSION_ID,
@@ -74,7 +78,7 @@ export function readEvents(logPath: string): WorkflowEvent[] {
     try {
       events.push(JSON.parse(line) as WorkflowEvent);
     } catch {
-      process.stderr.write(`workflow-events: skipping corrupted event line: ${line.slice(0, 80)}\n`);
+      logWarning("event-log", `skipping corrupted event line (${line.length} bytes)`);
     }
   }
 
@@ -124,31 +128,39 @@ export function compactMilestoneEvents(
   const logPath = join(basePath, ".gsd", "event-log.jsonl");
   const archivePath = join(basePath, ".gsd", `event-log-${milestoneId}.jsonl.archived`);
 
-  const allEvents = readEvents(logPath);
-  const toArchive = allEvents.filter(
-    (e) => (e.params as { milestoneId?: string }).milestoneId === milestoneId,
-  );
-  const remaining = allEvents.filter(
-    (e) => (e.params as { milestoneId?: string }).milestoneId !== milestoneId,
-  );
+  return withFileLockSync(logPath, () => {
+    const allEvents = readEvents(logPath);
+    
+    // Single-pass partition to halve the work (per reviewer agent)
+    const toArchive: WorkflowEvent[] = [];
+    const remaining: WorkflowEvent[] = [];
+    
+    for (const e of allEvents) {
+      if ((e.params as { milestoneId?: string }).milestoneId === milestoneId) {
+        toArchive.push(e);
+      } else {
+        remaining.push(e);
+      }
+    }
 
-  if (toArchive.length === 0) {
-    return { archived: 0 };
-  }
+    if (toArchive.length === 0) {
+      return { archived: 0 };
+    }
 
-  // Write archived events to .jsonl.archived file (crash-safe)
-  atomicWriteSync(
-    archivePath,
-    toArchive.map((e) => JSON.stringify(e)).join("\n") + "\n",
-  );
+    // Write archived events to .jsonl.archived file (crash-safe)
+    atomicWriteSync(
+      archivePath,
+      toArchive.map((e) => JSON.stringify(e)).join("\n") + "\n",
+    );
 
-  // Truncate active log to remaining events only
-  atomicWriteSync(
-    logPath,
-    remaining.length > 0
-      ? remaining.map((e) => JSON.stringify(e)).join("\n") + "\n"
-      : "",
-  );
+    // Truncate active log to remaining events only
+    atomicWriteSync(
+      logPath,
+      remaining.length > 0
+        ? remaining.map((e) => JSON.stringify(e)).join("\n") + "\n"
+        : "",
+    );
 
-  return { archived: toArchive.length };
+    return { archived: toArchive.length };
+  });
 }

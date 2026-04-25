@@ -43,10 +43,25 @@ export function resolveExpectedArtifactPath(
       return dir ? join(dir, buildMilestoneFileName(mid, "ROADMAP")) : null;
     }
     case "research-slice": {
+      // #4414: Sentinel unitId "{mid}/parallel-research" fans out across
+      // multiple slices. Resolve to a milestone-level placeholder path so
+      // blocker escalation has somewhere to write. Verification for this
+      // sentinel is handled directly in verifyExpectedArtifact.
+      if (sid === "parallel-research") {
+        const mdir = resolveMilestonePath(base, mid);
+        return mdir
+          ? join(mdir, buildMilestoneFileName(mid, "PARALLEL-BLOCKER"))
+          : null;
+      }
       const dir = resolveSlicePath(base, mid, sid!);
       return dir ? join(dir, buildSliceFileName(sid!, "RESEARCH")) : null;
     }
     case "plan-slice": {
+      const dir = resolveSlicePath(base, mid, sid!);
+      return dir ? join(dir, buildSliceFileName(sid!, "PLAN")) : null;
+    }
+    case "refine-slice": {
+      // ADR-011: refine-slice expands a sketch and writes the same PLAN.md as plan-slice.
       const dir = resolveSlicePath(base, mid, sid!);
       return dir ? join(dir, buildSliceFileName(sid!, "PLAN")) : null;
     }
@@ -56,7 +71,7 @@ export function resolveExpectedArtifactPath(
     }
     case "run-uat": {
       const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "UAT")) : null;
+      return dir ? join(dir, buildSliceFileName(sid!, "ASSESSMENT")) : null;
     }
     case "execute-task": {
       const dir = resolveSlicePath(base, mid, sid!);
@@ -109,9 +124,14 @@ export function diagnoseExpectedArtifact(
     case "plan-milestone":
       return `${relMilestoneFile(base, mid, "ROADMAP")} (milestone roadmap)`;
     case "research-slice":
+      if (sid === "parallel-research") {
+        return `${relMilestoneFile(base, mid, "PARALLEL-BLOCKER")} (parallel slice research sentinel)`;
+      }
       return `${relSliceFile(base, mid, sid!, "RESEARCH")} (slice research)`;
     case "plan-slice":
       return `${relSliceFile(base, mid, sid!, "PLAN")} (slice plan)`;
+    case "refine-slice":
+      return `${relSliceFile(base, mid, sid!, "PLAN")} (refined slice plan from sketch)`;
     case "execute-task": {
       return `Task ${tid} marked [x] in ${relSliceFile(base, mid, sid!, "PLAN")} + summary written`;
     }
@@ -124,7 +144,7 @@ export function diagnoseExpectedArtifact(
     case "reassess-roadmap":
       return `${relSliceFile(base, mid, sid!, "ASSESSMENT")} (roadmap reassessment)`;
     case "run-uat":
-      return `${relSliceFile(base, mid, sid!, "UAT")} (UAT result)`;
+      return `${relSliceFile(base, mid, sid!, "ASSESSMENT")} (UAT assessment result)`;
     case "validate-milestone":
       return `${relMilestoneFile(base, mid, "VALIDATION")} (milestone validation report)`;
     case "complete-milestone":

@@ -192,28 +192,33 @@ export async function handleQuick(
   const taskDirRel = `.gsd/quick/${taskNum}-${slug}`;
   const date = new Date().toISOString().split("T")[0];
 
-  // Create git branch for the quick task
+  // Create git branch for the quick task (unless isolation:none — #3337)
   const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
   const git = new GitServiceImpl(basePath, gitPrefs);
   const branchName = `gsd/quick/${taskNum}-${slug}`;
   let originalBranch = git.getCurrentBranch();
 
-  let branchCreated = false;
-  try {
-    const current = originalBranch;
-    if (current !== branchName) {
-      // Auto-commit any dirty state before switching
-      try {
-        git.autoCommit("quick-task", `Q${taskNum}`, []);
-      } catch { /* nothing to commit — fine */ }
+  const { getIsolationMode } = await import("./preferences.js");
+  const usesBranch = getIsolationMode() !== "none";
 
-      runGit(basePath, ["checkout", "-b", branchName]);
-      branchCreated = true;
+  let branchCreated = false;
+  if (usesBranch) {
+    try {
+      const current = originalBranch;
+      if (current !== branchName) {
+        // Auto-commit any dirty state before switching
+        try {
+          git.autoCommit("quick-task", `Q${taskNum}`, []);
+        } catch { /* nothing to commit — fine */ }
+
+        runGit(basePath, ["checkout", "-b", branchName]);
+        branchCreated = true;
+      }
+    } catch (err) {
+      // Branch creation failed — continue on current branch
+      const message = err instanceof Error ? err.message : String(err);
+      ctx.ui.notify(`Could not create branch ${branchName}: ${message}. Working on current branch.`, "warning");
     }
-  } catch (err) {
-    // Branch creation failed — continue on current branch
-    const message = err instanceof Error ? err.message : String(err);
-    ctx.ui.notify(`Could not create branch ${branchName}: ${message}. Working on current branch.`, "warning");
   }
 
   const actualBranch = branchCreated ? branchName : git.getCurrentBranch();

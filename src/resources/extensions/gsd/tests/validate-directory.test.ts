@@ -74,6 +74,27 @@ test("validateDirectory: C:\\Windows is blocked", { skip: !isWindows ? "Windows-
   assert.equal(result.severity, "blocked");
 });
 
+test("validateDirectory: D:\\Windows is blocked", { skip: !isWindows ? "Windows-only test" : undefined }, () => {
+  const result = validateDirectory("D:\\Windows");
+  assert.equal(result.safe, false);
+  assert.equal(result.severity, "blocked");
+  assert.ok(result.reason?.includes("system directory"));
+});
+
+test("validateDirectory: E:\\Program Files is blocked", { skip: !isWindows ? "Windows-only test" : undefined }, () => {
+  const result = validateDirectory("E:\\Program Files");
+  assert.equal(result.safe, false);
+  assert.equal(result.severity, "blocked");
+  assert.ok(result.reason?.includes("system directory"));
+});
+
+test("validateDirectory: any Windows drive root is blocked", { skip: !isWindows ? "Windows-only test" : undefined }, () => {
+  const result = validateDirectory("D:\\");
+  assert.equal(result.safe, false);
+  assert.equal(result.severity, "blocked");
+  assert.ok(result.reason?.includes("system directory"));
+});
+
 // ─── Home directory (cross-platform) ─────────────────────────────────────────────
 
 test("validateDirectory: home directory itself is blocked", () => {
@@ -104,7 +125,13 @@ test("validateDirectory: subdirectory of home is NOT blocked", () => {
 // Regression test for #1317: GSD worktree inside $HOME must not be blocked even
 // when the resolved project root equals $HOME (e.g. home dir is a git repo).
 test("validateDirectory: GSD worktree path nested under home is NOT blocked (#1317)", () => {
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  const fakeHome = makeTempDir("fake-home");
+  process.env.HOME = fakeHome;
+  process.env.USERPROFILE = fakeHome;
   const worktreePath = join(homedir(), ".gsd", "worktrees", "M001");
+  const worktreeRoot = join(fakeHome, ".gsd", "worktrees", "M001");
   mkdirSync(worktreePath, { recursive: true });
   try {
     // The worktree CWD itself is a valid location — it must pass.
@@ -112,7 +139,12 @@ test("validateDirectory: GSD worktree path nested under home is NOT blocked (#13
     assert.equal(result.safe, true, "GSD worktree path should be safe to run in");
     assert.equal(result.severity, "ok");
   } finally {
-    rmSync(join(homedir(), ".gsd", "worktrees", "M001"), { recursive: true, force: true });
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
+    rmSync(worktreeRoot, { recursive: true, force: true });
+    rmSync(fakeHome, { recursive: true, force: true });
   }
 });
 

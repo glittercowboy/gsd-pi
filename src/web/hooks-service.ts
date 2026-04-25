@@ -66,6 +66,7 @@ export async function collectHooksData(projectCwdOverride?: string): Promise<Hoo
           [HOOKS_MODULE_ENV]: hooksModulePath,
         },
         maxBuffer: HOOKS_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {

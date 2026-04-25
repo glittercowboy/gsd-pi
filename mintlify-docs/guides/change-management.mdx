@@ -1,0 +1,211 @@
+---
+title: "Change management"
+description: "How to handle bugs, new features, and roadmap reshuffling after milestones are underway."
+---
+
+Reality diverges from plans. This guide covers every situation where you need to act on something discovered after work is already in flight — from a single bug fix to inserting a whole new milestone before the next planned one.
+
+## Mental model
+
+GSD's pipeline looks like this:
+
+```
+M001 complete → M002 complete → M003 → M004 → ...
+```
+
+The key invariant: **completed units are sealed.** A finished task, slice, or milestone can't be un-completed. What you can always do is add new work ahead of or after any remaining unit.
+
+Between milestones you have the most freedom. Inside a running milestone you have real steering options without breaking the state machine.
+
+---
+
+## Small bug or quick fix
+
+**A self-contained fix that can be described in a sentence.**
+
+```
+/gsd quick "fix the date formatting bug in the invoice renderer"
+```
+
+`/gsd quick` executes immediately with full GSD guarantees (atomic commit, state tracking) but skips milestone ceremony. It doesn't touch the milestone pipeline.
+
+---
+
+## Bug or idea discovered while auto-mode is running
+
+**You spot something mid-execution but don't want to interrupt the run.**
+
+```
+/gsd capture "the login redirect is broken on mobile viewports"
+/gsd capture "add a loading spinner to the data table"
+```
+
+Captures are appended to `.gsd/CAPTURES.md` and triaged automatically at natural seams between tasks. See [captures and triage](/guides/captures-triage) for the full classification system.
+
+To force processing immediately:
+
+```
+/gsd triage
+```
+
+---
+
+## Current slice plan is wrong
+
+**You're mid-slice and the plan no longer makes sense — wrong approach, missing step, or a blocker.**
+
+```
+/gsd steer
+```
+
+This opens an interactive session to hard-edit plan documents. Changes are picked up at the next phase boundary without stopping auto-mode.
+
+For structural changes (adding tasks, removing tasks), the agent triggers a slice replan internally when it discovers a blocker. Completed tasks are protected — only pending tasks can be mutated.
+
+---
+
+## Bugs and features need to land before the next milestone
+
+**M001 and M002 are done. You've found bugs and have new features that must ship before M003 can proceed.**
+
+<Steps>
+  <Step title="Triage your list">
+    Separate into: bugs vs. features, and must-before-M003 vs. can-wait.
+  </Step>
+  <Step title="Create a new milestone for the pre-M003 work">
+    ```
+    /gsd new-milestone
+    ```
+    Describe the bugs and features. GSD creates a milestone — the title is what matters, not the number.
+  </Step>
+  <Step title="Check and reorder the queue">
+    ```
+    /gsd queue
+    ```
+    Confirm the new milestone is queued before M003. Reorder if needed.
+  </Step>
+  <Step title="Park M003 if it shouldn't run yet">
+    ```
+    /gsd park M003
+    ```
+    Parking skips M003 without deleting it. Unpark when ready:
+    ```
+    /gsd unpark M003
+    ```
+  </Step>
+  <Step title="Run auto-mode">
+    ```
+    /gsd auto
+    ```
+    Auto-mode dispatches the next active milestone in queue order.
+  </Step>
+</Steps>
+
+---
+
+## Modifying a not-yet-started milestone
+
+**You want to change M003's scope — add slices, remove slices, change the approach — before it starts.**
+
+Since M003 hasn't started, its plan files can be edited directly. Use `/gsd discuss` to talk through the changes and let GSD rewrite the artifacts:
+
+```
+/gsd discuss
+```
+
+> "M003 needs to include the new auth flow we discovered. Can we add a slice for that and remove the old token refresh slice?"
+
+Or use `/gsd steer` to edit plan files directly.
+
+If M003 is partially done (some slices complete), auto-mode calls `reassess-roadmap` automatically after each slice. You can also discuss changes during a pause — GSD can add, modify, or remove pending slices without touching the completed ones.
+
+---
+
+## A milestone needs to step back one position
+
+**Your "Milestone 3" is effectively now "Milestone 4" because new work must insert before it.**
+
+GSD milestone numbers are labels, not positions. Execution order is controlled by the queue, not the ID. The procedure is the same as above: create the new milestone, confirm queue order with `/gsd queue`, park M003 if needed.
+
+The milestone IDs stay as-is — M003 just executes later. No renumbering needed.
+
+---
+
+## Many bugs — worth a dedicated bugfix milestone
+
+**After M002 you have 10+ bugs across multiple systems. Too scattered for individual quick tasks.**
+
+```
+/gsd new-milestone
+```
+
+Describe the full bug list. GSD creates a milestone with slices organized by system or severity. Run it in auto-mode like any other milestone. When done, all bugs land as clean commits with a formal milestone summary — readable as a bugfix release.
+
+---
+
+## Feature ideas that can wait
+
+**Real ideas, but nothing that blocks the current plan.**
+
+```
+/gsd capture "dark mode toggle on the dashboard"
+```
+
+Deferred captures surface during roadmap reassessment. GSD can fold them into a later milestone when the timing makes sense. Or queue a dedicated features milestone directly:
+
+```
+/gsd queue
+```
+
+---
+
+## Bug in a completed slice
+
+**A shipped slice has a bug but it's already sealed.**
+
+You cannot un-complete the slice. Options:
+
+- `/gsd quick` for small fixes
+- A new slice in the next milestone that explicitly patches the bug — reference the original slice in the description
+- `/gsd steer` to add a fix task to the current active milestone if you're still inside it
+
+The completed slice record is preserved as-is. The fix lands as new work with its own commit and summary.
+
+---
+
+## An entire milestone went in the wrong direction
+
+**M002 is done but the approach was wrong, and M003 builds on it.**
+
+<Steps>
+  <Step title="Discuss the situation">
+    ```
+    /gsd discuss
+    ```
+    Work through what's wrong and what the correction looks like before touching anything.
+  </Step>
+  <Step title="Create a correction milestone">
+    A focused "M002b" or "M002-fix" that refactors or replaces what went wrong. Scope it precisely to the broken parts.
+  </Step>
+  <Step title="Revise M003 if needed">
+    If M003 doesn't depend on the broken parts, trim its scope so it doesn't compound the problem. Fix fully in the correction milestone first.
+  </Step>
+</Steps>
+
+---
+
+## Quick reference
+
+| Situation | Command |
+|---|---|
+| Small self-contained fix | `/gsd quick` |
+| Thought during auto-mode | `/gsd capture` |
+| Force-process captures now | `/gsd triage` |
+| Current slice plan is wrong | `/gsd steer` |
+| New work must land before next milestone | `/gsd new-milestone` + `/gsd queue` |
+| Delay a future milestone | `/gsd park <MID>` / `/gsd unpark <MID>` |
+| Modify a not-yet-started milestone | `/gsd discuss` or `/gsd steer` |
+| Many bugs → dedicated milestone | `/gsd new-milestone` (bugfix scope) |
+| Ideas that can wait | `/gsd capture` or `/gsd queue` |
+| Check/reorder pipeline | `/gsd queue` |
+| Architecture discussion | `/gsd discuss` |

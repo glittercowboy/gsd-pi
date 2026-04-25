@@ -4,12 +4,77 @@
 
 import { randomUUID } from "node:crypto";
 import type { ChannelAdapter, RemotePrompt, RemoteQuestion, RemoteAnswer } from "./types.js";
+import type { RoundResult } from "../shared/interview-ui.js";
 import { resolveRemoteConfig, type ResolvedConfig } from "./config.js";
 import { DiscordAdapter } from "./discord-adapter.js";
 import { SlackAdapter } from "./slack-adapter.js";
 import { TelegramAdapter } from "./telegram-adapter.js";
 import { createPromptRecord, writePromptRecord, markPromptAnswered, markPromptDispatched, markPromptStatus, updatePromptRecord } from "./store.js";
 import { sanitizeError } from "../shared/sanitize.js";
+
+const COMMAND_POLLING_INTERVAL_MS = 5000;
+
+/**
+ * Minimal adapter surface used by startCommandPolling. Just enough for
+ * the polling loop to invoke without pulling in the full
+ * TelegramAdapter in tests.
+ */
+export interface PollingAdapter {
+  pollAndHandleCommands: (basePath: string) => Promise<number>;
+}
+
+/**
+ * Optional dependency-injection seam for `startCommandPolling`. Production
+ * callers pass nothing; tests stub the config resolver, adapter
+ * constructor, and timer functions to exercise the real function
+ * without hitting the filesystem / env / real intervals. See #4806.
+ */
+export interface CommandPollingDeps {
+  resolveConfig?: () => ResolvedConfig | null;
+  createAdapter?: (config: ResolvedConfig, basePath: string) => PollingAdapter;
+  setIntervalFn?: typeof setInterval;
+  clearIntervalFn?: typeof clearInterval;
+}
+
+/**
+ * Start background polling for incoming slash commands on the configured
+ * remote channel. Only Telegram supports command polling — other channels
+ * are no-ops that return an inert cleanup function immediately.
+ *
+ * @param basePath - Project root, forwarded to command handlers (e.g. /status).
+ * @param intervalMs - Polling interval in milliseconds (default 5 s).
+ * @param deps - Test-only overrides. Omit in production.
+ * @returns A cleanup function that stops the polling interval.
+ */
+export function startCommandPolling(
+  basePath: string,
+  intervalMs = COMMAND_POLLING_INTERVAL_MS,
+  deps: CommandPollingDeps = {},
+): () => void {
+  const resolveConfig = deps.resolveConfig ?? resolveRemoteConfig;
+  const createAdapter =
+    deps.createAdapter ??
+    ((c: ResolvedConfig, b: string): PollingAdapter =>
+      new TelegramAdapter(c.token, c.channelId, b));
+  const setIntervalFn = deps.setIntervalFn ?? setInterval;
+  const clearIntervalFn = deps.clearIntervalFn ?? clearInterval;
+
+  const config = resolveConfig();
+  if (!config || config.channel !== "telegram") {
+    // Non-Telegram channels have no command polling support — return a no-op cleanup.
+    return () => {};
+  }
+
+  const adapter = createAdapter(config, basePath);
+
+  const timer = setIntervalFn(() => {
+    void adapter.pollAndHandleCommands(basePath).catch(() => {
+      // Non-fatal: network hiccup or rate-limit — best-effort polling
+    });
+  }, intervalMs);
+
+  return () => clearIntervalFn(timer);
+}
 
 interface ToolResult {
   content: Array<{ type: "text"; text: string }>;
@@ -24,9 +89,19 @@ interface QuestionInput {
   allowMultiple?: boolean;
 }
 
+/**
+ * Check whether a remote channel is configured without triggering any
+ * side effects (no HTTP requests, no prompt records). Used by the race
+ * logic to decide routing before committing to a remote dispatch.
+ */
+export function isRemoteConfigured(): boolean {
+  return resolveRemoteConfig() !== null;
+}
+
 export async function tryRemoteQuestions(
   questions: QuestionInput[],
   signal?: AbortSignal,
+  basePath?: string,
 ): Promise<ToolResult | null> {
   const config = resolveRemoteConfig();
   if (!config) return null;
@@ -34,7 +109,7 @@ export async function tryRemoteQuestions(
   const prompt = createPrompt(questions, config);
   writePromptRecord(createPromptRecord(prompt));
 
-  const adapter = createAdapter(config);
+  const adapter = createAdapter(config, basePath ?? process.cwd());
   try {
     await adapter.validate();
   } catch (err) {
@@ -93,10 +168,21 @@ export async function tryRemoteQuestions(
       promptId: prompt.id,
       threadUrl: dispatch.ref.threadUrl ?? null,
       questions,
-      response: answer,
+      response: toRoundResultResponse(answer),
       status: "answered",
     },
   };
+}
+
+/** Normalize a RemoteAnswer to the RoundResult shape consumed by the gsd write-gate hook. */
+export function toRoundResultResponse(answer: RemoteAnswer): RoundResult {
+  const normalized: RoundResult["answers"] = {};
+  for (const [id, data] of Object.entries(answer.answers)) {
+    const list = data.answers ?? [];
+    const selected: string | string[] = list.length <= 1 ? (list[0] ?? "") : list;
+    normalized[id] = { selected, notes: data.user_note ?? "" };
+  }
+  return { endInterview: false, answers: normalized };
 }
 
 function createPrompt(questions: QuestionInput[], config: ResolvedConfig): RemotePrompt {
@@ -118,9 +204,9 @@ function createPrompt(questions: QuestionInput[], config: ResolvedConfig): Remot
   };
 }
 
-function createAdapter(config: ResolvedConfig): ChannelAdapter {
+function createAdapter(config: ResolvedConfig, basePath: string): ChannelAdapter {
   if (config.channel === "slack") return new SlackAdapter(config.token, config.channelId);
-  if (config.channel === "telegram") return new TelegramAdapter(config.token, config.channelId);
+  if (config.channel === "telegram") return new TelegramAdapter(config.token, config.channelId, basePath);
   return new DiscordAdapter(config.token, config.channelId);
 }
 

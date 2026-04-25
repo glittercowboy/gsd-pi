@@ -3,11 +3,13 @@ import {
 	Container,
 	getCapabilities,
 	Image,
+	type ImageDimensions,
 	imageFallback,
 	Spacer,
 	Text,
 	type TUI,
 	truncateToWidth,
+	visibleWidth,
 } from "@gsd/pi-tui";
 import stripAnsi from "strip-ansi";
 import type { ToolDefinition } from "../../../core/extensions/types.js";
@@ -32,7 +34,7 @@ const WRITE_PARTIAL_FULL_HIGHLIGHT_LINES = 50;
  * Replace tabs with spaces for consistent rendering
  */
 function replaceTabs(text: string): string {
-	return text.replace(/\t/g, "   ");
+	return text.replace(/\t/g, "    ");
 }
 
 /**
@@ -48,6 +50,126 @@ function str(value: unknown): string | null {
 	if (typeof value === "string") return value;
 	if (value == null) return "";
 	return null; // Invalid type
+}
+
+/**
+ * Split a Claude Code MCP tool name (`mcp__<server>__<tool>`) into its parts.
+ * Returns null for non-prefixed names. Duplicated from the claude-code-cli
+ * extension (parseMcpToolName) so this package doesn't have to import across
+ * the resources/extensions boundary.
+ */
+function parseMcpToolName(name: string): { server: string; tool: string } | null {
+	if (!name.startsWith("mcp__")) return null;
+	const rest = name.slice("mcp__".length);
+	const delim = rest.indexOf("__");
+	if (delim <= 0 || delim === rest.length - 2) return null;
+	return { server: rest.slice(0, delim), tool: rest.slice(delim + 2) };
+}
+
+/**
+ * Prettify a raw tool name for display. Prefers the registered `label`
+ * ("Complete Slice") when available; otherwise strips a leading `gsd_`
+ * prefix and converts snake_case to Title Case.
+ */
+function prettifyToolName(name: string, label?: string): string {
+	if (label && label.trim().length > 0) return label;
+	const stripped = name.replace(/^gsd_/, "");
+	if (stripped.length === 0) return name;
+	return stripped
+		.split("_")
+		.map((word) => (word.length === 0 ? word : word[0].toUpperCase() + word.slice(1)))
+		.join(" ");
+}
+
+type ToolFrameTone = "pending" | "success" | "error";
+
+function trimOuterBlankLines(lines: string[]): string[] {
+	let start = 0;
+	let end = lines.length;
+	while (start < end && lines[start].trim().length === 0) start++;
+	while (end > start && lines[end - 1].trim().length === 0) end--;
+	return lines.slice(start, end);
+}
+
+function renderToolFrame(
+	contentLines: string[],
+	width: number,
+	opts: {
+		label: string;
+		status: string;
+		tone: ToolFrameTone;
+	},
+): string[] {
+	const outerWidth = Math.max(20, width);
+	const contentWidth = Math.max(1, outerWidth - 2); // "│ " + content
+
+	const borderColor = opts.tone === "error" ? "error" : "toolTitle";
+	const topColor = opts.tone === "error" ? "error" : "toolTitle";
+	const labelColor = opts.tone === "error" ? "error" : "toolTitle";
+	const statusColor = opts.tone === "error" ? "error" : opts.tone === "pending" ? "warning" : "success";
+	const border = (s: string) => theme.fg(borderColor, s);
+
+	const leftStyled = theme.fg(labelColor, theme.bold(`• ${opts.label}`));
+	const rightStyled = theme.fg(statusColor, opts.status);
+	const gap = Math.max(1, outerWidth - visibleWidth(leftStyled) - visibleWidth(rightStyled));
+	const headerRow = `${leftStyled}${" ".repeat(gap)}${rightStyled}`;
+	const headerPad = Math.max(0, outerWidth - visibleWidth(headerRow));
+
+	const sourceLines = trimOuterBlankLines(contentLines);
+	const bodyLines = (sourceLines.length > 0 ? sourceLines : [""]).map((line) => {
+		const clipped = truncateToWidth(line, contentWidth, "");
+		return border("│ ") + clipped;
+	});
+
+	return [
+		theme.fg(topColor, "─".repeat(outerWidth)),
+		headerRow + " ".repeat(headerPad),
+		...bodyLines,
+	];
+}
+
+const COMPACT_ARG_VALUE_LIMIT = 60;
+const GENERIC_OUTPUT_PREVIEW_LINES = 10;
+const GENERIC_ARGS_JSON_PREVIEW_LINES = 10;
+
+/**
+ * Format tool args for the generic-renderer fallback. Produces a one-line
+ * `k=v, k=v` summary when every value is a primitive that fits inline; falls
+ * back to a truncated JSON dump for structurally complex args.
+ */
+function formatCompactArgs(args: unknown, expanded: boolean): string {
+	if (args == null) return "";
+	if (typeof args !== "object") return String(args);
+
+	const entries = Object.entries(args as Record<string, unknown>);
+	if (entries.length === 0) return "";
+
+	const allPrimitive = entries.every(([, value]) => {
+		const t = typeof value;
+		return t === "number" || t === "boolean" || t === "string" || value == null;
+	});
+
+	if (allPrimitive) {
+		return entries
+			.map(([key, value]) => {
+				if (typeof value === "string") {
+					const truncated =
+						!expanded && value.length > COMPACT_ARG_VALUE_LIMIT
+							? `${value.slice(0, COMPACT_ARG_VALUE_LIMIT - 1)}…`
+							: value;
+					return `${key}=${JSON.stringify(truncated)}`;
+				}
+				if (value == null) return `${key}=null`;
+				return `${key}=${String(value)}`;
+			})
+			.join(", ");
+	}
+
+	// Complex args: show truncated JSON.
+	const lines = JSON.stringify(args, null, 2).split("\n");
+	const maxLines = expanded ? lines.length : GENERIC_ARGS_JSON_PREVIEW_LINES;
+	if (lines.length <= maxLines) return lines.join("\n");
+	return lines.slice(0, maxLines).join("\n") + "\n...";
 }
 
 export interface ToolExecutionOptions {
@@ -88,10 +210,17 @@ export class ToolExecutionComponent extends Container {
 	private editDiffArgsKey?: string; // Track which args the preview is for
 	// Cached converted images for Kitty protocol (which requires PNG), keyed by index
 	private convertedImages: Map<number, { data: string; mimeType: string }> = new Map();
+	// Cached resolved image dimensions to avoid re-triggering async parsing
+	// when updateDisplay() recreates Image components (#3455).
+	private resolvedImageDimensions: Map<number, ImageDimensions> = new Map();
 	// Incremental syntax highlighting cache for write tool call args
 	private writeHighlightCache?: WriteHighlightCache;
 	// When true, this component intentionally renders no lines
 	private hideComponent = false;
+
+	private get normalizedToolName(): string {
+		return typeof this.toolName === "string" ? this.toolName.toLowerCase() : "";
+	}
 
 	constructor(
 		toolName: string,
@@ -117,7 +246,7 @@ export class ToolExecutionComponent extends Container {
 
 		// Use contentBox for bash (visual truncation) or custom tools with custom renderers
 		// Use contentText for built-in tools (including overrides without custom renderers)
-		if (toolName === "bash" || (toolDefinition && !this.shouldUseBuiltInRenderer())) {
+		if (this.normalizedToolName === "bash" || (toolDefinition && !this.shouldUseBuiltInRenderer())) {
 			this.addChild(this.contentBox);
 		} else {
 			this.addChild(this.contentText);
@@ -132,14 +261,24 @@ export class ToolExecutionComponent extends Container {
 	 * or the toolDefinition doesn't provide custom renderers.
 	 */
 	private shouldUseBuiltInRenderer(): boolean {
-		const isBuiltInName = this.toolName in allTools;
+		const normalizedToolName = this.normalizedToolName;
+		const isBuiltInName = normalizedToolName in allTools;
 		const hasCustomRenderers = this.toolDefinition?.renderCall || this.toolDefinition?.renderResult;
 		return isBuiltInName && !hasCustomRenderers;
 	}
 
+	dispose(): void {
+		this.convertedImages.clear();
+		this.imageComponents = [];
+		this.imageSpacers = [];
+		this.editDiffPreview = undefined;
+		this.writeHighlightCache = undefined;
+		this.result = undefined;
+	}
+
 	updateArgs(args: any): void {
 		this.args = args;
-		if (this.toolName === "write" && this.isPartial) {
+		if (this.normalizedToolName === "write" && this.isPartial) {
 			this.updateWriteHighlightCacheIncremental();
 		}
 		this.updateDisplay();
@@ -295,7 +434,7 @@ export class ToolExecutionComponent extends Container {
 	): void {
 		this.result = result;
 		this.isPartial = isPartial;
-		if (this.toolName === "write" && !isPartial) {
+		if (this.normalizedToolName === "write" && !isPartial) {
 			const rawPath = str(this.args?.file_path ?? this.args?.path);
 			const fileContent = str(this.args?.content);
 			if (rawPath !== null && fileContent !== null) {
@@ -305,6 +444,46 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 		// Convert non-PNG images to PNG for Kitty protocol (async)
 		this.maybeConvertImagesForKitty();
+	}
+
+	/**
+	 * Mark a tool call as historical when replaying from session context and
+	 * no matching tool result is available. Happens after compaction squashes
+	 * tool_result messages out of history — the tool call block survives but
+	 * the result is gone. Without this, the component stays in "Running" state
+	 * forever even though the tool completed long ago.
+	 */
+	markHistoricalNoResult(): void {
+		if (this.result) return; // real result already set, nothing to do
+		this.isPartial = false;
+		this.result = {
+			content: [],
+			isError: false,
+		};
+		this.updateDisplay();
+	}
+
+	/**
+	 * Finalize a pending tool call as failed/interrupted while preserving any streamed partial output.
+	 */
+	completeWithError(message?: string): void {
+		this.isPartial = false;
+		if (this.result) {
+			let content = this.result.content;
+			if (message) {
+				const alreadyHasMessage = content.some((block) => block.type === "text" && block.text === message);
+				if (!alreadyHasMessage) {
+					content = [...content, { type: "text", text: message }];
+				}
+			}
+			this.result = { ...this.result, content, isError: true };
+		} else {
+			this.result = {
+				content: message ? [{ type: "text", text: message }] : [],
+				isError: true,
+			};
+		}
+		this.updateDisplay();
 	}
 
 	/**
@@ -357,16 +536,27 @@ export class ToolExecutionComponent extends Container {
 		if (this.hideComponent) {
 			return [];
 		}
-		return super.render(width);
+		const frameWidth = Math.max(20, width);
+		const contentWidth = Math.max(1, frameWidth - 4);
+		const lines = super.render(contentWidth);
+		const frameTone: ToolFrameTone =
+			this.result?.isError ? "error" : this.isPartial || !this.result ? "pending" : "success";
+		const frameStatus = this.isPartial || !this.result ? "Running" : this.result.isError ? "Error" : "Done";
+		const parsed = parseMcpToolName(this.toolName);
+		const frameLabel = parsed
+			? `Tool ${parsed.server}·${parsed.tool}`
+			: `Tool ${prettifyToolName(this.toolName, this.toolDefinition?.label) || "unknown"}`;
+		const framed = renderToolFrame(lines, frameWidth, {
+			label: frameLabel,
+			status: frameStatus,
+			tone: frameTone,
+		});
+		return framed.length > 0 ? ["", ...framed] : framed;
 	}
 
 	private updateDisplay(): void {
-		// Set background based on state
-		const bgFn = this.isPartial
-			? (text: string) => theme.bg("toolPendingBg", text)
-			: this.result?.isError
-				? (text: string) => theme.bg("toolErrorBg", text)
-				: (text: string) => theme.bg("toolSuccessBg", text);
+		// Tool body now uses transparent background; status is conveyed in the frame header.
+		const bgFn = (text: string) => text;
 
 		const useBuiltInRenderer = this.shouldUseBuiltInRenderer();
 		let customRendererHasContent = false;
@@ -374,7 +564,7 @@ export class ToolExecutionComponent extends Container {
 
 		// Use built-in rendering for built-in tools (or overrides without custom renderers)
 		if (useBuiltInRenderer) {
-			if (this.toolName === "bash") {
+			if (this.normalizedToolName === "bash") {
 				// Bash uses Box with visual line truncation
 				this.contentBox.setBgFn(bgFn);
 				this.contentBox.clear();
@@ -399,12 +589,30 @@ export class ToolExecutionComponent extends Container {
 					}
 				} catch {
 					// Fall back to default on error
-					this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+					this.contentBox.addChild(
+						new Text(
+							theme.fg(
+								"toolTitle",
+								theme.bold(prettifyToolName(this.toolName, this.toolDefinition?.label)),
+							),
+							0,
+							0,
+						),
+					);
 					customRendererHasContent = true;
 				}
 			} else {
-				// No custom renderCall, show tool name
-				this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+				// No custom renderCall, show prettified tool name
+				this.contentBox.addChild(
+					new Text(
+						theme.fg(
+							"toolTitle",
+							theme.bold(prettifyToolName(this.toolName, this.toolDefinition?.label)),
+						),
+						0,
+						0,
+					),
+				);
 				customRendererHasContent = true;
 			}
 
@@ -472,16 +680,28 @@ export class ToolExecutionComponent extends Container {
 					const spacer = new Spacer(1);
 					this.addChild(spacer);
 					this.imageSpacers.push(spacer);
+					// Pass cached dimensions to avoid re-triggering async parsing
+					// when updateDisplay() recreates Image components (#3455).
+					const cachedDims = this.resolvedImageDimensions.get(i);
 					const imageComponent = new Image(
 						imageData,
 						imageMimeType,
 						{ fallbackColor: (s: string) => theme.fg("toolOutput", s) },
 						{ maxWidthCells: 60 },
+						cachedDims,
 					);
-					imageComponent.setOnDimensionsResolved(() => {
-						this.updateDisplay();
-						this.ui.requestRender();
-					});
+					if (!cachedDims) {
+						const imgIdx = i;
+						imageComponent.setOnDimensionsResolved(() => {
+							// Cache resolved dimensions so future updateDisplay() calls
+							// don't re-trigger async parsing → infinite loop (#3455).
+							const dims = imageComponent.getDimensions?.();
+							if (dims) this.resolvedImageDimensions.set(imgIdx, dims);
+							// Just re-render — don't call updateDisplay() which would
+							// destroy and recreate all Image components.
+							this.ui.requestRender();
+						});
+					}
 					this.imageComponents.push(imageComponent);
 					this.addChild(imageComponent);
 				}
@@ -604,8 +824,9 @@ export class ToolExecutionComponent extends Container {
 	private formatToolExecution(): string {
 		let text = "";
 		const invalidArg = theme.fg("error", "[invalid arg]");
+		const normalizedToolName = this.normalizedToolName;
 
-		if (this.toolName === "read") {
+		if (normalizedToolName === "read") {
 			const rawPath = str(this.args?.file_path ?? this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
 			const offset = this.args?.offset;
@@ -621,6 +842,12 @@ export class ToolExecutionComponent extends Container {
 			text = `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}`;
 
 			if (this.result) {
+				if (this.result.isError) {
+					const errorText = this.getTextOutput().trim() || "read failed";
+					text += `\n\n${theme.fg("error", errorText)}`;
+					return text;
+				}
+
 				const rawOutput = this.getTextOutput();
 				// Strip hashline prefixes (e.g. "1#BQ:content") for TUI display
 				const output = rawOutput.replace(/^(\s*)\d+#[ZPMQVRWSNKTXJBYH]{2}:/gm, "$1");
@@ -667,7 +894,7 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (this.toolName === "write") {
+		} else if (normalizedToolName === "write") {
 			const rawPath = str(this.args?.file_path ?? this.args?.path);
 			const fileContent = str(this.args?.content);
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
@@ -726,7 +953,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n\n${theme.fg("error", errorText)}`;
 				}
 			}
-		} else if (this.toolName === "edit") {
+		} else if (normalizedToolName === "edit") {
 			const rawPath = str(this.args?.file_path ?? this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath) : null;
 
@@ -762,7 +989,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n\n${renderDiff(this.editDiffPreview.diff, { filePath: rawPath ?? undefined })}`;
 				}
 			}
-		} else if (this.toolName === "ls") {
+		} else if (normalizedToolName === "ls") {
 			const rawPath = str(this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
 			const limit = this.args?.limit;
@@ -773,6 +1000,12 @@ export class ToolExecutionComponent extends Container {
 			}
 
 			if (this.result) {
+				if (this.result.isError) {
+					const errorText = this.getTextOutput().trim() || "ls failed";
+					text += `\n\n${theme.fg("error", errorText)}`;
+					return text;
+				}
+
 				const output = this.getTextOutput().trim();
 				if (output) {
 					const lines = output.split("\n");
@@ -799,7 +1032,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
 				}
 			}
-		} else if (this.toolName === "find") {
+		} else if (normalizedToolName === "find") {
 			const pattern = str(this.args?.pattern);
 			const rawPath = str(this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
@@ -815,6 +1048,12 @@ export class ToolExecutionComponent extends Container {
 			}
 
 			if (this.result) {
+				if (this.result.isError) {
+					const errorText = this.getTextOutput().trim() || "find failed";
+					text += `\n\n${theme.fg("error", errorText)}`;
+					return text;
+				}
+
 				const output = this.getTextOutput().trim();
 				if (output) {
 					const lines = output.split("\n");
@@ -841,7 +1080,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
 				}
 			}
-		} else if (this.toolName === "grep") {
+		} else if (normalizedToolName === "grep") {
 			const pattern = str(this.args?.pattern);
 			const rawPath = str(this.args?.path);
 			const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
@@ -861,6 +1100,12 @@ export class ToolExecutionComponent extends Container {
 			}
 
 			if (this.result) {
+				if (this.result.isError) {
+					const errorText = this.getTextOutput().trim() || "grep failed";
+					text += `\n\n${theme.fg("error", errorText)}`;
+					return text;
+				}
+
 				const output = this.getTextOutput().trim();
 				if (output) {
 					const lines = output.split("\n");
@@ -891,7 +1136,7 @@ export class ToolExecutionComponent extends Container {
 					text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
 				}
 			}
-		} else if (this.toolName === "web_search") {
+		} else if (normalizedToolName === "web_search") {
 			// Server-side Anthropic web search
 			text = theme.fg("toolTitle", theme.bold("web search"));
 
@@ -912,14 +1157,39 @@ export class ToolExecutionComponent extends Container {
 				}
 			}
 		} else {
-			// Generic tool (shouldn't reach here for custom tools)
-			text = theme.fg("toolTitle", theme.bold(this.toolName));
+			// Generic tool / MCP tool without a registered renderer.
+			// MCP tool names from Claude Code arrive as `mcp__<server>__<tool>`;
+			// render the server prefix in muted style so the tool name reads
+			// cleanly. GSD-registered MCP tools have already had their prefix
+			// stripped upstream in partial-builder.ts and won't reach this branch.
+			const parsed = parseMcpToolName(this.toolName);
+			const displayName = parsed
+				? parsed.tool
+				: prettifyToolName(this.toolName, this.toolDefinition?.label);
+			const serverPrefix = parsed ? theme.fg("muted", `${parsed.server}\u00b7`) : "";
+			text = serverPrefix + theme.fg("toolTitle", theme.bold(displayName));
 
-			const content = JSON.stringify(this.args, null, 2);
-			text += `\n\n${content}`;
-			const output = this.getTextOutput();
-			if (output) {
-				text += `\n${output}`;
+			const argsText = formatCompactArgs(this.args, this.expanded);
+			if (argsText) {
+				if (argsText.includes("\n")) {
+					text += `\n\n${theme.fg("toolOutput", argsText)}`;
+				} else {
+					text += " " + theme.fg("toolOutput", argsText);
+				}
+			}
+
+			if (this.result) {
+				const output = this.getTextOutput().trim();
+				if (output) {
+					const lines = output.split("\n");
+					const maxLines = this.expanded ? lines.length : GENERIC_OUTPUT_PREVIEW_LINES;
+					const displayLines = lines.slice(0, maxLines);
+					const remaining = lines.length - maxLines;
+					text += `\n\n${displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n")}`;
+					if (remaining > 0) {
+						text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")})`;
+					}
+				}
 			}
 		}
 

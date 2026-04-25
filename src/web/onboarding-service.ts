@@ -10,6 +10,7 @@ type RequiredProviderCatalogEntry = {
   label: string;
   supportsApiKey: boolean;
   supportsOAuth: boolean;
+  supportsExternalCli?: boolean;
   recommended?: boolean;
 };
 
@@ -39,9 +40,10 @@ type OnboardingServiceDeps = {
   createFlowId?: () => string;
   getEnvApiKey?: GetEnvApiKeyFn;
   refreshBridgeAuth?: () => Promise<void>;
+  isExternalCliProvider?: (providerId: string) => boolean;
 };
 
-export type OnboardingCredentialSource = "auth_file" | "environment" | "runtime";
+export type OnboardingCredentialSource = "auth_file" | "environment" | "runtime" | "external_cli";
 export type OnboardingValidationStatus = "succeeded" | "failed";
 export type OnboardingFlowStatus =
   | "idle"
@@ -66,6 +68,7 @@ export interface OnboardingProviderState {
     oauth: boolean;
     oauthAvailable: boolean;
     usesCallbackServer: boolean;
+    externalCli: boolean;
   };
 }
 
@@ -114,6 +117,22 @@ export interface OnboardingBridgeAuthRefreshState {
   error: string | null;
 }
 
+/**
+ * CLI-side onboarding completion record exposed to the web client.
+ *
+ * Mirrors the JSON written by `src/resources/extensions/gsd/onboarding-state.ts`.
+ * Read-only metadata: lets the web UI render "setup complete (date)" indicators
+ * and offer a "re-run setup" affordance. Does NOT influence the `locked` flag —
+ * lock semantics still depend on whether a required provider is configured.
+ */
+export interface OnboardingCompletionRecord {
+  completedAt: string | null;
+  completedSteps: string[];
+  skippedSteps: string[];
+  lastResumePoint: string | null;
+  flowVersion: number;
+}
+
 export interface OnboardingState {
   status: "blocked" | "ready";
   locked: boolean;
@@ -133,6 +152,8 @@ export interface OnboardingState {
   lastValidation: OnboardingValidationResult | null;
   activeFlow: OnboardingProviderFlowState | null;
   bridgeAuthRefresh: OnboardingBridgeAuthRefreshState;
+  /** CLI-side onboarding wizard completion record. Null if never completed. Optional for back-compat with existing fixtures. */
+  completionRecord?: OnboardingCompletionRecord | null;
 }
 
 type ProviderFlowRuntime = {
@@ -141,8 +162,19 @@ type ProviderFlowRuntime = {
   abortController: AbortController;
 };
 
+/**
+ * Ordered catalog of required AI providers shown in the onboarding wizard.
+ *
+ * **Precedence contract:** `satisfiedBy` is set to the first *configured*
+ * provider in this list. Reordering entries changes which provider wins when
+ * multiple are configured simultaneously — do so intentionally.
+ *
+ * ExternalCli providers (those with `supportsExternalCli: true`) are always
+ * treated as configured by the onboarding service regardless of auth-file
+ * contents, so placing them higher in the list gives them higher precedence.
+ */
 const REQUIRED_PROVIDER_CATALOG: RequiredProviderCatalogEntry[] = [
-  { id: "anthropic", label: "Anthropic (Claude)", supportsApiKey: true, supportsOAuth: true, recommended: true },
+  { id: "anthropic", label: "Anthropic (Claude)", supportsApiKey: true, supportsOAuth: false, recommended: true },
   { id: "openai", label: "OpenAI", supportsApiKey: true, supportsOAuth: false },
   { id: "github-copilot", label: "GitHub Copilot", supportsApiKey: false, supportsOAuth: true },
   { id: "openai-codex", label: "ChatGPT Plus/Pro (Codex Subscription)", supportsApiKey: false, supportsOAuth: true },
@@ -153,6 +185,16 @@ const REQUIRED_PROVIDER_CATALOG: RequiredProviderCatalogEntry[] = [
   { id: "xai", label: "xAI (Grok)", supportsApiKey: true, supportsOAuth: false },
   { id: "openrouter", label: "OpenRouter", supportsApiKey: true, supportsOAuth: false },
   { id: "mistral", label: "Mistral", supportsApiKey: true, supportsOAuth: false },
+  { id: "minimax", label: "MiniMax", supportsApiKey: true, supportsOAuth: false },
+  { id: "minimax-cn", label: "MiniMax CN", supportsApiKey: true, supportsOAuth: false },
+  // Supported by the core provider registry; configured via env/auth today.
+  { id: "ollama-cloud", label: "Ollama Cloud", supportsApiKey: false, supportsOAuth: false },
+  { id: "custom-openai", label: "Custom (OpenAI-compatible)", supportsApiKey: false, supportsOAuth: false },
+  { id: "cerebras", label: "Cerebras", supportsApiKey: false, supportsOAuth: false },
+  { id: "azure-openai-responses", label: "Azure OpenAI", supportsApiKey: false, supportsOAuth: false },
+  { id: "alibaba-coding-plan", label: "Alibaba Coding Plan", supportsApiKey: false, supportsOAuth: false },
+  { id: "alibaba-dashscope", label: "Alibaba DashScope", supportsApiKey: false, supportsOAuth: false },
+  { id: "claude-code", label: "Claude Code (Local CLI)", supportsApiKey: false, supportsOAuth: false, supportsExternalCli: true, recommended: true },
 ];
 
 const OPTIONAL_SECTION_CATALOG: OptionalSectionCatalogEntry[] = [
@@ -179,9 +221,29 @@ const OPTIONAL_SECTION_CATALOG: OptionalSectionCatalogEntry[] = [
     providers: [
       { id: "discord_bot", label: "Discord", envVar: "DISCORD_BOT_TOKEN" },
       { id: "slack_bot", label: "Slack", envVar: "SLACK_BOT_TOKEN" },
+      { id: "telegram_bot", label: "Telegram", envVar: "TELEGRAM_BOT_TOKEN" },
     ],
   },
 ];
+
+/**
+ * ExternalCli providers authenticate through a local CLI tool rather than
+ * storing credentials in GSD. They are always treated as "configured" by the
+ * onboarding service — if the binary is missing, inference will fail at
+ * runtime (the correct place to surface that error).
+ *
+ * **Sync requirement:** This set must stay in sync with `CLI_AUTH_PROVIDERS`
+ * in `src/resources/extensions/gsd/doctor-providers.ts`. If a new ExternalCli
+ * provider is added to one set but not the other, onboarding will silently
+ * mis-classify it (treating it as unconfigured or vice-versa).
+ */
+const CLI_AUTH_PROVIDER_IDS = new Set([
+  "claude-code",
+]);
+
+function defaultIsExternalCliProvider(id: string): boolean {
+  return CLI_AUTH_PROVIDER_IDS.has(id);
+}
 
 let onboardingServiceOverrides: Partial<OnboardingServiceDeps> | null = null;
 let onboardingServiceSingleton: OnboardingService | null = null;
@@ -231,7 +293,9 @@ function resolveOnboardingLockReason(
 
 function hasStoredCredentialValue(authStorage: AuthStorageInstance, providerId: string): boolean {
   return authStorage.getCredentialsForProvider(providerId).some((credential) => {
-    if (credential.type === "oauth") return true;
+    if (credential.type === "oauth") {
+      return typeof credential.access === "string" && credential.access.trim().length > 0;
+    }
     return typeof credential.key === "string" && credential.key.trim().length > 0;
   });
 }
@@ -240,15 +304,18 @@ function resolveCredentialSource(
   authStorage: AuthStorageInstance,
   providerId: string,
   getEnvApiKeyFn: GetEnvApiKeyFn,
+  isExternalCliProviderFn: (id: string) => boolean,
 ): OnboardingCredentialSource | null {
+  // ExternalCli providers authenticate through a local CLI — no credentials
+  // are stored in GSD. Treat them as always configured.
+  if (isExternalCliProviderFn(providerId)) {
+    return "external_cli";
+  }
   if (hasStoredCredentialValue(authStorage, providerId)) {
     return "auth_file";
   }
   if (getEnvApiKeyFn(providerId)) {
     return "environment";
-  }
-  if (authStorage.getCredentialsForProvider(providerId).length > 0) {
-    return "runtime";
   }
   return null;
 }
@@ -351,6 +418,39 @@ async function validateAnthropicApiKey(fetchImpl: typeof fetch, apiKey: string):
   }
 }
 
+async function validateAnthropicCompatibleApiKey(
+  fetchImpl: typeof fetch,
+  providerId: string,
+  apiKey: string,
+  baseUrl: string,
+  model: string,
+): Promise<ValidationProbeResult> {
+  try {
+    const response = await fetchImpl(`${baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: {
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    if (!response.ok) {
+      return { ok: false, message: await parseFailureMessage(providerId, response) };
+    }
+
+    return { ok: true, message: `${providerId} credentials validated` };
+  } catch (error) {
+    return { ok: false, message: `${providerId} validation failed: ${sanitizeMessage(error)}` };
+  }
+}
+
 async function defaultValidateApiKey(
   providerId: string,
   apiKey: string,
@@ -374,9 +474,32 @@ async function defaultValidateApiKey(
       });
     case "mistral":
       return await validateBearerRequest(fetchImpl, providerId, "https://api.mistral.ai/v1/models", apiKey);
+    case "minimax":
+      return await validateAnthropicCompatibleApiKey(
+        fetchImpl,
+        providerId,
+        apiKey,
+        "https://api.minimax.io/anthropic",
+        "MiniMax-M2.7",
+      );
+    case "minimax-cn":
+      return await validateAnthropicCompatibleApiKey(
+        fetchImpl,
+        providerId,
+        apiKey,
+        "https://api.minimaxi.com/anthropic",
+        "MiniMax-M2.7",
+      );
     default:
       return { ok: false, message: `${providerId} does not support API-key validation via onboarding` };
   }
+}
+
+function resolveRuntimeTestIsExternalCliProvider(env: NodeJS.ProcessEnv): OnboardingServiceDeps["isExternalCliProvider"] | undefined {
+  if (env.GSD_WEB_TEST_DISABLE_EXTERNAL_CLI !== "1") {
+    return undefined;
+  }
+  return () => false;
 }
 
 function resolveRuntimeTestValidateApiKey(env: NodeJS.ProcessEnv): OnboardingServiceDeps["validateApiKey"] | undefined {
@@ -409,6 +532,7 @@ function getOnboardingDeps(): OnboardingServiceDeps {
     now: () => new Date(),
     createFlowId: () => randomUUID(),
     validateApiKey: resolveRuntimeTestValidateApiKey(process.env),
+    isExternalCliProvider: resolveRuntimeTestIsExternalCliProvider(process.env),
     refreshBridgeAuth: onboardingBridgeAuthRefresher ?? undefined,
     ...(onboardingServiceOverrides ?? {}),
   };
@@ -659,10 +783,11 @@ export class OnboardingService {
     getEnvApiKeyFn: GetEnvApiKeyFn,
   ): OnboardingProviderState[] {
     const oauthProviders = new Map(authStorage.getOAuthProviders().map((provider) => [provider.id, provider]));
+    const isExternalCliProviderFn = this.deps.isExternalCliProvider ?? defaultIsExternalCliProvider;
 
     return REQUIRED_PROVIDER_CATALOG.map((provider) => {
       const oauthProvider = oauthProviders.get(provider.id);
-      const configuredVia = resolveCredentialSource(authStorage, provider.id, getEnvApiKeyFn);
+      const configuredVia = resolveCredentialSource(authStorage, provider.id, getEnvApiKeyFn, isExternalCliProviderFn);
       return {
         id: provider.id,
         label: oauthProvider?.name ?? provider.label,
@@ -675,6 +800,7 @@ export class OnboardingService {
           oauth: provider.supportsOAuth,
           oauthAvailable: provider.supportsOAuth ? Boolean(oauthProvider) : false,
           usesCallbackServer: Boolean(oauthProvider?.usesCallbackServer),
+          externalCli: Boolean(provider.supportsExternalCli),
         },
       };
     });
@@ -689,6 +815,24 @@ export class OnboardingService {
     const satisfiedByProvider = providers.find((provider) => provider.configured) ?? null;
     const optionalSections = this.buildOptionalSectionState(authStorage);
     const lockReason = resolveOnboardingLockReason(Boolean(satisfiedByProvider), this.bridgeAuthRefresh);
+
+    // Read CLI-side completion record (best-effort — never throw)
+    let completionRecord: OnboardingCompletionRecord | null = null;
+    try {
+      const { readOnboardingRecord, isOnboardingComplete } = await import(
+        "../resources/extensions/gsd/onboarding-state.js"
+      );
+      const r = readOnboardingRecord();
+      completionRecord = {
+        completedAt: isOnboardingComplete() ? r.completedAt : null,
+        completedSteps: r.completedSteps,
+        skippedSteps: r.skippedSteps,
+        lastResumePoint: r.lastResumePoint,
+        flowVersion: r.flowVersion,
+      };
+    } catch {
+      completionRecord = null;
+    }
 
     return {
       status: lockReason ? "blocked" : "ready",
@@ -714,6 +858,7 @@ export class OnboardingService {
       lastValidation: this.lastValidation ? { ...this.lastValidation } : null,
       activeFlow: this.activeFlow ? structuredClone(this.activeFlow.state) : null,
       bridgeAuthRefresh: { ...this.bridgeAuthRefresh },
+      completionRecord,
     };
   }
 

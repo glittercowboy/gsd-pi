@@ -12,7 +12,7 @@
  *   11 — cancelled (SIGINT/SIGTERM received)
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, writeFileSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
 import { resolve } from 'node:path'
 import { ChildProcess } from 'node:child_process'
@@ -30,6 +30,8 @@ import {
   FIRE_AND_FORGET_METHODS,
   IDLE_TIMEOUT_MS,
   NEW_MILESTONE_IDLE_TIMEOUT_MS,
+  isInteractiveHeadlessTool,
+  shouldArmHeadlessIdleTimeout,
   EXIT_SUCCESS,
   EXIT_ERROR,
   EXIT_BLOCKED,
@@ -259,7 +261,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   // per-unit timeout via auto-supervisor. Disable the overall timeout unless the
   // user explicitly set --timeout.
   const isAutoMode = options.command === 'auto'
-  const isMultiTurnCommand = options.command === 'auto' || options.command === 'next'
+  // discuss and plan are multi-turn: they involve multiple question rounds,
+  // codebase scanning, and artifact writing before the workflow completes (#3547).
+  const isMultiTurnCommand = options.command === 'auto' || options.command === 'next' || options.command === 'discuss' || options.command === 'plan'
   if (isAutoMode && options.timeout === 300_000) {
     options.timeout = 0
   }
@@ -330,6 +334,30 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     return { exitCode: result.exitCode, interrupted: false }
   }
 
+  // Doctor: read-only health check, no RPC child needed (#4904 live-regression).
+  // The interactive `/gsd doctor` command lives in the GSD extension; this CLI
+  // path lets non-interactive callers (CI, recovery scripts, the live-regression
+  // suite) get the same diagnostic without a TTY.
+  if (options.command === 'doctor') {
+    const wantsJson = options.json || options.commandArgs.includes('--json')
+    const { runGSDDoctor } = await import('./resources/extensions/gsd/doctor.js')
+    const { formatDoctorReport, formatDoctorReportJson } = await import('./resources/extensions/gsd/doctor-format.js')
+    let exitCode = 1
+    try {
+      const report = await runGSDDoctor(process.cwd())
+      const out = wantsJson ? formatDoctorReportJson(report) : formatDoctorReport(report)
+      process.stdout.write(`${out}\n`)
+      exitCode = report.ok ? 0 : 1
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[headless] doctor failed: ${msg}\n`)
+      exitCode = 1
+    }
+    // Bypass the auto-restart loop in runHeadless — doctor is a one-shot
+    // diagnostic; exit 1 means "issues detected", not "crashed".
+    process.exit(exitCode)
+  }
+
   // Resolve CLI path for the child process
   const cliPath = process.env.GSD_BIN_PATH || process.argv[1]
   if (!cliPath) {
@@ -365,6 +393,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   let exitCode = 0
   let milestoneReady = false  // tracks "Milestone X ready." for auto-chaining
   const recentEvents: TrackedEvent[] = []
+  const interactiveToolCallIds = new Set<string>()
 
   // JSON batch mode: cost aggregation (cumulative-max pattern per K004)
   let cumulativeCostUsd = 0
@@ -458,7 +487,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
   function resetIdleTimer(): void {
     if (idleTimer) clearTimeout(idleTimer)
-    if (toolCallCount > 0) {
+    if (shouldArmHeadlessIdleTimeout(toolCallCount, interactiveToolCallIds.size)) {
       idleTimer = setTimeout(() => {
         completed = true
         resolveCompletion()
@@ -482,6 +511,20 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   client.onEvent((event) => {
     const eventObj = event as unknown as Record<string, unknown>
     trackEvent(eventObj)
+
+    const eventType = String(eventObj.type ?? '')
+    if (eventType === 'tool_execution_start') {
+      const toolCallId = String(eventObj.toolCallId ?? eventObj.id ?? '')
+      if (toolCallId && isInteractiveHeadlessTool(String(eventObj.toolName ?? ''))) {
+        interactiveToolCallIds.add(toolCallId)
+      }
+    } else if (eventType === 'tool_execution_end') {
+      const toolCallId = String(eventObj.toolCallId ?? eventObj.id ?? '')
+      if (toolCallId) {
+        interactiveToolCallIds.delete(toolCallId)
+      }
+    }
+
     resetIdleTimer()
 
     // Answer injector: observe events for question metadata
@@ -490,7 +533,6 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     // --json / --output-format stream-json: forward events as JSONL to stdout (filtered if --events)
     // --output-format json (batch mode): suppress streaming, track cost for final result
     if (options.json && options.outputFormat === 'stream-json') {
-      const eventType = String(eventObj.type ?? '')
       if (!options.eventFilter || options.eventFilter.has(eventType)) {
         process.stdout.write(JSON.stringify(eventObj) + '\n')
       }
@@ -699,7 +741,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     }
 
     // Quick commands: resolve on first agent_end
-    if (eventObj.type === 'agent_end' && isQuickCommand(options.command) && !completed) {
+    if (eventObj.type === 'agent_end' && isQuickCommand(options.command, options.commandArgs) && !completed) {
       completed = true
       resolveCompletion()
       return
@@ -711,13 +753,22 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
 
   // Signal handling
   const signalHandler = () => {
-    process.stderr.write('\n[headless] Interrupted, stopping child process...\n')
+    // Use writeSync on fd 2 to guarantee the Interrupted marker reaches
+    // consumers before process.exit() truncates pending async writes.
+    try {
+      writeSync(2, '\n[headless] Interrupted, stopping child process...\n')
+    } catch {
+      // Fallback to async write if fd 2 is somehow unavailable.
+      process.stderr.write('\n[headless] Interrupted, stopping child process...\n')
+    }
     interrupted = true
     exitCode = EXIT_CANCELLED
     // Kill child process — don't await, just fire and exit.
     // The main flow may be awaiting a promise that resolves when the child dies,
     // which would race with this handler. Exit synchronously to ensure correct exit code.
-    try { client.stop().catch(() => {}) } catch {}
+    void client.stop().catch((error: unknown) => {
+      process.stderr.write(`[headless] Warning: failed to stop child process: ${error instanceof Error ? error.message : String(error)}\n`)
+    })
     if (timeoutTimer) clearTimeout(timeoutTimer)
     if (idleTimer) clearTimeout(idleTimer)
     // Emit batch JSON result if in json mode before exiting
@@ -726,8 +777,20 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
     }
     process.exit(exitCode)
   }
-  process.on('SIGINT', signalHandler)
-  process.on('SIGTERM', signalHandler)
+  // Use prependListener so our handler runs before pi-coding-agent's
+  // LSP-client module-load SIGINT handler, which calls process.exit(0)
+  // and would otherwise short-circuit our exit-code-11 contract.
+  process.prependListener('SIGINT', signalHandler)
+  process.prependListener('SIGTERM', signalHandler)
+  // Emit a deterministic readiness marker so test harnesses can wait for
+  // the SIGINT handler to be live before sending a signal. writeSync on
+  // fd 2 avoids any pipe-buffering race between the marker and subsequent
+  // signal delivery.
+  try {
+    writeSync(2, '[headless] signal-handlers-ready\n')
+  } catch {
+    process.stderr.write('[headless] signal-handlers-ready\n')
+  }
 
   // Start the RPC session
   try {
@@ -798,9 +861,9 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   }
 
   // Detect child process crash (read-only exit event subscription — not stdin access)
-  const internalProcess = (client as any).process as ChildProcess
+  const internalProcess = Reflect.get(client as object, 'process') as ChildProcess | undefined
   if (internalProcess) {
-    internalProcess.on('exit', (code) => {
+    internalProcess.on('exit', (code: number | null) => {
       if (!completed) {
         const msg = `[headless] Child process exited unexpectedly with code ${code ?? 'null'}\n`
         process.stderr.write(msg)

@@ -1,6 +1,7 @@
-import { describe, it, beforeEach, afterEach } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
+import { once } from "node:events";
 import { serializeJsonLine, attachJsonlLineReader } from "./jsonl.js";
 import type {
 	RpcInitResult,
@@ -12,6 +13,18 @@ import type {
 } from "./rpc-types.js";
 import { RpcClient } from "./rpc-client.js";
 import type { SdkAgentEvent } from "./rpc-client.js";
+
+/**
+ * Flush pending microtasks and one turn of the macrotask queue.
+ *
+ * Used in places where the test needs "every already-queued stream event has
+ * been delivered" — cheaper than a wall-clock sleep and deterministic because
+ * `setImmediate` runs strictly after any I/O callbacks already queued by a
+ * synchronous `stream.write(...)`.
+ */
+function flushIO(): Promise<void> {
+	return new Promise((resolve) => setImmediate(resolve));
+}
 
 // ============================================================================
 // JSONL Tests
@@ -54,8 +67,9 @@ describe("attachJsonlLineReader", () => {
 		stream.write('{"a":1}\n{"b":2}\n');
 		stream.end();
 
-		// Let microtask queue flush
-		await new Promise((r) => setTimeout(r, 10));
+		// The reader registers its `end` listener first; awaiting `end` here
+		// runs strictly after the reader has drained any trailing buffer.
+		await once(stream, "end");
 
 		assert.equal(lines.length, 2);
 		assert.equal(JSON.parse(lines[0]).a, 1);
@@ -74,7 +88,7 @@ describe("attachJsonlLineReader", () => {
 		stream.write('orld"}\n');
 		stream.end();
 
-		await new Promise((r) => setTimeout(r, 10));
+		await once(stream, "end");
 
 		assert.equal(lines.length, 2);
 		assert.equal(JSON.parse(lines[0]).type, "hello");
@@ -90,7 +104,7 @@ describe("attachJsonlLineReader", () => {
 		stream.write('{"final":true}');
 		stream.end();
 
-		await new Promise((r) => setTimeout(r, 10));
+		await once(stream, "end");
 
 		assert.equal(lines.length, 1);
 		assert.equal(JSON.parse(lines[0]).final, true);
@@ -100,17 +114,30 @@ describe("attachJsonlLineReader", () => {
 		const stream = new PassThrough();
 		const lines: string[] = [];
 
-		const detach = attachJsonlLineReader(stream, (line) => lines.push(line));
+		// Use an explicit promise to signal "first line has been observed".
+		// This is deterministic — we resume exactly when the reader fires the
+		// callback, not after an arbitrary wall-clock delay.
+		let signalFirstLine!: () => void;
+		const firstLineSeen = new Promise<void>((resolve) => {
+			signalFirstLine = resolve;
+		});
+
+		const detach = attachJsonlLineReader(stream, (line) => {
+			lines.push(line);
+			if (lines.length === 1) signalFirstLine();
+		});
 
 		stream.write('{"a":1}\n');
-		await new Promise((r) => setTimeout(r, 10));
+		await firstLineSeen;
 		assert.equal(lines.length, 1);
 
 		detach();
 
 		stream.write('{"b":2}\n');
 		stream.end();
-		await new Promise((r) => setTimeout(r, 10));
+		// Drain any queued data events post-detach. `setImmediate` runs strictly
+		// after any 'data' events that were already queued by the write above.
+		await flushIO();
 
 		// Should still be 1 — detach removed listeners
 		assert.equal(lines.length, 1);
@@ -125,7 +152,7 @@ describe("attachJsonlLineReader", () => {
 		stream.write('{"v":1}\r\n');
 		stream.end();
 
-		await new Promise((r) => setTimeout(r, 10));
+		await once(stream, "end");
 
 		assert.equal(lines.length, 1);
 		assert.equal(JSON.parse(lines[0]).v, 1);
@@ -133,11 +160,26 @@ describe("attachJsonlLineReader", () => {
 });
 
 // ============================================================================
-// Type Shape Tests
+// JSONL Round-Trip Tests
+//
+// These previously lived under a "type shapes" block that only asserted that
+// a typed literal retained its own field values — pure type-system
+// tautologies. They are now replaced with round-trips through
+// `serializeJsonLine` + `JSON.parse`, which exercises the actual framing
+// pipeline the wire protocol uses. A regression where `serializeJsonLine`
+// mangles payloads or the LF terminator will now fail these tests.
 // ============================================================================
 
-describe("type shapes", () => {
-	it("RpcInitResult has protocolVersion, sessionId, capabilities", () => {
+describe("JSONL round-trip of v2 payloads", () => {
+	function roundTrip<T>(value: T): T {
+		const serialized = serializeJsonLine(value);
+		assert.ok(serialized.endsWith("\n"), "wire format must terminate with LF");
+		// Ensure we did not emit embedded unescaped LFs that would corrupt framing
+		assert.equal(serialized.indexOf("\n"), serialized.length - 1, "no unescaped LF inside payload");
+		return JSON.parse(serialized.trim()) as T;
+	}
+
+	it("RpcInitResult round-trips through serializeJsonLine", () => {
 		const init: RpcInitResult = {
 			protocolVersion: 2,
 			sessionId: "sess_123",
@@ -146,13 +188,11 @@ describe("type shapes", () => {
 				commands: ["prompt", "steer"],
 			},
 		};
-		assert.equal(init.protocolVersion, 2);
-		assert.equal(init.sessionId, "sess_123");
-		assert.ok(Array.isArray(init.capabilities.events));
-		assert.ok(Array.isArray(init.capabilities.commands));
+		const parsed = roundTrip(init);
+		assert.deepEqual(parsed, init);
 	});
 
-	it("RpcExecutionCompleteEvent has required fields", () => {
+	it("RpcExecutionCompleteEvent round-trips preserving nested stats", () => {
 		const event: RpcExecutionCompleteEvent = {
 			type: "execution_complete",
 			runId: "run_abc",
@@ -169,14 +209,11 @@ describe("type shapes", () => {
 				cost: 0.05,
 			},
 		};
-		assert.equal(event.type, "execution_complete");
-		assert.equal(event.runId, "run_abc");
-		assert.equal(event.status, "completed");
-		assert.ok(event.stats);
-		assert.equal(event.stats.sessionId, "sess_123");
+		const parsed = roundTrip(event);
+		assert.deepEqual(parsed, event);
 	});
 
-	it("RpcCostUpdateEvent has required fields", () => {
+	it("RpcCostUpdateEvent round-trips with numeric precision intact", () => {
 		const event: RpcCostUpdateEvent = {
 			type: "cost_update",
 			runId: "run_abc",
@@ -184,14 +221,11 @@ describe("type shapes", () => {
 			cumulativeCost: 0.05,
 			tokens: { input: 500, output: 200, cacheRead: 100, cacheWrite: 50 },
 		};
-		assert.equal(event.type, "cost_update");
-		assert.equal(event.runId, "run_abc");
-		assert.equal(event.turnCost, 0.01);
-		assert.equal(event.cumulativeCost, 0.05);
-		assert.ok(event.tokens);
+		const parsed = roundTrip(event);
+		assert.deepEqual(parsed, event);
 	});
 
-	it("SessionStats has all expected fields", () => {
+	it("SessionStats round-trips preserving totals", () => {
 		const stats: SessionStats = {
 			sessionFile: "/tmp/session.json",
 			sessionId: "s1",
@@ -201,22 +235,25 @@ describe("type shapes", () => {
 			toolResults: 5,
 			totalMessages: 20,
 			tokens: { input: 2000, output: 1000, cacheRead: 500, cacheWrite: 200, total: 3700 },
-			cost: 0.10,
+			cost: 0.1,
 		};
-		assert.equal(stats.sessionId, "s1");
-		assert.equal(stats.userMessages, 10);
-		assert.equal(stats.tokens.total, 3700);
-		assert.equal(stats.cost, 0.10);
+		const parsed = roundTrip(stats);
+		assert.deepEqual(parsed, stats);
+		assert.equal(
+			parsed.tokens.input + parsed.tokens.output + parsed.tokens.cacheRead + parsed.tokens.cacheWrite,
+			parsed.tokens.total,
+			"tokens.total should equal the sum of components after round-trip",
+		);
 	});
 
-	it("RpcProtocolVersion accepts 1 and 2", () => {
+	it("RpcProtocolVersion values 1 and 2 survive round-trip", () => {
 		const v1: RpcProtocolVersion = 1;
 		const v2: RpcProtocolVersion = 2;
-		assert.equal(v1, 1);
-		assert.equal(v2, 2);
+		assert.strictEqual(roundTrip({ v: v1 }).v, 1);
+		assert.strictEqual(roundTrip({ v: v2 }).v, 2);
 	});
 
-	it("RpcV2Event discriminated union covers both event types", () => {
+	it("RpcV2Event discriminated union survives round-trip for each arm", () => {
 		const events: RpcV2Event[] = [
 			{
 				type: "execution_complete",
@@ -242,9 +279,21 @@ describe("type shapes", () => {
 				tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0 },
 			},
 		];
-		assert.equal(events.length, 2);
-		assert.equal(events[0].type, "execution_complete");
-		assert.equal(events[1].type, "cost_update");
+
+		for (const evt of events) {
+			const parsed = roundTrip(evt);
+			assert.equal(parsed.type, evt.type, "discriminator must round-trip");
+			if (parsed.type === "execution_complete" && evt.type === "execution_complete") {
+				// `sessionFile: undefined` is dropped by JSON.stringify by design;
+				// compare the remaining observable fields.
+				assert.equal(parsed.runId, evt.runId);
+				assert.equal(parsed.status, evt.status);
+				assert.deepEqual(parsed.stats.tokens, evt.stats.tokens);
+			}
+			if (parsed.type === "cost_update" && evt.type === "cost_update") {
+				assert.deepEqual(parsed, evt);
+			}
+		}
 	});
 });
 
@@ -316,12 +365,14 @@ describe("events() async generator", () => {
 			}
 		})();
 
-		// Simulate server sending events
-		await new Promise((r) => setTimeout(r, 20));
+		// Drive the mock stream. The PassThrough pipeline delivers 'data'
+		// synchronously off the write; yielding one macrotask between writes
+		// lets the generator's awaiting promise resolve before we queue the
+		// next event, preserving the observable ordering.
 		mockStdout.write(serializeJsonLine({ type: "agent_start", runId: "r1" }));
-		await new Promise((r) => setTimeout(r, 20));
+		await flushIO();
 		mockStdout.write(serializeJsonLine({ type: "token", text: "hello" }));
-		await new Promise((r) => setTimeout(r, 20));
+		await flushIO();
 		mockStdout.write(serializeJsonLine({ type: "done" }));
 
 		await genPromise;
@@ -366,10 +417,9 @@ describe("events() async generator", () => {
 			}
 		})();
 
-		// Send one event, then simulate process exit
-		await new Promise((r) => setTimeout(r, 20));
+		// Send one event, let it propagate, then simulate process exit.
 		mockStdout.write(serializeJsonLine({ type: "agent_start" }));
-		await new Promise((r) => setTimeout(r, 20));
+		await flushIO();
 
 		// Fire exit handlers
 		for (const h of exitHandlers) h();
@@ -473,9 +523,12 @@ describe("v2 command serialization", () => {
 				write: (data: string) => {
 					const parsed = JSON.parse(data.trim());
 					sent.push(parsed);
-					// Auto-respond with success after a tick
+					// Auto-respond on the microtask queue. This is deterministic —
+					// any `await` in the caller yields before the callback runs,
+					// so the caller's `pendingRequests` entry is installed before
+					// `handleLine` tries to resolve it.
 					if (respondFn) {
-						setTimeout(() => respondFn!(parsed), 5);
+						queueMicrotask(() => respondFn!(parsed));
 					}
 					return true;
 				},
@@ -534,9 +587,13 @@ describe("v2 command serialization", () => {
 
 		respondNext();
 
-		// Call shutdown and simulate process exit
+		// Call shutdown and simulate process exit. `flushIO` drains the
+		// queued stdin write -> auto-respond -> handleLine chain that our
+		// mock triggers on every `send`, so by the time we fire the exit
+		// handlers the shutdown ack has been observed.
 		const shutdownPromise = client.shutdown();
-		await new Promise((r) => setTimeout(r, 20));
+		await flushIO();
+		await flushIO();
 		for (const h of exitHandlers) h(0);
 
 		await shutdownPromise;

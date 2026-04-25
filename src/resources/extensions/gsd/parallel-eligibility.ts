@@ -112,7 +112,20 @@ export async function analyzeParallelEligibility(
   for (const mid of milestoneIds) {
     const entry = registryMap.get(mid);
     const title = entry?.title ?? mid;
-    const status = entry?.status ?? "pending";
+
+    // Rule 0: milestones with no registry entry (ghost directories, unknown
+    // state) are ineligible — we cannot determine their status or deps (#2501)
+    if (!entry) {
+      ineligible.push({
+        milestoneId: mid,
+        title,
+        eligible: false,
+        reason: "Milestone has no planning data — cannot determine eligibility.",
+      });
+      continue;
+    }
+
+    const status = entry.status;
 
     // Rule 1: skip complete and parked milestones
     if (status === "complete" || status === "parked") {
@@ -126,7 +139,7 @@ export async function analyzeParallelEligibility(
     }
 
     // Rule 2: check dependency satisfaction
-    const deps = entry?.dependsOn ?? [];
+    const deps = entry.dependsOn ?? [];
     const unsatisfied = deps.filter(dep => {
       const depEntry = registryMap.get(dep);
       return !depEntry || depEntry.status !== "complete";

@@ -13,6 +13,52 @@ const packagedWebHostPath = join(projectRoot, "dist", "web", "standalone", "serv
 
 let runtimeArtifactsReady = false
 
+const SANITIZED_PROVIDER_ENV_KEYS = [
+  "ANTHROPIC_OAUTH_TOKEN",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "AZURE_OPENAI_API_KEY",
+  "GEMINI_API_KEY",
+  "GROQ_API_KEY",
+  "CEREBRAS_API_KEY",
+  "XAI_API_KEY",
+  "OPENROUTER_API_KEY",
+  "AI_GATEWAY_API_KEY",
+  "ZAI_API_KEY",
+  "MISTRAL_API_KEY",
+  "MINIMAX_API_KEY",
+  "MINIMAX_CN_API_KEY",
+  "HF_TOKEN",
+  "OPENCODE_API_KEY",
+  "KIMI_API_KEY",
+  "ALIBABA_API_KEY",
+  "COPILOT_GITHUB_TOKEN",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_PROJECT",
+  "GCLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
+  "AWS_PROFILE",
+  "AWS_ACCESS_KEY_ID",
+  "AWS_SECRET_ACCESS_KEY",
+  "AWS_BEARER_TOKEN_BEDROCK",
+  "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+  "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+  "AWS_WEB_IDENTITY_TOKEN_FILE",
+] as const
+
+function buildSanitizedRuntimeEnv(overrides?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env }
+  for (const key of SANITIZED_PROVIDER_ENV_KEYS) {
+    env[key] = ""
+  }
+  return {
+    ...env,
+    ...overrides,
+  }
+}
+
 type RuntimeEndpoint = "boot" | "events"
 
 type RuntimeRequestDiagnostic = {
@@ -147,12 +193,11 @@ export async function launchPackagedWebHost(options: {
       {
         cwd: options.launchCwd,
         env: {
-          ...process.env,
+          ...buildSanitizedRuntimeEnv(options.env),
           HOME: options.tempHome,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           CI: "1",
           FORCE_COLOR: "0",
-          ...options.env,
         },
         stdio: ["ignore", "pipe", "pipe"],
       },

@@ -2,21 +2,36 @@ import type {
   WorkspaceMilestoneTarget,
   WorkspaceSliceTarget,
   WorkspaceTaskTarget,
-} from "./gsd-workspace-store"
+} from "./workspace-types.js"
 
-export type ItemStatus = "done" | "in-progress" | "pending"
+export type ItemStatus = "done" | "in-progress" | "pending" | "parked"
 
 export function getMilestoneStatus(
   milestone: WorkspaceMilestoneTarget,
   active: { milestoneId?: string },
 ): ItemStatus {
-  if (milestone.slices.length > 0 && milestone.slices.every((slice) => slice.done)) {
+  // Prefer authoritative milestone status from GSD state registry (#2807)
+  if (milestone.status) {
+    switch (milestone.status) {
+      case "complete":
+        return "done"
+      case "active":
+        return "in-progress"
+      case "pending":
+        return "pending"
+      case "parked":
+        return "parked"
+    }
+  }
+
+  // Fallback: infer from slice completion (legacy / no status field)
+  if (milestone.slices.length > 0 && milestone.slices.every((slice: WorkspaceSliceTarget) => slice.done)) {
     return "done"
   }
   if (active.milestoneId === milestone.id) {
     return "in-progress"
   }
-  return milestone.slices.some((slice) => slice.done) ? "in-progress" : "pending"
+  return milestone.slices.some((slice: WorkspaceSliceTarget) => slice.done) ? "in-progress" : "pending"
 }
 
 export function getSliceStatus(

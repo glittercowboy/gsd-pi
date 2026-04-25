@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 
 import { deriveState } from "../state.js";
 import { resolveMilestoneFile } from "../paths.js";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 let passed = 0;
 let failed = 0;
@@ -81,7 +82,7 @@ assert(
 
 // Check the branch has draft-aware menu options
 const branchIdx = guidedFlowSource.indexOf('state.phase === "needs-discussion"');
-const branchChunk = guidedFlowSource.slice(branchIdx, branchIdx + 4000);
+const branchChunk = extractSourceRegion(guidedFlowSource, 'state.phase === "needs-discussion"');
 
 assert(
   branchChunk.includes("discuss_draft"),

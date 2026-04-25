@@ -9,9 +9,11 @@ import { deriveState, isValidationTerminal } from "../state.ts";
 import { resolveExpectedArtifactPath, diagnoseExpectedArtifact } from "../auto-artifact-paths.ts";
 import { verifyExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.ts";
 import { resolveDispatch, type DispatchContext } from "../auto-dispatch.ts";
+import { buildCompleteMilestonePrompt, buildValidateMilestonePrompt } from "../auto-prompts.ts";
 import type { GSDState } from "../types.ts";
 import { clearPathCache } from "../paths.ts";
 import { clearParseCache } from "../files.ts";
+import { closeDatabase, insertMilestone, insertSlice, openDatabase, getMilestone } from "../gsd-db.ts";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────
 
@@ -24,13 +26,25 @@ function makeTmpBase(): string {
 function cleanup(base: string): void {
   clearPathCache();
   clearParseCache();
+  closeDatabase();
   try { rmSync(base, { recursive: true, force: true }); } catch { /* */ }
+}
+
+function openTestDb(base: string): void {
+  const dbPath = join(base, ".gsd", "gsd.db");
+  assert.equal(openDatabase(dbPath), true, "test DB should open");
 }
 
 function writeRoadmap(base: string, mid: string, content: string): void {
   const dir = join(base, ".gsd", "milestones", mid);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${mid}-ROADMAP.md`), content);
+}
+
+function writeContext(base: string, mid: string, content = "# M001 Context\n\nValidated context."): void {
+  const dir = join(base, ".gsd", "milestones", mid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${mid}-CONTEXT.md`), content);
 }
 
 function writeMilestoneSummary(base: string, mid: string, content: string): void {
@@ -55,6 +69,12 @@ function writeSliceSummary(base: string, mid: string, sid: string, content: stri
   const dir = join(base, ".gsd", "milestones", mid, "slices", sid);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, `${sid}-SUMMARY.md`), content);
+}
+
+function writeSliceAssessment(base: string, mid: string, sid: string, content: string): void {
+  const dir = join(base, ".gsd", "milestones", mid, "slices", sid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${sid}-ASSESSMENT.md`), content);
 }
 
 const ALL_DONE_ROADMAP = `# M001: Test Milestone
@@ -163,17 +183,22 @@ test("deriveState returns completing-milestone when VALIDATION exists with termi
   }
 });
 
-test("deriveState treats needs-remediation as terminal — does not re-enter validating-milestone (#832)", async () => {
+test("deriveState returns blocked when needs-remediation has no incomplete slices (#4506)", async () => {
   const base = makeTmpBase();
   try {
     writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
     writeValidation(base, "M001", "---\nverdict: needs-remediation\nremediation_round: 0\n---\n\n# Validation\nNeeds fixes.");
 
     const state = await deriveState(base);
-    // needs-remediation is now terminal — milestone needs a SUMMARY to be fully complete
-    // Without SUMMARY, it enters completing-milestone (not validating-milestone)
-    assert.notEqual(state.phase, "validating-milestone");
+    // All slices done + needs-remediation → blocked (prevents infinite
+    // validate-milestone dispatch loop). Previously returned
+    // validating-milestone, which caused #4506.
+    assert.equal(state.phase, "blocked");
     assert.equal(state.activeMilestone?.id, "M001");
+    assert.ok(
+      state.blockers.some(b => b.includes("needs-remediation") && b.includes("M001")),
+      "blocker message should mention milestone and verdict",
+    );
   } finally {
     cleanup(base);
   }
@@ -188,6 +213,105 @@ test("deriveState returns complete when both VALIDATION and SUMMARY exist", asyn
 
     const state = await deriveState(base);
     assert.equal(state.phase, "complete");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildValidateMilestonePrompt inlines ASSESSMENT evidence instead of UAT spec", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
+    const dir = join(base, ".gsd", "milestones", "M001");
+    writeFileSync(join(dir, "M001-CONTEXT.md"), CONTEXT_FILE);
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
+    writeFileSync(join(dir, "slices", "S01", "S01-UAT.md"), "# UAT Spec\nDo the thing.\n");
+    writeSliceAssessment(base, "M001", "S01", "---\nverdict: PASS\n---\n# Assessment\nEvidence captured.");
+
+    const prompt = await buildValidateMilestonePrompt("M001", "Test Milestone", base);
+    assert.match(prompt, /S01 Assessment/i, "prompt should inline assessment evidence");
+    assert.match(prompt, /verdict: PASS/i, "prompt should include the assessment verdict");
+    assert.doesNotMatch(prompt, /UAT Spec/i, "prompt should not inline the raw UAT spec as evidence");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildCompleteMilestonePrompt skips skipped slices from DB-backed summary inlining", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", `# M001: Test Milestone
+
+## Vision
+Test
+
+## Success Criteria
+- It works
+
+## Slices
+
+- [x] **S01: First slice** \`risk:low\` \`depends:[]\`
+  > Done
+- [ ] **S02: Skipped slice** \`risk:low\` \`depends:[]\`
+  > Intentionally skipped
+
+## Boundary Map
+
+| From | To | Produces | Consumes |
+|------|-----|----------|----------|
+| S01  | terminal | output | nothing |
+`);
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [] });
+    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [] });
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
+
+    const prompt = await buildCompleteMilestonePrompt("M001", "Test Milestone", base);
+    assert.match(prompt, /S01 Summary/i, "prompt should inline non-skipped slice summaries");
+    assert.doesNotMatch(prompt, /### S02 Summary/i, "prompt should not inline skipped slice summaries");
+    assert.doesNotMatch(prompt, /not found — file does not exist yet/i, "prompt should not emit skipped-slice missing-file placeholders");
+    assert.doesNotMatch(prompt, /S02-SUMMARY\.md/, "skipped slice must not appear in on-demand path list (#4780)");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildValidateMilestonePrompt skips skipped slices from DB-backed summary inlining", async () => {
+  const base = makeTmpBase();
+  try {
+    writeRoadmap(base, "M001", `# M001: Test Milestone
+
+## Vision
+Test
+
+## Success Criteria
+- It works
+
+## Slices
+
+- [x] **S01: First slice** \`risk:low\` \`depends:[]\`
+  > Done
+- [ ] **S02: Skipped slice** \`risk:low\` \`depends:[]\`
+  > Intentionally skipped
+
+## Boundary Map
+
+| From | To | Produces | Consumes |
+|------|-----|----------|----------|
+| S01  | terminal | output | nothing |
+`);
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test Milestone", status: "active" });
+    insertSlice({ id: "S01", milestoneId: "M001", title: "First slice", status: "complete", depends: [] });
+    insertSlice({ id: "S02", milestoneId: "M001", title: "Skipped slice", status: "skipped", depends: [] });
+    writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDelivered.");
+    writeSliceAssessment(base, "M001", "S01", "---\nverdict: PASS\n---\n# Assessment\nEvidence captured.");
+
+    const prompt = await buildValidateMilestonePrompt("M001", "Test Milestone", base);
+    assert.match(prompt, /S01 Summary/i, "prompt should inline non-skipped slice summaries");
+    assert.doesNotMatch(prompt, /### S02 Summary/i, "prompt should not inline skipped slice summaries");
+    assert.doesNotMatch(prompt, /not found — file does not exist yet/i, "prompt should not emit skipped-slice missing-file placeholders");
   } finally {
     cleanup(base);
   }
@@ -211,6 +335,7 @@ test("dispatch rule matches validating-milestone phase", async () => {
   const base = makeTmpBase();
   try {
     // Set up minimal milestone structure for the prompt builder
+    writeContext(base, "M001");
     writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
     writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDone."); // Guard requires slice summaries (#1368)
 
@@ -247,6 +372,7 @@ test("dispatch rule skips when skip_milestone_validation preference is set", asy
 
   const base = makeTmpBase();
   try {
+    writeContext(base, "M001");
     writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
     writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDone."); // Guard requires slice summaries (#1368)
 
@@ -263,6 +389,131 @@ test("dispatch rule skips when skip_milestone_validation preference is set", asy
     // Verify the VALIDATION file was written
     const validationPath = join(base, ".gsd", "milestones", "M001", "M001-VALIDATION.md");
     assert.ok(existsSync(validationPath), "VALIDATION file should be written on skip");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("dispatch rule fails closed for failure-path SUMMARY when DB milestone is not complete (#4658)", async () => {
+  const state: GSDState = {
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "completing-milestone",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Complete milestone M001.",
+    registry: [{ id: "M001", title: "Test", status: "active" }],
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test", status: "active" });
+    writeContext(base, "M001");
+    writeMilestoneSummary(base, "M001", "# Milestone Summary\nverification FAILED — not complete.");
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state,
+      prefs: undefined,
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "stop");
+    if (result.action === "stop") {
+      assert.equal(result.level, "warning");
+      assert.match(result.reason, /failure-path SUMMARY/i);
+    }
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("dispatch rule reconciles DB for successful stale SUMMARY (#4658)", async () => {
+  const state: GSDState = {
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "completing-milestone",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Complete milestone M001.",
+    registry: [{ id: "M001", title: "Test", status: "active" }],
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test", status: "active" });
+    writeContext(base, "M001");
+    writeMilestoneSummary(
+      base,
+      "M001",
+      [
+        "---",
+        "id: M001",
+        "status: complete",
+        "---",
+        "",
+        "# M001: Test",
+        "",
+        "**Complete.**",
+      ].join("\n"),
+    );
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state,
+      prefs: undefined,
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "skip");
+    const milestone = getMilestone("M001");
+    assert.equal(milestone?.status, "complete");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("dispatch rule fails closed for ambiguous stale SUMMARY (#4658)", async () => {
+  const state: GSDState = {
+    activeMilestone: { id: "M001", title: "Test" },
+    activeSlice: null,
+    activeTask: null,
+    phase: "completing-milestone",
+    recentDecisions: [],
+    blockers: [],
+    nextAction: "Complete milestone M001.",
+    registry: [{ id: "M001", title: "Test", status: "active" }],
+    progress: { milestones: { done: 0, total: 1 } },
+  };
+
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    insertMilestone({ id: "M001", title: "Test", status: "active" });
+    writeContext(base, "M001");
+    writeMilestoneSummary(base, "M001", "# M001 Summary\nSome notes without completion metadata.");
+
+    const ctx: DispatchContext = {
+      basePath: base,
+      mid: "M001",
+      midTitle: "Test",
+      state,
+      prefs: undefined,
+    };
+    const result = await resolveDispatch(ctx);
+    assert.equal(result.action, "stop");
+    if (result.action === "stop") {
+      assert.equal(result.level, "warning");
+      assert.match(result.reason, /ambiguous SUMMARY/i);
+    }
   } finally {
     cleanup(base);
   }

@@ -9,7 +9,7 @@
  */
 
 import { execFileSync, execSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { gsdRoot } from "./paths.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
@@ -32,6 +32,9 @@ import {
   nativeRmCached,
   nativeUpdateRef,
   nativeAddPaths,
+  nativeResetSoft,
+  nativeCommitSubject,
+  _resetHasChangesCache,
 } from "./native-git-bridge.js";
 import { GSDError, GSD_MERGE_CONFLICT, GSD_GIT_ERROR } from "./errors.js";
 import { getErrorMessage } from "./error-utils.js";
@@ -50,9 +53,9 @@ export interface GitPreferences {
   main_branch?: string;
   merge_strategy?: "squash" | "merge";
   /** Controls auto-mode git isolation strategy.
-   *  - "worktree": (default) creates a milestone worktree for isolated work
+   *  - "worktree": creates a milestone worktree for isolated work
    *  - "branch": works directly in the project root (for submodule-heavy repos)
-   *  - "none": no git isolation — commits land on the user's current branch directly
+   *  - "none": (default) no git isolation — commits land on the user's current branch directly
    */
   isolation?: "worktree" | "branch" | "none";
   /** When false, GSD will not modify .gitignore at all — no baseline patterns
@@ -77,6 +80,27 @@ export interface GitPreferences {
    *  Default: the main branch (from `main_branch` or auto-detected).
    */
   pr_target_branch?: string;
+  /** Whether to squash `gsd snapshot:` commits into the next real autoCommit.
+   *  Enabled by default. Set to false to keep snapshot commits in history
+   *  for forensic inspection.
+   */
+  absorb_snapshot_commits?: boolean;
+  /** #4765 — when to collapse worktree commits back to main.
+   *  - "milestone" (default): existing behavior — squash-merge happens once
+   *    at milestone completion or transition.
+   *  - "slice": squash-merge each slice's commits to main as soon as the
+   *    slice passes validation. Shrinks the orphan window from
+   *    milestone-size to slice-size and surfaces merge conflicts per slice
+   *    rather than all at once at milestone end.
+   */
+  collapse_cadence?: "milestone" | "slice";
+  /** #4765 — when `collapse_cadence: "slice"`, optionally re-squash the per-
+   *  slice commits on main into one milestone commit at milestone completion.
+   *  Preserves the "one commit per milestone in main" history shape that
+   *  `collapse_cadence: "milestone"` produces today.
+   *  Default: true when collapse_cadence is "slice", ignored otherwise.
+   */
+  milestone_resquash?: boolean;
 }
 
 export const VALID_BRANCH_NAME = /^[a-zA-Z0-9_\-\/.]+$/;
@@ -84,6 +108,17 @@ export const VALID_BRANCH_NAME = /^[a-zA-Z0-9_\-\/.]+$/;
 export interface CommitOptions {
   message: string;
   allowEmpty?: boolean;
+}
+
+export type TurnGitActionMode = "commit" | "snapshot" | "status-only";
+
+export interface TurnGitActionResult {
+  action: TurnGitActionMode;
+  status: "ok" | "failed";
+  commitMessage?: string;
+  snapshotLabel?: string;
+  dirty?: boolean;
+  error?: string;
 }
 
 // ─── Meaningful Commit Message Generation ───────────────────────────────────
@@ -185,22 +220,26 @@ export interface PreMergeCheckResult {
 /**
  * GSD runtime paths that should be excluded from smart staging.
  * These are transient/generated artifacts that should never be committed.
- * Matches the union of SKIP_PATHS + SKIP_EXACT in worktree-manager.ts
- * and the first 7 entries in gitignore.ts BASELINE_PATTERNS.
+ *
+ * NOTE: GSD_RUNTIME_PATTERNS in gitignore.ts is the canonical source of truth.
+ * This array must stay synchronized with it.
  */
 export const RUNTIME_EXCLUSION_PATHS: readonly string[] = [
   ".gsd/activity/",
+  ".gsd/audit/",
+  ".gsd/forensics/",
   ".gsd/runtime/",
   ".gsd/worktrees/",
+  ".gsd/parallel/",
   ".gsd/auto.lock",
   ".gsd/metrics.json",
-  ".gsd/completed-units.json",
+  ".gsd/completed-units*.json", // covers completed-units.json and archived completed-units-{MID}.json
+  ".gsd/state-manifest.json",
   ".gsd/STATE.md",
-  ".gsd/gsd.db",
-  ".gsd/gsd.db-shm",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/gsd.db-wal",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/journal/",     // daily-rotated JSONL event journal (#2296)
-  ".gsd/doctor-history.jsonl", // doctor run history (#2296)
+  ".gsd/gsd.db*",
+  ".gsd/journal/",
+  ".gsd/doctor-history.jsonl",
+  ".gsd/event-log.jsonl",
   ".gsd/DISCUSSION-MANIFEST.json",
 ];
 
@@ -488,6 +527,29 @@ export class GitServiceImpl {
     // If .gsd/ IS in .gitignore (the default for external state projects),
     // git add -A already skips it and the exclusions are harmless no-ops.
     const allExclusions = [...RUNTIME_EXCLUSION_PATHS, ...extraExclusions];
+
+    // ── Parallel worker milestone scope (#1991) ──
+    // When GSD_MILESTONE_LOCK is set, this process is a parallel worker that
+    // must only commit files belonging to its own milestone. Exclude all other
+    // milestone directories from staging to prevent cross-milestone pollution
+    // (e.g., an M033 worker fabricating M032 artifacts in the same commit).
+    const milestoneLock = process.env.GSD_MILESTONE_LOCK;
+    if (milestoneLock) {
+      const msDir = join(gsdRoot(this.basePath), "milestones");
+      if (existsSync(msDir)) {
+        try {
+          const entries = readdirSync(msDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory() && entry.name !== milestoneLock) {
+              allExclusions.push(`.gsd/milestones/${entry.name}/`);
+            }
+          }
+        } catch {
+          // Best-effort — if we can't read the milestones dir, proceed without scoping
+        }
+      }
+    }
+
     nativeAddAllWithExclusions(this.basePath, allExclusions);
   }
 
@@ -540,7 +602,93 @@ export class GitServiceImpl {
       ? buildTaskCommitMessage(taskContext)
       : `chore: auto-commit after ${unitType}\n\nGSD-Unit: ${unitId}`;
     nativeCommit(this.basePath, message, { allowEmpty: false });
+
+    // Absorb any preceding gsd snapshot commits into this real commit.
+    // Walk backwards from HEAD~1 counting consecutive snapshot subjects,
+    // then soft-reset to before them and re-commit with the same message.
+    this.absorbSnapshotCommits(message);
+
     return message;
+  }
+
+  /**
+   * Squash consecutive `gsd snapshot:` commits that sit immediately below
+   * HEAD into the current HEAD commit. This keeps the git history clean
+   * after automated snapshot commits are superseded by real work.
+   *
+   * Guards:
+   * - Opt-in via `absorb_snapshot_commits` preference (default: true).
+   * - Refuses to rewrite commits that have been pushed to the remote
+   *   tracking branch (checks merge-base ancestry).
+   * - Saves HEAD SHA before reset; restores it if the re-commit fails.
+   *
+   * Does nothing if there are no snapshot commits to absorb.
+   */
+  private absorbSnapshotCommits(headMessage: string): void {
+    try {
+      // Opt-in guard — users can disable to keep snapshot commits for forensics
+      if (this.prefs.absorb_snapshot_commits === false) return;
+
+      const GSD_SNAPSHOT_PREFIX = "gsd snapshot:";
+      let count = 0;
+
+      // Walk back from HEAD~1 counting consecutive snapshot commits (cap at 10)
+      for (let i = 1; i <= 10; i++) {
+        const subject = nativeCommitSubject(this.basePath, `HEAD~${i}`);
+        if (!subject.startsWith(GSD_SNAPSHOT_PREFIX)) break;
+        count = i;
+      }
+
+      if (count === 0) return;
+
+      // Guard: don't rewrite history that has been pushed to the remote.
+      // Check whether the newest snapshot commit (HEAD~1) is already
+      // reachable from the remote tracking branch. If it is, the snapshots
+      // have been pushed and must not be squashed via local history rewrite.
+      // (Checking resetTarget instead would false-positive when the remote
+      // is at the pre-snapshot base but the snapshots themselves are local.)
+      const resetTarget = `HEAD~${count + 1}`;
+      try {
+        const branch = nativeGetCurrentBranch(this.basePath);
+        if (branch) {
+          const remoteBranch = `origin/${branch}`;
+          // merge-base --is-ancestor exits 0 if HEAD~1 is ancestor of remote
+          execFileSync("git", ["merge-base", "--is-ancestor", "HEAD~1", remoteBranch], {
+            cwd: this.basePath,
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          // If we get here, newest snapshot IS reachable from remote — already pushed
+          return;
+        }
+      } catch {
+        // Not an ancestor or remote doesn't exist — safe to proceed
+      }
+
+      // Save HEAD SHA so we can restore if the re-commit fails
+      const savedHead = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: this.basePath,
+        stdio: ["ignore", "pipe", "pipe"],
+        encoding: "utf-8",
+      }).trim();
+
+      nativeResetSoft(this.basePath, resetTarget);
+
+      // Re-run smartStage so the same RUNTIME_EXCLUSION_PATHS apply.
+      // Snapshot commits used nativeAddTracked (git add -u) which stages
+      // ALL tracked modifications including .gsd/ state files. Without
+      // re-staging, those .gsd/ changes leak into the absorbed commit.
+      this.smartStage();
+
+      try {
+        nativeCommit(this.basePath, headMessage, { allowEmpty: false });
+      } catch {
+        // Re-commit failed — restore original HEAD to avoid leaving the
+        // repo in a partially-reset state with no commit
+        nativeResetSoft(this.basePath, savedHead);
+      }
+    } catch {
+      // Non-fatal — if squash fails, the commits remain unsquashed
+    }
   }
 
   // ─── Branch Queries ────────────────────────────────────────────────────
@@ -629,7 +777,6 @@ export class GitServiceImpl {
    * Run pre-merge verification check. Auto-detects test runner from project
    * files, or uses custom command from prefs.pre_merge_check.
    * Gated on prefs.pre_merge_check (false = skip, string = custom command).
-   * Stub: to be implemented in T03.
    */
   runPreMergeCheck(): PreMergeCheckResult {
     if (this.prefs.pre_merge_check === false) {
@@ -701,6 +848,62 @@ export function createDraftPR(
 export function createGitService(basePath: string): GitServiceImpl {
   const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git ?? {};
   return new GitServiceImpl(basePath, gitPrefs);
+}
+
+function buildTurnSnapshotLabel(unitType: string, unitId: string): string {
+  const raw = `${unitType}/${unitId}`.trim();
+  if (!raw) return "turn";
+  return raw
+    .replace(/[^a-zA-Z0-9._/-]/g, "-")
+    .replace(/\/{2,}/g, "/")
+    .replace(/-{2,}/g, "-")
+    .replace(/^[-/]+|[-/]+$/g, "") || "turn";
+}
+
+export function runTurnGitAction(args: {
+  basePath: string;
+  action: TurnGitActionMode;
+  unitType: string;
+  unitId: string;
+  taskContext?: TaskCommitContext;
+}): TurnGitActionResult {
+  try {
+    // Force fresh working-tree status per turn; nativeHasChanges caches briefly.
+    _resetHasChangesCache();
+    if (args.action === "status-only") {
+      return {
+        action: args.action,
+        status: "ok",
+        dirty: nativeHasChanges(args.basePath),
+      };
+    }
+
+    const git = createGitService(args.basePath);
+    if (args.action === "snapshot") {
+      const label = buildTurnSnapshotLabel(args.unitType, args.unitId);
+      git.createSnapshot(label);
+      return {
+        action: args.action,
+        status: "ok",
+        snapshotLabel: label,
+        dirty: nativeHasChanges(args.basePath),
+      };
+    }
+
+    const commitMessage = git.autoCommit(args.unitType, args.unitId, [], args.taskContext) ?? undefined;
+    return {
+      action: args.action,
+      status: "ok",
+      commitMessage,
+      dirty: nativeHasChanges(args.basePath),
+    };
+  } catch (err) {
+    return {
+      action: args.action,
+      status: "failed",
+      error: getErrorMessage(err),
+    };
+  }
 }
 
 // ─── Commit Type Inference ─────────────────────────────────────────────────

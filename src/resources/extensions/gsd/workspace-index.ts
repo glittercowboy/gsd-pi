@@ -11,6 +11,7 @@ import {
   resolveTasksDir,
 } from "./paths.js";
 import { deriveState } from "./state.js";
+import { extractVerdict } from "./verdict-parser.js";
 import { milestoneIdSort, findMilestoneIds } from "./guided-flow.js";
 import type { RiskLevel } from "./types.js";
 import { getSliceBranchName, detectWorktreeName } from "./worktree.js";
@@ -42,6 +43,8 @@ export interface WorkspaceMilestoneTarget {
   id: string;
   title: string;
   roadmapPath?: string;
+  status?: "complete" | "active" | "pending" | "parked";
+  validationVerdict?: "pass" | "needs-attention" | "needs-remediation";
   slices: WorkspaceSliceTarget[];
 }
 
@@ -51,7 +54,12 @@ export interface WorkspaceScopeTarget {
   kind: "project" | "milestone" | "slice" | "task";
 }
 
-export interface GSDWorkspaceIndex {
+export interface WorkspaceValidationIssue {
+  message?: string;
+  [key: string]: unknown;
+}
+
+export interface WorkspaceIndex {
   milestones: WorkspaceMilestoneTarget[];
   active: {
     milestoneId?: string;
@@ -60,8 +68,10 @@ export interface GSDWorkspaceIndex {
     phase: string;
   };
   scopes: WorkspaceScopeTarget[];
-  validationIssues: Array<Record<string, unknown>>;
+  validationIssues: WorkspaceValidationIssue[];
 }
+
+export type GSDWorkspaceIndex = WorkspaceIndex;
 
 // Extract milestone title from roadmap header without using parsers.
 // Falls back to the milestone ID if no title line found.
@@ -191,6 +201,31 @@ export async function indexWorkspace(basePath: string, opts: IndexWorkspaceOptio
     taskId: state.activeTask?.id,
     phase: state.phase,
   };
+
+  // Enrich milestones with authoritative status from state registry (#2807)
+  if (state.registry) {
+    const registryMap = new Map(state.registry.map(e => [e.id, e]));
+    for (const milestone of milestones) {
+      const entry = registryMap.get(milestone.id);
+      if (entry) {
+        milestone.status = entry.status;
+      }
+    }
+  }
+
+  // Populate validationVerdict from VALIDATION files (#2807)
+  for (const milestone of milestones) {
+    const validationPath = resolveMilestoneFile(basePath, milestone.id, "VALIDATION");
+    if (validationPath) {
+      const validationContent = await loadFile(validationPath);
+      if (validationContent) {
+        const verdict = extractVerdict(validationContent);
+        if (verdict === "pass" || verdict === "needs-attention" || verdict === "needs-remediation") {
+          milestone.validationVerdict = verdict;
+        }
+      }
+    }
+  }
 
   const scopes: WorkspaceScopeTarget[] = [{ scope: "project", label: "project", kind: "project" }];
   for (const milestone of milestones) {

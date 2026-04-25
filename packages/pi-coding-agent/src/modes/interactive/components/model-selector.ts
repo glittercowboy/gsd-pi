@@ -9,11 +9,33 @@ import {
 	Text,
 	type TUI,
 } from "@gsd/pi-tui";
-import type { ModelRegistry } from "../../../core/model-registry.js";
+import type { ModelRegistry, ProviderAuthMode } from "../../../core/model-registry.js";
 import type { SettingsManager } from "../../../core/settings-manager.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
+
+export function providerDisplayName(provider: string): string {
+	return provider;
+}
+
+/**
+ * Short, user-facing label for a provider's auth mode. Returned strings are
+ * suitable for use as a suffix/badge alongside the provider name.
+ * Returns an empty string for modes that don't need a badge (e.g. "none").
+ */
+export function providerAuthBadge(authMode?: ProviderAuthMode): string {
+	switch (authMode) {
+		case "apiKey":
+			return "API key";
+		case "oauth":
+			return "OAuth";
+		case "externalCli":
+			return "CLI";
+		default:
+			return "";
+	}
+}
 
 function formatTokenCount(count: number): string {
 	if (count >= 1_000_000) {
@@ -111,7 +133,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.settingsManager = settingsManager;
 		this.modelRegistry = modelRegistry;
 		this.scopedModels = scopedModels;
-		this.scope = scopedModels.length > 0 ? "scoped" : "all";
+		// Only land in "scoped" view when at least one scoped model has working
+		// auth — otherwise the user would see an empty picker (#unconfigured-models).
+		const hasReadyScopedModel = scopedModels.some((scoped) =>
+			modelRegistry.isProviderRequestReady(scoped.model.provider),
+		);
+		this.scope = hasReadyScopedModel ? "scoped" : "all";
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
 
@@ -126,7 +153,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.scopeHintText = new Text(this.getScopeHintText(), 0, 0);
 			this.addChild(this.scopeHintText);
 		} else {
-			const hintText = "Only showing models with configured API keys (see README for details)";
+			const hintText =
+				"Only showing models with configured credentials (API key, OAuth, or CLI). See README for details.";
 			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		}
 		this.addChild(new Spacer(1));
@@ -206,12 +234,16 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		}
 
 		this.allModels = this.sortModelsWithinProvider(models);
+		// Scoped models must also be filtered by provider readiness so users
+		// can't pick a scoped model whose provider has no API key / OAuth.
 		this.scopedModelItems = this.sortModelsWithinProvider(
-			this.scopedModels.map((scoped) => ({
-				provider: scoped.model.provider,
-				id: scoped.model.id,
-				model: scoped.model,
-			})),
+			this.scopedModels
+				.filter((scoped) => this.modelRegistry.isProviderRequestReady(scoped.model.provider))
+				.map((scoped) => ({
+					provider: scoped.model.provider,
+					id: scoped.model.id,
+					model: scoped.model,
+				})),
 		);
 		this.activeModels = this.scope === "scoped" ? this.scopedModelItems : this.allModels;
 		this.filteredModels = this.activeModels;
@@ -391,7 +423,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			const ctx = formatTokenCount(item.model.contextWindow);
 			const ctxBadge = theme.fg("muted", `${ctx}`);
-			const providerBadge = theme.fg("muted", `[${item.provider}]`);
+			const authMode = this.modelRegistry.getProviderAuthMode(item.provider);
+			const authLabel = providerAuthBadge(authMode);
+			const providerBadgeText = authLabel
+				? `[${providerDisplayName(item.provider)} · ${authLabel}]`
+				: `[${providerDisplayName(item.provider)}]`;
+			const providerBadge = theme.fg("muted", providerBadgeText);
 			const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 
 			let line: string;
@@ -427,7 +464,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		const maxVisible = 12;
 
 		if (this.groupedRows.length === 0) {
-			this.listContainer.addChild(new Text(theme.fg("muted", "  No models available"), 0, 0));
+			this.listContainer.addChild(
+				new Text(theme.fg("muted", "  No providers configured."), 0, 0),
+			);
+			this.listContainer.addChild(
+				new Text(
+					theme.fg(
+						"muted",
+						"  Run /login (OAuth), set an API key, or install a CLI provider. See README.",
+					),
+					0,
+					0,
+				),
+			);
 			return;
 		}
 
@@ -447,13 +496,16 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			if (row.kind === "header") {
 				// Provider group header — always unselectable
-				const providerLabel = theme.fg("borderAccent", row.provider);
+				const providerLabel = theme.fg("borderAccent", providerDisplayName(row.provider));
 				const count = theme.fg("muted", ` (${row.count})`);
+				const authMode = this.modelRegistry.getProviderAuthMode(row.provider);
+				const authLabel = providerAuthBadge(authMode);
+				const authText = authLabel ? theme.fg("muted", ` · via ${authLabel}`) : "";
 				// Add blank line before header if not the very first visible row
 				if (i > startIndex) {
 					this.listContainer.addChild(new Text("", 0, 0));
 				}
-				this.listContainer.addChild(new Text(`  ${providerLabel}${count}`, 0, 0));
+				this.listContainer.addChild(new Text(`  ${providerLabel}${count}${authText}`, 0, 0));
 			} else {
 				// Model row
 				const isSelected = i === this.selectedGroupIndex;

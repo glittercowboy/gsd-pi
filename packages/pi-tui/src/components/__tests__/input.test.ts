@@ -32,4 +32,49 @@ describe("Input", () => {
 		input.focused = false;
 		assert.equal(input.focused, false);
 	});
+
+	it("secure mode obscures typed characters in render output", () => {
+		const input = new Input();
+		input.secure = true;
+		input.focused = true;
+		const SECRET = "secret123";
+		input.handleInput(SECRET);
+
+		const line = input.render(40)[0] ?? "";
+		// Previous assertion was `line.includes("*********")` — a literal
+		// 9-star string that silently goes stale if SECRET is renamed to
+		// a different length (#4796). Match any run of asterisks and
+		// assert its length covers the secret.
+		assert.ok(
+			!line.includes(SECRET),
+			"rendered line must not expose raw secret text",
+		);
+		const maskMatch = line.match(/\*+/);
+		assert.ok(
+			maskMatch,
+			`rendered line must include masked characters, got: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			maskMatch[0].length >= SECRET.length,
+			`mask must cover at least the secret length (${SECRET.length}), got ${maskMatch[0].length} asterisks`,
+		);
+	});
+
+	it("maps kitty keypad digits to text instead of inserting private-use glyphs", () => {
+		const input = new Input();
+		input.focused = true;
+
+		input.handleInput("\x1b[57400;129u");
+
+		assert.equal(input.getValue(), "1");
+	});
+
+	it("ignores kitty keypad navigation keys in text input", () => {
+		const input = new Input();
+		input.focused = true;
+
+		input.handleInput("\x1b[57417u");
+
+		assert.equal(input.getValue(), "");
+	});
 });

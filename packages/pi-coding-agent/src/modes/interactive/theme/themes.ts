@@ -8,9 +8,8 @@
  * To add a new built-in theme, add an entry to `builtinThemes` below.
  */
 
-// Re-use the ThemeJson type from the schema defined in theme.ts.
-// We import only the type to avoid circular runtime dependencies.
-import type { ThemeJson } from "./theme.js";
+// Re-use the ThemeJson type from the schema module to avoid runtime cycles.
+import type { ThemeJson } from "./theme-schema.js";
 
 // ---------------------------------------------------------------------------
 // Dark theme
@@ -19,11 +18,100 @@ import type { ThemeJson } from "./theme.js";
 const dark: ThemeJson = {
 	name: "dark",
 	vars: {
+		cyan: "#22d3ee",
+		blue: "#60a5fa",
+		green: "#34d399",
+		red: "#fb7185",
+		yellow: "#facc15",
+		gray: "#a1a1aa",
+		dimGray: "#8b93a7",
+		darkGray: "#4b5563",
+		accent: "#2dd4bf",
+		selectedBg: "#1f2a44",
+		userMsgBg: "#1e2535",
+		toolPendingBg: "#1f2330",
+		toolSuccessBg: "#1f3128",
+		toolErrorBg: "#3a202a",
+		customMsgBg: "#2a2140",
+	},
+	colors: {
+		accent: "accent",
+		border: "blue",
+		borderAccent: "cyan",
+		borderMuted: "darkGray",
+		success: "green",
+		error: "red",
+		warning: "yellow",
+		muted: "gray",
+		dim: "dimGray",
+		text: "",
+		thinkingText: "gray",
+
+		selectedBg: "selectedBg",
+		userMessageBg: "userMsgBg",
+		userMessageText: "gray",
+		assistantMessageText: "",
+		customMessageBg: "customMsgBg",
+		customMessageText: "",
+		customMessageLabel: "#c084fc",
+		toolPendingBg: "toolPendingBg",
+		toolSuccessBg: "toolSuccessBg",
+		toolErrorBg: "toolErrorBg",
+		toolTitle: "#8a8a8a",
+		toolOutput: "#6e6e6e",
+
+		mdHeading: "#fbbf24",
+		mdLink: "#93c5fd",
+		mdLinkUrl: "dimGray",
+		mdCode: "accent",
+		mdCodeBlock: "green",
+		mdCodeBlockBorder: "gray",
+		mdQuote: "gray",
+		mdQuoteBorder: "gray",
+		mdHr: "gray",
+		mdListBullet: "accent",
+
+		toolDiffAdded: "green",
+		toolDiffRemoved: "red",
+		toolDiffContext: "gray",
+
+		syntaxComment: "#7dd3a3",
+		syntaxKeyword: "#60a5fa",
+		syntaxFunction: "#fde68a",
+		syntaxVariable: "#7dd3fc",
+		syntaxString: "#fdba74",
+		syntaxNumber: "#86efac",
+		syntaxType: "#5eead4",
+		syntaxOperator: "#d1d5db",
+		syntaxPunctuation: "#d1d5db",
+
+		thinkingOff: "darkGray",
+		thinkingMinimal: "#8088a0",
+		thinkingLow: "#60a5fa",
+		thinkingMedium: "#2dd4bf",
+		thinkingHigh: "#c084fc",
+		thinkingXhigh: "#f472b6",
+
+		bashMode: "green",
+	},
+	export: {
+		pageBg: "#101522",
+		cardBg: "#171f33",
+		infoBg: "#3b321d",
+	},
+};
+
+// Matches the pre-refresh TUI palette used during the recent chat/tool-frame
+// design PR series. Keep this as an explicit fallback theme so users can opt
+// into the familiar look while still keeping newer high-saturation themes.
+const tuiClassic: ThemeJson = {
+	name: "tui-classic",
+	vars: {
 		cyan: "#00d7ff",
 		blue: "#5f87ff",
 		green: "#b5bd68",
 		red: "#cc6666",
-		yellow: "#ffff00",
+		yellow: "#e6b800",
 		gray: "#808080",
 		dimGray: "#666666",
 		darkGray: "#505050",
@@ -50,15 +138,16 @@ const dark: ThemeJson = {
 
 		selectedBg: "selectedBg",
 		userMessageBg: "userMsgBg",
-		userMessageText: "",
+		userMessageText: "gray",
+		assistantMessageText: "",
 		customMessageBg: "customMsgBg",
 		customMessageText: "",
 		customMessageLabel: "#9575cd",
 		toolPendingBg: "toolPendingBg",
 		toolSuccessBg: "toolSuccessBg",
 		toolErrorBg: "toolErrorBg",
-		toolTitle: "",
-		toolOutput: "gray",
+		toolTitle: "#8a8a8a",
+		toolOutput: "#6e6e6e",
 
 		mdHeading: "#f0c674",
 		mdLink: "#81a2be",
@@ -108,21 +197,21 @@ const dark: ThemeJson = {
 const light: ThemeJson = {
 	name: "light",
 	vars: {
-		teal: "#5a8080",
-		blue: "#547da7",
-		green: "#588458",
-		red: "#aa5555",
-		yellow: "#9a7326",
-		warning: "#7a5a00",
-		mediumGray: "#6c6c6c",
-		dimGray: "#767676",
-		lightGray: "#b0b0b0",
-		selectedBg: "#d0d0e0",
-		userMsgBg: "#e8e8e8",
-		toolPendingBg: "#e8e8f0",
-		toolSuccessBg: "#e8f0e8",
-		toolErrorBg: "#f0e8e8",
-		customMsgBg: "#ede7f6",
+		teal: "#0f766e",
+		blue: "#2563eb",
+		green: "#15803d",
+		red: "#dc2626",
+		yellow: "#b45309",
+		warning: "#9a3412",
+		mediumGray: "#4b5563",
+		dimGray: "#6b7280",
+		lightGray: "#cbd5e1",
+		selectedBg: "#dbeafe",
+		userMsgBg: "#f1f5f9",
+		toolPendingBg: "#eef2ff",
+		toolSuccessBg: "#ecfdf5",
+		toolErrorBg: "#fff1f2",
+		customMsgBg: "#f5f3ff",
 	},
 	colors: {
 		accent: "teal",
@@ -140,9 +229,10 @@ const light: ThemeJson = {
 		selectedBg: "selectedBg",
 		userMessageBg: "userMsgBg",
 		userMessageText: "",
+		assistantMessageText: "",
 		customMessageBg: "customMsgBg",
 		customMessageText: "",
-		customMessageLabel: "#7e57c2",
+		customMessageLabel: "#7c3aed",
 		toolPendingBg: "toolPendingBg",
 		toolSuccessBg: "toolSuccessBg",
 		toolErrorBg: "toolErrorBg",
@@ -178,15 +268,101 @@ const light: ThemeJson = {
 		thinkingMinimal: "#767676",
 		thinkingLow: "blue",
 		thinkingMedium: "teal",
-		thinkingHigh: "#875f87",
-		thinkingXhigh: "#8b008b",
+		thinkingHigh: "#9333ea",
+		thinkingXhigh: "#be185d",
 
 		bashMode: "green",
 	},
 	export: {
-		pageBg: "#f8f8f8",
+		pageBg: "#f8fafc",
 		cardBg: "#ffffff",
-		infoBg: "#fffae6",
+		infoBg: "#fff7ed",
+	},
+};
+
+const vivid: ThemeJson = {
+	name: "vivid",
+	vars: {
+		cyan: "#22d3ee",
+		blue: "#3b82f6",
+		green: "#22c55e",
+		red: "#f43f5e",
+		yellow: "#f59e0b",
+		gray: "#a5b4fc",
+		dimGray: "#93a6d6",
+		darkGray: "#475569",
+		accent: "#14b8a6",
+		selectedBg: "#1e1b4b",
+		userMsgBg: "#172554",
+		toolPendingBg: "#1e293b",
+		toolSuccessBg: "#052e16",
+		toolErrorBg: "#3f0d1f",
+		customMsgBg: "#312e81",
+	},
+	colors: {
+		accent: "accent",
+		border: "blue",
+		borderAccent: "cyan",
+		borderMuted: "darkGray",
+		success: "green",
+		error: "red",
+		warning: "yellow",
+		muted: "gray",
+		dim: "dimGray",
+		text: "",
+		thinkingText: "gray",
+
+		selectedBg: "selectedBg",
+		userMessageBg: "userMsgBg",
+		userMessageText: "gray",
+		assistantMessageText: "",
+		customMessageBg: "customMsgBg",
+		customMessageText: "",
+		customMessageLabel: "#c084fc",
+		toolPendingBg: "toolPendingBg",
+		toolSuccessBg: "toolSuccessBg",
+		toolErrorBg: "toolErrorBg",
+		toolTitle: "#8a8a8a",
+		toolOutput: "#6e6e6e",
+
+		mdHeading: "#fbbf24",
+		mdLink: "#60a5fa",
+		mdLinkUrl: "dimGray",
+		mdCode: "#5eead4",
+		mdCodeBlock: "#86efac",
+		mdCodeBlockBorder: "gray",
+		mdQuote: "gray",
+		mdQuoteBorder: "gray",
+		mdHr: "gray",
+		mdListBullet: "#2dd4bf",
+
+		toolDiffAdded: "#22c55e",
+		toolDiffRemoved: "#f43f5e",
+		toolDiffContext: "gray",
+
+		syntaxComment: "#6ee7b7",
+		syntaxKeyword: "#60a5fa",
+		syntaxFunction: "#fde68a",
+		syntaxVariable: "#7dd3fc",
+		syntaxString: "#fdba74",
+		syntaxNumber: "#86efac",
+		syntaxType: "#5eead4",
+		syntaxOperator: "#e2e8f0",
+		syntaxPunctuation: "#e2e8f0",
+
+		thinkingOff: "darkGray",
+		thinkingMinimal: "#8fa2d8",
+		thinkingLow: "#38bdf8",
+		thinkingMedium: "#2dd4bf",
+		thinkingHigh: "#a78bfa",
+		thinkingXhigh: "#f472b6",
+
+		bashMode: "green",
+	},
+	export: {
+		pageBg: "#0b1020",
+		cardBg: "#121a30",
+		infoBg: "#3b2f12",
 	},
 };
 
@@ -194,4 +370,9 @@ const light: ThemeJson = {
 // Export
 // ---------------------------------------------------------------------------
 
-export const builtinThemes: Record<string, ThemeJson> = { dark, light };
+export const builtinThemes: Record<string, ThemeJson> = {
+	dark,
+	light,
+	"tui-classic": tuiClassic,
+	vivid,
+};

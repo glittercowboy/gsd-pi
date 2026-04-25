@@ -3,6 +3,7 @@
 <template_meta>
 name: spike
 version: 1
+mode: markdown-phase
 requires_project: false
 artifact_dir: .gsd/workflows/spikes/
 </template_meta>
@@ -65,5 +66,11 @@ Use for: technology evaluation, architecture decisions, "should we X?" questions
    - Recommendation with rationale
    - Next steps if the recommendation is accepted
 4. **Present** the recommendation to the user for discussion
+5. **Offer wrap-up:** If the findings are reusable on future work, offer to run
+   the `spike-wrap-up` skill to package them as a project-local skill at
+   `.claude/skills/<name>/SKILL.md`. That skill will auto-load on future
+   similar tasks via `skill-discovery.ts`. If the recommendation is
+   decision-only (no reusable guidance), suggest appending a one-liner to
+   `.gsd/DECISIONS.md` instead.
 
 </process>

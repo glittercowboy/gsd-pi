@@ -5,6 +5,7 @@ import {
 	getDefaultTTL,
 	getDiscoverableProviders,
 	getDiscoveryAdapter,
+	supportsDiscoveryForApi,
 } from "./model-discovery.js";
 
 // ─── getDiscoveryAdapter ─────────────────────────────────────────────────────
@@ -50,6 +51,12 @@ describe("getDiscoveryAdapter", () => {
 		const adapter = getDiscoveryAdapter("unknown-provider");
 		assert.equal(adapter.provider, "unknown-provider");
 		assert.equal(adapter.supportsDiscovery, false);
+	});
+
+	it("returns OpenAI-style adapter for unknown provider with OpenAI-compatible API", () => {
+		const adapter = getDiscoveryAdapter("my-proxy", ["openai-completions"]);
+		assert.equal(adapter.provider, "my-proxy");
+		assert.equal(adapter.supportsDiscovery, true);
 	});
 
 	it("static adapter fetchModels returns empty array", async () => {
@@ -121,5 +128,17 @@ describe("DISCOVERY_TTLS", () => {
 			assert.equal(typeof value, "number");
 			assert.ok(value > 0);
 		}
+	});
+});
+
+describe("supportsDiscoveryForApi", () => {
+	it("returns true for OpenAI-compatible APIs", () => {
+		assert.equal(supportsDiscoveryForApi("openai-completions"), true);
+		assert.equal(supportsDiscoveryForApi("openai-responses"), true);
+	});
+
+	it("returns false for non-discoverable APIs", () => {
+		assert.equal(supportsDiscoveryForApi("anthropic-messages"), false);
+		assert.equal(supportsDiscoveryForApi(undefined), false);
 	});
 });

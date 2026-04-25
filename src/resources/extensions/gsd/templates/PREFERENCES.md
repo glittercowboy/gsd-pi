@@ -39,6 +39,24 @@ dynamic_routing:
   budget_pressure:
   cross_provider:
   hooks:
+uok:
+  enabled: true
+  legacy_fallback:
+    enabled: false
+  gates:
+    enabled: true
+  model_policy:
+    enabled: true
+  execution_graph:
+    enabled: true
+  gitops:
+    enabled: true
+    turn_action: commit
+    turn_push: false
+  audit_unified:
+    enabled: true
+  plan_v2:
+    enabled: true
 auto_visualize:
 auto_report:
 parallel:
@@ -71,6 +89,7 @@ remote_questions:
 uat_dispatch:
 post_unit_hooks: []
 pre_dispatch_hooks: []
+# language:
 # experimental:
 #   rtk: false
 ---

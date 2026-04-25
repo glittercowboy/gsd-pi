@@ -11,9 +11,24 @@ import type { KeyAction, KeybindingsConfig } from "../keybindings.js";
 import type { ModelRegistry } from "../model-registry.js";
 import type { SessionManager } from "../session-manager.js";
 import type {
+	AdjustToolSetEvent,
+	AdjustToolSetResult,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
+	BeforeCommitEvent,
+	BeforeCommitEventResult,
+	BeforeModelSelectEvent,
+	BeforeModelSelectResult,
+	BeforePrEvent,
+	BeforePrEventResult,
 	BeforeProviderRequestEvent,
+	BeforePushEvent,
+	BeforePushEventResult,
+	BeforeVerifyEvent,
+	BeforeVerifyEventResult,
+	BudgetThresholdEvent,
+	BudgetThresholdEventResult,
+	CommitEvent,
 	CompactOptions,
 	ContextEvent,
 	ContextEventResult,
@@ -34,6 +49,11 @@ import type {
 	InputEventResult,
 	InputSource,
 	MessageRenderer,
+	MilestoneEndEvent,
+	MilestoneStartEvent,
+	NotificationEvent,
+	PrOpenedEvent,
+	PushEvent,
 	RegisteredCommand,
 	RegisteredTool,
 	ResourcesDiscoverEvent,
@@ -42,12 +62,18 @@ import type {
 	SessionBeforeForkResult,
 	SessionBeforeSwitchResult,
 	SessionBeforeTreeResult,
+	SessionEndEvent,
+	StopEvent,
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolResultEvent,
 	ToolResultEventResult,
+	UnitEndEvent,
+	UnitStartEvent,
 	UserBashEvent,
 	UserBashEventResult,
+	VerifyFailure,
+	VerifyResultEvent,
 } from "./types.js";
 
 // Keybindings for these actions cannot be overridden by extensions
@@ -138,6 +164,8 @@ export type ExtensionErrorListener = (error: ExtensionError) => void;
 export type NewSessionHandler = (options?: {
 	parentSession?: string;
 	setup?: (sessionManager: SessionManager) => Promise<void>;
+	/** See ExtensionCommandContext.newSession for docs (#3731). */
+	abortSignal?: AbortSignal;
 }) => Promise<{ cancelled: boolean }>;
 
 export type ForkHandler = (entryId: string) => Promise<{ cancelled: boolean }>;
@@ -230,6 +258,130 @@ export class ExtensionRunner {
 		this.cwd = cwd;
 		this.sessionManager = sessionManager;
 		this.modelRegistry = modelRegistry;
+		// Bind emit methods into the shared runtime so createExtensionAPI can delegate to them.
+		this.runtime.emitBeforeModelSelect = (event) => this.emitBeforeModelSelect(event);
+		this.runtime.emitAdjustToolSet = (event) => this.emitAdjustToolSet(event);
+		this.runtime.emitExtensionEvent = (event) => this.emitExtensionEventDynamic(event);
+	}
+
+	/**
+	 * Dispatch an ExtensionEvent by type. Used by extensions to emit the
+	 * post-plan Layer 2 events (git lifecycle, verify, budget, milestone,
+	 * unit, notification, stop, session_end) without a bespoke method per
+	 * type. Returns the handler chain's aggregate result where meaningful.
+	 */
+	private async emitExtensionEventDynamic(event: ExtensionEvent): Promise<unknown> {
+		switch (event.type) {
+			case "notification":
+				return this.emitNotification({ kind: event.kind, message: event.message, details: event.details });
+			case "stop":
+				return this.emitStop({ reason: event.reason, lastMessage: event.lastMessage });
+			case "session_end":
+				return this.emitSessionEnd({ reason: event.reason, sessionFile: event.sessionFile });
+			case "before_commit":
+				return this.emitBeforeCommit({
+					message: event.message,
+					files: event.files,
+					cwd: event.cwd,
+					author: event.author,
+				});
+			case "commit":
+				return this.emitCommit({ sha: event.sha, message: event.message, files: event.files, cwd: event.cwd });
+			case "before_push":
+				return this.emitBeforePush({ remote: event.remote, branch: event.branch, cwd: event.cwd });
+			case "push":
+				return this.emitPush({ remote: event.remote, branch: event.branch, cwd: event.cwd });
+			case "before_pr":
+				return this.emitBeforePr({
+					branch: event.branch,
+					targetBranch: event.targetBranch,
+					title: event.title,
+					body: event.body,
+					cwd: event.cwd,
+				});
+			case "pr_opened":
+				return this.emitPrOpened({
+					url: event.url,
+					branch: event.branch,
+					targetBranch: event.targetBranch,
+					cwd: event.cwd,
+				});
+			case "before_verify":
+				return this.emitBeforeVerify({ unitType: event.unitType, unitId: event.unitId, cwd: event.cwd });
+			case "verify_result":
+				return this.emitVerifyResult({
+					passed: event.passed,
+					failures: event.failures,
+					unitType: event.unitType,
+					unitId: event.unitId,
+					cwd: event.cwd,
+				});
+			case "budget_threshold":
+				return this.emitBudgetThreshold({
+					fraction: event.fraction,
+					spent: event.spent,
+					limit: event.limit,
+					currency: event.currency,
+				});
+			case "milestone_start":
+				return this.emitMilestoneStart({ milestoneId: event.milestoneId, title: event.title, cwd: event.cwd });
+			case "milestone_end":
+				return this.emitMilestoneEnd({
+					milestoneId: event.milestoneId,
+					status: event.status,
+					cwd: event.cwd,
+				});
+			case "unit_start":
+				return this.emitUnitStart({
+					unitType: event.unitType,
+					unitId: event.unitId,
+					milestoneId: event.milestoneId,
+					cwd: event.cwd,
+				});
+			case "unit_end":
+				return this.emitUnitEnd({
+					unitType: event.unitType,
+					unitId: event.unitId,
+					milestoneId: event.milestoneId,
+					status: event.status,
+					cwd: event.cwd,
+				});
+			default:
+				return undefined;
+		}
+	}
+
+	/**
+	 * Install a synthetic "extension" that only provides event handlers.
+	 * Used by the Layer 0 hooks-runner to bridge shell hooks onto the
+	 * extension event bus without requiring a full extension module. The
+	 * returned disposer removes the synthetic extension.
+	 */
+	installHookBridge(
+		path: string,
+		handlers: Map<string, Array<(event: unknown, ctx: unknown) => Promise<unknown>>>,
+	): () => void {
+		const synthetic: Extension = {
+			path,
+			resolvedPath: path,
+			handlers: handlers as unknown as Extension["handlers"],
+			tools: new Map(),
+			messageRenderers: new Map(),
+			commands: new Map(),
+			flags: new Map(),
+			shortcuts: new Map(),
+			lifecycleHooks: {
+				beforeInstall: [],
+				afterInstall: [],
+				beforeRemove: [],
+				afterRemove: [],
+			},
+		};
+		this.extensions.push(synthetic);
+		return () => {
+			const index = this.extensions.indexOf(synthetic);
+			if (index >= 0) this.extensions.splice(index, 1);
+		};
 	}
 
 	bindCore(actions: ExtensionActions, contextActions: ExtensionContextActions): void {
@@ -679,7 +831,10 @@ export class ExtensionRunner {
 		return currentMessages;
 	}
 
-	async emitBeforeProviderRequest(payload: unknown, model?: { provider: string; id: string }): Promise<unknown> {
+	async emitBeforeProviderRequest(
+		payload: unknown,
+		model?: { provider: string; id: string; api?: string },
+	): Promise<unknown> {
 		let currentPayload = payload;
 
 		await this.invokeHandlers("before_provider_request", () => ({
@@ -692,6 +847,36 @@ export class ExtensionRunner {
 		});
 
 		return currentPayload;
+	}
+
+	async emitBeforeModelSelect(event: Omit<BeforeModelSelectEvent, "type">): Promise<BeforeModelSelectResult | undefined> {
+		let result: BeforeModelSelectResult | undefined;
+		await this.invokeHandlers("before_model_select", () => ({
+			type: "before_model_select" as const,
+			...event,
+		} satisfies BeforeModelSelectEvent), (handlerResult) => {
+			if (handlerResult) {
+				result = handlerResult as BeforeModelSelectResult;
+				return { done: true }; // first override wins
+			}
+			return { done: false };
+		});
+		return result;
+	}
+
+	async emitAdjustToolSet(event: Omit<AdjustToolSetEvent, "type">): Promise<AdjustToolSetResult | undefined> {
+		let result: AdjustToolSetResult | undefined;
+		await this.invokeHandlers("adjust_tool_set", () => ({
+			type: "adjust_tool_set" as const,
+			...event,
+		} satisfies AdjustToolSetEvent), (handlerResult) => {
+			if (handlerResult) {
+				result = handlerResult as AdjustToolSetResult;
+				return { done: true }; // first override wins
+			}
+			return { done: false };
+		});
+		return result;
 	}
 
 	async emitBeforeAgentStart(
@@ -785,4 +970,210 @@ export class ExtensionRunner {
 			? { action: "transform", text: currentText, images: currentImages }
 			: { action: "continue" };
 	}
+
+	// =========================================================================
+	// Layer 2 event emitters (notification, stop, session_end, git, verify,
+	// budget, milestone / unit). Fire-and-observe except where a handler result
+	// can veto or rewrite the pending action.
+	// =========================================================================
+
+	async emitStop(event: Omit<StopEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"stop",
+			() => ({ type: "stop" as const, ...event } satisfies StopEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitNotification(event: Omit<NotificationEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"notification",
+			() => ({ type: "notification" as const, ...event } satisfies NotificationEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitSessionEnd(event: Omit<SessionEndEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"session_end",
+			() => ({ type: "session_end" as const, ...event } satisfies SessionEndEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitBeforeCommit(
+		event: Omit<BeforeCommitEvent, "type">,
+	): Promise<BeforeCommitEventResult | undefined> {
+		let result: BeforeCommitEventResult | undefined;
+		let message = event.message;
+		await this.invokeHandlers(
+			"before_commit",
+			() => ({ type: "before_commit" as const, ...event, message } satisfies BeforeCommitEvent),
+			(handlerResult) => {
+				const r = handlerResult as BeforeCommitEventResult | undefined;
+				if (!r) return { done: false };
+				if (r.cancel) {
+					result = { cancel: true, reason: r.reason };
+					return { done: true };
+				}
+				if (r.message !== undefined) {
+					message = r.message;
+					result = { ...(result ?? {}), message };
+				}
+				return { done: false };
+			},
+		);
+		return result;
+	}
+
+	async emitCommit(event: Omit<CommitEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"commit",
+			() => ({ type: "commit" as const, ...event } satisfies CommitEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitBeforePush(
+		event: Omit<BeforePushEvent, "type">,
+	): Promise<BeforePushEventResult | undefined> {
+		let result: BeforePushEventResult | undefined;
+		await this.invokeHandlers(
+			"before_push",
+			() => ({ type: "before_push" as const, ...event } satisfies BeforePushEvent),
+			(handlerResult) => {
+				const r = handlerResult as BeforePushEventResult | undefined;
+				if (r?.cancel) {
+					result = r;
+					return { done: true };
+				}
+				return { done: false };
+			},
+		);
+		return result;
+	}
+
+	async emitPush(event: Omit<PushEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"push",
+			() => ({ type: "push" as const, ...event } satisfies PushEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitBeforePr(
+		event: Omit<BeforePrEvent, "type">,
+	): Promise<BeforePrEventResult | undefined> {
+		let result: BeforePrEventResult | undefined;
+		let title = event.title;
+		let body = event.body;
+		await this.invokeHandlers(
+			"before_pr",
+			() => ({ type: "before_pr" as const, ...event, title, body } satisfies BeforePrEvent),
+			(handlerResult) => {
+				const r = handlerResult as BeforePrEventResult | undefined;
+				if (!r) return { done: false };
+				if (r.cancel) {
+					result = { cancel: true, reason: r.reason };
+					return { done: true };
+				}
+				if (r.title !== undefined) title = r.title;
+				if (r.body !== undefined) body = r.body;
+				if (r.title !== undefined || r.body !== undefined) {
+					result = { ...(result ?? {}), title, body };
+				}
+				return { done: false };
+			},
+		);
+		return result;
+	}
+
+	async emitPrOpened(event: Omit<PrOpenedEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"pr_opened",
+			() => ({ type: "pr_opened" as const, ...event } satisfies PrOpenedEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitBeforeVerify(
+		event: Omit<BeforeVerifyEvent, "type">,
+	): Promise<BeforeVerifyEventResult | undefined> {
+		let result: BeforeVerifyEventResult | undefined;
+		await this.invokeHandlers(
+			"before_verify",
+			() => ({ type: "before_verify" as const, ...event } satisfies BeforeVerifyEvent),
+			(handlerResult) => {
+				const r = handlerResult as BeforeVerifyEventResult | undefined;
+				if (r?.cancel) {
+					result = r;
+					return { done: true };
+				}
+				return { done: false };
+			},
+		);
+		return result;
+	}
+
+	async emitVerifyResult(event: Omit<VerifyResultEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"verify_result",
+			() => ({ type: "verify_result" as const, ...event } satisfies VerifyResultEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitBudgetThreshold(
+		event: Omit<BudgetThresholdEvent, "type">,
+	): Promise<BudgetThresholdEventResult | undefined> {
+		let result: BudgetThresholdEventResult | undefined;
+		await this.invokeHandlers(
+			"budget_threshold",
+			() => ({ type: "budget_threshold" as const, ...event } satisfies BudgetThresholdEvent),
+			(handlerResult) => {
+				const r = handlerResult as BudgetThresholdEventResult | undefined;
+				if (r?.action) {
+					result = r;
+					return { done: true };
+				}
+				return { done: false };
+			},
+		);
+		return result;
+	}
+
+	async emitMilestoneStart(event: Omit<MilestoneStartEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"milestone_start",
+			() => ({ type: "milestone_start" as const, ...event } satisfies MilestoneStartEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitMilestoneEnd(event: Omit<MilestoneEndEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"milestone_end",
+			() => ({ type: "milestone_end" as const, ...event } satisfies MilestoneEndEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitUnitStart(event: Omit<UnitStartEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"unit_start",
+			() => ({ type: "unit_start" as const, ...event } satisfies UnitStartEvent),
+			() => ({ done: false }),
+		);
+	}
+
+	async emitUnitEnd(event: Omit<UnitEndEvent, "type">): Promise<void> {
+		await this.invokeHandlers(
+			"unit_end",
+			() => ({ type: "unit_end" as const, ...event } satisfies UnitEndEvent),
+			() => ({ done: false }),
+		);
+	}
 }
+
+/** Helper re-export for callers wiring verification failures. */
+export type { VerifyFailure };

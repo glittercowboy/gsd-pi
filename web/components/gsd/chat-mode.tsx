@@ -1892,6 +1892,8 @@ interface ChatPaneProps {
  */
 function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
   const [expanded, setExpanded] = useState(false)
+  const autoExpandedRef = useRef(false)
+  const normalizedToolName = typeof tool.name === "string" ? tool.name.toLowerCase() : ""
 
   const path = typeof tool.args?.path === "string" ? tool.args.path : typeof tool.args?.file_path === "string" ? tool.args.file_path : null
   const shortPath = path ? (path.startsWith(process.env.HOME ?? "/Users") ? "~" + path.slice((process.env.HOME ?? "").length) : path) : null
@@ -1899,23 +1901,31 @@ function ToolExecutionBlock({ tool }: { tool: CompletedToolExecution }) {
   const diff = tool.result?.details?.diff as string | undefined
 
   // Choose icon and label
-  const icon = tool.name === "edit" ? <FileEdit className="h-3.5 w-3.5" />
-    : tool.name === "write" ? <FilePlus className="h-3.5 w-3.5" />
+  const icon = normalizedToolName === "edit" ? <FileEdit className="h-3.5 w-3.5" />
+    : normalizedToolName === "write" ? <FilePlus className="h-3.5 w-3.5" />
     : <Terminal className="h-3.5 w-3.5" />
 
-  const label = tool.name === "edit" ? "Edit"
-    : tool.name === "write" ? "Write"
-    : tool.name === "bash" ? "$"
+  const label = normalizedToolName === "edit" ? "Edit"
+    : normalizedToolName === "write" ? "Write"
+    : normalizedToolName === "bash" ? "$"
     : tool.name
 
   // For bash, show the command
-  const bashCommand = tool.name === "bash" && typeof tool.args?.command === "string" ? tool.args.command : null
+  const bashCommand = normalizedToolName === "bash" && typeof tool.args?.command === "string" ? tool.args.command : null
 
   // Result text (for bash output, read result, etc.)
   const resultText = tool.result?.content
     ?.filter((c) => c.type === "text" && c.text)
     .map((c) => c.text)
     .join("\n") ?? ""
+
+  useEffect(() => {
+    if (autoExpandedRef.current) return
+    const hasVisibleResult = Boolean(diff || resultText.trim() || isError)
+    if (!hasVisibleResult) return
+    autoExpandedRef.current = true
+    setExpanded(true)
+  }, [diff, resultText, isError])
 
   return (
     <div className="flex justify-start gap-3">
@@ -2032,30 +2042,18 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
 
   const placeholderCTA = useMemo((): { label: string; icon: LucideIcon } | null => {
     if (!workflowAction.primary || workflowAction.disabled) return null
-    const phase = state.boot?.workspace?.active.phase ?? "pre-planning"
-    const autoActive = state.boot?.auto?.active ?? false
-    const autoPaused = state.boot?.auto?.paused ?? false
+    const primary = workflowAction.primary
+    const iconByCommand: Record<string, LucideIcon> = {
+      "/gsd stop": Square,
+      "/gsd auto": Zap,
+      "/gsd next": Play,
+    }
 
-    if (autoActive && !autoPaused) {
-      return { label: "Stop Auto", icon: Square }
+    return {
+      label: primary.label,
+      icon: iconByCommand[primary.command] ?? (primary.label === "New Milestone" ? Milestone : Play),
     }
-    if (autoPaused) {
-      return { label: "Resume Auto", icon: Play }
-    }
-    if (phase === "complete") {
-      return { label: "New Milestone", icon: Milestone }
-    }
-    if (phase === "planning") {
-      return { label: "Plan", icon: Play }
-    }
-    if (phase === "executing" || phase === "summarizing") {
-      return { label: "Start Auto", icon: Zap }
-    }
-    if (phase === "pre-planning") {
-      return { label: "Initialize Project", icon: Play }
-    }
-    return { label: "Continue", icon: Play }
-  }, [workflowAction, state.boot?.workspace?.active.phase, state.boot?.auto?.active, state.boot?.auto?.paused])
+  }, [workflowAction])
 
   const handlePlaceholderCTA = useCallback(() => {
     if (!workflowAction.primary) return
@@ -2204,6 +2202,12 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
 
   const showPlaceholder = timeline.length === 0 && !isStreaming
 
+  // Show an "awaiting input" indicator when the session is idle (connected,
+  // not streaming, has timeline content) so the UI does not appear stuck (#2707).
+  const showAwaitingInput = connected && !isStreaming && timeline.length > 0
+    && !state.activeToolExecution
+    && state.pendingUiRequests.length === 0
+
   // Auto-scroll ref
   const scrollRef = useRef<HTMLDivElement>(null)
   const isNearBottomRef = useRef(true)
@@ -2309,6 +2313,12 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
                   return <InlineUiRequest key={item.request.id} request={item.request} />
               }
             })}
+            {showAwaitingInput && (
+              <div className="flex items-center gap-2 px-1 py-1 text-xs text-muted-foreground animate-in fade-in duration-500">
+                <span className="inline-block h-2 w-2 rounded-full bg-emerald-500/70 animate-pulse" />
+                Ready for your input
+              </div>
+            )}
             <div className="h-2" />
           </div>
         )}

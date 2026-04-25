@@ -320,6 +320,10 @@ function buildSessionOptions(
 		options.tools = parsed.tools.map((name) => allTools[name]);
 	}
 
+	if (parsed.extraToolNames && parsed.extraToolNames.length > 0) {
+		options.extraActiveToolNames = parsed.extraToolNames;
+	}
+
 	return { options, cliThinkingFromModel };
 }
 

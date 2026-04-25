@@ -119,12 +119,10 @@ test("await_job returns not-found message for invalid job IDs", async () => {
 	manager.shutdown();
 });
 
-test("await_job marks jobs as awaited to suppress follow-up delivery (#2248)", async () => {
+test("await_job suppresses follow-up for jobs that complete while awaiting (#2248)", async () => {
 	const followUps: string[] = [];
 	const manager = new AsyncJobManager({
-		onJobComplete: (job) => {
-			if (!job.awaited) followUps.push(job.id);
-		},
+		onJobComplete: (job) => followUps.push(job.id),
 	});
 	const tool = createAwaitTool(() => manager);
 
@@ -133,13 +131,48 @@ test("await_job marks jobs as awaited to suppress follow-up delivery (#2248)", a
 		return new Promise<string>((resolve) => setTimeout(() => resolve("result"), 50));
 	});
 
-	// await_job consumes the result — should mark as awaited before promise resolves
+	// await_job consumes the result — suppressFollowUp() should cancel delivery timer
 	await tool.execute("tc7", { jobs: [jobId] }, noopSignal, () => {}, undefined as never);
 
-	// Give the onJobComplete callback a tick to fire
+	// Give the onJobComplete callback a tick to fire (if suppression failed)
 	await new Promise((r) => setTimeout(r, 50));
 
-	assert.equal(followUps.length, 0, "onJobComplete should not deliver follow-up for awaited jobs");
+	assert.equal(followUps.length, 0, "onJobComplete should not fire for jobs consumed by await_job");
+
+	manager.shutdown();
+});
+
+test("await_job suppresses follow-up for already-completed jobs (cross-turn case) (#3787)", async () => {
+	// This is the key regression: job completes in a prior LLM turn, then
+	// await_job is called in a later turn. The delivery timer must still be
+	// cancellable at that point.
+	const followUps: string[] = [];
+	const manager = new AsyncJobManager({
+		onJobComplete: (job) => followUps.push(job.id),
+	});
+	const tool = createAwaitTool(() => manager);
+
+	// Register and let the job complete fully before calling await_job
+	const jobId = manager.register("bash", "pre-completed-job", async () => "done");
+	const job = manager.getJob(jobId)!;
+	await job.promise;
+
+	// Simulate a "later turn" by yielding to the event loop — this lets any
+	// queueMicrotask callbacks run, but the setTimeout(0) delivery timer has
+	// not yet fired (it's scheduled for the next macrotask).
+	await new Promise((r) => setImmediate(r));
+
+	// Now call await_job — suppressFollowUp() should cancel the pending timer
+	await tool.execute("tc7b", { jobs: [jobId] }, noopSignal, () => {}, undefined as never);
+
+	// Drain the macrotask queue — the (now-cancelled) timer would have fired here
+	await new Promise((r) => setTimeout(r, 50));
+
+	assert.equal(
+		followUps.length,
+		0,
+		"onJobComplete should not fire for already-completed jobs consumed by await_job",
+	);
 
 	manager.shutdown();
 });

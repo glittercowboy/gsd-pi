@@ -157,62 +157,19 @@ describe("auto-start-needs-discussion (#1726)", () => {
     }
   });
 
-  test("6. No infinite loop: needs-discussion always routes to showSmartEntry", () => {
-    const source = readAutoStartSource();
-
-    // Verify needs-discussion does NOT appear in auto-dispatch trigger conditions
-    // within auto-start.ts. The only place needs-discussion should appear is in
-    // the showSmartEntry routing block.
-    const survivorSection = source.match(
-      /\/\/ Milestone branch recovery.*?let hasSurvivorBranch = false;[\s\S]*?if\s*\([^)]*state\.phase[^)]*\)\s*\{/,
-    );
-    if (survivorSection) {
-      assert.ok(
-        !survivorSection[0].includes("needs-discussion"),
-        "survivor branch phase condition must not mention needs-discussion",
-      );
-    }
-
-    // Verify needs-discussion IS handled inside the !hasSurvivorBranch block
-    const notSurvivorBlock = source.match(
-      /if\s*\(!hasSurvivorBranch\)\s*\{([\s\S]*?)\/\/ Unreachable safety check/,
-    );
-    assert.ok(!!notSurvivorBlock,
-      "found !hasSurvivorBranch block in auto-start.ts");
-    if (notSurvivorBlock) {
-      assert.ok(
-        notSurvivorBlock[1].includes('"needs-discussion"'),
-        "!hasSurvivorBranch block must handle needs-discussion phase",
-      );
-    }
-  });
-
-  test("7. Survivor branch + needs-discussion routes to showSmartEntry", () => {
-    const source = readAutoStartSource();
-
-    // When hasSurvivorBranch is true AND phase is needs-discussion, the code
-    // must route to showSmartEntry instead of falling through to auto-mode.
-    const survivorNeedsDiscussion = source.match(
-      /if\s*\(hasSurvivorBranch\s*&&\s*state\.phase\s*===\s*"needs-discussion"\)\s*\{[^}]*showSmartEntry/s,
-    );
-    assert.ok(!!survivorNeedsDiscussion,
-      "hasSurvivorBranch && needs-discussion must route to showSmartEntry");
-
-    // Verify the handler checks if the discussion succeeded
-    const handlerBlock = source.match(
-      /if\s*\(hasSurvivorBranch\s*&&\s*state\.phase\s*===\s*"needs-discussion"\)\s*\{([\s\S]*?)\n    \}/,
-    );
-    assert.ok(!!handlerBlock,
-      "found survivor + needs-discussion handler block");
-    if (handlerBlock) {
-      assert.ok(
-        handlerBlock[1].includes('postState.phase !== "needs-discussion"'),
-        "handler must check if phase advanced after discussion",
-      );
-      assert.ok(
-        handlerBlock[1].includes("releaseLockAndReturn"),
-        "handler must abort if discussion didn't promote draft",
-      );
-    }
-  });
+  // Tests 6 and 7 removed in the #4832 follow-up.
+  //
+  // They source-grepped `auto-start.ts` for specific regex patterns like
+  // `if (hasSurvivorBranch && state.phase === "needs-discussion")` —
+  // which broke (correctly so) when the three-way survivor decision was
+  // extracted into the `decideSurvivorAction` pure helper. The
+  // behavioural invariants they were trying to uphold are now covered
+  // directly in `survivor-branch-complete.test.ts`:
+  //   - (hasSurvivor=true, phase="needs-discussion") → "discuss"
+  //   - (hasSurvivor=false, phase="needs-discussion") → "none"
+  //   - (hasSurvivor=true, phase=other)              → "none"
+  // Those tests fail on real decision regressions without the
+  // source-grep brittleness. Tests 1–5 above remain — they hit
+  // `deriveState` on real fixtures and defend the #1726 infinite-loop
+  // fix end-to-end.
 });

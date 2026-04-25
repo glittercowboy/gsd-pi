@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AutoSession } from "../auto/session.ts";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -20,7 +21,7 @@ describe("double mergeAndExit guard (#2645)", () => {
     const completeIdx = phasesSrc.indexOf('state.phase === "complete"');
     assert.ok(completeIdx > 0, "phases.ts should have a 'complete' phase check");
 
-    const afterComplete = phasesSrc.slice(completeIdx, completeIdx + 600);
+    const afterComplete = extractSourceRegion(phasesSrc, 'state.phase === "complete"');
     const mergeIdx = afterComplete.indexOf("deps.resolver.mergeAndExit");
     const flagIdx = afterComplete.indexOf("s.milestoneMergedInPhases = true");
 
@@ -42,7 +43,7 @@ describe("double mergeAndExit guard (#2645)", () => {
     const allCompleteIdx = phasesSrc.indexOf("incomplete.length === 0");
     assert.ok(allCompleteIdx > 0, "phases.ts should have an all-milestones-complete check");
 
-    const afterAllComplete = phasesSrc.slice(allCompleteIdx, allCompleteIdx + 600);
+    const afterAllComplete = extractSourceRegion(phasesSrc, "incomplete.length === 0");
     const mergeIdx = afterAllComplete.indexOf("deps.resolver.mergeAndExit");
     const flagIdx = afterAllComplete.indexOf("s.milestoneMergedInPhases = true");
 
@@ -64,7 +65,7 @@ describe("double mergeAndExit guard (#2645)", () => {
     const step4Idx = autoSrc.indexOf("Step 4: Auto-worktree exit");
     assert.ok(step4Idx > 0, "auto.ts should have Step 4 worktree exit");
 
-    const step4Block = autoSrc.slice(step4Idx, step4Idx + 600);
+    const step4Block = extractSourceRegion(autoSrc, "Step 4: Auto-worktree exit");
     assert.ok(
       step4Block.includes("milestoneMergedInPhases"),
       "stopAuto Step 4 must check milestoneMergedInPhases before merging",

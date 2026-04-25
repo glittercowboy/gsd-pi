@@ -9,6 +9,7 @@
 // parseRoadmap(), parsePlan(), parseSummary() in files.ts.
 
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { logWarning } from "./workflow-logger.js";
 import { isClosedStatus } from "./status-guards.js";
 import { join, relative } from "node:path";
 import { createRequire } from "node:module";
@@ -93,9 +94,7 @@ function loadArtifactContent(
   try {
     content = readFileSync(absPath, "utf-8");
   } catch {
-    process.stderr.write(
-      `markdown-renderer: cannot read file from disk: ${absPath}\n`,
-    );
+    logWarning("renderer", `cannot read file from disk: ${absPath}`);
     return null;
   }
 
@@ -111,9 +110,7 @@ function loadArtifactContent(
     });
   } catch {
     // Non-fatal: we have the content, DB storage is best-effort
-    process.stderr.write(
-      `markdown-renderer: warning — failed to store disk fallback in DB: ${artifactPath}\n`,
-    );
+    logWarning("renderer", `failed to store disk fallback in DB: ${artifactPath}`);
   }
 
   return content;
@@ -146,9 +143,7 @@ async function writeAndStore(
     });
   } catch {
     // Non-fatal: file is on disk, DB is best-effort
-    process.stderr.write(
-      `markdown-renderer: warning — failed to update artifact in DB: ${artifactPath}\n`,
-    );
+    logWarning("renderer", `failed to update artifact in DB: ${artifactPath}`);
   }
 
   invalidateCaches();
@@ -174,7 +169,7 @@ function renderRoadmapMarkdown(milestone: MilestoneRow, slices: SliceRow[]): str
   lines.push("## Slices");
   lines.push("");
   for (const slice of slices) {
-    const done = slice.status === "complete" ? "x" : " ";
+    const done = isClosedStatus(slice.status) ? "x" : " ";
     const depends = `[${(slice.depends ?? []).join(",")}]`;
     lines.push(`- [${done}] **${slice.id}: ${slice.title}** \`risk:${slice.risk}\` \`depends:${depends}\``);
     lines.push(`  > After this: ${slice.demo}`);
@@ -501,7 +496,7 @@ export async function renderRoadmapCheckboxes(
   // Apply checkbox patches for each slice
   let updated = content;
   for (const slice of slices) {
-    const isDone = slice.status === "complete";
+    const isDone = isClosedStatus(slice.status);
     const sid = slice.id;
 
     if (isDone) {
@@ -806,7 +801,8 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
   try {
     const m = _require("./parsers-legacy.ts");
     parseRoadmap = m.parseRoadmap; parsePlan = m.parsePlan;
-  } catch {
+  } catch (e) {
+    logWarning("renderer", `parsers-legacy.ts require failed, falling back to .js: ${(e as Error).message}`);
     const m = _require("./parsers-legacy.js");
     parseRoadmap = m.parseRoadmap; parsePlan = m.parsePlan;
   }
@@ -825,24 +821,24 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
         const parsed = parseRoadmap(content);
 
         for (const slice of slices) {
-          const isCompleteInDb = slice.status === "complete";
+          const isCompleteInDb = isClosedStatus(slice.status);
           const roadmapSlice = parsed.slices.find((s: { id: string }) => s.id === slice.id);
           if (!roadmapSlice) continue;
 
           if (isCompleteInDb && !roadmapSlice.done) {
             stale.push({
               path: roadmapPath,
-              reason: `${slice.id} is complete in DB but unchecked in roadmap`,
+              reason: `${slice.id} is closed in DB but unchecked in roadmap`,
             });
           } else if (!isCompleteInDb && roadmapSlice.done) {
             stale.push({
               path: roadmapPath,
-              reason: `${slice.id} is not complete in DB but checked in roadmap`,
+              reason: `${slice.id} is not closed in DB but checked in roadmap`,
             });
           }
         }
-      } catch {
-        // Can't parse roadmap — skip silently
+      } catch (e) {
+        logWarning("renderer", `roadmap parse failed: ${(e as Error).message}`);
       }
     }
 
@@ -874,8 +870,8 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
               });
             }
           }
-        } catch {
-          // Can't parse plan — skip silently
+        } catch (e) {
+          logWarning("renderer", `plan parse failed: ${(e as Error).message}`);
         }
       }
 
@@ -1025,9 +1021,7 @@ export async function repairStaleRenders(basePath: string): Promise<number> {
         }
       }
     } catch (err) {
-      process.stderr.write(
-        `markdown-renderer: repair failed for ${entry.path}: ${(err as Error).message}\n`,
-      );
+      logWarning("renderer", `repair failed for ${entry.path}: ${(err as Error).message}`);
     }
   }
 

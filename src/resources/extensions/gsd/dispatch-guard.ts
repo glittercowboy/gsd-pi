@@ -3,8 +3,10 @@
 import { resolveMilestoneFile } from "./paths.js";
 import { findMilestoneIds } from "./guided-flow.js";
 import { parseUnitId } from "./unit-id.js";
-import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
+import { isDbAvailable, getMilestoneSlices, getMilestone } from "./gsd-db.js";
 import { parseRoadmap } from "./parsers-legacy.js";
+import { isClosedStatus } from "./status-guards.js";
+import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 import { readFileSync } from "node:fs";
 
 const SLICE_DISPATCH_TYPES = new Set([
@@ -46,7 +48,30 @@ export function getPriorSliceCompletionBlocker(
 
   for (const mid of milestoneIds) {
     if (resolveMilestoneFile(base, mid, "PARKED")) continue;
-    if (resolveMilestoneFile(base, mid, "SUMMARY")) continue;
+
+    // DB/SUMMARY completion check (#4663 sibling to #4658).
+    // Prior behavior treated any SUMMARY file on disk as proof of milestone
+    // completion, which is wrong when the SUMMARY is a failure-path report
+    // (verification FAILED, blocker placeholder, etc.). Resolve as follows:
+    //   1. When DB is available and status is closed → skip (authoritative).
+    //   2. When SUMMARY exists but looks like a failure/blocker report →
+    //      do not short-circuit; fall through to the slice-level check so
+    //      the guard can still block dependents of an active milestone.
+    //   3. Otherwise (SUMMARY without failure markers) → skip. Preserves
+    //      the #1716 contract where a completed milestone with unchecked
+    //      remediation slices is still treated as done.
+    const summaryPath = resolveMilestoneFile(base, mid, "SUMMARY");
+    if (isDbAvailable()) {
+      const milestoneRow = getMilestone(mid);
+      if (milestoneRow && isClosedStatus(milestoneRow.status)) continue;
+    }
+    if (summaryPath) {
+      let summaryContent: string | null = null;
+      try { summaryContent = readFileSync(summaryPath, "utf-8"); } catch { /* ignore */ }
+      if (!summaryContent || classifyMilestoneSummaryContent(summaryContent) !== "failure") {
+        continue;
+      }
+    }
 
     // Normalised slice list from DB or file fallback
     type NormSlice = { id: string; done: boolean; depends: string[] };
@@ -57,7 +82,7 @@ export function getPriorSliceCompletionBlocker(
       if (rows.length > 0) {
         slices = rows.map((r) => ({
           id: r.id,
-          done: r.status === "complete",
+          done: isClosedStatus(r.status),
           depends: r.depends ?? [],
         }));
       }
@@ -106,10 +131,32 @@ export function getPriorSliceCompletionBlocker(
         // it may be a cross-milestone reference handled elsewhere.
       }
     } else {
+      const milestoneUsesExplicitDeps = slices.some((slice) => slice.depends.length > 0);
+      if (milestoneUsesExplicitDeps) {
+        return null;
+      }
+
+      // Positional fallback is only a heuristic for legacy slices with no
+      // declared dependencies. Skip any earlier slice that depends on the
+      // target, directly or transitively, or we can deadlock a valid zero-dep
+      // slice behind its own downstream dependents (#3720).
+      const reverseDependents = new Set<string>();
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const slice of slices) {
+          if (reverseDependents.has(slice.id)) continue;
+          if (slice.depends.some((depId) => depId === targetSid || reverseDependents.has(depId))) {
+            reverseDependents.add(slice.id);
+            changed = true;
+          }
+        }
+      }
+
       const targetIndex = slices.findIndex((slice) => slice.id === targetSid);
       const incomplete = slices
         .slice(0, targetIndex)
-        .find((slice) => !slice.done);
+        .find((slice) => !slice.done && !reverseDependents.has(slice.id));
       if (incomplete) {
         return `Cannot dispatch ${unitType} ${unitId}: earlier slice ${targetMid}/${incomplete.id} is not complete.`;
       }

@@ -70,6 +70,25 @@ export function clearParseCache(): void {
   for (const cb of _cacheClearCallbacks) cb();
 }
 
+// ─── Platform shortcuts ───────────────────────────────────────────────────
+
+const IS_MAC = process.platform === "darwin";
+
+/**
+ * Format a keyboard shortcut for the current OS.
+ * Input: modifier key combo like "Ctrl+Alt+G"
+ * Output: "⌃⌥G" on macOS, "Ctrl+Alt+G" on Windows/Linux.
+ */
+export function formatShortcut(combo: string): string {
+  if (!IS_MAC) return combo;
+  return combo
+    .replace(/Ctrl\+Alt\+/i, "⌃⌥")
+    .replace(/Ctrl\+/i, "⌃")
+    .replace(/Alt\+/i, "⌥")
+    .replace(/Shift\+/i, "⇧")
+    .replace(/Cmd\+/i, "⌘");
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 /** Extract the text after a heading at a given level, up to the next heading of same or higher level. */
@@ -111,6 +130,25 @@ export function extractAllSections(body: string, level: number = 2): Map<string,
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Normalize a task-plan file reference that may include inline description text
+ * after the path, for example:
+ *   "docs/file.md — explanation"
+ *   "docs/file.md - explanation"
+ */
+export function normalizePlannedFileReference(value: string): string {
+  const trimmed = value.trim().replace(/`/g, "");
+  const match = /^(.*?)(?:\s+(?:—|-)\s+)(.+)$/.exec(trimmed);
+  if (!match) return trimmed;
+
+  const pathCandidate = match[1].trim();
+  if (pathCandidate.includes("/") || pathCandidate.includes("\\") || pathCandidate.includes(".")) {
+    return pathCandidate;
+  }
+
+  return trimmed;
 }
 
 /** Parse bullet list items from a text block. */
@@ -603,11 +641,11 @@ export function parseTaskPlanIO(content: string): { inputFiles: string[]; output
       let match: RegExpExecArray | null;
       backtickPathRegex.lastIndex = 0;
       while ((match = backtickPathRegex.exec(trimmed)) !== null) {
-        const candidate = match[1];
+        const candidate = normalizePlannedFileReference(match[1]);
         // Filter out things that look like code tokens rather than file paths
         // (e.g. `true`, `false`, `npm run test`). A file path has at least one
         // dot or slash.
-        if (candidate.includes("/") || candidate.includes(".")) {
+        if (candidate.includes("/") || candidate.includes("\\") || candidate.includes(".")) {
           paths.push(candidate);
         }
       }

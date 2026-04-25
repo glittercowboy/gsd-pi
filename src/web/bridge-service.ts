@@ -2,9 +2,10 @@ import { execFile, spawn, type ChildProcess, type SpawnOptions } from "node:chil
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { StringDecoder } from "node:string_decoder";
 import type { Readable } from "node:stream";
-import { join, resolve, dirname } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { resolveTypeStrippingFlag, resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts";
+import { safePackageRootFromImportUrl } from "./safe-import-meta-resolve.ts";
 
 import type { AgentSessionEvent, SessionStateChangeReason } from "../../packages/pi-coding-agent/src/core/agent-session.ts";
 import type {
@@ -14,6 +15,13 @@ import type {
   RpcResponse,
   RpcSessionState,
 } from "../../packages/pi-coding-agent/src/modes/rpc/rpc-types.ts";
+import type {
+  WorkspaceIndex as GSDWorkspaceIndex,
+  WorkspaceMilestoneTarget as GSDWorkspaceMilestoneTarget,
+  WorkspaceScopeTarget as GSDWorkspaceScopeTarget,
+  WorkspaceSliceTarget as GSDWorkspaceSliceTarget,
+  WorkspaceTaskTarget as GSDWorkspaceTaskTarget,
+} from "../shared/workspace-types.ts";
 import {
   SESSION_BROWSER_SCOPE,
   normalizeSessionBrowserQuery,
@@ -37,25 +45,17 @@ import {
   collectAuthoritativeAutoDashboardData,
   collectTestOnlyFallbackAutoDashboardData,
 } from "./auto-dashboard-service.ts";
+import type { AutoDashboardData, RtkSessionSavings } from "./auto-dashboard-types.ts";
 import { resolveGsdCliEntry } from "./cli-entry.ts";
 
-// Lazily computed fallback — import.meta.url is baked in at build time by
-// webpack, so when the standalone bundle built on Linux CI runs on Windows the
-// literal file:// URL contains a Unix path that fileURLToPath() rejects.
-// Deferring the computation means it only fires when GSD_WEB_PACKAGE_ROOT is
-// absent, and if it does fire we handle the cross-platform failure gracefully.
+// The standalone Next.js bundle bakes import.meta.url at build time with the
+// CI runner's absolute path.  On Windows, fileURLToPath() rejects a Linux
+// file:// URL at module load time.  Use a lazy getter so the derivation is
+// deferred to first use (not module load) and falls back to cwd on failure.
 let _defaultPackageRoot: string | undefined;
 function getDefaultPackageRoot(): string {
   if (_defaultPackageRoot !== undefined) return _defaultPackageRoot;
-  try {
-    _defaultPackageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-  } catch {
-    // Standalone bundle running on a different OS than the builder — the
-    // baked-in import.meta.url is not a valid local file URL.  Fall back to
-    // cwd which is the best available approximation; callers that need the
-    // real package root should set GSD_WEB_PACKAGE_ROOT.
-    _defaultPackageRoot = process.cwd();
-  }
+  _defaultPackageRoot = safePackageRootFromImportUrl(import.meta.url) ?? process.cwd();
   return _defaultPackageRoot;
 }
 
@@ -63,6 +63,7 @@ function getDefaultPackageRoot(): string {
 export function resetDefaultPackageRootForTests(): void {
   _defaultPackageRoot = undefined;
 }
+
 const RESPONSE_TIMEOUT_MS = 30_000;
 const START_TIMEOUT_MS = 150_000;
 const MAX_STDERR_BUFFER = 8_000;
@@ -397,32 +398,7 @@ function filterAndSortSessions(
   return scored.map((entry) => entry.session);
 }
 
-export interface RtkSessionSavings {
-  commands: number;
-  inputTokens: number;
-  outputTokens: number;
-  savedTokens: number;
-  savingsPct: number;
-  totalTimeMs: number;
-  avgTimeMs: number;
-  updatedAt: string;
-}
-
-export interface AutoDashboardData {
-  active: boolean;
-  paused: boolean;
-  stepMode: boolean;
-  startTime: number;
-  elapsed: number;
-  currentUnit: { type: string; id: string; startedAt: number } | null;
-  completedUnits: { type: string; id: string; startedAt: number; finishedAt: number }[];
-  basePath: string;
-  totalCost: number;
-  totalTokens: number;
-  rtkSavings?: RtkSessionSavings | null;
-  /** Whether RTK is enabled via experimental.rtk preference. False when not opted in. */
-  rtkEnabled?: boolean;
-}
+export type { AutoDashboardData, RtkSessionSavings };
 
 export interface BridgeLastError {
   message: string;
@@ -464,50 +440,13 @@ export interface BootResumableSession {
   isActive: boolean;
 }
 
-export interface GSDWorkspaceTaskTarget {
-  id: string;
-  title: string;
-  done: boolean;
-  planPath?: string;
-  summaryPath?: string;
-}
-
-export interface GSDWorkspaceSliceTarget {
-  id: string;
-  title: string;
-  done: boolean;
-  planPath?: string;
-  summaryPath?: string;
-  uatPath?: string;
-  tasksDir?: string;
-  branch?: string;
-  tasks: GSDWorkspaceTaskTarget[];
-}
-
-export interface GSDWorkspaceMilestoneTarget {
-  id: string;
-  title: string;
-  roadmapPath?: string;
-  slices: GSDWorkspaceSliceTarget[];
-}
-
-export interface GSDWorkspaceScopeTarget {
-  scope: string;
-  label: string;
-  kind: "project" | "milestone" | "slice" | "task";
-}
-
-export interface GSDWorkspaceIndex {
-  milestones: GSDWorkspaceMilestoneTarget[];
-  active: {
-    milestoneId?: string;
-    sliceId?: string;
-    taskId?: string;
-    phase: string;
-  };
-  scopes: GSDWorkspaceScopeTarget[];
-  validationIssues: Array<Record<string, unknown>>;
-}
+export type {
+  GSDWorkspaceTaskTarget,
+  GSDWorkspaceSliceTarget,
+  GSDWorkspaceMilestoneTarget,
+  GSDWorkspaceScopeTarget,
+  GSDWorkspaceIndex,
+};
 
 // ─── Project Detection ──────────────────────────────────────────────────────
 
@@ -659,6 +598,7 @@ export type BridgeLiveStateDomain = "auto" | "workspace" | "recovery" | "resumab
 export type BridgeLiveStateInvalidationSource = "bridge_event" | "rpc_command" | "session_manage";
 export type BridgeLiveStateInvalidationReason =
   | "agent_end"
+  | "turn_end"
   | "auto_retry_start"
   | "auto_retry_end"
   | "auto_compaction_start"
@@ -771,6 +711,7 @@ async function loadSessionBrowserSessionsViaChildProcess(config: BridgeRuntimeCo
           GSD_SESSION_BROWSER_DIR: config.projectSessionsDir,
         },
         maxBuffer: 1024 * 1024,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -832,6 +773,7 @@ async function appendSessionInfoViaChildProcess(
           GSD_TARGET_SESSION_NAME: name,
         },
         maxBuffer: 1024 * 1024,
+        windowsHide: true,
       },
       (error, _stdout, stderr) => {
         if (error) {
@@ -1030,6 +972,7 @@ async function loadWorkspaceIndexViaChildProcess(basePath: string, packageRoot: 
           GSD_WORKSPACE_BASE: basePath,
         },
         maxBuffer: 1024 * 1024,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -1249,6 +1192,13 @@ function createLiveStateInvalidationFromBridgeEvent(
         reason: "agent_end",
         source: "bridge_event",
         domains: ["auto", "workspace", "recovery"],
+        workspaceIndexCacheInvalidated: true,
+      };
+    case "turn_end":
+      return {
+        reason: "turn_end",
+        source: "bridge_event",
+        domains: ["workspace"],
         workspaceIndexCacheInvalidated: true,
       };
     case "auto_retry_start":
@@ -1616,6 +1566,7 @@ export class BridgeService {
       cwd: cliEntry.cwd,
       env: childEnv,
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     }) as SpawnedRpcChild;
 
     this.process = child;
@@ -1771,6 +1722,7 @@ export class BridgeService {
       const eventType = (event as { type?: string }).type;
       if (
         eventType === "agent_end" ||
+        eventType === "turn_end" ||
         eventType === "auto_retry_start" ||
         eventType === "auto_retry_end" ||
         eventType === "auto_compaction_start" ||

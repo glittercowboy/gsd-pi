@@ -9,7 +9,7 @@
 
 import { describe, test, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -57,13 +57,20 @@ function hasRecognizedProjectFiles(basePath: string, existsSyncFn: (p: string) =
   return false;
 }
 
+/** Simulate the phases.ts Xcode-bundle detection (readdirSync suffix scan). */
+function hasXcodeBundle(basePath: string): boolean {
+  try {
+    return readdirSync(basePath).some((e) => e.endsWith(".xcodeproj") || e.endsWith(".xcworkspace"));
+  } catch { return false; }
+}
+
 import { existsSync } from "node:fs";
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 test("PROJECT_FILES is exported and contains expected multi-ecosystem entries", () => {
   assert.ok(Array.isArray(PROJECT_FILES), "PROJECT_FILES is an array");
-  assert.ok(PROJECT_FILES.length >= 17, `expected >= 17 entries, got ${PROJECT_FILES.length}`);
+  assert.ok(PROJECT_FILES.length >= 18, `expected >= 18 entries, got ${PROJECT_FILES.length}`);
   // Spot-check key ecosystems
   assert.ok(PROJECT_FILES.includes("Cargo.toml"), "includes Rust marker");
   assert.ok(PROJECT_FILES.includes("go.mod"), "includes Go marker");
@@ -138,5 +145,31 @@ describe("health check without git repo", () => {
   test("health check fails for directory with no .git", () => {
     writeFileSync(join(dir, "Cargo.toml"), "[package]\nname = \"test\"\n");
     assert.ok(!wouldPassHealthCheck(dir, existsSync), "no-git directory should fail health check");
+  });
+});
+
+describe("health check with xcodegen and Xcode bundles", () => {
+  let dir: string;
+  beforeEach(() => { dir = createGitRepo(); });
+  afterEach(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  test("health check passes for xcodegen project (project.yml, no Package.swift)", () => {
+    writeFileSync(join(dir, "project.yml"), "name: MyApp\ntargets:\n  MyApp:\n    type: application\n");
+    assert.ok(wouldPassHealthCheck(dir, existsSync), "xcodegen project should pass health check");
+  });
+
+  // Regression for the real-world failure in #1882: an iOS project with a
+  // project-specific Xcode bundle (Sudokuxyz.xcodeproj/) was blocked because
+  // PROJECT_FILES only probes exact filenames, not suffix-based directory names.
+  test("Xcode bundle (*.xcodeproj) is not in PROJECT_FILES but detected by suffix scan", () => {
+    mkdirSync(join(dir, "Sudokuxyz.xcodeproj"), { recursive: true });
+    mkdirSync(join(dir, "Sources", "Sudokuxyz"), { recursive: true });
+    writeFileSync(join(dir, "Sources", "Sudokuxyz", "ContentView.swift"), "import SwiftUI\n");
+    // PROJECT_FILES uses exact names — cannot match project-specific bundle names
+    assert.ok(!hasRecognizedProjectFiles(dir, existsSync), "xcodeproj bundle must NOT be in PROJECT_FILES");
+    // The readdirSync suffix scan used in phases.ts detects it
+    assert.ok(hasXcodeBundle(dir), "readdirSync suffix scan detects .xcodeproj bundle");
+    // Health check passes regardless (only requires .git)
+    assert.ok(wouldPassHealthCheck(dir, existsSync), "Xcode bundle project should pass health check");
   });
 });

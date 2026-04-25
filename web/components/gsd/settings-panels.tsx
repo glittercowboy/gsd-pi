@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react"
 import {
   AlertTriangle,
   CheckCircle2,
+  CircleDashed,
   Cpu,
   DollarSign,
   Eye,
@@ -14,10 +15,14 @@ import {
   LoaderCircle,
   Radio,
   RefreshCw,
+  RotateCcw,
   Settings,
+  SkipForward,
   SlidersHorizontal,
   Type,
+  Wand2,
 } from "lucide-react"
+import { useDevOverrides } from "@/lib/dev-overrides"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -139,6 +144,24 @@ function SkillBadgeList({ label, skills }: { label: string; skills: string[] | u
   )
 }
 
+function ModelBadgeList({ models }: { models: Record<string, string> | undefined }) {
+  if (!models || Object.keys(models).length === 0) return null
+  return (
+    <div className="space-y-1">
+      <span className="text-[11px] text-muted-foreground">Phase Models</span>
+      <div className="flex flex-wrap gap-1">
+        {Object.entries(models)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([phase, model]) => (
+            <Badge key={phase} variant="outline" className="text-[10px] px-1.5 py-0 font-mono">
+              {phase}: {model}
+            </Badge>
+          ))}
+      </div>
+    </div>
+  )
+}
+
 function KvRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 text-xs">
@@ -170,6 +193,7 @@ function useSettingsData() {
 
 function tokenProfileVariant(profile: string | undefined): "info" | "warning" | "success" {
   if (profile === "budget") return "warning"
+  if (profile === "burn-max") return "warning"
   if (profile === "quality") return "success"
   return "info"
 }
@@ -206,12 +230,17 @@ export function PrefsPanel() {
 
           {/* Skills */}
           <div className="space-y-2">
+            <ModelBadgeList models={prefs.models} />
             <SkillBadgeList label="Always use" skills={prefs.alwaysUseSkills} />
             <SkillBadgeList label="Prefer" skills={prefs.preferSkills} />
             <SkillBadgeList label="Avoid" skills={prefs.avoidSkills} />
-            {!prefs.alwaysUseSkills?.length && !prefs.preferSkills?.length && !prefs.avoidSkills?.length && (
-              <span className="text-[11px] text-muted-foreground">No skill preferences configured</span>
-            )}
+            {!prefs.models || Object.keys(prefs.models).length === 0
+              ? !prefs.alwaysUseSkills?.length && !prefs.preferSkills?.length && !prefs.avoidSkills?.length && (
+                <span className="text-[11px] text-muted-foreground">No model or skill preferences configured</span>
+              )
+              : !prefs.alwaysUseSkills?.length && !prefs.preferSkills?.length && !prefs.avoidSkills?.length && (
+                <span className="text-[11px] text-muted-foreground">No skill preferences configured</span>
+              )}
           </div>
 
           {/* Toggles */}
@@ -233,6 +262,47 @@ export function PrefsPanel() {
             <KvRow label="Auto-Visualize">
               <span className={prefs.autoVisualize ? "text-success" : "text-muted-foreground"}>
                 {prefs.autoVisualize ? "on" : "off"}
+              </span>
+            </KvRow>
+            <KvRow label="Service Tier">
+              <span className="font-mono text-[10px]">{prefs.serviceTier ?? "default"}</span>
+            </KvRow>
+            <KvRow label="Show Token Cost">
+              <span className={prefs.showTokenCost ? "text-success" : "text-muted-foreground"}>
+                {prefs.showTokenCost ? "on" : "off"}
+              </span>
+            </KvRow>
+            <KvRow label="Context Selection">
+              <span className="font-mono text-[10px]">{prefs.contextSelection ?? "full"}</span>
+            </KvRow>
+            <KvRow label="Context Window">
+              <span className="font-mono text-[10px]">
+                {typeof prefs.contextWindowOverride === "number" ? prefs.contextWindowOverride : "auto"}
+              </span>
+            </KvRow>
+            <KvRow label="Language">
+              <span className="font-mono text-[10px]">{prefs.language ?? "default"}</span>
+            </KvRow>
+            <KvRow label="Reactive Exec">
+              <span className={prefs.reactiveExecution?.enabled ? "text-success" : "text-muted-foreground"}>
+                {prefs.reactiveExecution?.enabled ? "on" : "off"}
+              </span>
+            </KvRow>
+            <KvRow label="Gate Eval">
+              <span className={prefs.gateEvaluation?.enabled ? "text-success" : "text-muted-foreground"}>
+                {prefs.gateEvaluation?.enabled ? "on" : "off"}
+              </span>
+            </KvRow>
+            <KvRow label="Slice Parallel">
+              <span className={prefs.sliceParallel?.enabled ? "text-success" : "text-muted-foreground"}>
+                {prefs.sliceParallel?.enabled ? "on" : "off"}
+              </span>
+            </KvRow>
+            <KvRow label="Phase Controls">
+              <span className="font-mono text-[10px]">
+                {prefs.phases
+                  ? Object.values(prefs.phases).filter((value) => value === true).length
+                  : 0} enabled
               </span>
             </KvRow>
             <KvRow label="Preference Scope">
@@ -451,6 +521,8 @@ export function BudgetPanel() {
               value={prefs?.tokenProfile ?? "balanced"}
               variant={tokenProfileVariant(prefs?.tokenProfile)}
             />
+            <Pill label="Service Tier" value={prefs?.serviceTier ?? "default"} />
+            <Pill label="Token Cost" value={prefs?.showTokenCost ? "shown" : "hidden"} />
           </div>
 
           {/* Context budget allocations */}
@@ -1016,6 +1088,139 @@ function FontSizeControl({
   )
 }
 
+// ─── Onboarding status section ───────────────────────────────────────
+
+/**
+ * Canonical onboarding step IDs and human-readable labels.
+ *
+ * Mirrors `ONBOARDING_STEPS` in
+ * `src/resources/extensions/gsd/setup-catalog.ts`. Kept inline here (rather
+ * than imported from the CLI tree) to avoid pulling Node-only modules into
+ * the web bundle. If the CLI catalog adds a step, mirror the entry here so
+ * unrecognized step IDs don't break the rendering.
+ */
+const ONBOARDING_STEP_LABELS: Record<string, string> = {
+  llm: "LLM provider & auth",
+  model: "Default model",
+  search: "Web search provider",
+  remote: "Remote questions",
+  "tool-keys": "Tool API keys",
+  prefs: "Global preferences",
+  skills: "Skills install",
+  doctor: "Validate setup",
+  project: "Project init",
+}
+
+const ONBOARDING_STEP_ORDER = [
+  "llm", "model", "search", "remote", "tool-keys", "prefs", "skills", "doctor", "project",
+] as const
+
+function formatCompletionDate(iso: string | null | undefined): string {
+  if (!iso) return ""
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })
+  } catch {
+    return iso
+  }
+}
+
+function OnboardingStatusSection() {
+  const workspace = useGSDWorkspaceState()
+  const devOverrides = useDevOverrides()
+  const onboarding = workspace.boot?.onboarding
+  const record = onboarding?.completionRecord ?? null
+
+  // No bridge support yet — older bridges don't include the field.
+  if (record === undefined) return null
+
+  const completed = new Set(record?.completedSteps ?? [])
+  const skipped = new Set(record?.skippedSteps ?? [])
+  const completedAt = record?.completedAt ?? null
+  const lastResume = record?.lastResumePoint ?? null
+
+  const canForceReentry = devOverrides.isDevMode
+
+  const handleReenter = () => {
+    if (canForceReentry) {
+      // In dev mode, toggling the override re-shows the gate immediately.
+      // In production a server-side reset RPC is required (tracked separately).
+      devOverrides.toggle("forceOnboarding")
+    }
+  }
+
+  return (
+    <div className="space-y-3 rounded-md border border-border/50 bg-muted/20 p-4" data-testid="settings-onboarding-status">
+      <div className="flex items-start justify-between gap-3">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Wand2 className="h-3.5 w-3.5 text-muted-foreground" />
+            <span>Onboarding setup</span>
+            {completedAt ? (
+              <Badge variant="outline" className="h-5 border-success/40 bg-success/10 text-[10px] text-success">
+                Complete
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="h-5 border-warning/40 bg-warning/10 text-[10px] text-warning">
+                Incomplete
+              </Badge>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {completedAt
+              ? `Last completed ${formatCompletionDate(completedAt)}.`
+              : lastResume
+                ? `Paused at "${ONBOARDING_STEP_LABELS[lastResume] ?? lastResume}". Re-run /gsd onboarding --resume to continue.`
+                : "You haven't completed the onboarding wizard yet."}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleReenter}
+            disabled={!canForceReentry}
+            data-testid="settings-onboarding-rerun"
+          >
+            <RotateCcw className="mr-1.5 h-3 w-3" />
+            Re-run setup
+          </Button>
+          {!canForceReentry && (
+            <span className="text-[10px] text-muted-foreground">
+              Run <code className="rounded bg-muted px-1 font-mono">/gsd onboarding</code> in your terminal
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Per-step status grid */}
+      <ul className="grid grid-cols-1 gap-1 sm:grid-cols-2">
+        {ONBOARDING_STEP_ORDER.map((stepId) => {
+          const isComplete = completed.has(stepId)
+          const isSkipped = skipped.has(stepId)
+          const Icon = isComplete ? CheckCircle2 : isSkipped ? SkipForward : CircleDashed
+          const tone = isComplete
+            ? "text-success"
+            : isSkipped
+              ? "text-muted-foreground/70"
+              : "text-muted-foreground/50"
+          return (
+            <li
+              key={stepId}
+              className="flex items-center gap-2 text-[11px]"
+              data-testid={`settings-onboarding-step-${stepId}`}
+            >
+              <Icon className={cn("h-3 w-3 shrink-0", tone)} />
+              <span className={cn("truncate", isComplete ? "text-foreground" : "text-muted-foreground")}>
+                {ONBOARDING_STEP_LABELS[stepId] ?? stepId}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
 export function GeneralPanel() {
   const [terminalFontSize, setTerminalFontSize] = useTerminalFontSize()
   const [editorFontSize, setEditorFontSize] = useEditorFontSize()
@@ -1029,6 +1234,8 @@ export function GeneralPanel() {
         onRefresh={() => {}}
         refreshing={false}
       />
+
+      <OnboardingStatusSection />
 
       <FontSizeControl
         label="Terminal font size"

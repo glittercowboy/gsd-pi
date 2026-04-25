@@ -162,13 +162,20 @@ function TerminalInstance({
     while (inputQueueRef.current.length > 0) {
       const data = inputQueueRef.current.shift()!
       try {
-        await authFetch(buildProjectPath("/api/terminal/input", projectCwd), {
+        const res = await authFetch(buildProjectPath("/api/terminal/input", projectCwd), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: sessionId, data }),
         })
+        if (!res.ok) {
+          if (res.status >= 500) inputQueueRef.current.unshift(data)
+          onConnectionChangeRef.current(false)
+          termRef.current?.writeln(`\r\nInput failed (${res.status}). Reconnect the terminal and retry.`)
+          break
+        }
       } catch {
         inputQueueRef.current.unshift(data)
+        onConnectionChangeRef.current(false)
         break
       }
     }
@@ -465,6 +472,23 @@ async function uploadAndInjectImage(file: File, sessionId: string, projectCwd?: 
 
 // ─── Multi-instance terminal panel ────────────────────────────────────────────
 
+/**
+ * Derive a session ID that is scoped to the project path.  This ensures
+ * that switching projects creates a separate PTY session per project, and
+ * switching back reconnects to the *same* server-side PTY instead of
+ * spawning a new one (the server's getOrCreateSession returns the existing
+ * live session when the ID matches).
+ */
+function deriveProjectScopedSessionId(
+  projectCwd: string | undefined,
+  sessionPrefix?: string,
+  command?: string,
+): string {
+  const base = sessionPrefix ?? (command ? "gsd-default" : "default")
+  if (!projectCwd) return base
+  return `${base}:${projectCwd}`
+}
+
 export function ShellTerminal({
   className,
   command,
@@ -477,7 +501,7 @@ export function ShellTerminal({
 }: ShellTerminalProps) {
   const { resolvedTheme } = useTheme()
   const isDark = resolvedTheme !== "light"
-  const defaultId = sessionPrefix ?? (command ? "gsd-default" : "default")
+  const defaultId = deriveProjectScopedSessionId(projectCwd, sessionPrefix, command)
   const commandLabel = deriveCommandLabel(command)
   const [tabs, setTabs] = useState<TerminalTab[]>([
     { id: defaultId, label: commandLabel, connected: false },
@@ -485,6 +509,19 @@ export function ShellTerminal({
   const [activeTabId, setActiveTabId] = useState(defaultId)
   const [isDragOver, setIsDragOver] = useState(false)
   const terminalAreaRef = useRef<HTMLDivElement>(null)
+
+  // When the project changes, the defaultId changes.  Reset tabs so the
+  // terminal reconnects to the project-scoped PTY session on the server.
+  // The server's getOrCreateSession will return the existing live session
+  // when the session ID matches, preserving terminal state.
+  const prevDefaultIdRef = useRef(defaultId)
+  useEffect(() => {
+    if (prevDefaultIdRef.current !== defaultId) {
+      prevDefaultIdRef.current = defaultId
+      setTabs([{ id: defaultId, label: commandLabel, connected: false }])
+      setActiveTabId(defaultId)
+    }
+  }, [defaultId, commandLabel])
 
   // ── Drag-and-drop handlers (native DOM, capture phase) ──────────────────
   // React synthetic events don't reliably fire through xterm's internal DOM.

@@ -1,53 +1,129 @@
 // Agent activeInferenceModel regression tests
-// Verifies that activeInferenceModel is set/cleared correctly in _runLoop,
-// and that the footer reads activeInferenceModel instead of state.model.
+// Verifies that activeInferenceModel is set before streaming begins and
+// cleared after streaming completes — observed via the streamFn seam and
+// post-condition, not the source text.
 // Regression test for https://github.com/gsd-build/gsd-2/issues/1844 Bug 2
 
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { Agent } from "./agent.ts";
+import { getModel, type AssistantMessageEventStream } from "@gsd/pi-ai";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+function makeDoneStream(modelId: string): AssistantMessageEventStream {
+	const usage = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	const message = {
+		role: "assistant" as const,
+		content: [{ type: "text" as const, text: "ok" }],
+		api: "anthropic-messages" as const,
+		provider: "anthropic",
+		model: modelId,
+		usage,
+		stopReason: "stop" as const,
+		timestamp: Date.now(),
+	};
+	return {
+		async *[Symbol.asyncIterator]() {
+			yield { type: "start", partial: message };
+			yield { type: "done", message };
+		},
+		result: async () => message,
+		[Symbol.asyncDispose]: async () => {},
+	} as AssistantMessageEventStream;
+}
 
 describe("Agent — activeInferenceModel (#1844 Bug 2)", () => {
-	it("activeInferenceModel is declared in AgentState interface", () => {
-		const typesSource = readFileSync(join(__dirname, "types.ts"), "utf-8");
-		assert.match(typesSource, /activeInferenceModel\??:\s*Model/,
-			"AgentState must declare activeInferenceModel field");
+	it("_runLoop sets activeInferenceModel = model mid-stream and clears it when finished", async () => {
+		const model = getModel("anthropic", "claude-3-5-sonnet-20241022");
+		let midStreamModel: unknown = "<not-captured>";
+
+		const agent = new Agent({
+			initialState: { model, systemPrompt: "test", tools: [] },
+			streamFn: (streamModel): AssistantMessageEventStream => {
+				// streamFn is invoked AFTER `activeInferenceModel = model` and
+				// BEFORE the finally block that clears it. Capture state here.
+				midStreamModel = agent.state.activeInferenceModel;
+				return makeDoneStream(streamModel.id);
+			},
+		});
+
+		// Baseline: undefined before any inference.
+		assert.equal(
+			agent.state.activeInferenceModel,
+			undefined,
+			"activeInferenceModel must be undefined before prompt()",
+		);
+
+		await agent.prompt("hello");
+
+		// Mid-stream: set to the inference model.
+		assert.equal(
+			(midStreamModel as { id?: string } | undefined)?.id,
+			model.id,
+			"activeInferenceModel must equal the inference model while streaming",
+		);
+
+		// Post-stream: cleared back to undefined (finally block).
+		assert.equal(
+			agent.state.activeInferenceModel,
+			undefined,
+			"activeInferenceModel must be undefined after prompt() resolves",
+		);
 	});
 
-	it("_runLoop sets activeInferenceModel before streaming and clears in finally", () => {
-		const agentSource = readFileSync(join(__dirname, "agent.ts"), "utf-8");
+	it("activeInferenceModel is also cleared when the stream throws", async () => {
+		const model = getModel("anthropic", "claude-3-5-sonnet-20241022");
+		let midStreamModel: unknown = "<not-captured>";
 
-		// Must set activeInferenceModel = model before streaming starts
-		const setLine = agentSource.indexOf("this._state.activeInferenceModel = model");
-		assert.ok(setLine > -1, "agent.ts must set activeInferenceModel = model in _runLoop");
+		const agent = new Agent({
+			initialState: { model, systemPrompt: "test", tools: [] },
+			streamFn: (): AssistantMessageEventStream => {
+				midStreamModel = agent.state.activeInferenceModel;
+				return {
+					async *[Symbol.asyncIterator]() {
+						throw new Error("boom");
+					},
+					result: async () => {
+						throw new Error("boom");
+					},
+					[Symbol.asyncDispose]: async () => {},
+				} as AssistantMessageEventStream;
+			},
+		});
 
-		// Must clear activeInferenceModel = undefined after streaming completes
-		const clearLine = agentSource.indexOf("this._state.activeInferenceModel = undefined");
-		assert.ok(clearLine > -1, "agent.ts must clear activeInferenceModel in finally block");
+		await agent.prompt("hello");
 
-		// The set must come before the clear
-		assert.ok(setLine < clearLine, "activeInferenceModel must be set before cleared");
+		assert.equal(
+			(midStreamModel as { id?: string } | undefined)?.id,
+			model.id,
+			"activeInferenceModel must be set even when the stream later throws",
+		);
+		assert.equal(
+			agent.state.activeInferenceModel,
+			undefined,
+			"activeInferenceModel must be cleared in finally even after stream errors",
+		);
 	});
 
-	it("footer displays activeInferenceModel instead of state.model", () => {
-		const footerPath = join(__dirname, "..", "..", "pi-coding-agent", "src",
-			"modes", "interactive", "components", "footer.ts");
-		const footerSource = readFileSync(footerPath, "utf-8");
-		assert.match(footerSource, /activeInferenceModel/,
-			"footer.ts must reference activeInferenceModel for display");
-	});
+	it("getProviderOptions are forwarded into the provider stream call", async () => {
+		let capturedOptions: Record<string, unknown> | undefined;
+		const model = getModel("anthropic", "claude-3-5-sonnet-20241022");
+		const agent = new Agent({
+			initialState: { model, systemPrompt: "test", tools: [] },
+			getProviderOptions: async () => ({ customRuntimeOption: "present" }),
+			streamFn: (_model, _context, options): AssistantMessageEventStream => {
+				capturedOptions = options as Record<string, unknown> | undefined;
+				return makeDoneStream(model.id);
+			},
+		});
 
-	it("activeInferenceModel is set before AbortController creation", () => {
-		const agentSource = readFileSync(join(__dirname, "agent.ts"), "utf-8");
-
-		const setLine = agentSource.indexOf("this._state.activeInferenceModel = model");
-		const abortLine = agentSource.indexOf("this.abortController = new AbortController");
-		assert.ok(setLine > -1 && abortLine > -1);
-		assert.ok(setLine < abortLine,
-			"activeInferenceModel must be set before streaming infrastructure is created");
+		await agent.prompt("hello");
+		assert.equal(capturedOptions?.customRuntimeOption, "present");
 	});
 });

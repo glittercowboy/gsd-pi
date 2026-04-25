@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { AuthStorage } from "./auth-storage.js";
 import { ModelDiscoveryCache } from "./discovery-cache.js";
 import { getDefaultTTL, getDiscoverableProviders, getDiscoveryAdapter } from "./model-discovery.js";
+import { ModelRegistry } from "./model-registry.js";
 
 let testDir: string;
 
@@ -131,5 +132,79 @@ describe("Discovery TTL configuration", () => {
 		const defaultTTL = getDefaultTTL("default");
 		// Unknown providers should get the same TTL as the explicit "default" key
 		assert.equal(customTTL, defaultTTL);
+	});
+});
+
+describe("ModelRegistry discovery — OpenAI-compatible custom providers", () => {
+	it("discovers custom OpenAI-compatible providers and maps capability metadata", async () => {
+		const providerName = `minimax-openai-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+		const modelsPath = join(testDir, "models.json");
+		writeFileSync(
+			modelsPath,
+			JSON.stringify(
+				{
+					providers: {
+						[providerName]: {
+							baseUrl: "https://api.minimax.example",
+							apiKey: "minimax-test-key",
+							api: "openai-completions",
+							models: [{ id: "bootstrap-model" }],
+						},
+					},
+				},
+				null,
+				2,
+			),
+			"utf-8",
+		);
+
+		const prevFetch = globalThis.fetch;
+		let requestedUrl = "";
+		globalThis.fetch = (async (input: string | URL | Request) => {
+			requestedUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			return new Response(
+				JSON.stringify({
+					data: [
+						{
+							id: "MiniMax-M2.7-highspeed",
+							name: "MiniMax M2.7 Highspeed",
+							context_window: 165000,
+							max_output_tokens: 32768,
+							supports_reasoning: true,
+							input_modalities: ["text", "image"],
+						},
+					],
+				}),
+				{
+					status: 200,
+					headers: { "content-type": "application/json" },
+				},
+			);
+		}) as typeof globalThis.fetch;
+
+		try {
+			const registry = new ModelRegistry(AuthStorage.inMemory({}), modelsPath);
+			// Guard against global cache leakage from prior test runs.
+			registry.getDiscoveryCache().clear(providerName);
+			const results = await registry.discoverModels([providerName]);
+
+			const discovery = results.find((r) => r.provider === providerName);
+			assert.ok(discovery, "discovery result should include custom provider");
+			assert.equal(discovery?.error, undefined, "custom provider discovery should succeed");
+			assert.equal(requestedUrl, "https://api.minimax.example/v1/models");
+
+			const discovered = registry
+				.getAllWithDiscovered()
+				.find((m) => m.provider === providerName && m.id === "MiniMax-M2.7-highspeed");
+			assert.ok(discovered, "discovered model should be merged into model list");
+			assert.equal(discovered?.api, "openai-completions");
+			assert.equal(discovered?.baseUrl, "https://api.minimax.example");
+			assert.equal(discovered?.contextWindow, 165000);
+			assert.equal(discovered?.maxTokens, 32768);
+			assert.equal(discovered?.reasoning, true);
+			assert.deepEqual(discovered?.input, ["text", "image"]);
+		} finally {
+			globalThis.fetch = prevFetch;
+		}
 	});
 });

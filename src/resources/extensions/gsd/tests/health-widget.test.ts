@@ -6,8 +6,10 @@ import { tmpdir } from "node:os";
 import {
   buildHealthLines,
   detectHealthWidgetProjectState,
+  formatRelativeTime,
   type HealthWidgetData,
 } from "../health-widget-core.ts";
+import { registerHooks } from "../bootstrap/register-hooks.ts";
 
 function makeTempDir(prefix: string): string {
   const dir = join(
@@ -34,6 +36,8 @@ function activeData(overrides: Partial<HealthWidgetData> = {}): HealthWidgetData
     providerIssue: null,
     environmentErrorCount: 0,
     environmentWarningCount: 0,
+    lastCommitEpoch: null,
+    lastCommitMessage: null,
     lastRefreshed: Date.now(),
     ...overrides,
   };
@@ -98,6 +102,70 @@ test("buildHealthLines: active state with issues reports issue summary", (t) => 
   assert.match(lines[0]!, /Env: 1 error/);
 });
 
+// ── Last commit display ──────────────────────────────────────────────────
+
+test("buildHealthLines: shows last commit with relative time and message", (t) => {
+  const epoch = Math.floor(Date.now() / 1000) - 300; // 5 minutes ago
+  const lines = buildHealthLines(activeData({
+    lastCommitEpoch: epoch,
+    lastCommitMessage: "feat(widget): add health display",
+  }));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0]!, /Last commit: 5m ago/);
+  assert.match(lines[0]!, /feat\(widget\): add health display/);
+});
+
+test("buildHealthLines: truncates long commit messages", (t) => {
+  const epoch = Math.floor(Date.now() / 1000) - 60;
+  const longMsg = "a".repeat(80);
+  const lines = buildHealthLines(activeData({
+    lastCommitEpoch: epoch,
+    lastCommitMessage: longMsg,
+  }));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0]!, /a{49}…/);
+  assert.ok(!lines[0]!.includes("a".repeat(51)), "message is truncated");
+});
+
+test("buildHealthLines: no last commit section when epoch is null", (t) => {
+  const lines = buildHealthLines(activeData({ lastCommitEpoch: null }));
+  assert.equal(lines.length, 1);
+  assert.ok(!lines[0]!.includes("Last commit"), "no last commit when null");
+});
+
+test("buildHealthLines: last commit without message shows only time", (t) => {
+  const epoch = Math.floor(Date.now() / 1000) - 3600; // 1 hour ago
+  const lines = buildHealthLines(activeData({
+    lastCommitEpoch: epoch,
+    lastCommitMessage: null,
+  }));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0]!, /Last commit: 1h ago/);
+  assert.ok(!lines[0]!.includes(" — "), "no dash separator when no message");
+});
+
+// ── formatRelativeTime ───────────────────────────────────────────────────
+
+test("formatRelativeTime: just now for <60s", () => {
+  const epoch = Math.floor(Date.now() / 1000) - 30;
+  assert.equal(formatRelativeTime(epoch), "just now");
+});
+
+test("formatRelativeTime: minutes", () => {
+  const epoch = Math.floor(Date.now() / 1000) - 300;
+  assert.equal(formatRelativeTime(epoch), "5m ago");
+});
+
+test("formatRelativeTime: hours", () => {
+  const epoch = Math.floor(Date.now() / 1000) - 7200;
+  assert.equal(formatRelativeTime(epoch), "2h ago");
+});
+
+test("formatRelativeTime: days", () => {
+  const epoch = Math.floor(Date.now() / 1000) - 172800;
+  assert.equal(formatRelativeTime(epoch), "2d ago");
+});
+
 test("detectHealthWidgetProjectState: metrics file alone does not imply project", (t) => {
   const dir = makeTempDir("metrics-only");
   t.after(() => { cleanup(dir); });
@@ -109,4 +177,54 @@ test("detectHealthWidgetProjectState: metrics file alone does not imply project"
     "utf-8",
   );
   assert.equal(detectHealthWidgetProjectState(dir), "initialized");
+});
+
+test("session_start bootstraps the health widget alongside notifications", async (t) => {
+  const dir = makeTempDir("bootstrap");
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+
+  const originalCwd = process.cwd();
+  process.chdir(dir);
+  t.after(() => {
+    process.chdir(originalCwd);
+    cleanup(dir);
+  });
+
+  const widgets: string[] = [];
+  const statuses: string[] = [];
+  const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void> | void>();
+  const pi = {
+    on(event: string, handler: (event: unknown, ctx: any) => Promise<void> | void) {
+      handlers.set(event, handler);
+    },
+  } as any;
+
+  registerHooks(pi, []);
+  const sessionStart = handlers.get("session_start");
+  assert.ok(sessionStart, "session_start handler is registered");
+
+  await sessionStart!({}, {
+    hasUI: true,
+    ui: {
+      notify: () => {},
+      setStatus: (key: string) => {
+        statuses.push(key);
+      },
+      setWorkingMessage: () => {},
+      onTerminalInput: () => () => {},
+      setWidget: (key: string) => {
+        widgets.push(key);
+      },
+    },
+    sessionManager: {
+      getSessionId: () => null,
+    },
+    model: null,
+  } as any);
+
+  assert.ok(widgets.includes("gsd-health"), "health widget is bootstrapped");
+  assert.ok(
+    statuses.some((k) => k.includes("notifications")),
+    "notification status chip is registered",
+  );
 });

@@ -19,14 +19,26 @@ function phasePresentation(phase: string): { label: string; tone: PhaseTone } {
       return { label: "Planning", tone: "info" }
     case "pre-planning":
       return { label: "Pre-planning", tone: "muted" }
+    case "researching":
+      return { label: "Researching", tone: "info" }
+    case "refining":
+      return { label: "Refining", tone: "info" }
     case "summarizing":
       return { label: "Summarizing", tone: "info" }
+    case "verifying":
+      return { label: "Verifying", tone: "info" }
     case "blocked":
       return { label: "Blocked", tone: "warning" }
+    case "paused":
+      return { label: "Paused", tone: "warning" }
     case "needs-discussion":
       return { label: "Discussion", tone: "warning" }
+    case "validating-milestone":
+      return { label: "Validating", tone: "info" }
     case "replanning-slice":
       return { label: "Replanning", tone: "info" }
+    case "escalating-task":
+      return { label: "Escalating", tone: "warning" }
     case "completing-milestone":
       return { label: "Completing", tone: "info" }
     case "evaluating-gates":

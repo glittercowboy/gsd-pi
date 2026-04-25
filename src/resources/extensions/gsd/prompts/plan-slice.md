@@ -20,9 +20,22 @@ Pay particular attention to **Forward Intelligence** sections — they contain h
 
 You have full tool access. Before decomposing, explore the relevant code to ground your plan in reality.
 
-### Verify Roadmap Assumptions
+### Verify Roadmap Assumptions (JIT Reassessment — ADR-003 §4)
 
-Check prior slice summaries (inlined above as dependency summaries, if present). If prior slices discovered constraints, changed approaches, or flagged fragility, adjust your plan accordingly. The roadmap description may be stale — verify it against the current codebase state.
+Before planning this slice, verify that the roadmap's assumptions still hold given prior slice summaries. Check inlined dependency summaries (below) for discovered constraints, changed approaches, or flagged fragility.
+
+**If the remaining roadmap needs adjustment, modify it before proceeding:**
+
+- If a downstream slice's title/demo/dependencies are now wrong, call `gsd_reassess_roadmap` with the corrected `sliceChanges.modified` entry.
+- If new work surfaced that deserves its own slice, add it via `sliceChanges.added`.
+- If a downstream slice is now redundant or out of scope, remove it via `sliceChanges.removed`.
+- **Bias strongly toward "roadmap is fine."** Most slice completions produce no structural change. Only adjust when there is concrete evidence a downstream slice is wrong — not speculative concern. Over-reassessment is costlier than a later mid-slice replan.
+
+Completed slices are immutable: never modify or remove a slice whose status is complete.
+
+Then proceed with planning this slice against the (possibly updated) roadmap.
+
+The roadmap description may be stale — verify it against the current codebase state.
 
 ### Explore Slice Scope
 
@@ -44,6 +57,7 @@ Narrate your decomposition reasoning — why you're grouping work this way, what
 
 Then:
 0. If `REQUIREMENTS.md` was preloaded above, identify which Active requirements the roadmap says this slice owns or supports. These are the requirements this plan must deliver — every owned requirement needs at least one task that directly advances it, and verification must prove the requirement is met.
+0a. Call `memory_query` with keywords from the slice title and the source files listed below. Prior architectural decisions, conventions, and gotchas in this area should inform task decomposition — not be re-derived during execution.
 1. Read the templates:
    - `~/.gsd/agent/extensions/gsd/templates/plan.md`
    - `~/.gsd/agent/extensions/gsd/templates/task-plan.md`
@@ -53,6 +67,7 @@ Then:
    - For simple slices: executable commands or script assertions are fine.
    - If the project is non-trivial and has no test framework, the first task should set one up.
    - If this slice establishes a boundary contract, verification must exercise that contract.
+   - Planned test files must only read from or import paths that are tracked in git. Do NOT plan tests whose inputs or fixtures are paths listed in `.gitignore` (e.g. `.gsd/`, `.planning/`, `.audits/`). If the scenario seems to require such a file, plan an inline fixture or a tracked sample instead.
 4. **For non-trivial slices only** — plan observability, proof level, and integration closure:
    - Include `Observability / Diagnostics` for backend, integration, async, stateful, or UI slices where failure diagnosis matters.
    - Fill `Proof Level` and `Integration Closure` when the slice crosses runtime boundaries or has meaningful integration concerns.
@@ -81,6 +96,8 @@ Then:
 11. {{commitInstruction}}
 
 The slice directory and tasks/ subdirectory already exist. Do NOT mkdir. All work stays in your working directory: `{{workingDirectory}}`.
+
+**Autonomous execution:** Do not call `ask_user_questions` or `secure_env_collect`. You are running in auto-mode — there is no human available to answer questions. Make reasonable assumptions and document them in the plan. If a decision genuinely requires human input, write a note in the relevant task's description and call `gsd_plan_slice` with what you have.
 
 **You MUST call `gsd_plan_slice` to persist the planning state before finishing.**
 

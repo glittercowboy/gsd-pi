@@ -17,20 +17,24 @@ import type {
   SkillResolutionReport,
 } from "./preferences-types.js";
 import { validatePreferences } from "./preferences-validation.js";
-import { loadEffectiveGSDPreferences } from "./preferences.js";
 
 // Re-export types so existing consumers of ./preferences-skills.js keep working
 export type { GSDSkillRule, SkillDiscoveryMode, SkillResolution, SkillResolutionReport } from "./preferences-types.js";
 
 /**
  * Known skill directories, in priority order.
- * Global skills (~/.agents/skills/) take precedence over project skills.
+ * Searches both the skills.sh ecosystem directory (~/.agents/skills/) and
+ * Claude Code's official directory (~/.claude/skills/). Project-level
+ * directories for both conventions are included as well.
  * Legacy ~/.gsd/agent/skills/ is included as a fallback for pre-migration installs.
  */
 export function getSkillSearchDirs(cwd: string): Array<{ dir: string; method: SkillResolution["method"] }> {
   const dirs: Array<{ dir: string; method: SkillResolution["method"] }> = [
     { dir: join(homedir(), ".agents", "skills"), method: "user-skill" },
     { dir: join(cwd, ".agents", "skills"), method: "project-skill" },
+    // Claude Code official skill directories
+    { dir: join(homedir(), ".claude", "skills"), method: "user-skill" },
+    { dir: join(cwd, ".claude", "skills"), method: "project-skill" },
   ];
   // Legacy fallback — read skills from old GSD directory only if migration hasn't completed
   const legacyDir = join(homedir(), ".gsd", "agent", "skills");
@@ -138,38 +142,5 @@ export function resolveAllSkillReferences(preferences: GSDPreferences, cwd: stri
   return { resolutions, warnings };
 }
 
-/**
- * Format a skill reference for the system prompt.
- * If resolved, shows the path so the agent knows exactly where to read.
- * If unresolved, marks it clearly.
- */
-export function formatSkillRef(ref: string, resolutions: Map<string, SkillResolution>): string {
-  const resolution = resolutions.get(ref);
-  if (!resolution || resolution.method === "unresolved") {
-    return `${ref} (⚠ not found — check skill name or path)`;
-  }
-  // For absolute paths where SKILL.md is just appended, don't clutter the output
-  if (resolution.method === "absolute-path" || resolution.method === "absolute-dir") {
-    return ref;
-  }
-  // For bare names resolved from skill directories, show the resolved path
-  return `${ref} → \`${resolution.resolvedPath}\``;
-}
-
-/**
- * Resolve the skill discovery mode from effective preferences.
- * Defaults to "suggest" -- skills are identified during research but not installed automatically.
- */
-export function resolveSkillDiscoveryMode(): SkillDiscoveryMode {
-  const prefs = loadEffectiveGSDPreferences();
-  return prefs?.preferences.skill_discovery ?? "suggest";
-}
-
-/**
- * Resolve the skill staleness threshold in days.
- * Returns 0 if disabled, default 60 if not configured.
- */
-export function resolveSkillStalenessDays(): number {
-  const prefs = loadEffectiveGSDPreferences();
-  return prefs?.preferences.skill_staleness_days ?? 60;
-}
+// resolveSkillDiscoveryMode and resolveSkillStalenessDays moved to
+// preferences.ts to break circular dependency (they need loadEffectiveGSDPreferences).

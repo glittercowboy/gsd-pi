@@ -7,6 +7,7 @@ import {
 	cleanupSessionProcesses,
 	processes,
 } from "../resources/extensions/bg-shell/process-manager.ts";
+import { waitForCondition } from "../resources/extensions/gsd/tests/test-helpers.ts";
 
 function isPidAlive(pid: number | undefined): boolean {
 	if (!pid || pid <= 0) return false;
@@ -41,16 +42,25 @@ test("cleanupSessionProcesses reaps only session-scoped processes from the previ
 		ownerSessionFile: "session-b",
 	});
 
-	await new Promise((resolve) => setTimeout(resolve, 150));
-	assert.equal(isPidAlive(owned.proc.pid), true, "owned process should be alive before cleanup");
-	assert.equal(isPidAlive(persistent.proc.pid), true, "persistent process should be alive before cleanup");
-	assert.equal(isPidAlive(foreign.proc.pid), true, "foreign process should be alive before cleanup");
+	// Poll until all three spawned children are live — no magic sleeps.
+	await waitForCondition(
+		() =>
+			isPidAlive(owned.proc.pid) &&
+			isPidAlive(persistent.proc.pid) &&
+			isPidAlive(foreign.proc.pid),
+		{ timeoutMs: 5_000, description: "all three spawned children to be alive" },
+	);
 
 	const removed = await cleanupSessionProcesses("session-a", { graceMs: 200 });
 	assert.deepEqual(removed.sort(), [owned.id], "only the session-scoped process should be reaped");
 
-	await new Promise((resolve) => setTimeout(resolve, 150));
-	assert.equal(isPidAlive(owned.proc.pid), false, "owned process should be terminated");
+	// Poll until the reaped child has actually exited. Foreign + persistent stay
+	// alive by contract — any point after cleanupSessionProcesses returned is a
+	// valid observation window for them.
+	await waitForCondition(() => !isPidAlive(owned.proc.pid), {
+		timeoutMs: 5_000,
+		description: "owned (session-a) process to exit after cleanup",
+	});
 	assert.equal(isPidAlive(persistent.proc.pid), true, "persistent process should survive cleanup");
 	assert.equal(isPidAlive(foreign.proc.pid), true, "foreign process should survive cleanup");
 	assert.equal(processes.get(owned.id)?.persistAcrossSessions, false);

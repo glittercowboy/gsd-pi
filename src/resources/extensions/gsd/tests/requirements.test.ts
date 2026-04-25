@@ -95,6 +95,15 @@ describe('requirements', () => {
     assert.ok(report.issues.some(issue => issue.code === "active_requirement_missing_owner"), "doctor flags missing owner");
   });
 
+  // #4414: active_requirement_missing_owner is a planning-hygiene signal,
+  // not a correctness blocker — severity must be warning, not error.
+  test('#4414: active_requirement_missing_owner is a warning, not an error', async () => {
+    const report = await runGSDDoctor(base);
+    const issue = report.issues.find(i => i.code === "active_requirement_missing_owner");
+    assert.ok(issue, "issue is present");
+    assert.equal(issue!.severity, "warning", "severity downgraded so doctor report.ok is not flipped to false");
+  });
+
   after(() => {
     rmSync(base, { recursive: true, force: true });
   });

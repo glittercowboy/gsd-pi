@@ -9,9 +9,40 @@
 
 export type SettingsWorkflowMode = "solo" | "team"
 
-export type SettingsTokenProfile = "budget" | "balanced" | "quality"
+export type SettingsTokenProfile = "budget" | "balanced" | "quality" | "burn-max"
 
 export type SettingsBudgetEnforcement = "warn" | "pause" | "halt"
+export type SettingsContextSelectionMode = "full" | "smart"
+export type SettingsServiceTier = "priority" | "flex"
+
+export interface SettingsPhaseSkipPreferences {
+  skip_research?: boolean
+  skip_reassess?: boolean
+  skip_slice_research?: boolean
+  skip_milestone_validation?: boolean
+  reassess_after_slice?: boolean
+  require_slice_discussion?: boolean
+  mid_execution_escalation?: boolean
+  progressive_planning?: boolean
+}
+
+export interface SettingsReactiveExecutionConfig {
+  enabled?: boolean
+  max_parallel?: number
+  isolation_mode?: "same-tree"
+  subagent_model?: string
+}
+
+export interface SettingsGateEvaluationConfig {
+  enabled?: boolean
+  slice_gates?: string[]
+  task_gates?: boolean
+}
+
+export interface SettingsSliceParallelConfig {
+  enabled?: boolean
+  max_workers?: number
+}
 
 // ─── Dynamic Routing (mirrors DynamicRoutingConfig from model-router.ts) ─────
 
@@ -87,6 +118,7 @@ export interface SettingsProjectTotals {
 
 export interface SettingsPreferencesData {
   mode?: SettingsWorkflowMode
+  models?: Record<string, string>
   budgetCeiling?: number
   budgetEnforcement?: SettingsBudgetEnforcement
   tokenProfile?: SettingsTokenProfile
@@ -101,6 +133,15 @@ export interface SettingsPreferencesData {
   }
   uatDispatch?: boolean
   autoVisualize?: boolean
+  phases?: SettingsPhaseSkipPreferences
+  contextSelection?: SettingsContextSelectionMode
+  reactiveExecution?: SettingsReactiveExecutionConfig
+  gateEvaluation?: SettingsGateEvaluationConfig
+  sliceParallel?: SettingsSliceParallelConfig
+  serviceTier?: SettingsServiceTier
+  showTokenCost?: boolean
+  contextWindowOverride?: number
+  language?: string
   remoteQuestions?: {
     channel?: "slack" | "discord" | "telegram"
     channelId?: string

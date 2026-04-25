@@ -5,7 +5,7 @@
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
 import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { transformMessages } from "./transform-messages.js";
+import { transformMessagesWithReport } from "./transform-messages.js";
 
 type GoogleApiType = "google-generative-ai" | "google-gemini-cli" | "google-vertex";
 
@@ -80,7 +80,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 		return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
+	const transformedMessages = transformMessagesWithReport(context.messages, model, normalizeToolCallId, "google-generative-ai");
 
 	for (const msg of transformedMessages) {
 		if (msg.role === "user") {

@@ -2,7 +2,8 @@
 /**
  * link-workspace-packages.cjs
  *
- * Creates node_modules/@gsd/* symlinks pointing to packages/* directories.
+ * Creates node_modules/@gsd/* and node_modules/@gsd-build/* symlinks pointing
+ * to shipped packages/* directories.
  *
  * During development, npm workspaces creates these automatically. But in the
  * published tarball, workspace packages are shipped under packages/ (via the
@@ -17,30 +18,25 @@
  */
 const { existsSync, mkdirSync, symlinkSync, cpSync, lstatSync, readlinkSync, unlinkSync } = require('fs')
 const { resolve, join } = require('path')
+const { getLinkablePackages, REPO_ROOT } = require('./lib/workspace-manifest.cjs')
 
-const root = resolve(__dirname, '..')
-const packagesDir = join(root, 'packages')
-const nodeModulesGsd = join(root, 'node_modules', '@gsd')
-
-// Map directory names to package names
-const packageMap = {
-  'native': 'native',
-  'pi-agent-core': 'pi-agent-core',
-  'pi-ai': 'pi-ai',
-  'pi-coding-agent': 'pi-coding-agent',
-  'pi-tui': 'pi-tui',
+const scopeDirs = {
+  '@gsd': join(REPO_ROOT, 'node_modules', '@gsd'),
+  '@gsd-build': join(REPO_ROOT, 'node_modules', '@gsd-build'),
 }
 
-// Ensure @gsd scope directory exists
-if (!existsSync(nodeModulesGsd)) {
-  mkdirSync(nodeModulesGsd, { recursive: true })
+for (const scopeDir of Object.values(scopeDirs)) {
+  if (!existsSync(scopeDir)) {
+    mkdirSync(scopeDir, { recursive: true })
+  }
 }
 
 let linked = 0
 let copied = 0
-for (const [dir, name] of Object.entries(packageMap)) {
-  const source = join(packagesDir, dir)
-  const target = join(nodeModulesGsd, name)
+for (const pkg of getLinkablePackages()) {
+  const source = pkg.path
+  const scopeDir = scopeDirs[pkg.scope]
+  const target = join(scopeDir, pkg.name)
 
   if (!existsSync(source)) continue
 
@@ -50,7 +46,7 @@ for (const [dir, name] of Object.entries(packageMap)) {
       const stat = lstatSync(target)
       if (stat.isSymbolicLink()) {
         const linkTarget = readlinkSync(target)
-        if (resolve(join(nodeModulesGsd, linkTarget)) === source || linkTarget === source) {
+        if (resolve(join(scopeDir, linkTarget)) === source || linkTarget === source) {
           continue // Already correct
         }
         unlinkSync(target) // Wrong target, relink

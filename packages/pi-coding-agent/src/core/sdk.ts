@@ -1,4 +1,43 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
+
+/**
+ * Lightweight PATH scan for the `claude` binary — no subprocess, no network.
+ * Mirrors the check in src/resources/extensions/gsd/doctor-providers.ts so the
+ * legacy Anthropic OAuth self-heal path can only trigger when the user has a
+ * working Claude Code CLI to fall back to.
+ */
+function isClaudeCodeBinaryInPath(): boolean {
+	const pathDirs = (process.env.PATH ?? "").split(":");
+	return pathDirs.some((dir) => dir && existsSync(join(dir, "claude")));
+}
+
+/**
+ * Structured error thrown when all credentials for a provider are in a
+ * backoff window.  Carries typed metadata so callers (e.g. the auto-loop)
+ * can make informed retry decisions instead of string-matching the message.
+ */
+export class CredentialCooldownError extends Error {
+	readonly code = "AUTH_COOLDOWN" as const;
+	/** Milliseconds until the earliest credential becomes available, or undefined if unknown. */
+	readonly retryAfterMs: number | undefined;
+
+	constructor(provider: string, retryAfterMs?: number) {
+		super(
+			`All credentials for "${provider}" are in a cooldown window. ` +
+				`Please wait a moment and try again, or switch to a different provider.`,
+		);
+		this.name = "CredentialCooldownError";
+		this.retryAfterMs = retryAfterMs;
+	}
+}
+
+export function canRestoreSessionModel(
+	modelRegistry: Pick<ModelRegistry, "isProviderRequestReady">,
+	model: Model<any>,
+): boolean {
+	return modelRegistry.isProviderRequestReady(model.provider);
+}
 import { Agent, type AgentMessage, type ThinkingLevel } from "@gsd/pi-agent-core";
 import type { Message, Model } from "@gsd/pi-ai";
 import { getAgentDir, getDocsPath } from "../config.js";
@@ -66,6 +105,16 @@ export interface CreateAgentSessionOptions {
 	tools?: Tool[];
 	/** Custom tools to register (in addition to built-in tools). */
 	customTools?: ToolDefinition[];
+	/**
+	 * Additional tool names to activate after extensions/MCP servers register.
+	 * Names that are not registered by any extension are silently ignored
+	 * by AgentSession.setActiveToolsByName.
+	 *
+	 * Used by --tools to forward names that don't match a built-in (likely
+	 * extension- or MCP-provided), so subagents whose frontmatter declares
+	 * extension tools don't end up with an empty tool list.
+	 */
+	extraActiveToolNames?: string[];
 
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
 	resourceLoader?: ResourceLoader;
@@ -75,6 +124,10 @@ export interface CreateAgentSessionOptions {
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
+
+	/** Optional: check if the claude-code CLI provider is ready (installed + authed).
+	 * Passed to RetryHandler for third-party block recovery (#3772). */
+	isClaudeCodeReady?: () => boolean;
 }
 
 /** Result from createAgentSession */
@@ -195,6 +248,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		time("resourceLoader.reload");
 	}
 
+	// Flush provider registrations queued during extension loading so that
+	// extension models (e.g. pi-claude-cli) are visible in the registry before
+	// findInitialModel() runs. bindCore() repeats this flush as a safety net
+	// for any late-arriving registrations.
+	const { runtime: extensionRuntime } = resourceLoader.getExtensions();
+	for (const { name, config } of extensionRuntime.pendingProviderRegistrations) {
+		modelRegistry.registerProvider(name, config);
+	}
+	extensionRuntime.pendingProviderRegistrations = [];
+
 	// Check if session has existing data to restore
 	const existingSession = sessionManager.buildSessionContext();
 	const hasExistingSession = existingSession.messages.length > 0;
@@ -206,13 +269,23 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && existingSession.model) {
 		const restoredModel = modelRegistry.find(existingSession.model.provider, existingSession.model.modelId);
-		if (restoredModel && (await modelRegistry.getApiKey(restoredModel))) {
-			model = restoredModel;
-		}
+			if (restoredModel && canRestoreSessionModel(modelRegistry, restoredModel)) {
+				model = restoredModel;
+			}
 		if (!model) {
 			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
 		}
 	}
+
+	// Flush extension provider registrations so extension-provided models (e.g. claude-code/*)
+	// are available in the registry before model resolution. Without this, findInitialModel()
+	// cannot find extension models and falls back to built-in providers (#3534).
+	const extensionsForModelResolution = resourceLoader.getExtensions();
+	for (const { name, config } of extensionsForModelResolution.runtime.pendingProviderRegistrations) {
+		modelRegistry.registerProvider(name, config);
+	}
+	// Clear the queue so bindCore() doesn't re-register the same providers.
+	extensionsForModelResolution.runtime.pendingProviderRegistrations = [];
 
 	// If still no model, use findInitialModel (checks settings default, then provider defaults)
 	if (!model) {
@@ -255,9 +328,15 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const defaultActiveToolNames: ToolName[] = editMode === "hashline"
 		? ["hashline_read", "bash", "hashline_edit", "write", "lsp"]
 		: ["read", "bash", "edit", "write", "lsp"];
-	const initialActiveToolNames: ToolName[] = options.tools
+	const builtinActiveToolNames: ToolName[] = options.tools
 		? options.tools.map((t) => t.name).filter((n): n is ToolName => n in allTools)
 		: defaultActiveToolNames;
+	// Merge in extension/MCP tool names from --tools that didn't match a built-in.
+	// AgentSession.setActiveToolsByName silently drops names that aren't in the
+	// registry, so unknown names are harmless here.
+	const initialActiveToolNames: string[] = options.extraActiveToolNames
+		? [...builtinActiveToolNames, ...options.extraActiveToolNames]
+		: builtinActiveToolNames;
 
 	let agent: Agent;
 
@@ -327,6 +406,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		maxRetryDelayMs: settingsManager.getRetrySettings().maxDelayMs,
 		externalToolExecution: (m) => modelRegistry.getProviderAuthMode(m.provider) === "externalCli",
+		getProviderOptions: async (currentModel) => {
+			if (currentModel.provider !== "claude-code") return undefined;
+			const runner = extensionRunnerRef.current;
+			if (!runner?.hasUI()) return undefined;
+			return {
+				extensionUIContext: runner.getUIContext(),
+			};
+		},
 		getApiKey: async (provider) => {
 			// Use the provider argument from the in-flight request;
 			// agent.state.model may already be switched mid-turn.
@@ -341,8 +428,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 			// Retry key resolution with backoff to handle transient network failures
 			// (e.g., OAuth token refresh failing due to brief connectivity loss).
+			// When credentials are in a cooldown window (e.g., after a 429), wait
+			// for the backoff to expire instead of using fixed delays that are
+			// shorter than the cooldown duration.
 			const maxAttempts = 3;
 			const baseDelayMs = 2000;
+			const maxCooldownWaitMs = 60_000; // Don't wait longer than 60s (skip quota-exhausted 30min backoffs)
 			for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 				const key = await modelRegistry.getApiKeyForProvider(resolvedProvider);
 				if (key) return key;
@@ -357,21 +448,63 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				const isOAuth = model && modelRegistry.isUsingOAuth(model);
 				if (!hasAuth && !isOAuth) break;
 
-				// Wait with exponential backoff before retrying
+				// If credentials are in a cooldown window, wait for the earliest
+				// one to expire rather than using a fixed delay that's too short.
+				const backoffExpiry = modelRegistry.authStorage.getEarliestBackoffExpiry(resolvedProvider);
+				if (backoffExpiry !== undefined) {
+					const waitMs = backoffExpiry - Date.now() + 500; // 500ms buffer
+					if (waitMs > 0 && waitMs <= maxCooldownWaitMs) {
+						await new Promise(resolve => setTimeout(resolve, waitMs));
+						continue; // Retry immediately after cooldown clears
+					}
+					if (waitMs > maxCooldownWaitMs) {
+						break; // Quota-exhausted or very long backoff — don't block
+					}
+				}
+
+				// Standard exponential backoff for non-cooldown transient failures
 				await new Promise(resolve => setTimeout(resolve, baseDelayMs * attempt));
 			}
 
-			// All retries exhausted — throw descriptive error
-			// Check if credentials exist but are temporarily backed off
-			// (e.g., after a 429 quota exhaustion). Provide a specific error
-			// so the retry handler knows this is transient, not a permanent
-			// auth failure.
+			// All retries exhausted — throw descriptive error.
+			// Check if credentials exist but are temporarily in a backoff window
+			// (e.g., after a 429). This message intentionally avoids phrases like
+			// "rate limit" / "429" to prevent isRetryableError() from re-entering
+			// the retry handler and creating cascading error entries (#3429).
 			const hasAuth = modelRegistry.authStorage.hasAuth(resolvedProvider);
 			if (hasAuth) {
-				throw new Error(
-					`All credentials for "${resolvedProvider}" are temporarily backed off due to rate limiting. ` +
-						`The request will be retried automatically when backoff expires.`,
-				);
+				// Anthropic OAuth was removed in v2.74.0 for TOS compliance (#3952).
+				// Users who upgraded from an older version may still have OAuth
+				// credentials in auth.json that will never resolve to a valid API key.
+				if (
+					resolvedProvider === "anthropic" &&
+					modelRegistry.authStorage.hasLegacyOAuthCredential(resolvedProvider)
+				) {
+					// Self-heal: strip the stale oauth entry so hasAuth() stops lying
+					// about anthropic being configured. This preserves any api_key
+					// credentials alongside it.
+					const removed = modelRegistry.authStorage.removeLegacyOAuthCredential(resolvedProvider);
+					if (removed) {
+						console.warn(
+							`[auth] Removed unsupported Anthropic OAuth credential from auth.json (#3952).`,
+						);
+					}
+					if (isClaudeCodeBinaryInPath()) {
+						throw new Error(
+							`Removed stale Anthropic OAuth credential (OAuth support removed in v2.74.0). ` +
+								`Your current model's provider is set to "anthropic" but the local Claude Code CLI ` +
+								`is available — switch the model's provider to "claude-code" in your preferences ` +
+								`to use it, or set ANTHROPIC_API_KEY to continue with the Anthropic API directly.`,
+						);
+					}
+					throw new Error(
+						`Removed stale Anthropic OAuth credential (OAuth support removed in v2.74.0). ` +
+							`Set ANTHROPIC_API_KEY, run '/login' and paste an API key, or switch to a different provider.`,
+					);
+				}
+				const expiry = modelRegistry.authStorage.getEarliestBackoffExpiry(resolvedProvider);
+				const retryAfterMs = expiry !== undefined ? Math.max(0, expiry - Date.now()) : undefined;
+				throw new CredentialCooldownError(resolvedProvider, retryAfterMs);
 			}
 			const model = agent.state.model;
 			const isOAuth = model && modelRegistry.isUsingOAuth(model);
@@ -379,10 +512,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				// If credentials exist but are all in a backoff window (quota / rate-limit),
 				// surface a specific message instead of the misleading "Authentication failed".
 				if (modelRegistry.authStorage.areAllCredentialsBackedOff(resolvedProvider)) {
-					throw new Error(
-						`Rate limit in effect for "${resolvedProvider}". ` +
-							`Please wait before retrying or switch to a different model.`,
-					);
+					const expiry = modelRegistry.authStorage.getEarliestBackoffExpiry(resolvedProvider);
+					const retryAfterMs = expiry !== undefined ? Math.max(0, expiry - Date.now()) : undefined;
+					throw new CredentialCooldownError(resolvedProvider, retryAfterMs);
 				}
 				throw new Error(
 					`Authentication failed for "${resolvedProvider}". ` +
@@ -422,6 +554,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRegistry,
 		initialActiveToolNames,
 		extensionRunnerRef,
+		isClaudeCodeReady: options.isClaudeCodeReady,
 	});
 	const extensionsResult = resourceLoader.getExtensions();
 

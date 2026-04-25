@@ -273,9 +273,9 @@ test('Scenario 2: Fully complete project — deriveState phase', async () => {
       invalidateAllCaches();
       const state = await deriveState(base);
       assert.deepStrictEqual(state.phase, 'complete', 'complete: deriveState phase is complete (validation + summary written by migration)');
-      // When all milestones are complete, activeMilestone points to the last entry (for display)
-      assert.ok(state.activeMilestone !== null, 'complete: deriveState has activeMilestone (last entry)');
-      assert.deepStrictEqual(state.activeMilestone!.id, 'M001', 'complete: deriveState activeMilestone is M001');
+      assert.equal(state.activeMilestone, null, 'complete: deriveState has no activeMilestone');
+      assert.ok(state.lastCompletedMilestone !== null, 'complete: deriveState exposes lastCompletedMilestone');
+      assert.deepStrictEqual(state.lastCompletedMilestone!.id, 'M001', 'complete: deriveState lastCompletedMilestone is M001');
 
       // generatePreview for complete project
       const preview = generatePreview(project);
@@ -292,4 +292,3 @@ test('Scenario 2: Fully complete project — deriveState phase', async () => {
       rmSync(base, { recursive: true, force: true });
     }
 });
-

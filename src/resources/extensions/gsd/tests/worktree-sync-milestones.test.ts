@@ -100,8 +100,8 @@ describe('worktree-sync-milestones', async () => {
     }
   }
 
-  // ─── 3. gsd.db deleted in worktree after sync ─────────────────────────
-  console.log('\n=== 3. gsd.db deleted in worktree after sync ===');
+  // ─── 3. empty gsd.db deleted in worktree after sync ────────────────────
+  console.log('\n=== 3. empty gsd.db deleted in worktree after sync ===');
   {
     const mainBase = createBase('main');
     const wtBase = createBase('wt');
@@ -111,13 +111,37 @@ describe('worktree-sync-milestones', async () => {
       mkdirSync(m001Dir, { recursive: true });
       writeFileSync(join(m001Dir, 'M001-ROADMAP.md'), '# Roadmap');
 
-      // Worktree has a stale gsd.db
-      writeFileSync(join(wtBase, '.gsd', 'gsd.db'), 'stale data');
+      // Worktree has an empty (0-byte) gsd.db — stale/corrupt
+      writeFileSync(join(wtBase, '.gsd', 'gsd.db'), '');
       assert.ok(existsSync(join(wtBase, '.gsd', 'gsd.db')), 'gsd.db exists before sync');
 
       syncProjectRootToWorktree(mainBase, wtBase, 'M001');
 
-      assert.ok(!existsSync(join(wtBase, '.gsd', 'gsd.db')), '#853: gsd.db deleted after sync');
+      assert.ok(!existsSync(join(wtBase, '.gsd', 'gsd.db')), '#853: empty gsd.db deleted after sync');
+    } finally {
+      cleanup(mainBase);
+      cleanup(wtBase);
+    }
+  }
+
+  // ─── 3b. non-empty gsd.db preserved in worktree after sync (#2815) ───
+  console.log('\n=== 3b. non-empty gsd.db preserved in worktree after sync (#2815) ===');
+  {
+    const mainBase = createBase('main');
+    const wtBase = createBase('wt');
+
+    try {
+      const m001Dir = join(mainBase, '.gsd', 'milestones', 'M001');
+      mkdirSync(m001Dir, { recursive: true });
+      writeFileSync(join(m001Dir, 'M001-ROADMAP.md'), '# Roadmap');
+
+      // Worktree has a populated gsd.db (e.g. from gsd-migrate on respawn)
+      writeFileSync(join(wtBase, '.gsd', 'gsd.db'), 'migrated-db-content');
+      assert.ok(existsSync(join(wtBase, '.gsd', 'gsd.db')), 'gsd.db exists before sync');
+
+      syncProjectRootToWorktree(mainBase, wtBase, 'M001');
+
+      assert.ok(existsSync(join(wtBase, '.gsd', 'gsd.db')), '#2815: non-empty gsd.db preserved after sync');
     } finally {
       cleanup(mainBase);
       cleanup(wtBase);
@@ -197,7 +221,8 @@ describe('worktree-sync-milestones', async () => {
 
     try {
       // Build worktree milestone structure with slice-level and task-level files
-      const wtSliceDir = join(wtBase, '.gsd', 'milestones', 'M001', 'slices', 'S01');
+      // Use M002 as the milestone to sync, M001 as the "current" being merged (skipped)
+      const wtSliceDir = join(wtBase, '.gsd', 'milestones', 'M002', 'slices', 'S01');
       const wtTasksDir = join(wtSliceDir, 'tasks');
       mkdirSync(wtTasksDir, { recursive: true });
       writeFileSync(join(wtSliceDir, 'S01-SUMMARY.md'), '# S01 Summary');
@@ -205,11 +230,12 @@ describe('worktree-sync-milestones', async () => {
       writeFileSync(join(wtTasksDir, 'T02-SUMMARY.md'), '# T02 Summary');
 
       // Main project root starts with only the milestone directory (no slices yet)
-      mkdirSync(join(mainBase, '.gsd', 'milestones', 'M001'), { recursive: true });
+      mkdirSync(join(mainBase, '.gsd', 'milestones', 'M002'), { recursive: true });
 
+      // Pass M001 as milestoneId (the one being merged/skipped), M002 should still sync
       const { synced } = syncWorktreeStateBack(mainBase, wtBase, 'M001');
 
-      const mainSliceDir = join(mainBase, '.gsd', 'milestones', 'M001', 'slices', 'S01');
+      const mainSliceDir = join(mainBase, '.gsd', 'milestones', 'M002', 'slices', 'S01');
       const mainTasksDir = join(mainSliceDir, 'tasks');
 
       assert.ok(
@@ -317,16 +343,16 @@ describe('worktree-sync-milestones', async () => {
         'M002 missing in main before sync',
       );
 
-      // Sync with milestoneId = M001 (the current milestone)
+      // Sync with milestoneId = M001 (the current milestone being merged — skipped)
       const { synced } = syncWorktreeStateBack(mainBase, wtBase, 'M001');
 
-      // M001 should be synced (current milestone — always synced)
+      // M001 should be SKIPPED (current milestone being merged — #3641)
       assert.ok(
-        existsSync(join(mainBase, '.gsd', 'milestones', 'M001', 'M001-SUMMARY.md')),
-        'M001 SUMMARY synced to main',
+        !existsSync(join(mainBase, '.gsd', 'milestones', 'M001', 'M001-SUMMARY.md')),
+        'M001 SUMMARY NOT synced (current milestone skipped to prevent merge conflicts)',
       );
 
-      // M002 should ALSO be synced (next milestone — the fix)
+      // M002 should be synced (other milestone — not skipped)
       assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'M002-abc123', 'M002-abc123-CONTEXT.md')),
         'M002 CONTEXT synced to main (next-milestone fix)',
@@ -383,20 +409,17 @@ describe('worktree-sync-milestones', async () => {
       writeFileSync(join(wtBase, '.gsd', 'REQUIREMENTS.md'), '# Requirements\n## R001-R089\n## R090 — SCIM\n## R091 — WebAuthn');
       writeFileSync(join(wtBase, '.gsd', 'PROJECT.md'), '# Project\nMilestones: M001-M007');
 
-      // Sync with milestoneId = M006 (the completing milestone)
+      // Sync with milestoneId = M006 (the completing milestone — skipped by sync)
       const { synced } = syncWorktreeStateBack(mainBase, wtBase, 'M006-589wvh');
 
-      // Verify M006 artifacts synced
+      // M006 is the current milestone being merged — it should be SKIPPED (#3641)
+      // Its files are already in the milestone branch and would conflict with squash merge.
       assert.ok(
-        existsSync(join(mainBase, '.gsd', 'milestones', 'M006-589wvh', 'M006-589wvh-SUMMARY.md')),
-        'M006 SUMMARY synced',
-      );
-      assert.ok(
-        existsSync(join(mainBase, '.gsd', 'milestones', 'M006-589wvh', 'slices', 'S01', 'S01-SUMMARY.md')),
-        'M006 S01 SUMMARY synced',
+        !existsSync(join(mainBase, '.gsd', 'milestones', 'M006-589wvh', 'M006-589wvh-SUMMARY.md')),
+        'M006 SUMMARY NOT synced (current milestone skipped)',
       );
 
-      // Verify M007 artifacts synced (the critical fix)
+      // Verify M007 artifacts synced (the critical fix — other milestones still sync)
       assert.ok(
         existsSync(join(mainBase, '.gsd', 'milestones', 'M007-wortc8', 'M007-wortc8-CONTEXT.md')),
         'M007 CONTEXT synced to main (next-milestone)',

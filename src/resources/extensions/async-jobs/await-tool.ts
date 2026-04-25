@@ -66,10 +66,13 @@ export function createAwaitTool(getManager: () => AsyncJobManager): ToolDefiniti
 				}
 			}
 
-			// Mark all watched jobs as awaited upfront so the onJobComplete
-			// callback (which fires synchronously in the promise .then()) knows
-			// to suppress the follow-up message.
-			for (const j of watched) j.awaited = true;
+			// Suppress follow-up notifications for all watched jobs upfront.
+			// suppressFollowUp() cancels the pending delivery timer (if any), which
+			// handles both the within-turn case (job completes while we await) and
+			// the cross-turn case (job already completed before await_job was called).
+			// Previously this only set j.awaited = true, which missed the cross-turn
+			// case because the queueMicrotask had already fired (#3787).
+			for (const j of watched) manager.suppressFollowUp(j.id);
 
 			// If all watched jobs are already done, return immediately
 			const running = watched.filter((j) => j.status === "running");

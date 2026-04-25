@@ -13,6 +13,20 @@ export async function checkEngineHealth(
   issues: DoctorIssue[],
   fixesApplied: string[],
 ): Promise<void> {
+  const dbPath = join(basePath, ".gsd", "gsd.db");
+
+  if (!isDbAvailable() && existsSync(dbPath)) {
+    issues.push({
+      severity: "warning",
+      code: "db_unavailable",
+      scope: "project",
+      unitId: "project",
+      message: "Database unavailable — using filesystem state derivation (degraded mode). State queries may be slower and less reliable.",
+      file: ".gsd/gsd.db",
+      fixable: false,
+    });
+  }
+
   // ── DB constraint violation detection (full doctor only, not pre-dispatch per D-10) ──
   try {
     if (isDbAvailable()) {

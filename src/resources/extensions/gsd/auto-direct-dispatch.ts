@@ -28,7 +28,12 @@ import {
   buildReplanSlicePrompt,
 } from "./auto-prompts.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import type { MinimalModelRegistry } from "./context-budget.js";
 import { pauseAuto } from "./auto.js";
+import {
+  getWorkflowTransportSupportError,
+  getRequiredWorkflowToolsForAutoUnit,
+} from "./workflow-mcp.js";
 
 export async function dispatchDirectPhase(
   ctx: ExtensionCommandContext,
@@ -100,7 +105,13 @@ export async function dispatchDirectPhase(
         }
         unitType = "plan-slice";
         unitId = `${mid}/${sid}`;
-        prompt = await buildPlanSlicePrompt(mid, midTitle, sid, sTitle, base);
+        prompt = await buildPlanSlicePrompt(
+          mid, midTitle, sid, sTitle, base, undefined,
+          {
+            sessionContextWindow: ctx.model?.contextWindow,
+            modelRegistry: ctx.modelRegistry as MinimalModelRegistry | undefined,
+          },
+        );
       } else {
         unitType = "plan-milestone";
         unitId = mid;
@@ -125,7 +136,13 @@ export async function dispatchDirectPhase(
       }
       unitType = "execute-task";
       unitId = `${mid}/${sid}/${tid}`;
-      prompt = await buildExecuteTaskPrompt(mid, sid, sTitle, tid, tTitle, base);
+      prompt = await buildExecuteTaskPrompt(
+        mid, sid, sTitle, tid, tTitle, base,
+        {
+          sessionContextWindow: ctx.model?.contextWindow,
+          modelRegistry: ctx.modelRegistry as MinimalModelRegistry | undefined,
+        },
+      );
       break;
     }
 
@@ -241,6 +258,22 @@ export async function dispatchDirectPhase(
         "warning",
       );
       return;
+  }
+
+  const compatibilityError = getWorkflowTransportSupportError(
+    ctx.model?.provider,
+    getRequiredWorkflowToolsForAutoUnit(unitType),
+    {
+      projectRoot: base,
+      surface: "direct phase dispatch",
+      unitType,
+      authMode: ctx.model?.provider ? ctx.modelRegistry.getProviderAuthMode(ctx.model.provider) : undefined,
+      baseUrl: ctx.model?.baseUrl,
+    },
+  );
+  if (compatibilityError) {
+    ctx.ui.notify(compatibilityError, "error");
+    return;
   }
 
   ctx.ui.notify(`Dispatching ${unitType} for ${unitId}...`, "info");

@@ -21,10 +21,9 @@ import {
   realpathSync,
   readFileSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 
 import {
   createAutoWorktree,
@@ -32,8 +31,6 @@ import {
   getAutoWorktreeOriginalBase,
   mergeMilestoneToMain,
 } from "../../auto-worktree.ts";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function run(command: string, cwd: string): string {
   return execSync(command, {
@@ -75,58 +72,12 @@ function createMilestoneArtifacts(dir: string, mid: string): void {
   writeFileSync(join(msDir, `${mid}-ROADMAP.md`), roadmap);
 }
 
-// ─── Source-level: verify the merge code exists in the "all complete" path ────
-
-test("auto-loop 'all milestones complete' path merges before stopping (#962)", () => {
-  const loopSrc = readFileSync(join(__dirname, "../..", "auto", "phases.ts"), "utf-8");
-  const resolverSrc = readFileSync(
-    join(__dirname, "../..", "worktree-resolver.ts"),
-    "utf-8",
-  );
-
-  // Find the "incomplete.length === 0" block
-  const incompleteIdx = loopSrc.indexOf("incomplete.length === 0");
-  assert.ok(
-    incompleteIdx > -1,
-    "auto/phases.ts should have 'incomplete.length === 0' check",
-  );
-
-  // The merge call must appear BETWEEN the incomplete check and the stopAuto call.
-  const blockAfterIncomplete = loopSrc.slice(
-    incompleteIdx,
-    incompleteIdx + 3000,
-  );
-
-  assert.ok(
-    blockAfterIncomplete.includes("deps.resolver.mergeAndExit"),
-    "auto/phases.ts should call resolver.mergeAndExit in the 'all milestones complete' path",
-  );
-
-  // The merge should come before stopAuto in this block
-  const mergePos = blockAfterIncomplete.indexOf("deps.resolver.mergeAndExit");
-  const stopPos = blockAfterIncomplete.indexOf("stopAuto");
-  assert.ok(
-    mergePos < stopPos,
-    "resolver.mergeAndExit should be called before stopAuto in the 'all complete' path",
-  );
-
-  const helperIdx = resolverSrc.indexOf("mergeAndExit(milestoneId");
-  assert.ok(
-    helperIdx > -1,
-    "WorktreeResolver.mergeAndExit helper should exist",
-  );
-  const helperBlock = resolverSrc.slice(helperIdx, helperIdx + 2600);
-  assert.ok(
-    helperBlock.includes('mode === "worktree"') ||
-      helperBlock.includes('mode: "worktree"'),
-    "WorktreeResolver.mergeAndExit should handle worktree mode",
-  );
-  assert.ok(
-    helperBlock.includes('mode === "branch"') ||
-      helperBlock.includes('mode: "branch"'),
-    "WorktreeResolver.mergeAndExit should handle branch mode",
-  );
-});
+// Note: the prior phases.ts / worktree-resolver.ts source-grep block was
+// removed under #4825 — it asserted `deps.resolver.mergeAndExit` appears
+// before `stopAuto` via indexOf positions in the source text, which broke
+// on any helper refactor without catching a real regression. The two
+// integration tests below exercise the merge-before-stop behaviour end
+// to end through real git worktrees.
 
 // ─── Integration: single milestone completes → merged to main ────────────────
 

@@ -33,6 +33,8 @@ export const processes = new Map<string, BgProcess>();
 /** Pending alerts to inject into the next agent context */
 export let pendingAlerts: string[] = [];
 
+const MAX_PENDING_ALERTS = 50;
+
 /** Replace the pendingAlerts array (used by the extension entry point) */
 export function setPendingAlerts(alerts: string[]): void {
 	pendingAlerts = alerts;
@@ -58,8 +60,12 @@ export function addEvent(bg: BgProcess, event: Omit<ProcessEvent, "timestamp">):
 	}
 }
 
-export function pushAlert(bg: BgProcess, message: string): void {
-	pendingAlerts.push(`[bg:${bg.id} ${bg.label}] ${message}`);
+export function pushAlert(bg: BgProcess | null, message: string): void {
+	const prefix = bg ? `[bg:${bg.id} ${bg.label}] ` : "";
+	pendingAlerts.push(`${prefix}${message}`);
+	if (pendingAlerts.length > MAX_PENDING_ALERTS) {
+		pendingAlerts.splice(0, pendingAlerts.length - MAX_PENDING_ALERTS);
+	}
 }
 
 export function getInfo(p: BgProcess): BgProcessInfo {

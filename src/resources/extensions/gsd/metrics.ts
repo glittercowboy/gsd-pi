@@ -19,6 +19,8 @@ import { gsdRoot } from "./paths.js";
 import { getAndClearSkills } from "./skill-telemetry.js";
 import { loadJsonFile, loadJsonFileOrNull, saveJsonFile } from "./json-persistence.js";
 import { parseUnitId } from "./unit-id.js";
+import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
+import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
 
 // Re-export from shared — import directly from format-utils to avoid pulling
 // in the full barrel (mod.js → ui.js → @gsd/pi-tui) which breaks when loaded
@@ -41,6 +43,7 @@ export interface UnitMetrics {
   model: string;           // model ID used
   startedAt: number;       // ms timestamp
   finishedAt: number;      // ms timestamp
+  autoSessionKey?: string; // identifies one auto-mode run across pause/resume
   tokens: TokenCounts;
   cost: number;            // total USD cost
   toolCalls: number;
@@ -87,6 +90,7 @@ export function classifyUnitPhase(unitType: string): MetricsPhase {
       return "discussion";
     case "plan-milestone":
     case "plan-slice":
+    case "refine-slice":
       return "planning";
     case "execute-task":
       return "execution";
@@ -133,7 +137,19 @@ export function snapshotUnitMetrics(
   unitId: string,
   startedAt: number,
   model: string,
-  opts?: { tier?: string; modelDowngraded?: boolean; contextWindowTokens?: number; truncationSections?: number; continueHereFired?: boolean; promptCharCount?: number; baselineCharCount?: number },
+  opts?: {
+    tier?: string;
+    modelDowngraded?: boolean;
+    contextWindowTokens?: number;
+    truncationSections?: number;
+    continueHereFired?: boolean;
+    promptCharCount?: number;
+    baselineCharCount?: number;
+    autoSessionKey?: string;
+    traceId?: string;
+    turnId?: string;
+    causedBy?: string;
+  },
 ): UnitMetrics | null {
   if (!ledger) return null;
 
@@ -181,6 +197,7 @@ export function snapshotUnitMetrics(
     model,
     startedAt,
     finishedAt: Date.now(),
+    ...(opts?.autoSessionKey ? { autoSessionKey: opts.autoSessionKey } : {}),
     tokens,
     cost,
     toolCalls,
@@ -223,6 +240,27 @@ export function snapshotUnitMetrics(
     ledger.units.push(unit);
   }
   saveLedger(basePath, ledger);
+
+  if (isUnifiedAuditEnabled()) {
+    emitUokAuditEvent(
+      basePath,
+      buildAuditEnvelope({
+        traceId: opts?.traceId ?? `metrics:${unitType}:${unitId}`,
+        turnId: opts?.turnId,
+        causedBy: opts?.causedBy,
+        category: "metrics",
+        type: "unit-metrics-snapshot",
+        payload: {
+          unitType,
+          unitId,
+          model,
+          tokens: unit.tokens,
+          cost: unit.cost,
+          toolCalls: unit.toolCalls,
+        },
+      }),
+    );
+  }
 
   return unit;
 }
@@ -567,7 +605,34 @@ export function loadLedgerFromDisk(base: string): MetricsLedger | null {
 }
 
 function loadLedger(base: string): MetricsLedger {
-  return loadJsonFile(metricsPath(base), isMetricsLedger, defaultLedger);
+  const raw = loadJsonFile(metricsPath(base), isMetricsLedger, defaultLedger);
+  const before = raw.units.length;
+  raw.units = deduplicateUnits(raw.units);
+  if (raw.units.length < before) {
+    // Persist the cleaned ledger so duplicates don't re-accumulate
+    saveLedger(base, raw);
+  }
+  return raw;
+}
+
+/**
+ * Collapse duplicate entries with the same (type, id, startedAt) triple.
+ * Keeps the entry with the highest finishedAt (the most complete snapshot).
+ *
+ * This is a defensive measure against idle-watchdog race conditions that can
+ * produce duplicate entries on disk despite the in-memory idempotency guard
+ * in snapshotUnitMetrics(). See #1943.
+ */
+function deduplicateUnits(units: UnitMetrics[]): UnitMetrics[] {
+  const map = new Map<string, UnitMetrics>();
+  for (const u of units) {
+    const key = `${u.type}\0${u.id}\0${u.startedAt}`;
+    const existing = map.get(key);
+    if (!existing || u.finishedAt > existing.finishedAt) {
+      map.set(key, u);
+    }
+  }
+  return Array.from(map.values());
 }
 
 function saveLedger(base: string, data: MetricsLedger): void {

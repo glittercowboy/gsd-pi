@@ -935,13 +935,16 @@ export async function installPacksBatched(
 
 /**
  * Check if any skills from a pack are already installed.
+ * Searches both the skills.sh ecosystem directory and Claude Code's official directory.
  */
 export function isPackInstalled(pack: SkillPack): boolean {
-  const skillsDir = join(homedir(), ".agents", "skills");
-  if (!existsSync(skillsDir)) return false;
+  const skillsDirs = [
+    join(homedir(), ".agents", "skills"),
+    join(homedir(), ".claude", "skills"),
+  ];
 
   return pack.skills.every((name) =>
-    existsSync(join(skillsDir, name, "SKILL.md")),
+    skillsDirs.some((dir) => existsSync(join(dir, name, "SKILL.md"))),
   );
 }
 

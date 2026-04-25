@@ -131,9 +131,10 @@ export class UserMessageSelectorComponent extends Container {
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 
-		// Auto-cancel if no messages
+		// Auto-cancel if no messages — invoke synchronously via microtask
+		// to avoid the 100ms visual flicker from setTimeout
 		if (messages.length === 0) {
-			setTimeout(() => onCancel(), 100);
+			Promise.resolve().then(() => onCancel());
 		}
 	}
 

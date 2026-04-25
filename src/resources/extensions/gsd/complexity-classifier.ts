@@ -16,6 +16,7 @@ export interface ClassificationResult {
   tier: ComplexityTier;
   reason: string;
   downgraded: boolean;   // true if budget pressure lowered the tier
+  taskMetadata?: TaskMetadata;
 }
 
 export interface TaskMetadata {
@@ -31,19 +32,23 @@ export interface TaskMetadata {
 // ─── Unit Type → Default Tier Mapping ────────────────────────────────────────
 
 const UNIT_TYPE_TIERS: Record<string, ComplexityTier> = {
-  // Tier 1 — Light: structured summaries, completion, UAT
-  "complete-slice": "light",
+  // Tier 1 — Light: compact verification turns
   "run-uat": "light",
 
-  // Tier 2 — Standard: research, routine planning, discussion
+  // Tier 2 — Standard: research, routine discussion, slice completion
+  // complete-slice can carry large inlined context; avoid routing it to the
+  // cheapest "light" model by default (#4520).
+  "complete-slice": "standard",
   "discuss-milestone": "standard",
   "discuss-slice": "standard",
   "research-milestone": "standard",
   "research-slice": "standard",
-  "plan-milestone": "standard",
-  "plan-slice": "standard",
 
-  // Tier 3 — Heavy: execution, replanning (requires deep reasoning)
+  // Tier 3 — Heavy: planning, execution, replanning (requires deep reasoning)
+  // Planning is heavy so it uses the best configured model (e.g. Opus) and is
+  // not downgraded by dynamic routing when a capable model is configured.
+  "plan-milestone": "heavy",
+  "plan-slice": "heavy",
   "execute-task": "standard",   // default standard, upgraded by metadata
   "replan-slice": "heavy",
   "reassess-roadmap": "heavy",
@@ -69,17 +74,20 @@ export function classifyUnitComplexity(
 ): ClassificationResult {
   // Hook units default to light
   if (unitType.startsWith("hook/")) {
-    const result: ClassificationResult = { tier: "light", reason: "hook unit", downgraded: false };
+    const result: ClassificationResult = { tier: "light", reason: "hook unit", downgraded: false, taskMetadata: undefined };
     return applyBudgetPressure(result, budgetPct);
   }
 
   // Start with the default tier for this unit type
   let tier = UNIT_TYPE_TIERS[unitType] ?? "standard";
   let reason = `unit type: ${unitType}`;
+  let taskMeta: TaskMetadata | undefined;
 
   // For execute-task, analyze task metadata for complexity signals
   if (unitType === "execute-task") {
-    const taskAnalysis = analyzeTaskComplexity(unitId, basePath, metadata);
+    // Extract metadata once and reuse throughout to avoid double-extraction
+    taskMeta = metadata ?? extractTaskMetadata(unitId, basePath);
+    const taskAnalysis = analyzeTaskComplexity(unitId, basePath, taskMeta);
     tier = taskAnalysis.tier;
     reason = taskAnalysis.reason;
   }
@@ -94,14 +102,15 @@ export function classifyUnitComplexity(
   }
 
   // Adaptive learning: check if history suggests bumping the tier
-  const tags = metadata?.tags ?? extractTaskMetadata(unitId, basePath).tags;
+  // Use already-extracted taskMeta.tags if available to avoid double-extraction
+  const tags = taskMeta?.tags ?? metadata?.tags;
   const adaptiveAdjustment = getAdaptiveTierAdjustment(unitType, tier, tags);
   if (adaptiveAdjustment && tierOrdinal(adaptiveAdjustment) > tierOrdinal(tier)) {
     reason = `${reason} (adaptive: high failure rate at ${tier})`;
     tier = adaptiveAdjustment;
   }
 
-  const result: ClassificationResult = { tier, reason, downgraded: false };
+  const result: ClassificationResult = { tier, reason, downgraded: false, taskMetadata: taskMeta };
   return applyBudgetPressure(result, budgetPct);
 }
 
@@ -185,8 +194,8 @@ function analyzePlanComplexity(
   // Check if this is a milestone-level plan (more complex) vs single slice
   const { milestone: mid, slice: sid } = parseUnitId(unitId);
   if (!sid) {
-    // Milestone-level planning is always at least standard
-    return { tier: "standard", reason: "milestone-level planning" };
+    // Milestone-level planning is always heavy — requires full context and best model
+    return { tier: "heavy", reason: "milestone-level planning" };
   }
 
   // For slice planning, try to read the context/research to gauge complexity
@@ -210,7 +219,7 @@ function analyzePlanComplexity(
 /**
  * Extract task metadata from the task plan file on disk.
  */
-function extractTaskMetadata(unitId: string, basePath: string): TaskMetadata {
+export function extractTaskMetadata(unitId: string, basePath: string): TaskMetadata {
   const meta: TaskMetadata = {};
   const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
   if (!mid || !sid || !tid) return meta;

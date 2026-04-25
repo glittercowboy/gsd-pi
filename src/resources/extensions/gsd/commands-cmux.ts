@@ -1,6 +1,5 @@
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
-import { existsSync, readFileSync } from "node:fs";
-import { clearCmuxSidebar, CmuxClient, detectCmuxEnvironment, resolveCmuxConfig } from "../cmux/index.js";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { saveFile } from "./files.js";
 import {
   getProjectGSDPreferencesPath,
@@ -8,6 +7,37 @@ import {
   loadProjectGSDPreferences,
 } from "./preferences.js";
 import { ensurePreferencesFile, serializePreferencesToFrontmatter } from "./commands-prefs-wizard.js";
+
+/**
+ * Auto-enable cmux in project preferences when detected but never configured.
+ * Called at boot (before agent start) — no ExtensionCommandContext needed.
+ * Returns true if preferences were written, false if skipped.
+ */
+export function autoEnableCmuxPreferences(): boolean {
+  const path = resolveProjectPreferencesWritePath();
+  if (!existsSync(path)) return false;
+
+  const existing = loadProjectGSDPreferences();
+  const prefs: Record<string, unknown> = existing?.preferences ? { ...existing.preferences } : { version: 1 };
+  prefs.cmux = {
+    enabled: true,
+    notifications: true,
+    sidebar: true,
+    splits: false,
+    browser: false,
+    ...((prefs.cmux as Record<string, unknown> | undefined) ?? {}),
+  };
+  (prefs.cmux as Record<string, unknown>).enabled = true;
+  prefs.version = prefs.version || 1;
+
+  const frontmatter = serializePreferencesToFrontmatter(prefs);
+  let body = "\n# GSD Skill Preferences\n\nSee `~/.gsd/agent/extensions/gsd/docs/preferences-reference.md` for full field documentation and examples.\n";
+  const preserved = extractBodyAfterFrontmatter(readFileSync(path, "utf-8"));
+  if (preserved) body = preserved;
+
+  writeFileSync(path, `---\n${frontmatter}---${body}`, "utf-8");
+  return true;
+}
 
 function extractBodyAfterFrontmatter(content: string): string | null {
   const start = content.startsWith("---\n") ? 4 : content.startsWith("---\r\n") ? 5 : -1;
@@ -22,7 +52,7 @@ async function writeProjectCmuxPreferences(
   ctx: ExtensionCommandContext,
   updater: (prefs: Record<string, unknown>) => void,
 ): Promise<void> {
-  const path = getProjectGSDPreferencesPath();
+  const path = resolveProjectPreferencesWritePath();
   await ensurePreferencesFile(path, ctx, "project");
 
   const existing = loadProjectGSDPreferences();
@@ -42,7 +72,13 @@ async function writeProjectCmuxPreferences(
   await ctx.reload();
 }
 
-function formatCmuxStatus(): string {
+function resolveProjectPreferencesWritePath(): string {
+  return loadProjectGSDPreferences()?.path ?? getProjectGSDPreferencesPath();
+}
+
+async function formatCmuxStatus(): Promise<string> {
+  const { CmuxClient, detectCmuxEnvironment, resolveCmuxConfig } =
+    await import("../cmux/index.js");
   const loaded = loadEffectiveGSDPreferences();
   const detected = detectCmuxEnvironment();
   const resolved = resolveCmuxConfig(loaded?.preferences);
@@ -68,7 +104,8 @@ function formatCmuxStatus(): string {
   ].join("\n");
 }
 
-function ensureCmuxAvailableForEnable(ctx: ExtensionCommandContext): boolean {
+async function ensureCmuxAvailableForEnable(ctx: ExtensionCommandContext): Promise<boolean> {
+  const { detectCmuxEnvironment } = await import("../cmux/index.js");
   const detected = detectCmuxEnvironment();
   if (detected.available) return true;
   ctx.ui.notify(
@@ -81,12 +118,12 @@ function ensureCmuxAvailableForEnable(ctx: ExtensionCommandContext): boolean {
 export async function handleCmux(args: string, ctx: ExtensionCommandContext): Promise<void> {
   const trimmed = args.trim();
   if (!trimmed || trimmed === "status") {
-    ctx.ui.notify(formatCmuxStatus(), "info");
+    ctx.ui.notify(await formatCmuxStatus(), "info");
     return;
   }
 
   if (trimmed === "on") {
-    if (!ensureCmuxAvailableForEnable(ctx)) return;
+    if (!await ensureCmuxAvailableForEnable(ctx)) return;
     await writeProjectCmuxPreferences(ctx, (prefs) => {
       prefs.cmux = {
         enabled: true,
@@ -107,6 +144,7 @@ export async function handleCmux(args: string, ctx: ExtensionCommandContext): Pr
     await writeProjectCmuxPreferences(ctx, (prefs) => {
       prefs.cmux = { ...((prefs.cmux as Record<string, unknown> | undefined) ?? {}), enabled: false };
     });
+    const { clearCmuxSidebar } = await import("../cmux/index.js");
     clearCmuxSidebar(effective);
     ctx.ui.notify("cmux integration disabled in project preferences.", "info");
     return;
@@ -116,7 +154,7 @@ export async function handleCmux(args: string, ctx: ExtensionCommandContext): Pr
   if (parts.length === 2 && ["notifications", "sidebar", "splits", "browser"].includes(parts[0]) && ["on", "off"].includes(parts[1])) {
     const feature = parts[0] as "notifications" | "sidebar" | "splits" | "browser";
     const enabled = parts[1] === "on";
-    if (enabled && !ensureCmuxAvailableForEnable(ctx)) return;
+    if (enabled && !await ensureCmuxAvailableForEnable(ctx)) return;
 
     await writeProjectCmuxPreferences(ctx, (prefs) => {
       const next = { ...((prefs.cmux as Record<string, unknown> | undefined) ?? {}) };
@@ -126,6 +164,7 @@ export async function handleCmux(args: string, ctx: ExtensionCommandContext): Pr
     });
 
     if (!enabled && feature === "sidebar") {
+      const { clearCmuxSidebar } = await import("../cmux/index.js");
       clearCmuxSidebar(loadEffectiveGSDPreferences()?.preferences);
     }
 

@@ -65,6 +65,13 @@ import type {
   SessionManageResponse,
 } from "./session-browser-contract"
 import { authFetch, appendAuthParam } from "./auth"
+import { ContextualTips } from "../../packages/pi-coding-agent/src/core/contextual-tips.ts"
+import type {
+  WorkspaceIndex,
+  WorkspaceScopeTarget,
+  WorkspaceSliceTarget,
+  WorkspaceValidationIssue,
+} from "../../src/shared/workspace-types.ts"
 
 export type WorkspaceStatus = "idle" | "loading" | "ready" | "error" | "unauthenticated"
 export type WorkspaceConnectionState =
@@ -125,60 +132,8 @@ export interface BridgeRuntimeSnapshot {
   lastError: BridgeLastError | null
 }
 
-export interface WorkspaceTaskTarget {
-  id: string
-  title: string
-  done: boolean
-  planPath?: string
-  summaryPath?: string
-}
-
-export type RiskLevel = "low" | "medium" | "high"
-
-export interface WorkspaceSliceTarget {
-  id: string
-  title: string
-  done: boolean
-  planPath?: string
-  summaryPath?: string
-  uatPath?: string
-  tasksDir?: string
-  branch?: string
-  risk?: RiskLevel
-  depends?: string[]
-  demo?: string
-  tasks: WorkspaceTaskTarget[]
-}
-
-export interface WorkspaceMilestoneTarget {
-  id: string
-  title: string
-  roadmapPath?: string
-  slices: WorkspaceSliceTarget[]
-}
-
-export interface WorkspaceScopeTarget {
-  scope: string
-  label: string
-  kind: "project" | "milestone" | "slice" | "task"
-}
-
-export interface WorkspaceValidationIssue {
-  message?: string
-  [key: string]: unknown
-}
-
-export interface WorkspaceIndex {
-  milestones: WorkspaceMilestoneTarget[]
-  active: {
-    milestoneId?: string
-    sliceId?: string
-    taskId?: string
-    phase: string
-  }
-  scopes: WorkspaceScopeTarget[]
-  validationIssues: WorkspaceValidationIssue[]
-}
+export type { WorkspaceTaskTarget, RiskLevel, WorkspaceSliceTarget, WorkspaceMilestoneTarget } from "./workspace-types.js"
+export type { WorkspaceIndex, WorkspaceScopeTarget, WorkspaceValidationIssue }
 
 export interface RtkSessionSavings {
   commands: number
@@ -224,12 +179,13 @@ export interface WorkspaceOnboardingProviderState {
   required: true
   recommended: boolean
   configured: boolean
-  configuredVia: "auth_file" | "environment" | "runtime" | null
+  configuredVia: "auth_file" | "environment" | "runtime" | "external_cli" | null
   supports: {
     apiKey: boolean
     oauth: boolean
     oauthAvailable: boolean
     usesCallbackServer: boolean
+    externalCli: boolean
   }
 }
 
@@ -279,6 +235,25 @@ export interface WorkspaceOnboardingBridgeAuthRefreshState {
   error: string | null
 }
 
+/**
+ * CLI-side onboarding wizard completion record (mirrors the server-side
+ * OnboardingState.completionRecord field). Optional to keep the contract
+ * back-compat with workspaces still on older bridge versions that don't
+ * include this field.
+ */
+export interface WorkspaceOnboardingCompletionRecord {
+  /** ISO timestamp of when the wizard last completed, or null if never. */
+  completedAt: string | null
+  /** Step IDs that were completed. */
+  completedSteps: string[]
+  /** Step IDs that were explicitly skipped. */
+  skippedSteps: string[]
+  /** Last step the wizard was on, used by /gsd onboarding --resume. */
+  lastResumePoint: string | null
+  /** Bumped on the CLI side when a new required step is added; signals re-onboarding need. */
+  flowVersion: number
+}
+
 export interface WorkspaceOnboardingState {
   status: "blocked" | "ready"
   locked: boolean
@@ -287,7 +262,7 @@ export interface WorkspaceOnboardingState {
     blocking: true
     skippable: false
     satisfied: boolean
-    satisfiedBy: { providerId: string; source: "auth_file" | "environment" | "runtime" } | null
+    satisfiedBy: { providerId: string; source: "auth_file" | "environment" | "runtime" | "external_cli" } | null
     providers: WorkspaceOnboardingProviderState[]
   }
   optional: {
@@ -298,6 +273,8 @@ export interface WorkspaceOnboardingState {
   lastValidation: WorkspaceOnboardingValidationResult | null
   activeFlow: WorkspaceOnboardingFlowState | null
   bridgeAuthRefresh: WorkspaceOnboardingBridgeAuthRefreshState
+  /** CLI-side wizard completion record. Null if never completed; undefined if the bridge predates this field. */
+  completionRecord?: WorkspaceOnboardingCompletionRecord | null
 }
 
 // ─── Project Detection ──────────────────────────────────────────────────────
@@ -349,6 +326,7 @@ export type LiveStateInvalidationDomain = "auto" | "workspace" | "recovery" | "r
 export type LiveStateInvalidationSource = "bridge_event" | "rpc_command" | "session_manage"
 export type LiveStateInvalidationReason =
   | "agent_end"
+  | "turn_end"
   | "auto_retry_start"
   | "auto_retry_end"
   | "auto_compaction_start"
@@ -440,6 +418,18 @@ export interface ToolExecutionStartEvent {
   [key: string]: unknown
 }
 
+export interface ToolExecutionUpdateEvent {
+  type: "tool_execution_update"
+  toolCallId: string
+  toolName: string
+  partialResult?: {
+    content?: Array<{ type: string; text?: string }>
+    details?: Record<string, unknown>
+    isError?: boolean
+  }
+  [key: string]: unknown
+}
+
 export interface ToolExecutionEndEvent {
   type: "tool_execution_end"
   toolCallId: string
@@ -465,10 +455,11 @@ export type WorkspaceEvent =
   | ExtensionErrorEvent
   | MessageUpdateEvent
   | ToolExecutionStartEvent
+  | ToolExecutionUpdateEvent
   | ToolExecutionEndEvent
   | AgentEndEvent
   | TurnEndEvent
-  | ({ type: Exclude<string, "bridge_status" | "live_state_invalidation" | "extension_ui_request" | "extension_error" | "message_update" | "tool_execution_start" | "tool_execution_end" | "agent_end" | "turn_end">; [key: string]: unknown } & Record<string, unknown>)
+  | ({ type: Exclude<string, "bridge_status" | "live_state_invalidation" | "extension_ui_request" | "extension_error" | "message_update" | "tool_execution_start" | "tool_execution_update" | "tool_execution_end" | "agent_end" | "turn_end">; [key: string]: unknown } & Record<string, unknown>)
 
 export function isWorkspaceEvent(value: unknown): value is WorkspaceEvent {
   return value !== null && typeof value === "object" && typeof (value as Record<string, unknown>).type === "string"
@@ -520,6 +511,11 @@ export interface ActiveToolExecution {
   id: string
   name: string
   args?: Record<string, unknown>
+  result?: {
+    content?: Array<{ type: string; text?: string }>
+    details?: Record<string, unknown>
+    isError?: boolean
+  }
 }
 
 /** Completed tool execution with result — kept for chat rendering */
@@ -721,6 +717,8 @@ function summarizeEvent(event: WorkspaceEvent): { type: TerminalLineType; messag
         type: "output",
         message: `[Tool] ${typeof event.toolName === "string" ? event.toolName : "tool"} started`,
       }
+    case "tool_execution_update":
+      return null
     case "tool_execution_end":
       return {
         type: event.isError ? "error" : "success",
@@ -1864,6 +1862,7 @@ export class GSDWorkspaceStore {
 
   private state = createInitialState()
   private readonly listeners = new Set<() => void>()
+  private readonly contextualTips = new ContextualTips()
   private bootPromise: Promise<void> | null = null
   private eventSource: EventSource | null = null
   private onboardingPollTimer: ReturnType<typeof setInterval> | null = null
@@ -4041,6 +4040,26 @@ export class GSDWorkspaceStore {
       lastSlashCommandOutcome: trimmed.startsWith("/") ? outcome : null,
     })
 
+    // Evaluate contextual tips before sending to agent
+    if (outcome.kind === "prompt") {
+      const sessionState = this.state.boot?.bridge.sessionState
+      const tip = this.contextualTips.evaluate({
+        input: trimmed,
+        isStreaming: Boolean(sessionState?.isStreaming),
+        thinkingLevel: sessionState?.thinkingLevel,
+        // contextPercent not available in web — compaction nudge won't fire here
+        contextPercent: undefined,
+      })
+      if (tip) {
+        this.patchState({
+          terminalLines: withTerminalLine(
+            this.state.terminalLines,
+            createTerminalLine("system", `💡 ${tip}`),
+          ),
+        })
+      }
+    }
+
     switch (outcome.kind) {
       case "prompt":
       case "rpc": {
@@ -4683,6 +4702,11 @@ export class GSDWorkspaceStore {
         })
       }
 
+      // Reset contextual tips on new session
+      if (payload.command === "new_session" && payload.success) {
+        this.contextualTips.reset()
+      }
+
       if (payload.code === "onboarding_locked" && payload.details?.onboarding && this.state.boot) {
         this.patchState({
           boot: cloneBootWithPartialOnboarding(this.state.boot, payload.details.onboarding),
@@ -4765,8 +4789,15 @@ export class GSDWorkspaceStore {
     })
 
     const payload = (await response.json()) as OnboardingApiPayload
-    if (!payload.onboarding) {
+    if (!response.ok) {
+      if (payload.onboarding) {
+        this.applyOnboardingState(payload.onboarding)
+      }
       throw new Error(payload.error ?? `Onboarding action failed with ${response.status}`)
+    }
+
+    if (!payload.onboarding) {
+      throw new Error(`Onboarding action returned no state (${response.status})`)
     }
 
     this.applyOnboardingState(payload.onboarding)
@@ -4953,6 +4984,9 @@ export class GSDWorkspaceStore {
       case "tool_execution_start":
         this.handleToolExecutionStart(event as ToolExecutionStartEvent)
         break
+      case "tool_execution_update":
+        this.handleToolExecutionUpdate(event as ToolExecutionUpdateEvent)
+        break
       case "tool_execution_end":
         this.handleToolExecutionEnd(event as ToolExecutionEndEvent)
         break
@@ -5081,10 +5115,16 @@ export class GSDWorkspaceStore {
       const nextThinking = [...this.state.liveThinkingTranscript, ""]
       const nextSegments = [...this.state.completedTurnSegments, finalSegments]
       const overflow = nextTranscript.length > MAX_TRANSCRIPT_BLOCKS ? nextTranscript.length - MAX_TRANSCRIPT_BLOCKS : 0
+      // When overflow trims the front of parallel arrays, also trim
+      // chatUserMessages to keep index-based interleaving aligned (#2707).
+      const trimmedUserMsgs = overflow > 0
+        ? this.state.chatUserMessages.slice(overflow)
+        : undefined
       this.patchState({
         liveTranscript: overflow > 0 ? nextTranscript.slice(overflow) : nextTranscript,
         liveThinkingTranscript: overflow > 0 ? nextThinking.slice(overflow) : nextThinking,
         completedTurnSegments: overflow > 0 ? nextSegments.slice(overflow) : nextSegments,
+        ...(trimmedUserMsgs !== undefined ? { chatUserMessages: trimmedUserMsgs } : {}),
         streamingAssistantText: "",
         streamingThinkingText: "",
         currentTurnSegments: [],
@@ -5107,25 +5147,35 @@ export class GSDWorkspaceStore {
   }
 
   private handleToolExecutionStart(event: ToolExecutionStartEvent): void {
-    // Finalize any in-flight streaming content into segments before the tool runs
-    const pendingSegments: TurnSegment[] = []
-    if (this.state.streamingThinkingText.length > 0) {
-      pendingSegments.push({ kind: "thinking", content: this.state.streamingThinkingText })
-    }
-    if (this.state.streamingAssistantText.length > 0) {
-      pendingSegments.push({ kind: "text", content: this.state.streamingAssistantText })
-    }
     this.patchState({
       activeToolExecution: {
         id: event.toolCallId,
         name: event.toolName,
         args: (event as Record<string, unknown>).args as Record<string, unknown> | undefined,
       },
-      ...(pendingSegments.length > 0 ? {
-        currentTurnSegments: [...this.state.currentTurnSegments, ...pendingSegments],
-        streamingAssistantText: "",
-        streamingThinkingText: "",
-      } : {}),
+      // Treat pre-tool streaming text as ephemeral. Claude Code can emit
+      // provisional assistant text before a tool call, then replace it with
+      // the real final text after the tool completes. If we finalize that
+      // interim text here, the chat timeline shows stale text above the tool.
+      streamingAssistantText: "",
+      streamingThinkingText: "",
+    })
+  }
+
+  private handleToolExecutionUpdate(event: ToolExecutionUpdateEvent): void {
+    const active = this.state.activeToolExecution
+    if (!active || active.id !== event.toolCallId) return
+    this.patchState({
+      activeToolExecution: {
+        ...active,
+        result: event.partialResult
+          ? {
+              content: event.partialResult.content,
+              details: event.partialResult.details,
+              isError: Boolean(event.partialResult.isError),
+            }
+          : active.result,
+      },
     })
   }
 

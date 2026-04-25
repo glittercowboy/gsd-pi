@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runGSDDoctor } from "../../doctor.ts";
-import { closeDatabase } from "../../gsd-db.ts";
+import { closeDatabase, insertMilestone, insertSlice, openDatabase } from "../../gsd-db.ts";
 
 function makeTmp(name: string): string {
   const dir = join(tmpdir(), `doctor-fixlevel-${name}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -174,6 +174,57 @@ test("legacy roadmap fallback: future slices are treated as pending, active slic
     missingTasksDirUnits,
     [],
     "future slices without directories should be skipped before missing_tasks_dir checks",
+  );
+});
+
+test("db skipped slices do not report missing directories", async (t) => {
+  const tmp = makeTmp("skipped-slice-dir");
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const gsd = join(tmp, ".gsd");
+  const m = join(gsd, "milestones", "M001");
+  mkdirSync(m, { recursive: true });
+
+  writeFileSync(join(m, "M001-ROADMAP.md"), `# M001: Test
+
+## Slices
+
+- [ ] **S05: Skipped Slice** \`risk:low\` \`depends:[]\`
+  > Intentionally skipped
+`);
+
+  openDatabase(join(gsd, "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+  insertSlice({ id: "S05", milestoneId: "M001", title: "Skipped Slice", status: "skipped", sequence: 5 });
+
+  const report = await runGSDDoctor(tmp, { scope: "M001" });
+  const missingDirIssues = report.issues.filter(
+    i =>
+      (i.code === "missing_slice_dir" || i.code === "missing_tasks_dir") &&
+      i.unitId === "M001/S05",
+  );
+
+  assert.deepStrictEqual(
+    missingDirIssues,
+    [],
+    "skipped slices should not require slice or tasks directories",
+  );
+});
+
+test("doctor source treats skipped DB slices as closed and directory-optional", () => {
+  const doctorSource = readFileSync(join(process.cwd(), "src/resources/extensions/gsd/doctor.ts"), "utf8");
+  assert.match(
+    doctorSource,
+    /done:\s*isClosedStatus\(s\.status\)/,
+    "doctor should normalize skipped DB slices through isClosedStatus()",
+  );
+  assert.match(
+    doctorSource,
+    /if \(slice\.pending \|\| slice\.skipped\) continue;/,
+    "doctor should skip missing-directory checks for skipped slices",
   );
 });
 

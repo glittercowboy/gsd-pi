@@ -1,0 +1,176 @@
+name: Prod Release
+
+# Manual prod release. Click "Run workflow" in the Actions tab to cut @latest
+# from main. Gated by the `prod` GitHub Environment approval before any
+# publishing or commit-push side effects run.
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: prod-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+  pull-requests: write
+
+jobs:
+  prod-release:
+    name: Production Release
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    environment: prod
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PAT }}
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Next.js build
+        uses: useblacksmith/cache@v5
+        with:
+          path: web/.next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**', 'web/hooks/**') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-
+            nextjs-${{ runner.os }}-
+
+      - name: Run live LLM tests (optional)
+        continue-on-error: true
+        run: npm run test:live || echo "::warning::Live LLM tests failed — non-blocking, but worth investigating"
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GSD_LIVE_TESTS: "1"
+
+      - name: Generate changelog and determine version
+        id: release
+        run: |
+          OUTPUT=$(node scripts/generate-changelog.mjs)
+          echo "$OUTPUT" | jq .
+          echo "version=$(echo "$OUTPUT" | jq -r '.newVersion')" >> "$GITHUB_OUTPUT"
+          echo "$OUTPUT" | jq -r '.changelogEntry' > /tmp/changelog-entry.md
+          echo "$OUTPUT" | jq -r '.releaseNotes' > /tmp/release-notes.md
+
+      - name: Bump version and sync packages
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: node scripts/bump-version.mjs "$RELEASE_VERSION"
+
+      - name: Validate package files after version bump
+        run: |
+          node -e "require('./package.json')" && \
+          node -e "require('./packages/pi-coding-agent/package.json')" && \
+          node -e "require('./pkg/package.json')" && \
+          echo "All package.json files are valid"
+
+      - name: Update CHANGELOG.md
+        run: node scripts/update-changelog.mjs /tmp/changelog-entry.md
+
+      - name: Commit and tag release
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json web/package-lock.json CHANGELOG.md native/npm/*/package.json pkg/package.json packages/*/package.json
+          git commit -m "release: v${RELEASE_VERSION}"
+          git pull --rebase origin main
+          git tag "v${RELEASE_VERSION}"
+
+      - name: Build release
+        run: npm run build
+
+      - name: Publish release to npm @latest
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          OUTPUT=$(npm publish 2>&1) && echo "$OUTPUT" || {
+            if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
+              echo "Version already published — promoting to latest"
+              npm dist-tag add "gsd-pi@${RELEASE_VERSION}" latest
+            else
+              echo "$OUTPUT"
+              exit 1
+            fi
+          }
+
+      - name: Push release commit and tag
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          git push origin main
+          git push origin "v${RELEASE_VERSION}"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          gh release create "v${RELEASE_VERSION}" \
+            --title "v${RELEASE_VERSION}" \
+            --notes-file /tmp/release-notes.md \
+            --latest
+
+      - name: Post to Discord
+        if: ${{ env.DISCORD_WEBHOOK != '' }}
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          NOTES=$(cat /tmp/release-notes.md)
+          curl -s -X POST "$DISCORD_WEBHOOK" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg c "**GSD v${RELEASE_VERSION} Released**\n\n${NOTES}\n\n\`npm i gsd-pi@${RELEASE_VERSION}\`" '{content:$c}')"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push release Docker image
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          docker build --target runtime \
+            -t ghcr.io/gsd-build/gsd-pi:latest \
+            -t "ghcr.io/gsd-build/gsd-pi:${RELEASE_VERSION}" \
+            .
+          docker push "ghcr.io/gsd-build/gsd-pi:${RELEASE_VERSION}"
+          docker push ghcr.io/gsd-build/gsd-pi:latest
+
+      - name: Open back-merge PR main→next if behind
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PAT }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          if ! git ls-remote --exit-code --heads origin next >/dev/null 2>&1; then
+            echo "next branch does not exist yet; skipping back-merge"
+            exit 0
+          fi
+          git fetch origin next main
+          BEHIND=$(git rev-list --count origin/next..origin/main)
+          if [ "$BEHIND" -gt 0 ]; then
+            BRANCH="backmerge/main-to-next-v${RELEASE_VERSION}"
+            git checkout -B "$BRANCH" origin/main
+            git push origin "$BRANCH" --force-with-lease
+            gh pr create --base next --head "$BRANCH" \
+              --title "chore: back-merge main to next (v${RELEASE_VERSION})" \
+              --body "Sync release commit and version bump from main into next." || true
+          else
+            echo "next is up to date with main; no back-merge needed"
+          fi

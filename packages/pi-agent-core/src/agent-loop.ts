@@ -22,6 +22,15 @@ import type {
 	StreamFn,
 } from "./types.js";
 
+/**
+ * Maximum number of consecutive turns where ALL tool calls in the turn fail
+ * schema validation before the loop terminates. This prevents unbounded retry
+ * loops when the LLM repeatedly emits tool calls with arguments that cannot
+ * pass validation (e.g., schema overload, truncated JSON, missing required
+ * fields). See: https://github.com/gsd-build/gsd-2/issues/2783
+ */
+export const MAX_CONSECUTIVE_VALIDATION_FAILURES = 3;
+
 export const ZERO_USAGE = {
 	input: 0,
 	output: 0,
@@ -175,6 +184,12 @@ async function runLoop(
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
+	// Track consecutive turns where ALL tool calls fail validation.
+	// When the LLM repeatedly emits tool calls with schema-overloaded or malformed
+	// arguments, each turn produces only error tool results. Without a cap, this
+	// creates an unbounded retry loop that burns budget. (#2783)
+	let consecutiveAllToolErrorTurns = 0;
+
 	// Outer loop: continues when queued follow-up messages arrive after agent would stop
 	while (true) {
 		let hasMoreToolCalls = true;
@@ -207,6 +222,20 @@ async function runLoop(
 				// backoff, network unavailable). Convert to a graceful error message so the
 				// agent loop can end cleanly instead of crashing with an unhandled rejection.
 				const errorText = error instanceof Error ? error.message : String(error);
+				if (config.onStreamError) {
+					try {
+						await config.onStreamError(
+							{
+								error: error instanceof Error ? error : new Error(errorText),
+								partialText: "",
+								willRetry: false,
+							},
+							signal,
+						);
+					} catch {
+						// Hook failures must not crash the loop.
+					}
+				}
 				message = {
 					role: "assistant",
 					content: [],
@@ -231,16 +260,26 @@ async function runLoop(
 				return;
 			}
 
-			// Check for tool calls
+			// Check for tool calls or paused server turn
 			const toolCalls = message.content.filter((c) => c.type === "toolCall");
-			hasMoreToolCalls = toolCalls.length > 0;
+			hasMoreToolCalls =
+				toolCalls.length > 0 || message.stopReason === "pauseTurn";
 
 			const toolResults: ToolResultMessage[] = [];
 			if (hasMoreToolCalls && config.externalToolExecution) {
 				// External execution mode: tools were handled by the provider
 				// (e.g., Claude Code SDK). Emit tool_execution events for each
-				// tool call. The TUI adds these as components after the message.
+				// tool call. Prefer any provider-supplied externalResult attached
+				// to the tool call so the UI can show the real stdout/stderr
+				// instead of a generic placeholder.
 				for (const tc of toolCalls as AgentToolCall[]) {
+					const externalResult = (tc as AgentToolCall & {
+						externalResult?: {
+							content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+							details?: Record<string, unknown>;
+							isError?: boolean;
+						};
+					}).externalResult;
 					stream.push({
 						type: "tool_execution_start",
 						toolCallId: tc.id,
@@ -251,11 +290,16 @@ async function runLoop(
 						type: "tool_execution_end",
 						toolCallId: tc.id,
 						toolName: tc.name,
-						result: {
-							content: [{ type: "text", text: "(executed by Claude Code)" }],
-							details: {},
-						},
-						isError: false,
+						result: externalResult
+							? {
+									content: externalResult.content ?? [{ type: "text", text: "" }],
+									details: externalResult.details ?? {},
+								}
+							: {
+									content: [{ type: "text", text: "(executed by Claude Code)" }],
+									details: {},
+								},
+						isError: externalResult?.isError ?? false,
 					});
 				}
 				// Don't add tool results to context or loop back — the streamSimple
@@ -275,6 +319,54 @@ async function runLoop(
 				for (const result of toolResults) {
 					currentContext.messages.push(result);
 					newMessages.push(result);
+				}
+
+				// Schema overload detection (#2783): count only preparation-phase
+				// errors (schema validation, tool-not-found, tool-blocked) toward the
+				// consecutive failure cap. Tool execution errors — such as bash
+				// commands returning non-zero exit codes (e.g. grep/rg exit 1 for
+				// "no matches") — are valid tool usage and must NOT trigger the cap.
+				// See: #3618
+				const hasPreparationErrors = toolExecution.preparationErrorCount > 0;
+				const allToolsFailedPreparation =
+					toolResults.length > 0 &&
+					toolExecution.preparationErrorCount === toolResults.length;
+				if (allToolsFailedPreparation) {
+					consecutiveAllToolErrorTurns++;
+				} else if (!hasPreparationErrors) {
+					// Reset only when there are zero preparation errors this turn.
+					// Mixed turns (some prep errors, some successes) don't reset,
+					// but they also don't increment — this avoids masking a
+					// pattern of alternating schema failures with one working call.
+					consecutiveAllToolErrorTurns = 0;
+				}
+
+				if (consecutiveAllToolErrorTurns >= MAX_CONSECUTIVE_VALIDATION_FAILURES) {
+					// Force-stop: the LLM is stuck retrying broken tool calls.
+					// Emit the turn_end and terminate the agent loop cleanly.
+					stream.push({ type: "turn_end", message, toolResults });
+					const stopMessage: AssistantMessage = {
+						role: "assistant",
+						content: [
+							{
+								type: "text",
+								text: `Agent stopped: ${consecutiveAllToolErrorTurns} consecutive turns with all tool calls failing. This usually means the model is repeatedly sending arguments that do not match the tool schema.`,
+							},
+						],
+						api: config.model.api,
+						provider: config.model.provider,
+						model: config.model.id,
+						usage: ZERO_USAGE,
+						stopReason: "error",
+						errorMessage: "Schema overload: consecutive tool validation failures exceeded cap",
+						timestamp: Date.now(),
+					};
+					emitMessagePair(stream, stopMessage);
+					newMessages.push(stopMessage);
+					stream.push({ type: "turn_end", message: stopMessage, toolResults: [] });
+					stream.push({ type: "agent_end", messages: newMessages });
+					stream.end(newMessages);
+					return;
 				}
 			}
 
@@ -399,6 +491,19 @@ async function streamAssistantResponse(
 }
 
 /**
+ * Result from executing tool calls in a turn. Includes metadata about
+ * error provenance so the schema overload detector can distinguish
+ * preparation failures (schema validation, tool-not-found, tool-blocked)
+ * from execution failures (the tool ran but threw, e.g. bash exit code 1).
+ */
+interface ToolExecutionResult {
+	toolResults: ToolResultMessage[];
+	steeringMessages?: AgentMessage[];
+	/** Number of tool results that failed during preparation (validation/schema). */
+	preparationErrorCount: number;
+}
+
+/**
  * Execute tool calls from an assistant message.
  */
 async function executeToolCalls(
@@ -407,7 +512,7 @@ async function executeToolCalls(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	stream: EventStream<AgentEvent, AgentMessage[]>,
-): Promise<{ toolResults: ToolResultMessage[]; steeringMessages?: AgentMessage[] }> {
+): Promise<ToolExecutionResult> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall") as AgentToolCall[];
 	if (config.toolExecution === "sequential") {
 		return executeToolCallsSequential(currentContext, assistantMessage, toolCalls, config, signal, stream);
@@ -422,9 +527,10 @@ async function executeToolCallsSequential(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	stream: EventStream<AgentEvent, AgentMessage[]>,
-): Promise<{ toolResults: ToolResultMessage[]; steeringMessages?: AgentMessage[] }> {
+): Promise<ToolExecutionResult> {
 	const results: ToolResultMessage[] = [];
 	let steeringMessages: AgentMessage[] | undefined;
+	let preparationErrorCount = 0;
 
 	for (let index = 0; index < toolCalls.length; index++) {
 		const toolCall = toolCalls[index];
@@ -437,6 +543,9 @@ async function executeToolCallsSequential(
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
 		if (preparation.kind === "immediate") {
+			if (preparation.isError) {
+				preparationErrorCount++;
+			}
 			results.push(emitToolCallOutcome(toolCall, preparation.result, preparation.isError, stream));
 		} else {
 			const executed = await executePreparedToolCall(preparation, signal, stream);
@@ -466,7 +575,7 @@ async function executeToolCallsSequential(
 		}
 	}
 
-	return { toolResults: results, steeringMessages };
+	return { toolResults: results, steeringMessages, preparationErrorCount };
 }
 
 async function executeToolCallsParallel(
@@ -476,10 +585,11 @@ async function executeToolCallsParallel(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	stream: EventStream<AgentEvent, AgentMessage[]>,
-): Promise<{ toolResults: ToolResultMessage[]; steeringMessages?: AgentMessage[] }> {
+): Promise<ToolExecutionResult> {
 	const results: ToolResultMessage[] = [];
 	const runnableCalls: PreparedToolCall[] = [];
 	let steeringMessages: AgentMessage[] | undefined;
+	let preparationErrorCount = 0;
 
 	for (let index = 0; index < toolCalls.length; index++) {
 		const toolCall = toolCalls[index];
@@ -492,6 +602,9 @@ async function executeToolCallsParallel(
 
 		const preparation = await prepareToolCall(currentContext, assistantMessage, toolCall, config, signal);
 		if (preparation.kind === "immediate") {
+			if (preparation.isError) {
+				preparationErrorCount++;
+			}
 			results.push(emitToolCallOutcome(toolCall, preparation.result, preparation.isError, stream));
 		} else {
 			runnableCalls.push(preparation);
@@ -508,7 +621,7 @@ async function executeToolCallsParallel(
 				for (const skipped of remainingCalls) {
 					results.push(skipToolCall(skipped, stream));
 				}
-				return { toolResults: results, steeringMessages };
+				return { toolResults: results, steeringMessages, preparationErrorCount };
 			}
 		}
 	}
@@ -540,7 +653,7 @@ async function executeToolCallsParallel(
 		}
 	}
 
-	return { toolResults: results, steeringMessages };
+	return { toolResults: results, steeringMessages, preparationErrorCount };
 }
 
 type PreparedToolCall = {

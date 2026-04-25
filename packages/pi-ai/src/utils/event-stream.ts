@@ -80,3 +80,8 @@ export class AssistantMessageEventStream extends EventStream<AssistantMessageEve
 		);
 	}
 }
+
+/** Factory function for AssistantMessageEventStream (for use by package consumers). */
+export function createAssistantMessageEventStream(): AssistantMessageEventStream {
+	return new AssistantMessageEventStream();
+}

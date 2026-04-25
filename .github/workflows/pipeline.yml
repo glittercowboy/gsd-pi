@@ -1,5 +1,9 @@
 name: Pipeline
 
+# Rebuilds the CI builder Docker image when Dockerfile changes on main.
+# Dev and prod publishing live in separate workflows (dev-publish.yml,
+# prod-release.yml) — both manual "Run workflow" triggers.
+
 on:
   workflow_run:
     workflows: ["CI"]
@@ -7,251 +11,24 @@ on:
     branches: [main]
 
 concurrency:
-  group: pipeline-main
+  group: pipeline-builder
   cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
-  dev-publish:
-    name: Dev Publish
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    container:
-      image: ghcr.io/gsd-build/gsd-ci-builder:latest
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-    outputs:
-      dev-version: ${{ steps.stamp.outputs.version }}
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Mark workspace safe for git
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Stamp dev version and sync platform packages
-        id: stamp
-        run: |
-          npm run pipeline:version-stamp
-          npm run sync-platform-versions
-          echo "version=$(node -e 'process.stdout.write(require("./package.json").version)')" >> "$GITHUB_OUTPUT"
-
-      - name: Publish @dev
-        run: |
-          VERSION=$(node -e 'process.stdout.write(require("./package.json").version)')
-          if npm view "gsd-pi@${VERSION}" version 2>/dev/null; then
-            echo "Version ${VERSION} already published — skipping"
-          else
-            npm publish --tag dev
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Smoke test (local)
-        run: |
-          chmod +x dist/loader.js
-          export GSD_SMOKE_BINARY="$(pwd)/dist/loader.js"
-          npm run test:smoke
-
-  test-verify:
-    name: Test & Verify
-    needs: dev-publish
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          cache: 'npm'
-
-      - name: Install gsd-pi@dev globally (with registry propagation retry)
-        run: |
-          for i in 1 2 3 4 5 6; do
-            npm install -g gsd-pi@dev && exit 0
-            echo "Attempt $i failed — waiting 10s for npm registry propagation..."
-            sleep 10
-          done
-          echo "Failed to install gsd-pi@dev after 6 attempts"
-          exit 1
-
-      - name: Run smoke tests (against installed binary)
-        run: |
-          export GSD_SMOKE_BINARY=$(which gsd)
-          npm run test:smoke
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run fixture tests
-        run: npm run test:fixtures
-
-      - name: Run live regression tests (against installed binary)
-        run: |
-          export GSD_SMOKE_BINARY=$(which gsd)
-          npm run test:live-regression
-
-      - name: Promote to @next
-        env:
-          DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm dist-tag add "gsd-pi@${DEV_VERSION}" next
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push runtime Docker image
-        env:
-          DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
-        run: |
-          docker build --target runtime \
-            -t "ghcr.io/gsd-build/gsd-pi:next" \
-            -t "ghcr.io/gsd-build/gsd-pi:${DEV_VERSION}" \
-            .
-          docker push ghcr.io/gsd-build/gsd-pi:next
-          docker push "ghcr.io/gsd-build/gsd-pi:${DEV_VERSION}"
-
-  prod-release:
-    name: Production Release
-    needs: [dev-publish, test-verify]
-    runs-on: blacksmith-4vcpu-ubuntu-2404
-    environment: prod
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.RELEASE_PAT }}
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24
-          registry-url: https://registry.npmjs.org
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run live LLM tests (optional)
-        continue-on-error: true
-        run: npm run test:live
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GSD_LIVE_TESTS: "1"
-
-      - name: Generate changelog and determine version
-        id: release
-        run: |
-          OUTPUT=$(node scripts/generate-changelog.mjs)
-          echo "$OUTPUT" | jq .
-          echo "version=$(echo "$OUTPUT" | jq -r '.newVersion')" >> "$GITHUB_OUTPUT"
-          echo "$OUTPUT" | jq -r '.changelogEntry' > /tmp/changelog-entry.md
-          echo "$OUTPUT" | jq -r '.releaseNotes' > /tmp/release-notes.md
-
-      - name: Bump version and sync packages
-        env:
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: node scripts/bump-version.mjs "$RELEASE_VERSION"
-
-      - name: Update CHANGELOG.md
-        run: node scripts/update-changelog.mjs /tmp/changelog-entry.md
-
-      - name: Commit, tag, and push
-        env:
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add package.json package-lock.json CHANGELOG.md native/npm/*/package.json pkg/package.json packages/pi-coding-agent/package.json
-          git commit -m "release: v${RELEASE_VERSION}"
-          git tag "v${RELEASE_VERSION}"
-          git pull --rebase origin main
-          git push origin main
-          git push origin "v${RELEASE_VERSION}"
-
-      - name: Build release
-        run: npm run build
-
-      - name: Publish release to npm @latest
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          OUTPUT=$(npm publish 2>&1) && echo "$OUTPUT" || {
-            if echo "$OUTPUT" | grep -q "cannot publish over the previously published"; then
-              echo "Version already published — promoting to latest"
-              npm dist-tag add "gsd-pi@${RELEASE_VERSION}" latest
-            else
-              echo "$OUTPUT"
-              exit 1
-            fi
-          }
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          gh release create "v${RELEASE_VERSION}" \
-            --title "v${RELEASE_VERSION}" \
-            --notes-file /tmp/release-notes.md \
-            --latest
-
-      - name: Post to Discord
-        if: ${{ env.DISCORD_WEBHOOK != '' }}
-        env:
-          DISCORD_WEBHOOK: ${{ secrets.DISCORD_CHANGELOG_WEBHOOK }}
-          RELEASE_VERSION: ${{ steps.release.outputs.version }}
-        run: |
-          NOTES=$(cat /tmp/release-notes.md)
-          curl -s -X POST "$DISCORD_WEBHOOK" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n --arg c "**GSD v${RELEASE_VERSION} Released**\n\n${NOTES}\n\n\`npm i gsd-pi@${RELEASE_VERSION}\`" '{content:$c}')"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Tag runtime Docker image as latest
-        env:
-          DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
-        run: |
-          docker pull "ghcr.io/gsd-build/gsd-pi:${DEV_VERSION}"
-          docker tag "ghcr.io/gsd-build/gsd-pi:${DEV_VERSION}" ghcr.io/gsd-build/gsd-pi:latest
-          docker push ghcr.io/gsd-build/gsd-pi:latest
-
   update-builder:
     name: Update CI Builder Image
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_branch == 'main' }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 2
 
       - name: Check for Dockerfile changes

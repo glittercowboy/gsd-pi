@@ -42,7 +42,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, spawn, spawnSync } from 'node:child_process';
 
 // ─── Configuration ───────────────────────────────────────────────────────────
 
@@ -294,7 +294,10 @@ function findGsdLoader() {
   
   // 3. Try `which gsd` and resolve symlink
   try {
-    const bin = execSync('which gsd', { encoding: 'utf-8', timeout: 3000 }).trim();
+    const pathLookup = process.platform === 'win32' ? 'where.exe' : 'which';
+    const lookupArgs = ['gsd'];
+    const result = spawnSync(pathLookup, lookupArgs, { encoding: 'utf-8', timeout: 3000 });
+    const bin = result.status === 0 ? result.stdout.trim().split(/\r?\n/)[0]?.trim() : '';
     if (bin) {
       const realBin = fs.realpathSync(bin);
       const loader = path.resolve(path.dirname(realBin), '..', 'dist', 'loader.js');
@@ -309,7 +312,7 @@ const GSD_LOADER = findGsdLoader();
 
 /**
  * Respawn a dead worker. Returns the new PID or null on failure.
- * Uses nohup + output redirection so the child is fully detached.
+ * Uses a detached Node child with log file descriptors so the child is fully detached.
  */
 function respawnWorker(mid) {
   const worktreeDir = path.resolve(PROJECT_ROOT, `.gsd/worktrees/${mid}`);
@@ -319,41 +322,37 @@ function respawnWorker(mid) {
   const stdoutLog = path.resolve(PROJECT_ROOT, PARALLEL_DIR, `${mid}.stdout.log`);
   const stderrLog = path.resolve(PROJECT_ROOT, PARALLEL_DIR, `${mid}.stderr.log`);
   
+  let stdoutFd;
+  let stderrFd;
   try {
-    const env = [
-      `GSD_MILESTONE_LOCK=${mid}`,
-      `GSD_PROJECT_ROOT=${PROJECT_ROOT}`,
-      `GSD_PARALLEL_WORKER=1`,
-    ].join(' ');
-    
-    // Use a shell script written to a temp file to avoid quoting hell
-    const script = [
-      '#!/bin/bash',
-      `cd "${worktreeDir}"`,
-      `export GSD_MILESTONE_LOCK=${mid}`,
-      `export GSD_PROJECT_ROOT="${PROJECT_ROOT}"`,
-      `export GSD_PARALLEL_WORKER=1`,
-      `exec node "${GSD_LOADER}" headless --json auto > "${stdoutLog}" 2>> "${stderrLog}"`,
-    ].join('\n');
-    
-    const scriptPath = path.resolve(PROJECT_ROOT, PARALLEL_DIR, `${mid}.respawn.sh`);
-    fs.writeFileSync(scriptPath, script, { mode: 0o755 });
-    
-    // Launch detached via nohup
-    const result = execSync(
-      `nohup bash "${scriptPath}" > /dev/null 2>&1 & echo $!`,
-      { timeout: 5000, encoding: 'utf-8', cwd: worktreeDir }
-    ).trim();
-    
-    // Clean up the temp script after a delay (process already forked)
-    setTimeout(() => {
-      try { fs.unlinkSync(scriptPath); } catch {}
-    }, 5000);
-    
-    const newPid = parseInt(result, 10);
-    return isNaN(newPid) ? null : newPid;
+    fs.mkdirSync(path.dirname(stdoutLog), { recursive: true });
+    stdoutFd = fs.openSync(stdoutLog, 'a');
+    stderrFd = fs.openSync(stderrLog, 'a');
+
+    const child = spawn(process.execPath, [GSD_LOADER, 'headless', '--json', 'auto'], {
+      cwd: worktreeDir,
+      detached: true,
+      env: {
+        ...process.env,
+        GSD_MILESTONE_LOCK: mid,
+        GSD_PROJECT_ROOT: PROJECT_ROOT,
+        GSD_PARALLEL_WORKER: '1',
+      },
+      stdio: ['ignore', stdoutFd, stderrFd],
+      windowsHide: true,
+    });
+
+    child.unref();
+    return child.pid ?? null;
   } catch (err) {
     return null;
+  } finally {
+    if (stdoutFd !== undefined) {
+      try { fs.closeSync(stdoutFd); } catch {}
+    }
+    if (stderrFd !== undefined) {
+      try { fs.closeSync(stderrFd); } catch {}
+    }
   }
 }
 

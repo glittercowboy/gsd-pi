@@ -7,6 +7,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { listDescendants } from "@gsd/native";
 import type { AgentMessage } from "@gsd/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, OAuthProviderId } from "@gsd/pi-ai";
 import type {
@@ -78,7 +79,7 @@ import { ExtensionSelectorComponent } from "./components/extension-selector.js";
 import { FooterComponent } from "./components/footer.js";
 import { appKey, appKeyHint, editorKey, formatKeyForDisplay, keyHint, rawKeyHint } from "./components/keybinding-hints.js";
 import { LoginDialogComponent } from "./components/login-dialog.js";
-import { ModelSelectorComponent } from "./components/model-selector.js";
+import { ModelSelectorComponent, providerDisplayName } from "./components/model-selector.js";
 import { OAuthSelectorComponent } from "./components/oauth-selector.js";
 import { ProviderManagerComponent } from "./components/provider-manager.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
@@ -89,6 +90,7 @@ import { ToolExecutionComponent } from "./components/tool-execution.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
+import { ContextualTips } from "../../core/contextual-tips.js";
 import { type SlashCommandContext, dispatchSlashCommand, getAppKeyDisplay } from "./slash-command-handlers.js";
 import { handleAgentEvent } from "./controllers/chat-controller.js";
 import { createExtensionUIContext as buildExtensionUIContext } from "./controllers/extension-ui-controller.js";
@@ -107,6 +109,7 @@ import {
 	getThemeByName,
 	initTheme,
 	onThemeChange,
+	stopThemeWatcher,
 	setRegisteredThemes,
 	setTheme,
 	setThemeInstance,
@@ -122,6 +125,45 @@ interface Expandable {
 
 function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
+}
+
+export type AssistantReplaySegment =
+	| { kind: "assistant"; startIndex: number; endIndex: number }
+	| { kind: "tool"; contentIndex: number };
+
+/**
+ * Build replay segments for historical assistant messages so rebuild paths
+ * preserve the original content[] ordering between assistant prose and tools.
+ */
+export function buildAssistantReplaySegments(contentBlocks: Array<any>): AssistantReplaySegment[] {
+	const segments: AssistantReplaySegment[] = [];
+	let runStart = -1;
+
+	for (let i = 0; i < contentBlocks.length; i++) {
+		const block = contentBlocks[i];
+		const isAssistantText = block?.type === "text" || block?.type === "thinking";
+		const isTool = block?.type === "toolCall" || block?.type === "serverToolUse";
+
+		if (isAssistantText) {
+			if (runStart === -1) runStart = i;
+			continue;
+		}
+
+		if (runStart !== -1) {
+			segments.push({ kind: "assistant", startIndex: runStart, endIndex: i - 1 });
+			runStart = -1;
+		}
+
+		if (isTool) {
+			segments.push({ kind: "tool", contentIndex: i });
+		}
+	}
+
+	if (runStart !== -1) {
+		segments.push({ kind: "assistant", startIndex: runStart, endIndex: contentBlocks.length - 1 });
+	}
+
+	return segments;
 }
 
 type CompactionQueuedMessage = {
@@ -156,11 +198,16 @@ export interface InteractiveModeOptions {
 }
 
 export class InteractiveMode {
+	// Cap rendered chat components to prevent unbounded memory/CPU growth.
+	// Only render-components are removed — session transcript stays on disk.
+	private static readonly MAX_CHAT_COMPONENTS = 100;
+
 	private session: AgentSession;
 	private ui: TUI;
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
+	private pinnedMessageContainer: Container;
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
 	private autocompleteProvider: CombinedAutocompleteProvider | undefined;
@@ -202,8 +249,14 @@ export class InteractiveMode {
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
 
+	// Branch change listener unsubscribe function
+	private _branchChangeUnsub?: () => void;
+
 	// Track if editor is in bash mode (text starts with !)
 	private isBashMode = false;
+
+	// Contextual tips — session-scoped, non-intrusive hints
+	private contextualTips = new ContextualTips();
 
 	// Track current bash execution component
 	private bashComponent: BashExecutionComponent | undefined = undefined;
@@ -272,6 +325,7 @@ export class InteractiveMode {
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
+		this.pinnedMessageContainer = new Container();
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
 		this.keybindings = KeybindingsManager.create();
@@ -329,7 +383,7 @@ export class InteractiveMode {
 				return filtered.map((item) => ({
 					value: item.label,
 					label: item.id,
-					description: item.provider,
+					description: providerDisplayName(item.provider),
 				}));
 			};
 		}
@@ -477,6 +531,7 @@ export class InteractiveMode {
 		this.ui.addChild(this.chatContainer);
 		this.ui.addChild(this.pendingMessagesContainer);
 		this.ui.addChild(this.statusContainer);
+		this.ui.addChild(this.pinnedMessageContainer);
 		this.renderWidgets(); // Initialize with default spacer
 		this.ui.addChild(this.widgetContainerAbove);
 		this.ui.addChild(this.editorContainer);
@@ -511,7 +566,7 @@ export class InteractiveMode {
 		});
 
 		// Set up git branch watcher (uses provider instead of footer)
-		this.footerDataProvider.onBranchChange(() => {
+		this._branchChangeUnsub = this.footerDataProvider.onBranchChange(() => {
 			this.ui.requestRender();
 		});
 
@@ -1383,7 +1438,21 @@ export class InteractiveMode {
 	 */
 	private renderWidgets(): void {
 		if (!this.widgetContainerAbove || !this.widgetContainerBelow) return;
-		this.renderWidgetContainer(this.widgetContainerAbove, this.extensionWidgetsAbove, true, true);
+
+		// widgetContainerAbove: spacer collapses when pinned content is visible
+		// so there's no extra blank line between pinned output and the editor border.
+		// Use detachChildren() (not clear()) — the extensionWidgetsAbove map owns
+		// disposal; clear() would dispose every mounted widget on every re-render.
+		this.widgetContainerAbove.detachChildren();
+		const pinned = this.pinnedMessageContainer;
+		this.widgetContainerAbove.addChild({
+			render: () => pinned.children.length > 0 ? [] : [""],
+			invalidate: () => {},
+		});
+		for (const component of this.extensionWidgetsAbove.values()) {
+			this.widgetContainerAbove.addChild(component);
+		}
+
 		this.renderWidgetContainer(this.widgetContainerBelow, this.extensionWidgetsBelow, false, false);
 		this.ui.requestRender();
 	}
@@ -1394,7 +1463,9 @@ export class InteractiveMode {
 		spacerWhenEmpty: boolean,
 		leadingSpacer: boolean,
 	): void {
-		container.clear();
+		// Detach without disposing — the widgets map owns lifecycle; disposing
+		// here would kill refresh timers and subscriptions on every re-render.
+		container.detachChildren();
 
 		if (widgets.size === 0) {
 			if (spacerWhenEmpty) {
@@ -1618,7 +1689,7 @@ export class InteractiveMode {
 					this.hideExtensionInput();
 					resolve(undefined);
 				},
-				{ tui: this.ui, timeout: opts?.timeout },
+				{ tui: this.ui, timeout: opts?.timeout, secure: opts?.secure },
 			);
 
 			this.editorContainer.clear();
@@ -1756,8 +1827,10 @@ export class InteractiveMode {
 			this.showError(message);
 		} else if (type === "warning") {
 			this.showWarning(message);
+		} else if (type === "success") {
+			this.showSuccess(message);
 		} else {
-			this.showStatus(message);
+			this.showStatus(message, { append: true });
 		}
 	}
 
@@ -1998,8 +2071,9 @@ export class InteractiveMode {
 	}
 
 	private subscribeToAgent(): void {
-		this.unsubscribe = this.session.subscribe(async (event) => {
-			await this.handleEvent(event);
+		let eventQueue: Promise<void> = Promise.resolve();
+		this.unsubscribe = this.session.subscribe((event) => {
+			eventQueue = eventQueue.then(() => this.handleEvent(event)).catch(() => {});
 		});
 	}
 
@@ -2023,12 +2097,13 @@ export class InteractiveMode {
 	 * If multiple status messages are emitted back-to-back (without anything else being added to the chat),
 	 * we update the previous status line instead of appending new ones to avoid log spam.
 	 */
-	private showStatus(message: string): void {
+	private showStatus(message: string, options?: { append?: boolean }): void {
+		const append = options?.append ?? false;
 		const children = this.chatContainer.children;
 		const last = children.length > 0 ? children[children.length - 1] : undefined;
 		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
 
-		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
+		if (!append && last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
 			this.lastStatusText.setText(theme.fg("dim", message));
 			this.ui.requestRender();
 			return;
@@ -2044,6 +2119,7 @@ export class InteractiveMode {
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+		const timestampFormat = this.settingsManager.getTimestampFormat();
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
@@ -2101,12 +2177,12 @@ export class InteractiveMode {
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
 								message.timestamp,
-								this.settingsManager.getTimestampFormat(),
+								timestampFormat,
 							);
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
-						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings(), message.timestamp, this.settingsManager.getTimestampFormat());
+						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings(), message.timestamp, timestampFormat);
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
@@ -2120,7 +2196,7 @@ export class InteractiveMode {
 					message,
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
-					this.settingsManager.getTimestampFormat(),
+					timestampFormat,
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;
@@ -2132,6 +2208,18 @@ export class InteractiveMode {
 			default: {
 				const _exhaustive: never = message;
 			}
+		}
+		this.trimChatHistory();
+	}
+
+	/**
+	 * Remove oldest components when chat exceeds MAX_CHAT_COMPONENTS.
+	 * Only render-components are removed — session data stays in SessionManager.
+	 */
+	private trimChatHistory(): void {
+		while (this.chatContainer.children.length > InteractiveMode.MAX_CHAT_COMPONENTS) {
+			const oldest = this.chatContainer.children[0];
+			this.chatContainer.removeChild(oldest);
 		}
 	}
 
@@ -2146,6 +2234,7 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.pendingTools.clear();
+		const timestampFormat = this.settingsManager.getTimestampFormat();
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
@@ -2155,9 +2244,30 @@ export class InteractiveMode {
 		for (const message of sessionContext.messages) {
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
-				this.addMessageToChat(message);
-				// Render tool call components
-				for (const content of message.content) {
+				const hasToolBlocks = message.content.some((c) => c.type === "toolCall" || c.type === "serverToolUse");
+				if (!hasToolBlocks) {
+					this.addMessageToChat(message);
+					continue;
+				}
+
+				const assistantSegments: AssistantMessageComponent[] = [];
+				const replaySegments = buildAssistantReplaySegments(message.content);
+
+				for (const segment of replaySegments) {
+					if (segment.kind === "assistant") {
+						const assistantComponent = new AssistantMessageComponent(
+							message,
+							this.hideThinkingBlock,
+							this.getMarkdownThemeWithSettings(),
+							timestampFormat,
+							{ startIndex: segment.startIndex, endIndex: segment.endIndex },
+						);
+						this.chatContainer.addChild(assistantComponent);
+						assistantSegments.push(assistantComponent);
+						continue;
+					}
+
+					const content = message.content[segment.contentIndex];
 					if (content.type === "toolCall") {
 						const component = new ToolExecutionComponent(
 							content.name,
@@ -2213,6 +2323,11 @@ export class InteractiveMode {
 						}
 					}
 				}
+
+				// Match streaming-mode behavior: show metadata once on the final
+				// assistant prose segment for this message.
+				const lastAssistantSegment = assistantSegments[assistantSegments.length - 1];
+				lastAssistantSegment?.setShowMetadata(true);
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
 				const component = this.pendingTools.get(message.toolCallId);
@@ -2226,7 +2341,14 @@ export class InteractiveMode {
 			}
 		}
 
+		// Any pendingTools entries left over after replay are historical tool
+		// calls whose results were squashed out of session context (commonly by
+		// compaction). Mark them finished so the frame stops showing "Running".
+		for (const component of this.pendingTools.values()) {
+			component.markHistoricalNoResult();
+		}
 		this.pendingTools.clear();
+		this.trimChatHistory();
 		this.ui.requestRender();
 	}
 
@@ -2237,6 +2359,7 @@ export class InteractiveMode {
 			updateFooter: true,
 			populateHistory: true,
 		});
+		this.populatePinnedFromMessages(context.messages);
 
 		// Show compaction info if session was compacted
 		const allEntries = this.sessionManager.getEntries();
@@ -2258,8 +2381,60 @@ export class InteractiveMode {
 
 	private rebuildChatFromMessages(): void {
 		this.chatContainer.clear();
+		this.pinnedMessageContainer.clear();
 		const context = this.sessionManager.buildSessionContext();
 		this.renderSessionContext(context);
+		// Pinned content NOT re-populated here — the streaming lifecycle in
+		// chat-controller.ts manages the pinned zone during active work.
+		// populatePinnedFromMessages() remains in renderInitialMessages()
+		// for the session-resume case at startup.
+	}
+
+	/**
+	 * After rebuilding chat from messages, pin the last assistant text above the
+	 * editor if tool results would otherwise push it out of the viewport.
+	 */
+	private populatePinnedFromMessages(messages: AgentMessage[]): void {
+		this.pinnedMessageContainer.clear();
+
+		// Walk backwards to find the last assistant message
+		let lastAssistant: AssistantMessage | undefined;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (msg && "role" in msg && msg.role === "assistant") {
+				lastAssistant = msg as AssistantMessage;
+				break;
+			}
+		}
+		if (!lastAssistant) return;
+
+		// Check if any tool calls follow the last text block
+		const content = lastAssistant.content;
+		let lastTextIndex = -1;
+		let hasToolAfterText = false;
+		for (let i = 0; i < content.length; i++) {
+			if (content[i].type === "text") lastTextIndex = i;
+		}
+		if (lastTextIndex >= 0) {
+			for (let i = lastTextIndex + 1; i < content.length; i++) {
+				if (content[i].type === "toolCall" || content[i].type === "serverToolUse") {
+					hasToolAfterText = true;
+					break;
+				}
+			}
+		}
+		if (!hasToolAfterText || lastTextIndex < 0) return;
+
+		const textBlock = content[lastTextIndex] as { type: "text"; text: string };
+		const text = textBlock.text?.trim();
+		if (!text) return;
+
+		this.pinnedMessageContainer.addChild(
+			new DynamicBorder((str: string) => theme.fg("dim", str), "Latest Output"),
+		);
+		this.pinnedMessageContainer.addChild(
+			new Markdown(text, 1, 0, this.getMarkdownThemeWithSettings()),
+		);
 	}
 
 	// =========================================================================
@@ -2320,6 +2495,21 @@ export class InteractiveMode {
 		if (shutdownBehavior === "stop_ui") {
 			return;
 		}
+
+		// Kill ALL descendant processes to prevent orphans (next-server, pnpm dev, etc.)
+		try {
+			const descendants = listDescendants(process.pid);
+			for (const childPid of descendants) {
+				try { process.kill(childPid, "SIGTERM"); } catch {}
+			}
+			if (descendants.length > 0) {
+				await new Promise(resolve => setTimeout(resolve, 500));
+				for (const childPid of descendants) {
+					try { process.kill(childPid, "SIGKILL"); } catch {}
+				}
+			}
+		} catch {}
+
 		process.exit(0);
 	}
 
@@ -2365,6 +2555,12 @@ export class InteractiveMode {
 	private async handleFollowUp(): Promise<void> {
 		const text = (this.editor.getExpandedText?.() ?? this.editor.getText()).trim();
 		if (!text) return;
+
+		if (text.startsWith("/") && !this.isKnownSlashCommand(text)) {
+			const command = text.split(/\s/)[0];
+			this.showError(`Unknown command: ${command}. Use slash autocomplete to see available commands.`);
+			return;
+		}
 
 		// Queue input during compaction (extension commands execute immediately)
 		if (this.session.isCompacting) {
@@ -2549,6 +2745,27 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	showSuccess(successMessage: string): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("success", text)));
+		this.chatContainer.addChild(
+			new Text(theme.fg("success", successMessage), 1, 0),
+		);
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("success", text)));
+		this.chatContainer.addChild(new Spacer(1));
+		this.ui.requestRender();
+	}
+
+	showTip(message: string): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", `💡 ${message}`), 1, 0));
+		this.ui.requestRender();
+	}
+
+	getContextPercent(): number | undefined {
+		return this.session.getContextUsage()?.percent ?? undefined;
+	}
+
 	showNewVersionNotification(newVersion: string): void {
 		const action = theme.fg("accent", getUpdateInstruction("@gsd/pi-coding-agent"));
 		const updateInstruction = theme.fg("muted", `New version ${newVersion} is available. `) + action;
@@ -2648,6 +2865,12 @@ export class InteractiveMode {
 	}
 
 	private queueCompactionMessage(text: string, mode: "steer" | "followUp"): void {
+		if (text.startsWith("/") && !this.isKnownSlashCommand(text)) {
+			const command = text.split(/\s/)[0];
+			this.showError(`Unknown command: ${command}. Use slash autocomplete to see available commands.`);
+			return;
+		}
+
 		this.compactionQueuedMessages.push({ text, mode });
 		this.editor.addToHistory?.(text);
 		this.editor.setText("");
@@ -2664,6 +2887,32 @@ export class InteractiveMode {
 		const spaceIndex = text.indexOf(" ");
 		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
 		return !!extensionRunner.getCommand(commandName);
+	}
+
+	private isKnownSlashCommand(text: string): boolean {
+		if (!text.startsWith("/")) return false;
+
+		const spaceIndex = text.indexOf(" ");
+		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+
+		if (BUILTIN_SLASH_COMMANDS.some((command) => command.name === commandName)) {
+			return true;
+		}
+
+		if (this.isExtensionCommand(text)) {
+			return true;
+		}
+
+		if (this.session.promptTemplates.some((template) => template.name === commandName)) {
+			return true;
+		}
+
+		if (commandName.startsWith("skill:") && this.settingsManager.getEnableSkillCommands()) {
+			const skillName = commandName.slice("skill:".length);
+			return this.session.resourceLoader.getSkills().skills.some((skill) => skill.name === skillName);
+		}
+
+		return false;
 	}
 
 	private async flushCompactionQueue(options?: { willRetry?: boolean }): Promise<void> {
@@ -3335,6 +3584,23 @@ export class InteractiveMode {
 					done();
 					this.ui.requestRender();
 				},
+				async (provider: string) => {
+					// Enter key → auth setup for selected provider (#3579).
+					// Only OAuth providers support the login dialog flow.
+					// externalCli providers (e.g. claude-code) authenticate through
+					// their own CLI — sending them to the OAuth dialog produces
+					// "Unknown OAuth provider: claude-code" (#4548).
+					const isOAuthProvider = this.session.modelRegistry.authStorage
+						.getOAuthProviders()
+						.some((p) => p.id === provider);
+					if (!isOAuthProvider) {
+						done();
+						this.showStatus(`${provider} uses external CLI auth — use /model to select a model or run the provider's own auth command.`);
+						return;
+					}
+					done();
+					await this.showLoginDialog(provider);
+				},
 			);
 			return { component, focus: component };
 		});
@@ -3598,6 +3864,9 @@ export class InteractiveMode {
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
 
+		// Reset contextual tips for the new session
+		this.contextualTips.reset();
+
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));
 		this.ui.requestRender();
@@ -3805,6 +4074,33 @@ export class InteractiveMode {
 			this.loadingAnimation = undefined;
 		}
 		this.clearExtensionTerminalInputListeners();
+
+		// Clean up branch change listener (Fix 1)
+		this._branchChangeUnsub?.();
+		this._branchChangeUnsub = undefined;
+
+		// Clean up theme change listener and watcher (Fix 2)
+		onThemeChange(() => {});
+		stopThemeWatcher();
+
+		// Resolve any pending getUserInput promise so the run() loop can exit (Fix 3)
+		if (this.onInputCallback) {
+			this.onInputCallback("");
+			this.onInputCallback = undefined;
+		}
+
+		// Dispose extension widgets, custom footer, and custom header (Fix 4)
+		this.clearExtensionWidgets();
+		if (this.customFooter?.dispose) {
+			this.customFooter.dispose();
+		}
+		this.customFooter = undefined;
+		if (this.customHeader?.dispose) {
+			this.customHeader.dispose();
+		}
+		this.customHeader = undefined;
+		this.autocompleteProvider = undefined;
+
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {

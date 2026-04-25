@@ -37,6 +37,9 @@ export interface ExtensionRegistryEntry {
   source: "bundled" | "user" | "project";
   disabledAt?: string;
   disabledReason?: string;
+  version?: string;           // From manifest, used for semver comparison
+  installedFrom?: string;     // Original specifier: npm package name, git URL, or local path
+  installType?: "npm" | "git" | "local";  // Explicit source type
 }
 
 export interface ExtensionRegistry {

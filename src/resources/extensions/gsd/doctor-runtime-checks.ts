@@ -8,9 +8,10 @@ import { deriveState } from "./state.js";
 import { saveFile } from "./files.js";
 import { nativeIsRepo, nativeForEachRef, nativeUpdateRef } from "./native-git-bridge.js";
 import { readCrashLock, isLockProcessAlive, clearLock } from "./crash-recovery.js";
-import { ensureGitignore } from "./gitignore.js";
+import { ensureGitignore, isGsdGitignored } from "./gitignore.js";
 import { readAllSessionStatuses, isSessionStale, removeSessionStatus } from "./session-status-io.js";
 import { recoverFailedMigration } from "./migrate-external.js";
+import { splitCompletedKey } from "./forensics.js";
 
 export async function checkRuntimeHealth(
   basePath: string,
@@ -118,11 +119,9 @@ export async function checkRuntimeHealth(
       const orphaned: string[] = [];
 
       for (const key of keys) {
-        // Key format: "unitType/unitId" e.g. "execute-task/M001/S01/T01"
-        const slashIdx = key.indexOf("/");
-        if (slashIdx === -1) continue;
-        const unitType = key.slice(0, slashIdx);
-        const unitId = key.slice(slashIdx + 1);
+        const parsed = splitCompletedKey(key);
+        if (!parsed) continue;
+        const { unitType, unitId } = parsed;
 
         // Only validate artifact-producing unit types
         const { verifyExpectedArtifact } = await import("./auto-recovery.js");
@@ -302,13 +301,16 @@ export async function checkRuntimeHealth(
         content.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#")),
       );
 
-      // Check for critical runtime patterns that must be present
+      // Check for critical runtime patterns that must be present.
+      // NOTE: GSD_RUNTIME_PATTERNS in gitignore.ts is the canonical source of truth.
+      // This is a minimal subset for the doctor check.
       const criticalPatterns = [
         ".gsd/activity/",
         ".gsd/runtime/",
         ".gsd/auto.lock",
-        ".gsd/gsd.db",
-        ".gsd/completed-units.json",
+        ".gsd/gsd.db*",
+        ".gsd/completed-units*.json",
+        ".gsd/event-log.jsonl",
       ];
 
       // If blanket .gsd/ or .gsd is present, all patterns are covered
@@ -378,6 +380,27 @@ export async function checkRuntimeHealth(
             file: ".gsd",
             fixable: false,
           });
+        }
+
+        // ── Symlinked .gsd without .gitignore entry (#4423) ──
+        // When `.gsd` is a symlink AND not gitignored, `git add -A -- :!.gsd/...`
+        // pathspecs fail with "beyond a symbolic link". Without self-heal this
+        // silently drops new user files during auto-commit.
+        if (nativeIsRepo(basePath) && !isGsdGitignored(basePath)) {
+          issues.push({
+            severity: "warning",
+            code: "symlinked_gsd_unignored",
+            scope: "project",
+            unitId: "project",
+            message: ".gsd is a symlink to external state but is not listed in .gitignore. This causes git pathspec exclusions to fail and can lead to silently dropped new files during auto-commit. Add `.gsd` to .gitignore.",
+            file: ".gitignore",
+            fixable: true,
+          });
+
+          if (shouldFix("symlinked_gsd_unignored")) {
+            const modified = ensureGitignore(basePath);
+            if (modified) fixesApplied.push("added .gsd to .gitignore (symlinked external state)");
+          }
         }
       }
     }

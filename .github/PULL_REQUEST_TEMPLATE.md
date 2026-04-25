@@ -1,3 +1,16 @@
+## Linked issue
+
+<!--
+PRs without a linked issue will be closed.
+Open or find an issue first: https://github.com/gsd-build/gsd-2/issues
+-->
+
+Closes #<!-- issue number — required -->
+
+- [ ] I have linked an issue above. I understand that PRs without a linked issue will be closed without review.
+
+---
+
 ## TL;DR
 
 **What:** <!-- One sentence — what does this change? -->
@@ -10,7 +23,7 @@
 
 ## Why
 
-<!-- The motivation. What problem does this solve? Link issues: Closes #123 -->
+<!-- The motivation. What problem does this solve? -->
 
 ## How
 

@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { AutoDashboardData } from "./bridge-service.ts";
+import type { AutoDashboardData } from "./auto-dashboard-types.ts";
 import { resolveSubprocessModule, buildSubprocessPrefixArgs } from "./ts-subprocess-flags.ts";
 
 const AUTO_DASHBOARD_MAX_BUFFER = 1024 * 1024;
@@ -40,6 +40,64 @@ function resolveTsLoaderPath(packageRoot: string): string {
 
 export function collectTestOnlyFallbackAutoDashboardData(): AutoDashboardData {
   return fallbackAutoDashboardData();
+}
+
+/**
+ * Check if a PID is alive by sending signal 0.
+ */
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reconcile subprocess auto dashboard data with on-disk session state.
+ *
+ * The subprocess always starts with fresh module state (s.active === false),
+ * so it can never report active/paused correctly. We check:
+ *   1. .gsd/auto.lock — if present and its PID is alive, auto IS running.
+ *   2. .gsd/runtime/paused-session.json — if present, auto IS paused.
+ *
+ * See #2705.
+ */
+function reconcileWithDiskState(
+  data: AutoDashboardData,
+  projectCwd: string,
+  checkExists: (path: string) => boolean,
+): AutoDashboardData {
+  // If the subprocess already reports active or paused, trust it.
+  if (data.active || data.paused) return data;
+
+  // Check for paused-session.json first (paused takes precedence).
+  const pausedPath = join(projectCwd, ".gsd", "runtime", "paused-session.json");
+  if (checkExists(pausedPath)) {
+    try {
+      // Validate the file is readable JSON (not corrupt).
+      JSON.parse(readFileSync(pausedPath, "utf-8"));
+      return { ...data, paused: true };
+    } catch {
+      // Corrupt or unreadable — ignore.
+    }
+  }
+
+  // Check for session lock with a live PID.
+  const lockPath = join(projectCwd, ".gsd", "auto.lock");
+  if (checkExists(lockPath)) {
+    try {
+      const lockData = JSON.parse(readFileSync(lockPath, "utf-8")) as { pid?: number };
+      if (typeof lockData.pid === "number" && isPidAlive(lockData.pid)) {
+        return { ...data, active: true };
+      }
+    } catch {
+      // Corrupt or unreadable — ignore.
+    }
+  }
+
+  return data;
 }
 
 export async function collectAuthoritativeAutoDashboardData(
@@ -95,6 +153,7 @@ export async function collectAuthoritativeAutoDashboardData(
           [AUTO_DASHBOARD_MODULE_ENV]: autoModulePath,
         },
         maxBuffer: AUTO_DASHBOARD_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {
@@ -103,7 +162,12 @@ export async function collectAuthoritativeAutoDashboardData(
         }
 
         try {
-          resolveResult(JSON.parse(stdout) as AutoDashboardData);
+          const parsed = JSON.parse(stdout) as AutoDashboardData;
+          const projectCwd = env.GSD_WEB_PROJECT_CWD || "";
+          const reconciled = projectCwd
+            ? reconcileWithDiskState(parsed, projectCwd, checkExists)
+            : parsed;
+          resolveResult(reconciled);
         } catch (parseError) {
           reject(
             new Error(
