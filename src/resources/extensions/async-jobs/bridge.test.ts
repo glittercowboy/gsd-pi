@@ -71,6 +71,9 @@ test("async-jobs bridge cancels running jobs and suppresses follow-up delivery",
     jobIds: [jobId],
   });
 
+  // Give the cancel_or_ignore handler time to run and suppress any pending
+  // setTimeout(0)-scheduled async_job_result delivery; 80ms is conservative
+  // for event-loop jitter, not a semantic timeout.
   await new Promise((resolve) => setTimeout(resolve, 80));
   assert.equal(sentMessages.length, 0, "cancel_or_ignore should suppress late async_job_result delivery");
 

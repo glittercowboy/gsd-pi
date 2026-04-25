@@ -110,7 +110,8 @@ export class AutoSession {
   readonly unitRecoveryCount = new Map<string, number>();
   /** Async job ids started during each unit execution (keyed by type:id:startedAt). */
   readonly unitAsyncJobIds = new Map<string, Set<string>>();
-  /** Bounded set of async job ids whose late completion messages should be dropped. */
+  /** Capped set of async job ids whose late completion messages should be dropped.
+   *  auto.ts prunes insertion order to bound memory across long-lived sessions. */
   readonly ignoredAsyncJobIds = new Set<string>();
 
   // ── Timers ───────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import {
   extractAsyncBashJobId,
   extractAsyncJobResultJobIdFromUserMessage,
   filterIgnoredAsyncJobMessages,
+  makeUnitExecutionKey,
   truncateContextMessage,
 } from "../async-job-hygiene.ts";
 import { convertToLlm, createCustomMessage } from "../../../../../packages/pi-coding-agent/src/core/messages.ts";
@@ -46,6 +47,14 @@ test("extractAsyncBashJobId reads job id from async_bash tool result", () => {
     ],
   };
   assert.equal(extractAsyncBashJobId(result), "bg_abc12345");
+});
+
+test("makeUnitExecutionKey uses collision-safe tuple encoding", () => {
+  const keyA = makeUnitExecutionKey("execute:task", "M001:S01:T01", 1234);
+  const keyB = makeUnitExecutionKey("execute", "task:M001:S01:T01", 1234);
+  assert.equal(typeof keyA, "string");
+  assert.equal(typeof keyB, "string");
+  assert.notEqual(keyA, keyB);
 });
 
 test("extractAsyncJobResultJobIdFromUserMessage reads job id from wrapped system notification", () => {

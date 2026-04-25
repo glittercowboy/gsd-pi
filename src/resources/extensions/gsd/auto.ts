@@ -576,7 +576,9 @@ export function recordToolInvocationError(toolName: string, errorMsg: string): v
   }
 }
 
-function pruneIgnoredAsyncJobIds(maxEntries = 256): void {
+const MAX_IGNORED_ASYNC_JOB_IDS = 256;
+
+function pruneIgnoredAsyncJobIds(maxEntries = MAX_IGNORED_ASYNC_JOB_IDS): void {
   while (s.ignoredAsyncJobIds.size > maxEntries) {
     const oldest = s.ignoredAsyncJobIds.values().next().value;
     if (!oldest) break;
@@ -638,8 +640,8 @@ export function ignoreAsyncJobsForUnitExecution(
   return ignored;
 }
 
-export function getIgnoredAsyncJobIds(): Set<string> {
-  return s.ignoredAsyncJobIds;
+export function getIgnoredAsyncJobIds(): ReadonlySet<string> {
+  return new Set(s.ignoredAsyncJobIds);
 }
 
 export function getOldestInFlightToolAgeMs(): number {
@@ -1483,6 +1485,10 @@ export async function startAuto(
     milestoneLock?: string | null;
   },
 ): Promise<void> {
+  // AutoSession.reset() clears the shared async-job bridge reference, so
+  // rebind it on every start/resume attempt instead of only at hook install.
+  setAsyncJobEventBus(pi.events);
+
   if (s.active) {
     debugLog("startAuto", { phase: "already-active", skipping: true });
     return;
