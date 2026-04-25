@@ -90,6 +90,7 @@
     "sync-platform-versions": "node native/scripts/sync-platform-versions.cjs",
     "validate-pack": "node scripts/validate-pack.js",
     "typecheck:extensions": "tsc --noEmit --project tsconfig.extensions.json",
+    "verify:pr": "npm run build:core && npm run typecheck:extensions && npm run test:unit",
     "pipeline:version-stamp": "node scripts/version-stamp.mjs",
     "release:changelog": "node scripts/generate-changelog.mjs",
     "release:bump": "node scripts/bump-version.mjs",

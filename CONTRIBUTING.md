@@ -101,6 +101,7 @@ If this is a non-trivial change, explain the design and any alternatives you con
 ### Requirements
 
 - **CI must pass.** If your PR breaks tests, fix them before requesting review.
+- **Run `npm run verify:pr` locally before pushing.** It composes `build:core` → `typecheck:extensions` → `test:unit` — the same sequence the CI build job runs. Catches strict-null-check failures, closed-union-literal mismatches, and lint-style test invariants (e.g. `silent-catch-diagnostics`) that ad-hoc `node --test <file>` invocations miss.
 - **One concern per PR.** A bug fix is a bug fix. A feature is a feature. Don't bundle unrelated changes.
 - **No drive-by formatting.** Don't reformat code you didn't change. Don't reorder imports in files you're not modifying.
 - **Link issues when relevant.** Not mandatory for every PR, but if an issue exists, reference it.
