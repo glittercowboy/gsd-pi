@@ -83,6 +83,24 @@ export interface HeadlessOptions {
   bare?: boolean         // --bare: suppress CLAUDE.md/AGENTS.md, user skills, project preferences
 }
 
+/**
+ * Commands classified as multi-turn in headless mode: they involve multiple
+ * question rounds, codebase scanning, and artifact writing before the workflow
+ * completes (#3547). Multi-turn commands suppress single-execution-complete
+ * exit and disable the default 5-minute timeout.
+ *
+ * Exported so the regression test can exercise the real classifier rather
+ * than grepping the source for identifier names.
+ */
+export function isMultiTurnHeadlessCommand(command: string): boolean {
+  return (
+    command === 'auto' ||
+    command === 'next' ||
+    command === 'discuss' ||
+    command === 'plan'
+  )
+}
+
 interface TrackedEvent {
   type: string
   timestamp: number
@@ -263,7 +281,7 @@ async function runHeadlessOnce(options: HeadlessOptions, restartCount: number): 
   const isAutoMode = options.command === 'auto'
   // discuss and plan are multi-turn: they involve multiple question rounds,
   // codebase scanning, and artifact writing before the workflow completes (#3547).
-  const isMultiTurnCommand = options.command === 'auto' || options.command === 'next' || options.command === 'discuss' || options.command === 'plan'
+  const isMultiTurnCommand = isMultiTurnHeadlessCommand(options.command)
   if (isAutoMode && options.timeout === 300_000) {
     options.timeout = 0
   }

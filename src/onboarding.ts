@@ -103,7 +103,7 @@ const API_KEY_PREFIXES: Record<string, string[]> = {
   openai: ['sk-'],
 }
 
-const OTHER_PROVIDERS = [
+export const OTHER_PROVIDERS = [
   { value: 'google', label: 'Google (Gemini)', hint: 'aistudio.google.com/app/apikey' },
   { value: 'groq', label: 'Groq', hint: 'console.groq.com/keys' },
   { value: 'xai', label: 'xAI (Grok)', hint: 'console.x.ai' },
@@ -200,7 +200,7 @@ function persistDefaultModel(modelId: string): void {
   }
 }
 
-function detectNativeProviderFromBaseUrl(baseUrl: string): 'minimax' | 'minimax-cn' | null {
+export function detectNativeProviderFromBaseUrl(baseUrl: string): 'minimax' | 'minimax-cn' | null {
   try {
     const hostname = new URL(baseUrl).hostname.toLowerCase()
     if (hostname === 'api.minimax.io' || hostname.endsWith('.minimax.io')) {

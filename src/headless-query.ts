@@ -22,11 +22,37 @@ import type { GSDState } from './resources/extensions/gsd/types.js'
 import { resolveBundledSourceResource } from './bundled-resource-path.js'
 
 const jiti = createJiti(fileURLToPath(import.meta.url), { interopDefault: true, debug: false })
-// Resolve extensions from the synced agent directory so headless-query
-// loads the same extension copy as interactive/auto modes (#3471).
-// Falls back to bundled source for source-tree dev workflows.
-const agentExtensionsDir = join(process.env.GSD_AGENT_DIR || join(homedir(), '.gsd', 'agent'), 'extensions', 'gsd')
 const { existsSync } = await import('node:fs')
+
+/**
+ * Resolve the GSD extensions root for headless-query. Prefers the synced
+ * agent directory (so headless-query loads the same extension copy as
+ * interactive/auto modes — #3471) and falls back to the bundled source
+ * resource for source-tree dev workflows.
+ *
+ * Pure on the given inputs (env + fs probe + bundled resolver) so the
+ * #3471 contract can be exercised in tests without spawning a subprocess.
+ */
+export function resolveGsdAgentExtensionsDir(env: NodeJS.ProcessEnv = process.env): string {
+  return join(env.GSD_AGENT_DIR || join(homedir(), '.gsd', 'agent'), 'extensions', 'gsd')
+}
+
+/**
+ * Decide whether headless-query should load extensions from the agent
+ * sync directory (#3471) or fall back to bundled source. Returns the
+ * agent dir alongside the decision so a caller can use it directly.
+ */
+export function shouldUseAgentExtensionsDir(opts: {
+  env?: NodeJS.ProcessEnv
+  fileExists?: (path: string) => boolean
+}): { agentDir: string; useAgentDir: boolean } {
+  const env = opts.env ?? process.env
+  const fileExists = opts.fileExists ?? existsSync
+  const agentDir = resolveGsdAgentExtensionsDir(env)
+  return { agentDir, useAgentDir: fileExists(join(agentDir, 'state.ts')) }
+}
+
+const agentExtensionsDir = resolveGsdAgentExtensionsDir()
 const useAgentDir = existsSync(join(agentExtensionsDir, 'state.ts'))
 const gsdExtensionPath = (...segments: string[]) =>
   useAgentDir

@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { pickTrustedConfigurationValue } from "./trusted-config.js";
 import { GsdClient, ThinkingLevel } from "./gsd-client.js";
 import { registerChatParticipant } from "./chat-participant.js";
 import { GsdSidebarProvider } from "./sidebar.js";
@@ -30,8 +31,7 @@ let permissionManager: GsdPermissionManager | undefined;
 
 function getTrustedConfigurationValue<T>(section: string, key: string, fallback: T): T {
 	const config = vscode.workspace.getConfiguration(section);
-	const inspected = config.inspect<T>(key);
-	return inspected?.globalValue ?? inspected?.defaultValue ?? fallback;
+	return pickTrustedConfigurationValue(config.inspect<T>(key), fallback);
 }
 
 export function resolveTrustedGsdStartupConfig(): { binaryPath: string; autoStart: boolean } {

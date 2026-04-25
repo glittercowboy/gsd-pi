@@ -114,49 +114,21 @@ test("isInfrastructureError returns code for ECONNREFUSED when offline", async (
 	}
 });
 
-// ─── Web search filtering when PI_OFFLINE set ──────────────────────────────
-
-test("web search tool is filtered when PI_OFFLINE is set", async () => {
-	const { readFileSync } = await import("node:fs");
-	const { join } = await import("node:path");
-
-	const toolExecPath = join(
-		process.cwd(),
-		"packages/pi-coding-agent/src/modes/interactive/components/tool-execution.ts",
-	);
-	const content = readFileSync(toolExecPath, "utf-8");
-	assert.ok(
-		content.includes("PI_OFFLINE") && content.includes("web_search"),
-		"tool-execution.ts should check PI_OFFLINE for web_search",
-	);
-
-	const chatControllerPath = join(
-		process.cwd(),
-		"packages/pi-coding-agent/src/modes/interactive/controllers/chat-controller.ts",
-	);
-	const chatContent = readFileSync(chatControllerPath, "utf-8");
-	assert.ok(
-		chatContent.includes("PI_OFFLINE") && chatContent.includes("webSearchResult"),
-		"chat-controller.ts should check PI_OFFLINE for webSearchResult",
-	);
-});
-
-// ─── Version check skipped when PI_OFFLINE ─────────────────────────────────
-
-test("version check is skipped when PI_OFFLINE is set", async () => {
-	const { readFileSync } = await import("node:fs");
-	const { join } = await import("node:path");
-
-	const interactivePath = join(
-		process.cwd(),
-		"packages/pi-coding-agent/src/modes/interactive/interactive-mode.ts",
-	);
-	const content = readFileSync(interactivePath, "utf-8");
-	assert.ok(
-		content.includes("PI_OFFLINE"),
-		"interactive-mode.ts should check PI_OFFLINE for version check skip",
-	);
-});
+// ─── PI_OFFLINE web_search / version-check filtering ──────────────────────
+//
+// Two former tests here grep'd `pi-coding-agent/src/modes/interactive/...`
+// for the literal strings `PI_OFFLINE`, `web_search`, `webSearchResult`.
+// That asserted nothing about runtime behaviour (renaming a comment that
+// happens to mention `web_search` was sufficient to keep them green) and
+// it lived in vendored pi sources that we observe through their compiled
+// API, not their TypeScript source — the live binary may not match. The
+// behavioural contract — that `PI_OFFLINE=1` causes pi to refuse remote
+// tools — is owned by `@pi/coding-agent`'s own test suite. Removed here.
+//
+// What we still test in this file:
+//   * `isLocalModel` (pure, exported from pi)
+//   * `INFRA_ERROR_CODES` (real Set; offline-mode classifier)
+//   * `isInfrastructureError` under PI_OFFLINE (real function, real env)
 
 // ─── Helper ─────────────────────────────────────────────────────────────────
 
