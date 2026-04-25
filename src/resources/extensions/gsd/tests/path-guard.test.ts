@@ -81,6 +81,21 @@ test("isWithinPerimeter follows in-tree symlinks", (t) => {
   assert.equal(isWithinPerimeter(link, base), true);
 });
 
+test("isWithinPerimeter handles non-existent target paths (realpath fallback)", (t) => {
+  const base = mkdtempSync(join(tmpdir(), "gsd-perim-"));
+  t.after(() => rmSync(base, { recursive: true, force: true }));
+
+  // New file inside the perimeter — does not exist yet, must still be allowed.
+  assert.equal(isWithinPerimeter(join(base, "does-not-exist.txt"), base), true);
+  // New file outside — does not exist yet, must still be blocked. Use a path
+  // that won't collide with $TMPDIR on macOS.
+  assert.equal(isWithinPerimeter("/etc/does-not-exist-yet", base), false);
+});
+
+test("isWithinPerimeter fails closed when basePath is missing", () => {
+  assert.equal(isWithinPerimeter("/etc/passwd", ""), false);
+});
+
 // ─── classifyFilePath ───────────────────────────────────────────────────────
 
 test("classifyFilePath: pass for in-tree paths", (t) => {

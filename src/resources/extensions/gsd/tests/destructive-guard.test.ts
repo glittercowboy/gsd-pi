@@ -179,6 +179,38 @@ test("classifyCatastrophic does NOT block recursive chmod inside the project", (
   }
 });
 
+test("classifyCatastrophic blocks rm of pseudo-fs and additional roots", () => {
+  for (const cmd of [
+    "rm -rf /proc",
+    "rm -rf /sys",
+    "rm -rf /dev",
+    "rm -rf /run",
+    "rm -rf /opt",
+    "rm -rf /srv",
+    "rm -rf /mnt/data",
+    "rm -rf /media/usb",
+    "rm -rf /nix/store",
+    "rm -rf /data",
+  ]) {
+    assert.equal(classifyCatastrophic(cmd).block, true, cmd);
+  }
+});
+
+test("classifyCatastrophic blocks rm with long-form flags", () => {
+  for (const cmd of [
+    "rm --recursive --force /etc",
+    "rm --recursive /usr",
+    "rm --force --recursive /var",
+    "rm --no-preserve-root -rf /",
+  ]) {
+    assert.equal(classifyCatastrophic(cmd).block, true, cmd);
+  }
+});
+
+test("classifyCatastrophic blocks chmod with long-form recursive flag", () => {
+  assert.equal(classifyCatastrophic("chmod --recursive 777 /etc").block, true);
+});
+
 test("classifyCatastrophic returns false for benign commands", () => {
   for (const cmd of [
     "ls -la",

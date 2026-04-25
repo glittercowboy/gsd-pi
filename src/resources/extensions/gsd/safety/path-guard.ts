@@ -9,25 +9,55 @@
 // absolute out-of-tree paths (`> /etc/passwd`) are matched via the same
 // pattern style used by write-intercept.ts.
 //
+// Threat model: this is a tripwire for confused-agent accidents (Write/Edit
+// to /etc/* or a heredoc-ified system file), not a sandbox. The bash
+// scanner is a regex over the command string and is best-effort: quoting,
+// variable expansion, heredocs, command substitution, and language
+// interpreters (`python -c open('/etc/x','w')`) all bypass the bash arm.
+// In-tree absolute paths and Write/Edit calls hit the structured arm
+// (classifyFilePath), which is precise.
+//
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 // ─── Perimeter check ────────────────────────────────────────────────────────
 
 /**
  * Resolve a path to an absolute form, preferring the realpath when it exists
- * so that in-tree symlinks escape detection correctly.
+ * so that in-tree symlinks resolve correctly.
+ *
+ * For paths that don't exist yet (e.g. a Write to a new file), we walk up to
+ * the longest existing prefix, realpath that, and re-append the missing
+ * suffix. This is required on macOS where tmpdir's `/var/...` resolves to
+ * `/private/var/...` — without prefix-resolution, an in-tree new file would
+ * appear to escape the perimeter.
+ *
+ * Falls back conservatively to plain `resolve()` if no ancestor resolves.
  */
 function canonicalize(p: string): string {
   const abs = resolve(p);
   try {
     return realpathSync(abs);
   } catch {
-    // Path doesn't exist yet — that's fine, resolve() is sufficient.
-    return abs;
+    // Walk up to the longest existing ancestor.
+    let cur = abs;
+    const suffix: string[] = [];
+    while (true) {
+      const parent = dirname(cur);
+      if (parent === cur) return abs; // hit filesystem root, give up
+      const tail = cur.slice(parent.length);
+      suffix.unshift(tail);
+      cur = parent;
+      try {
+        const real = realpathSync(cur);
+        return real + suffix.join("");
+      } catch {
+        /* keep walking */
+      }
+    }
   }
 }
 
@@ -35,15 +65,15 @@ function canonicalize(p: string): string {
  * True iff `child` is the same path as `parent` or nested inside it.
  * Both inputs are expected to be absolute. Uses path.relative to avoid
  * false positives from prefix-string comparison (`/fooBar` startsWith `/foo`).
+ *
+ * `relative()` always produces a leading ".." segment for any escape
+ * (POSIX or Windows), so `startsWith("..")` is sufficient on both platforms.
  */
 function isPathInside(child: string, parent: string): boolean {
   const rel = relative(parent, child);
   if (rel === "") return true;
-  if (rel.startsWith("..")) return false;
   if (isAbsolute(rel)) return false;
-  // On Windows, `relative` returns a path with backslashes; on POSIX, slashes.
-  // A leading ".." segment is the only escape signal we need.
-  return !rel.split(sep).includes("..");
+  return !rel.startsWith("..");
 }
 
 /**
@@ -57,6 +87,9 @@ function isPathInside(child: string, parent: string): boolean {
 export function isWithinPerimeter(filePath: string, basePath: string): boolean {
   if (!filePath) return true;
   if (!isAbsolute(filePath)) return true;
+  // Defensive: if no perimeter is supplied, fail closed (treat as out-of-tree)
+  // so a misconfigured caller cannot silently disable the guard.
+  if (!basePath) return false;
 
   const target = canonicalize(filePath);
   const base = canonicalize(basePath);

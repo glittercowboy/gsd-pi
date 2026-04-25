@@ -37,6 +37,17 @@ const DESTRUCTIVE_PATTERNS: readonly DestructivePattern[] = [
  *
  * Every entry here is a hard block. False positives would be worse than for
  * the broader destructive set, so patterns are deliberately narrow.
+ *
+ * Threat model: this guard is a defense-in-depth layer aimed at confused-agent
+ * accidents (the LLM accidentally constructs a destructive command), not a
+ * sandbox against an adversarial actor with shell-execution. Trivial bypasses
+ * exist via `eval`, `bash -c`, command substitution, base64-decoded payloads,
+ * tools spelled with whitespace expansion, or any language interpreter
+ * (`python -c`, `node -e`). Treat this as a tripwire, not a perimeter.
+ *
+ * Defense-in-depth: the filesystem perimeter guard (`path-guard.ts`) catches
+ * a different class — out-of-tree writes — and the two together close the
+ * common-case slip-up. Neither is sufficient against a hostile model.
  */
 interface CatastrophicPattern {
   pattern: RegExp;
@@ -45,18 +56,21 @@ interface CatastrophicPattern {
 
 const CATASTROPHIC_PATTERNS: readonly CatastrophicPattern[] = [
   // Filesystem wipes targeting well-known critical roots. We anchor on the
-  // root path (/, /*, ~, $HOME, /etc, /usr, /var, /bin, /sbin, /lib) so that
-  // `rm -rf ./node_modules` etc. do not trigger.
+  // root path so that `rm -rf ./node_modules` etc. do not trigger.
+  //
+  // Flag forms accepted (any one is enough):
+  //   short combined: -rf, -fr, -Rf, -r, -f
+  //   long: --recursive, --force, --no-preserve-root
   //
   // Target alternatives:
   //   /*                                 — glob of root
-  //   /etc, /usr, /var, ...  (word boundary) — system dirs
+  //   /etc, /usr, /var, ...  (word boundary) — system + pseudo-fs dirs
   //   /  followed by whitespace or EOL  — bare root
   //   ~  followed by /, whitespace, or EOL — home
   //   $HOME                              — literal var
   {
     pattern:
-      /\brm\s+(?:-[a-zA-Z]*[rRfF][a-zA-Z]*\s+)+(?:--\s+)?(?:\/\*|\/(?:etc|usr|var|bin|sbin|lib|lib64|boot|root|home)\b|\/(?:\s|$)|~(?:\/|\s|$)|\$HOME\b)/,
+      /\brm\s+(?:(?:-[a-zA-Z]*[rRfF][a-zA-Z]*|--(?:recursive|force|no-preserve-root))\s+)+(?:--\s+)?(?:\/\*|\/(?:etc|usr|var|bin|sbin|lib|lib64|boot|root|home|proc|sys|dev|run|opt|srv|mnt|media|nix|data)\b|\/(?:\s|$)|~(?:\/|\s|$)|\$HOME\b)/,
     label: "rm -rf of critical filesystem root",
   },
   // Disk wipes via dd targeting block devices (Linux: /dev/sd*, /dev/nvme*,
@@ -95,7 +109,7 @@ const CATASTROPHIC_PATTERNS: readonly CatastrophicPattern[] = [
   // Recursive chmod on the filesystem root or system directories.
   {
     pattern:
-      /\bchmod\s+-[a-zA-Z]*R[a-zA-Z]*\s+(?:\d+|[a-zA-Z+=,-]+)\s+(?:\/\*|\/(?:etc|usr|var|bin|sbin|lib|lib64|boot|root|home)\b|\/(?:\s|$)|~(?:\/|\s|$)|\$HOME\b)/,
+      /\bchmod\s+(?:(?:-[a-zA-Z]*R[a-zA-Z]*|--recursive)\s+)+(?:\d+|[a-zA-Z+=,-]+)\s+(?:\/\*|\/(?:etc|usr|var|bin|sbin|lib|lib64|boot|root|home|proc|sys|dev|run|opt|srv|mnt|media|nix|data)\b|\/(?:\s|$)|~(?:\/|\s|$)|\$HOME\b)/,
     label: "recursive chmod of critical root",
   },
 ];
