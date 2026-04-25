@@ -15,6 +15,7 @@ import {
   decayStaleMemories,
 } from './memory-store.js';
 import type { MemoryAction } from './memory-store.js';
+import { logWarning } from './workflow-logger.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -139,9 +140,10 @@ export async function resolveMemoryExtractionApiKey(
     // Surface the lookup failure so an expired OAuth token doesn't masquerade
     // as a missing-key error from the downstream completion call.
     const detail = err instanceof Error ? err.message : String(err);
-    console.warn(
-      `[memory-extractor] modelRegistry.getApiKey failed for ${model.id}: ${detail}. ` +
-      `Memory extraction will proceed without an explicit key; re-authenticate if this is an OAuth model.`,
+    logWarning(
+      'memory-extractor',
+      `modelRegistry.getApiKey failed for ${model.id}: ${detail}. ` +
+        `Memory extraction will proceed without an explicit key; re-authenticate if this is an OAuth model.`,
     );
     return undefined;
   }
@@ -254,8 +256,9 @@ export function extractTranscriptFromActivity(raw: string, maxChars = 30_000): s
       // Handle content array or direct text
       if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
-          if (block.type === 'text' && block.text) {
-            const text = block.text;
+          if (!block || typeof block !== 'object' || Array.isArray(block)) continue;
+          const { type, text } = block as { type?: unknown; text?: unknown };
+          if (type === 'text' && typeof text === 'string' && text) {
             if (totalChars + text.length > maxChars) {
               parts.push(text.substring(0, maxChars - totalChars));
               return parts.join('\n\n');

@@ -24,6 +24,7 @@ import {
   getActiveMemoriesRanked,
   isUnitProcessed,
 } from '../memory-store.ts';
+import { _resetLogs, peekLogs, setStderrLoggingEnabled } from '../workflow-logger.ts';
 import type { MemoryAction } from '../memory-store.ts';
 import { describe, test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -101,6 +102,29 @@ test('memory-extractor: extractTranscriptFromActivity handles wrapped session en
   assert.equal(
     extractTranscriptFromActivity(raw),
     'first block\n\nsecond block\n\nthird block',
+  );
+});
+
+test('memory-extractor: extractTranscriptFromActivity skips malformed content blocks individually', () => {
+  const raw = JSON.stringify({
+    type: 'message',
+    message: {
+      role: 'assistant',
+      content: [
+        null,
+        'bad block',
+        42,
+        ['bad array'],
+        { type: 'image', text: 'ignored image text' },
+        { type: 'text', text: 'kept block' },
+        { type: 'text', text: 'also kept' },
+      ],
+    },
+  });
+
+  assert.equal(
+    extractTranscriptFromActivity(raw),
+    'kept block\n\nalso kept',
   );
 });
 
@@ -304,11 +328,10 @@ test('memory-extractor: resolveMemoryExtractionApiKey uses modelRegistry credent
   } as any, model);
   assert.equal(ok, 'oauth-token');
 
-  // Lookup failures must be surfaced via console.warn so an expired OAuth
+  // Lookup failures must be surfaced via workflow-logger so an expired OAuth
   // token isn't silently masked as a missing-key error downstream.
-  const originalWarn = console.warn;
-  const warnings: string[] = [];
-  console.warn = (msg: unknown) => { warnings.push(String(msg)); };
+  _resetLogs();
+  const restoreStderr = setStderrLoggingEnabled(false);
   try {
     const failed = await resolveMemoryExtractionApiKey({
       modelRegistry: {
@@ -318,12 +341,18 @@ test('memory-extractor: resolveMemoryExtractionApiKey uses modelRegistry credent
       },
     } as any, model);
     assert.equal(failed, undefined, 'falls back to undefined so the outer flow can continue');
+    const warnings = peekLogs().filter((entry) => entry.severity === 'warn');
     assert.ok(
-      warnings.some((w) => w.includes('modelRegistry.getApiKey failed') && w.includes('lookup failed')),
+      warnings.some((entry) =>
+        entry.component === 'memory-extractor' &&
+        entry.message.includes('modelRegistry.getApiKey failed') &&
+        entry.message.includes('lookup failed')
+      ),
       'must log a diagnostic warning when the registry throws',
     );
   } finally {
-    console.warn = originalWarn;
+    setStderrLoggingEnabled(restoreStderr);
+    _resetLogs();
   }
 });
 

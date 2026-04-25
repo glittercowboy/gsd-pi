@@ -64,6 +64,7 @@ export type LogComponent =
   | "safety"        // LLM safety harness
   | "ecosystem"     // GSD ecosystem extension loader and dispatch
   | "memory-embeddings" // Memory layer embedding generation
+  | "memory-extractor"  // Memory layer transcript extraction
   | "memory-ingest"     // Memory layer ingestion pipeline
   | "memory-backfill"   // ADR-013: decisions->memories backfill
   | "context-mode"     // Context-mode exec sandbox and compaction snapshot
