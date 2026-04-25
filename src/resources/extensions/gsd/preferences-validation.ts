@@ -1101,6 +1101,32 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Auto-Mode Request Interval ───────────────────────────────────
+  if (preferences.min_request_interval_ms !== undefined) {
+    if (
+      typeof preferences.min_request_interval_ms === "number" &&
+      Number.isFinite(preferences.min_request_interval_ms) &&
+      preferences.min_request_interval_ms >= 0
+    ) {
+      validated.min_request_interval_ms = Math.floor(preferences.min_request_interval_ms);
+    } else {
+      errors.push("min_request_interval_ms must be a non-negative number");
+    }
+  }
+
+  // ─── Stale Commit Threshold ───────────────────────────────────────
+  if (preferences.stale_commit_threshold_minutes !== undefined) {
+    if (
+      typeof preferences.stale_commit_threshold_minutes === "number" &&
+      Number.isFinite(preferences.stale_commit_threshold_minutes) &&
+      preferences.stale_commit_threshold_minutes >= 0
+    ) {
+      validated.stale_commit_threshold_minutes = Math.floor(preferences.stale_commit_threshold_minutes);
+    } else {
+      errors.push("stale_commit_threshold_minutes must be a non-negative number");
+    }
+  }
+
   // ─── Experimental Features ────────────────────────────────────────
   if (preferences.experimental !== undefined) {
     if (typeof preferences.experimental === "object" && preferences.experimental !== null) {

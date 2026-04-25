@@ -433,6 +433,8 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     service_tier: override.service_tier ?? base.service_tier,
     forensics_dedup: override.forensics_dedup ?? base.forensics_dedup,
     show_token_cost: override.show_token_cost ?? base.show_token_cost,
+    min_request_interval_ms: override.min_request_interval_ms ?? base.min_request_interval_ms,
+    stale_commit_threshold_minutes: override.stale_commit_threshold_minutes ?? base.stale_commit_threshold_minutes,
     codebase: (base.codebase || override.codebase)
       ? {
           ...(base.codebase ?? {}),

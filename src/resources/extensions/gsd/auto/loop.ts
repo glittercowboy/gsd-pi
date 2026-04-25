@@ -237,6 +237,19 @@ async function runUnitPhaseViaContract(
   return outcome ?? { action: "break", reason: "scheduler-dispatch-missing-result" };
 }
 
+async function enforceMinRequestInterval(s: AutoSession, prefs: IterationContext["prefs"]): Promise<void> {
+  const minInterval = prefs?.min_request_interval_ms ?? 0;
+  if (minInterval > 0 && s.lastRequestTimestamp > 0) {
+    const elapsed = Date.now() - s.lastRequestTimestamp;
+    if (elapsed < minInterval) {
+      const waitMs = minInterval - elapsed;
+      debugLog("autoLoop", { phase: "rate-limit-wait", waitMs });
+      await new Promise<void>(r => setTimeout(r, waitMs));
+    }
+  }
+  s.lastRequestTimestamp = Date.now();
+}
+
 /**
  * Main auto-mode execution loop. Iterates: derive → dispatch → guards →
  * runUnit → finalize → repeat. Exits when s.active becomes false or a
@@ -357,20 +370,6 @@ export async function autoLoop(
       const prefs = deps.loadEffectiveGSDPreferences()?.preferences;
       const uokFlags = resolveUokFlags(prefs);
 
-      // ── Proactive rate limiting ──
-      // Sleep if less than min_request_interval_ms has elapsed since the last
-      // LLM request, preventing 429s on rate-limited providers (#2996).
-      const minInterval = prefs?.min_request_interval_ms ?? 0;
-      if (minInterval > 0 && s.lastRequestTimestamp > 0) {
-        const elapsed = Date.now() - s.lastRequestTimestamp;
-        if (elapsed < minInterval) {
-          const waitMs = minInterval - elapsed;
-          debugLog("autoLoop", { phase: "rate-limit-wait", waitMs });
-          await new Promise<void>(r => setTimeout(r, waitMs));
-        }
-      }
-      s.lastRequestTimestamp = Date.now();
-
       // ── Check sidecar queue before deriveState ──
       let sidecarItem: SidecarItem | undefined;
       if (s.sidecarQueue.length > 0) {
@@ -482,6 +481,7 @@ export async function autoLoop(
         }
 
         // ── Unit execution (shared with dev path) ──
+        await enforceMinRequestInterval(s, prefs);
         const unitPhaseResult = await runUnitPhaseViaContract(
           dispatchContract,
           ic,
@@ -667,6 +667,7 @@ export async function autoLoop(
         });
       }
 
+      await enforceMinRequestInterval(s, prefs);
       const unitPhaseResult = await runUnitPhaseViaContract(
         dispatchContract,
         ic,

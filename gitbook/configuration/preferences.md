@@ -120,6 +120,16 @@ auto_supervisor:
   hard_timeout_minutes: 30    # pause auto mode
 ```
 
+### `min_request_interval_ms`
+
+Minimum milliseconds between auto-mode LLM request dispatches. Use this to proactively slow auto-mode on rate-limited providers and reduce 429 errors. Set to `0` to disable.
+
+```yaml
+min_request_interval_ms: 1000   # wait at least 1 second between LLM requests
+```
+
+Default: `0` (disabled)
+
 ### `verification_commands`
 
 Shell commands that run after every task execution:

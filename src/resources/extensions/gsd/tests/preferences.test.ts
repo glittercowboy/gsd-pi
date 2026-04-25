@@ -683,6 +683,54 @@ test("loadEffectiveGSDPreferences exposes slice_parallel prefs to runtime caller
   }
 });
 
+test("loadEffectiveGSDPreferences preserves request interval and stale commit prefs across merge", () => {
+  const originalCwd = process.cwd();
+  const originalGsdHome = process.env.GSD_HOME;
+  const tempProject = mkdtempSync(join(tmpdir(), "gsd-rate-limit-project-"));
+  const tempGsdHome = mkdtempSync(join(tmpdir(), "gsd-rate-limit-home-"));
+
+  try {
+    mkdirSync(join(tempProject, ".gsd"), { recursive: true });
+
+    writeFileSync(
+      join(tempGsdHome, "PREFERENCES.md"),
+      [
+        "---",
+        "version: 1",
+        "min_request_interval_ms: 250",
+        "stale_commit_threshold_minutes: 45",
+        "---",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    writeFileSync(
+      join(tempProject, ".gsd", "PREFERENCES.md"),
+      [
+        "---",
+        "version: 1",
+        "min_request_interval_ms: 100",
+        "---",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    process.env.GSD_HOME = tempGsdHome;
+    process.chdir(tempProject);
+
+    const loaded = loadEffectiveGSDPreferences();
+    assert.notEqual(loaded, null);
+    assert.equal(loaded!.preferences.min_request_interval_ms, 100);
+    assert.equal(loaded!.preferences.stale_commit_threshold_minutes, 45);
+  } finally {
+    process.chdir(originalCwd);
+    if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = originalGsdHome;
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempGsdHome, { recursive: true, force: true });
+  }
+});
+
 test("preferences paths use canonical uppercase filenames", () => {
   const originalCwd = process.cwd();
   const originalGsdHome = process.env.GSD_HOME;
