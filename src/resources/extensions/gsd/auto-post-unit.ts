@@ -65,7 +65,7 @@ import { resolveExpectedArtifactPath as resolveArtifactForContent } from "./auto
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { getSliceTasks } from "./gsd-db.js";
 import { runPreExecutionChecks, type PreExecutionResult } from "./pre-execution-checks.js";
-import { writePreExecutionEvidence } from "./verification-evidence.js";
+import { writePreExecutionEvidence, type PreExecutionCheckJSON } from "./verification-evidence.js";
 import { ensureCodebaseMapFresh } from "./codebase-generator.js";
 import { resolveUokFlags } from "./uok/flags.js";
 import { UokGateRunner } from "./uok/gate-runner.js";
@@ -73,6 +73,16 @@ import { writeTurnGitTransaction } from "./uok/gitops.js";
 
 /** Maximum verification retry attempts before escalating to blocker placeholder (#2653). */
 const MAX_VERIFICATION_RETRIES = 3;
+/** Keep failure toasts short while still showing concrete examples. */
+const MAX_NOTIFICATION_DETAILS = 3;
+const NOTIFICATION_BULLET = "•";
+
+function formatPreExecutionCheckDetail(check: PreExecutionCheckJSON): string {
+  const category = check.category?.trim() || "unknown category";
+  const target = check.target?.trim() || "unknown target";
+  const message = check.message.split(/\r?\n/, 1)[0]?.trim() || "No details provided";
+  return `  ${NOTIFICATION_BULLET} [${category}] ${target}: ${message}`;
+}
 
 
 /** Enqueue a sidecar item (hook, triage, or quick-task) for the main loop to
@@ -111,7 +121,7 @@ import {
   describeNextUnit,
 } from "./auto-dashboard.js";
 import { existsSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { _resetHasChangesCache } from "./native-git-bridge.js";
 import { autoCommitCurrentBranch } from "./worktree.js";
 
@@ -1087,8 +1097,11 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
 
         // Write evidence JSON to slice artifacts directory
         const slicePath = resolveSlicePath(s.basePath, mid, sid);
+        const evidenceFileName = `${sid}-PRE-EXEC-VERIFY.json`;
+        let evidencePath = join(".gsd", "milestones", mid, "slices", sid, evidenceFileName);
         if (slicePath) {
           writePreExecutionEvidence(result, slicePath, mid, sid);
+          evidencePath = relative(s.basePath, join(slicePath, evidenceFileName)) || evidenceFileName;
         }
 
         if (uokFlags.gates) {
@@ -1125,9 +1138,11 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
         if (result.status === "fail") {
           const blockingChecks = result.checks.filter(c => !c.passed && c.blocking);
           const blockingCount = blockingChecks.length;
-          const details = blockingChecks.slice(0, 3).map(c => `  \u2022 ${c.message}`).join("\n");
-          const suffix = blockingChecks.length > 3 ? `\n  \u2022 ...and ${blockingChecks.length - 3} more` : "";
-          const evidenceNote = `\nSee ${sid}-PRE-EXEC-VERIFY.json for full details.`;
+          const details = blockingChecks.slice(0, MAX_NOTIFICATION_DETAILS).map(formatPreExecutionCheckDetail).join("\n");
+          const suffix = blockingChecks.length > MAX_NOTIFICATION_DETAILS
+            ? `\n  ${NOTIFICATION_BULLET} ...and ${blockingChecks.length - MAX_NOTIFICATION_DETAILS} more`
+            : "";
+          const evidenceNote = `\nSee ${evidencePath} for full details.`;
           ctx.ui.notify(
             `Pre-execution checks failed: ${blockingCount} blocking issue${blockingCount === 1 ? "" : "s"} found\n${details}${suffix}${evidenceNote}`,
             "error",
