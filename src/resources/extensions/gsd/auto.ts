@@ -87,7 +87,7 @@ import {
 } from "./auto-tool-tracking.js";
 import { closeoutUnit } from "./auto-unit-closeout.js";
 import { recoverTimedOutUnit } from "./auto-timeout-recovery.js";
-import { selectAndApplyModel, resolveModelId } from "./auto-model-selection.js";
+import { selectAndApplyModel, resolveModelId, clearToolBaseline } from "./auto-model-selection.js";
 import { resetRoutingHistory, recordOutcome } from "./routing-history.js";
 import {
   checkPostUnitHooks,
@@ -1088,6 +1088,12 @@ export async function stopAuto(
     restoreProjectRootEnv();
     restoreMilestoneLockEnv();
 
+    // Drop the active-tool baseline so a subsequent /gsd auto run on the
+    // same `pi` instance recaptures from the live tool set rather than
+    // restoring this session's snapshot and silently undoing any tool
+    // changes the user made between sessions (#4959 / CodeRabbit).
+    if (pi) clearToolBaseline(pi);
+
     // Reset all session state in one call
     s.reset();
   }
@@ -1387,6 +1393,15 @@ export async function startAuto(
     debugLog("startAuto", { phase: "already-active", skipping: true });
     return;
   }
+
+  // On a *fresh* start, drop any stale active-tool baseline left by a prior
+  // auto session that didn't run stopAuto cleanly.  Skip on resume: pauseAuto
+  // leaves the last provider-trimmed active tools in place, so clearing here
+  // would let the next selectAndApplyModel recapture that already-narrowed
+  // set as the new baseline — exactly the cross-unit poisoning this PR is
+  // fixing (#4959 / CodeRabbit Major).  The pre-pause baseline survives in
+  // the WeakMap keyed by `pi`.
+  if (!s.paused) clearToolBaseline(pi);
 
   const requestedStepMode = options?.step ?? false;
   const interruptedAssessment = options?.interrupted ?? null;

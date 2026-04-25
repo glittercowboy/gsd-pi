@@ -15,6 +15,7 @@ import {
   type AgentEndEvent,
   type LoopDeps,
 } from "../auto-loop.js";
+import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -2358,4 +2359,72 @@ test("autoLoop warns but proceeds for greenfield project (no project files) (#18
     greenfieldWarning,
     "should warn about greenfield project (no project files)",
   );
+});
+
+// ─── #4850: pre-send model-policy block is non-retryable ────────────────────
+test("autoLoop classifies ModelPolicyDispatchBlockedError as blocked, not a retryable error", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const notifications: Array<{ message: string; level?: string }> = [];
+  ctx.ui.notify = (m: string, l?: string) => { notifications.push({ message: m, level: l }); };
+
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+
+  const journalEvents: Array<{ eventType: string; data?: any }> = [];
+  let pauseAutoCalls = 0;
+  let stopAutoCalls = 0;
+  // Capture onTurnResult to assert blocked-unit identity is propagated to
+  // the uokObserver. Without the fix, observedUnitType/Id are unset because
+  // the throw happens inside dispatch before the success-path assignments
+  // at loop.ts:453/631/647 (#4959 / CodeRabbit Minor).
+  const turnResults: Array<{ unitType?: string; unitId?: string; status: string }> = [];
+
+  const deps = makeMockDeps({
+    selectAndApplyModel: async () => {
+      throw new ModelPolicyDispatchBlockedError(
+        "research-slice",
+        "M001/S01",
+        [{ provider: "openai", modelId: "gpt-4o", reason: "tool policy denied (web_search) for openai-completions" }],
+      );
+    },
+    pauseAuto: async () => { pauseAutoCalls++; },
+    stopAuto: async () => { stopAutoCalls++; },
+    emitJournalEvent: (entry: any) => { journalEvents.push(entry); },
+    uokObserver: {
+      onTurnStart: () => {},
+      onPhaseResult: () => {},
+      onTurnResult: (res: any) => { turnResults.push({ unitType: res.unitType, unitId: res.unitId, status: res.status }); },
+    } as any,
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  // The unit-end event with status: "blocked" must be emitted.
+  const unitEnd = journalEvents.find(
+    e => e.eventType === "unit-end" && e.data?.status === "blocked",
+  );
+  assert.ok(unitEnd, "should emit unit-end with status=blocked");
+  assert.equal(unitEnd!.data.reason, "model-policy-dispatch-blocked");
+
+  // Loop must pause for manual attention, NOT retry until 3-strike hard stop.
+  assert.equal(pauseAutoCalls, 1, "should pause once on policy block");
+  assert.equal(stopAutoCalls, 0, "should NOT call stopAuto — pre-send block is not a retryable iteration error");
+
+  // The notification should surface the per-model deny reason from the typed error.
+  const blockedNotice = notifications.find(
+    n => n.message.includes("model-policy denied dispatch")
+      && n.message.includes("tool policy denied (web_search)"),
+  );
+  assert.ok(blockedNotice, "user-facing notification should name the policy block + deny reason");
+
+  // Blocked-unit identity must reach uokObserver.onTurnResult — the typed
+  // error already carries it, the loop must thread it into observedUnitType/Id
+  // before finishTurn is called (#4959 / CodeRabbit Minor).
+  const pausedTurn = turnResults.find(r => r.status === "paused");
+  assert.ok(pausedTurn, "uokObserver should observe a paused turn for the blocked unit");
+  assert.equal(pausedTurn!.unitType, "research-slice", "onTurnResult must receive the blocked unitType from the typed error");
+  assert.equal(pausedTurn!.unitId, "M001/S01", "onTurnResult must receive the blocked unitId from the typed error");
 });

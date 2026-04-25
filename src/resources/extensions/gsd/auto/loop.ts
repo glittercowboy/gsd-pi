@@ -29,6 +29,7 @@ import {
 } from "./phases.js";
 import { debugLog } from "../debug-logger.js";
 import { isInfrastructureError, isTransientCooldownError, getCooldownRetryAfterMs, COOLDOWN_FALLBACK_WAIT_MS, MAX_COOLDOWN_RETRIES } from "./infra-errors.js";
+import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import { resolveEngine } from "../engine-resolver.js";
 import { logWarning } from "../workflow-logger.js";
 import { gsdRoot } from "../paths.js";
@@ -702,6 +703,52 @@ export async function autoLoop(
       // completion even on failure (#2344). Without this, errors in
       // runFinalize leave the journal incomplete, making diagnosis harder.
       deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-end", data: { iteration, error: msg } });
+
+      // ── Pre-send model-policy block: not a retryable error (#4959 / #4850) ──
+      // The model-policy gate runs before the prompt is sent.  When every
+      // candidate model is denied (cross-provider disabled + flat-rate
+      // baseline + tool-policy denial), retrying the same unit produces the
+      // same denial — burning the consecutive-error budget toward a 3-strike
+      // hard stop and corrupting auto-mode state.  Pause for user attention
+      // instead, with the per-model deny reasons surfaced from the typed
+      // error.
+      if (loopErr instanceof ModelPolicyDispatchBlockedError) {
+        debugLog("autoLoop", {
+          phase: "model-policy-blocked",
+          iteration,
+          unitType: loopErr.unitType,
+          unitId: loopErr.unitId,
+          reasons: loopErr.reasons,
+        });
+        ctx.ui.notify(
+          `Auto-mode paused: model-policy denied dispatch for ${loopErr.unitType}/${loopErr.unitId}. ${msg}`,
+          "error",
+        );
+        deps.emitJournalEvent({
+          ts: new Date().toISOString(),
+          flowId,
+          seq: nextSeq(),
+          eventType: "unit-end",
+          data: {
+            unitType: loopErr.unitType,
+            unitId: loopErr.unitId,
+            status: "blocked",
+            reason: "model-policy-dispatch-blocked",
+            reasons: loopErr.reasons,
+          },
+        });
+        // Carry the blocked unit identity into the turn-result observer:
+        // the throw originated inside dispatch, so observedUnitType/Id were
+        // not assigned by the success path at lines 453/631/647 — but the
+        // typed error already names the unit (#4959 / CodeRabbit).
+        observedUnitType = loopErr.unitType;
+        observedUnitId = loopErr.unitId;
+        await deps.pauseAuto(ctx, pi);
+        finishTurn("paused", "manual-attention", msg);
+        // Do NOT increment consecutiveErrors — the failure is configuration,
+        // not a transient runtime fault.
+        break;
+      }
 
       // ── Infrastructure errors: immediate stop, no retry ──
       // These are unrecoverable (disk full, OOM, etc.). Retrying just burns
