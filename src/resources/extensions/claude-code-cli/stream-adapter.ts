@@ -27,6 +27,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { PartialMessageBuilder, ZERO_USAGE, mapUsage } from "./partial-builder.js";
 import { buildWorkflowMcpServers } from "../gsd/workflow-mcp.js";
+import { isAutoActive } from "../gsd/auto.js";
 import { showInterviewRound, type Question, type RoundResult } from "../shared/tui.js";
 import type {
 	SDKAssistantMessage,
@@ -1281,7 +1282,9 @@ export function buildSdkOptions(
 	// bypassPermissions and an empty disallow list so every tool — including
 	// `AskUserQuestion` and every `mcp__*` workflow tool — is auto-approved.
 	// Opt back into gated mode with GSD_CLAUDE_CODE_PERMISSION_MODE=acceptEdits.
-	const disallowedTools: string[] = [];
+	// Prevent AskUserQuestion in auto-mode — it causes InputValidationError and a re-dispatch loop (#4957).
+	const autoActive = isAutoActive();
+	const disallowedTools: string[] = autoActive ? ["AskUserQuestion"] : [];
 	const allowedTools = [
 		"Read",
 		"Write",
@@ -1292,7 +1295,7 @@ export function buildSdkOptions(
 		"Agent",
 		"WebFetch",
 		"WebSearch",
-		"AskUserQuestion",
+		...(autoActive ? [] : ["AskUserQuestion"]),
 		...(mcpServers ? Object.keys(mcpServers).map((serverName) => `mcp__${serverName}__*`) : []),
 	];
 	const supportsAdaptive = modelSupportsAdaptiveThinking(modelId);

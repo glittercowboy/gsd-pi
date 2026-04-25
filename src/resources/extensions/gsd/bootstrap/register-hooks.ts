@@ -17,7 +17,7 @@ import { getDiscussionMilestoneId } from "../guided-flow.js";
 import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
 import { deriveState } from "../state.js";
-import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart, recordToolInvocationError } from "../auto.js";
+import { getAutoDashboardData, isAutoActive, isAutoPaused, isToolInvocationError, markToolEnd, markToolStart, recordToolInvocationError } from "../auto.js";
 
 import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
@@ -393,7 +393,7 @@ export function registerHooks(
     if (isAutoActive() && typeof event.toolCallId === "string") {
       markToolEnd(event.toolCallId);
     }
-    if (isAutoActive() && event.isError && event.toolName.startsWith("gsd_")) {
+    if (isAutoActive() && event.isError) {
       const resultPayload = ("result" in event ? event.result : undefined) as any;
       const errorText = typeof resultPayload === "string"
         ? resultPayload
@@ -402,7 +402,9 @@ export function registerHooks(
             : (typeof (event as any).content === "string"
                 ? (event as any).content
                 : String(resultPayload ?? "")));
-      recordToolInvocationError(event.toolName, errorText);
+      if (event.toolName.startsWith("gsd_") || isToolInvocationError(errorText)) {
+        recordToolInvocationError(event.toolName, errorText);
+      }
     }
     if (event.toolName !== "ask_user_questions") return;
     const milestoneId = getDiscussionMilestoneId(process.cwd());
@@ -491,11 +493,13 @@ export function registerHooks(
     markToolEnd(event.toolCallId);
     // #2883: Capture tool invocation errors (malformed/truncated JSON arguments)
     // so postUnitPreVerification can break the retry loop instead of re-dispatching.
-    if (event.isError && event.toolName.startsWith("gsd_")) {
+    if (event.isError) {
       const errorText = typeof event.result === "string"
         ? event.result
         : (typeof event.result?.content?.[0]?.text === "string" ? event.result.content[0].text : String(event.result));
-      recordToolInvocationError(event.toolName, errorText);
+      if (event.toolName.startsWith("gsd_") || isToolInvocationError(errorText)) {
+        recordToolInvocationError(event.toolName, errorText);
+      }
     }
     // Safety harness: record tool execution results for evidence cross-referencing
     if (isAutoActive()) {
