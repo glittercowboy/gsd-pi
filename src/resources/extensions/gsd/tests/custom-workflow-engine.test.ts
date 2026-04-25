@@ -139,6 +139,44 @@ describe("CustomWorkflowEngine.resolveDispatch", () => {
     }
   });
 
+  it("persists the dispatched step as active in GRAPH.yaml before returning", async () => {
+    const { engine, runDir } = setupEngine([
+      makeStep({ id: "step-1", prompt: "Do the first thing" }),
+      makeStep({ id: "step-2", dependsOn: ["step-1"] }),
+    ], "my-workflow");
+
+    const state = await engine.deriveState("/unused");
+    const dispatch = await engine.resolveDispatch(state, { basePath: "/unused" });
+
+    assert.equal(dispatch.action, "dispatch");
+    const graph = readGraph(runDir);
+    assert.equal(graph.steps[0].status, "active");
+    assert.ok(graph.steps[0].startedAt, "startedAt should be persisted before dispatch returns");
+    assert.equal(graph.steps[1].status, "pending");
+  });
+
+  it("reuses an already active step on a subsequent dispatch before reconcile", async () => {
+    const { engine } = setupEngine([
+      makeStep({ id: "step-1", prompt: "Do the first thing" }),
+      makeStep({ id: "step-2", dependsOn: ["step-1"] }),
+    ], "my-workflow");
+
+    let state = await engine.deriveState("/unused");
+    const firstDispatch = await engine.resolveDispatch(state, { basePath: "/unused" });
+    assert.equal(firstDispatch.action, "dispatch");
+    if (firstDispatch.action === "dispatch") {
+      assert.equal(firstDispatch.step.unitId, "my-workflow/step-1");
+    }
+
+    state = await engine.deriveState("/unused");
+    const secondDispatch = await engine.resolveDispatch(state, { basePath: "/unused" });
+    assert.equal(secondDispatch.action, "dispatch");
+    if (secondDispatch.action === "dispatch") {
+      assert.equal(secondDispatch.step.unitId, "my-workflow/step-1");
+      assert.equal(secondDispatch.step.prompt, "Do the first thing");
+    }
+  });
+
   it("returns stop when all steps are complete", async () => {
     const { engine } = setupEngine([
       makeStep({ id: "a", status: "complete" }),
@@ -279,6 +317,31 @@ describe("CustomWorkflowEngine.reconcile", () => {
     assert.equal(graph.steps[0].status, "complete");
     assert.equal(graph.steps[1].status, "pending");
     assert.equal(graph.steps[2].status, "pending");
+  });
+
+  it("reconcile completes a step that was previously persisted as active", async () => {
+    const { engine, runDir } = setupEngine([
+      makeStep({ id: "step-1", prompt: "Do the first thing" }),
+      makeStep({ id: "step-2", dependsOn: ["step-1"] }),
+    ], "wf");
+
+    const state = await engine.deriveState("/unused");
+    const dispatch = await engine.resolveDispatch(state, { basePath: "/unused" });
+    assert.equal(dispatch.action, "dispatch");
+
+    const activeState = await engine.deriveState("/unused");
+    const result = await engine.reconcile(activeState, {
+      unitType: "custom-step",
+      unitId: "wf/step-1",
+      startedAt: Date.now() - 1000,
+      finishedAt: Date.now(),
+    });
+
+    assert.equal(result.outcome, "continue");
+    const graph = readGraph(runDir);
+    assert.equal(graph.steps[0].status, "complete");
+    assert.ok(graph.steps[0].startedAt, "startedAt should survive reconcile");
+    assert.ok(graph.steps[0].finishedAt, "finishedAt should be persisted on completion");
   });
 });
 

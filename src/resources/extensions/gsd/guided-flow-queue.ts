@@ -18,6 +18,7 @@ import {
   resolveGsdRootFile, relGsdRootFile, relSliceFile,
 } from "./paths.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { atomicWriteSync } from "./atomic-write.js";
 import { nativeAddPaths, nativeCommit } from "./native-git-bridge.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { loadQueueOrder, sortByQueueOrder, saveQueueOrder } from "./queue-order.js";
@@ -435,5 +436,7 @@ function syncProjectMdSequence(
   const separatorLine = lines[tableStart + 1];
   const newTable = [headerLine, separatorLine, ...newRows];
   lines.splice(tableStart, tableEnd - tableStart, ...newTable);
-  writeFileSync(projectPath, lines.join("\n"), "utf-8");
+  // Atomic write: tmp+rename avoids a torn PROJECT.md appearing dirty in
+  // another worktree's working tree during a concurrent /gsd auto merge.
+  atomicWriteSync(projectPath, lines.join("\n"), "utf-8");
 }

@@ -30,6 +30,20 @@ describe('normalizeFilePath backtick stripping (#3649)', () => {
     assert.equal(normalizeFilePath('``src/foo.ts`` (current state)'), 'src/foo.ts')
   })
 
+  it('strips stray backticks from dash-annotated bare paths (#4550)', () => {
+    assert.equal(
+      normalizeFilePath('.gsd/KNOWLEDGE.md` — append-only S05 lessons section'),
+      '.gsd/KNOWLEDGE.md',
+    )
+  })
+
+  it('prefers a backticked path inside a dash-annotated prefix (#4550)', () => {
+    assert.equal(
+      normalizeFilePath('Input `src/foo.ts` — current state'),
+      'src/foo.ts',
+    )
+  })
+
   it('strips backticks even when mixed with other normalization', () => {
     assert.equal(normalizeFilePath('`./src//bar.ts`'), 'src/bar.ts')
   })

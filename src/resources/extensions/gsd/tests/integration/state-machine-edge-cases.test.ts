@@ -1155,7 +1155,7 @@ describe("dispatch guard integration", () => {
     assert.ok(existsSync(validationPath), "VALIDATION file should be written");
     const content = readFileSync(validationPath, "utf-8");
     assert.ok(content.includes("verdict: pass"), "should contain pass verdict");
-    assert.ok(content.includes("skipped by preference"), "should note it was skipped");
+    assert.ok(content.includes("`skip_milestone_validation` preference"), "should note it was skipped via the preference path (#4781)");
   });
 
   test("rewrite-docs circuit breaker: exceeding MAX attempts resolves all overrides", async () => {

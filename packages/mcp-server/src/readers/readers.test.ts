@@ -503,7 +503,11 @@ describe('runDoctorLite', () => {
     const empty = tmpProject();
     const result = runDoctorLite(empty);
     assert.equal(result.ok, true);
-    assert.equal(result.issues[0].code, 'no_gsd_directory');
+    assert.ok(
+      result.issues.some(
+        (issue) => issue.code === 'no_gsd_directory' || issue.code === 'missing_project_md',
+      ),
+    );
     rmSync(empty, { recursive: true, force: true });
   });
 });

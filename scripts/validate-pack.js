@@ -6,12 +6,15 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ROOT = resolve(__dirname, '..');
+const require = createRequire(import.meta.url);
+const { getLinkablePackages, getCorePackages } = require('./lib/workspace-manifest.cjs');
 
 let tarball = null;
 let installDir = null;
@@ -47,18 +50,17 @@ try {
   npmCacheDir = mkdtempSync(join(tmpdir(), 'validate-pack-npm-cache-'));
   mkdirSync(npmCacheDir, { recursive: true });
 
-  // --- Guard: workspace packages must not have @gsd/* cross-deps ---
+  // --- Guard: @gsd/* workspace packages must not have @gsd/* cross-deps ---
+  // (@gsd-build/* packages CAN depend on each other — e.g., mcp-server depends
+  // on rpc-client — because they are both published to the registry.)
   console.log('==> Checking workspace packages for @gsd/* cross-deps...');
-  const workspaces = ['native', 'pi-agent-core', 'pi-ai', 'pi-coding-agent', 'pi-tui'];
   let crossFailed = false;
 
-  for (const ws of workspaces) {
-    const pkgPath = join(ROOT, 'packages', ws, 'package.json');
-    if (!existsSync(pkgPath)) continue;
-    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+  for (const ws of getCorePackages()) {
+    const pkg = JSON.parse(readFileSync(ws.packageJsonPath, 'utf8'));
     const deps = Object.keys(pkg.dependencies || {}).filter(d => d.startsWith('@gsd/'));
     if (deps.length) {
-      console.log(`    LEAKED in ${ws}: ${deps.join(', ')}`);
+      console.log(`    LEAKED in ${ws.dir}: ${deps.join(', ')}`);
       crossFailed = true;
     }
   }
@@ -144,34 +146,32 @@ try {
     process.exit(1);
   }
 
-  // --- Verify @gsd/* packages resolved correctly post-install ---
+  // --- Verify every linkable workspace package resolved correctly post-install ---
   // This catches the Windows-style failure where symlinkSync fails silently and
   // node_modules/@gsd/ is never populated, causing ERR_MODULE_NOT_FOUND at runtime.
-  console.log('==> Verifying @gsd/* workspace package resolution...');
+  // Checks every package with `gsd.linkable: true` — not just a hand-picked subset —
+  // so any future addition is automatically covered.
+  console.log('==> Verifying workspace package resolution (every linkable package)...');
   const installedRoot = join(installDir, 'node_modules', 'gsd-pi');
-  const criticalPackages = [
-    { scope: '@gsd', name: 'pi-coding-agent' },
-    { scope: '@gsd-build', name: 'rpc-client' },
-  ];
   let resolutionFailed = false;
-  for (const pkg of criticalPackages) {
+  for (const pkg of getLinkablePackages()) {
     const pkgPath = join(installedRoot, 'node_modules', pkg.scope, pkg.name);
-    const fallbackPath = join(installedRoot, 'packages', pkg.name);
+    const fallbackPath = join(installedRoot, 'packages', pkg.dir);
     if (!existsSync(pkgPath)) {
       if (existsSync(fallbackPath)) {
-        console.log(`    MISSING symlink/copy: node_modules/${pkg.scope}/${pkg.name} (packages/${pkg.name} exists — postinstall may not have run)`);
+        console.log(`    MISSING symlink/copy: node_modules/${pkg.scope}/${pkg.name} (packages/${pkg.dir} exists — postinstall may not have run)`);
       } else {
-        console.log(`    MISSING: node_modules/${pkg.scope}/${pkg.name} (packages/${pkg.name} also absent — package is broken)`);
+        console.log(`    MISSING: node_modules/${pkg.scope}/${pkg.name} (packages/${pkg.dir} also absent — package is broken)`);
       }
       resolutionFailed = true;
     }
   }
   if (resolutionFailed) {
-    console.log('ERROR: @gsd/* packages are not resolvable after install.');
+    console.log('ERROR: Linkable workspace packages are not resolvable after install.');
     console.log('    This will cause ERR_MODULE_NOT_FOUND on first run (especially on Windows).');
     process.exit(1);
   }
-  console.log('    @gsd/* packages are resolvable.');
+  console.log(`    All ${getLinkablePackages().length} linkable packages are resolvable.`);
 
   // --- Run the binary to confirm end-to-end resolution ---
   console.log('==> Running installed binary (gsd -v)...');

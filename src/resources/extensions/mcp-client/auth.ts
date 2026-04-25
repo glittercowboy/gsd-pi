@@ -37,7 +37,18 @@ export type McpHttpAuthConfig = McpHttpAuthHeaders & McpHttpOAuthConfig;
 function resolveEnvValue(value: string): string {
 	return value.replace(
 		/\$\{([^}]+)\}/g,
-		(_match, varName) => process.env[varName] ?? "",
+		(_match, varName) => {
+			const resolved = process.env[varName];
+			if (resolved === undefined || resolved === "") {
+				// eslint-disable-next-line no-console
+				console.warn(
+					`[mcp-client auth] Environment variable "${varName}" referenced in MCP server config is unset. ` +
+					`Requests will go out with a malformed header and the remote server will likely reject them with 401.`,
+				);
+				return "";
+			}
+			return resolved;
+		},
 	);
 }
 

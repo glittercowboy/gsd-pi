@@ -32,7 +32,7 @@ dynamic_routing:
   tier_models:                    # optional: explicit model per tier
     light: claude-haiku-4-5
     standard: claude-sonnet-4-6
-    heavy: claude-opus-4-6
+    heavy: claude-opus-4-7
   escalate_on_failure: true       # bump tier on failure (default)
   budget_pressure: true           # auto-downgrade near budget ceiling (default)
   cross_provider: true            # consider models from other providers (default)

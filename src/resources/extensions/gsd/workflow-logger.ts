@@ -16,10 +16,20 @@
 // the start of each unit to prevent log bleed between units running in the same
 // Node process.
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
+import { withFileLockSync } from "./file-lock.js";
 import { appendNotification } from "./notification-store.js";
+import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
+import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -51,7 +61,14 @@ export type LogComponent =
   | "guided"        // Guided flow (discuss, plan wizards)
   | "registry"      // Rule registry hook state
   | "renderer"      // Markdown renderer and projections
-  | "safety";       // LLM safety harness
+  | "safety"        // LLM safety harness
+  | "ecosystem"     // GSD ecosystem extension loader and dispatch
+  | "memory-embeddings" // Memory layer embedding generation
+  | "memory-ingest"     // Memory layer ingestion pipeline
+  | "memory-backfill"   // ADR-013: decisions->memories backfill
+  | "context-mode"     // Context-mode exec sandbox and compaction snapshot
+  | "preflight"        // Clean-root preflight gate at milestone completion
+  | "postUnit";     // Post-unit processing (abandon detection, overrides)
 
 export interface LogEntry {
   ts: string;
@@ -275,6 +292,29 @@ function _push(
     _buffer.shift();
   }
 
+  if (_auditBasePath && isUnifiedAuditEnabled()) {
+    try {
+      emitUokAuditEvent(
+        _auditBasePath,
+        buildAuditEnvelope({
+          traceId: `workflow-log:${component}`,
+          turnId: context?.id,
+          causedBy: context?.fn ?? context?.tool,
+          category: "orchestration",
+          type: severity === "error" ? "workflow-log-error" : "workflow-log-warn",
+          payload: {
+            component,
+            message,
+            context: context ?? {},
+          },
+        }),
+      );
+    } catch (auditEmitErr) {
+      // Best-effort: unified audit projection must never block workflow logger.
+      _writeStderr(`[gsd:workflow-logger] unified-audit emit failed: ${(auditEmitErr as Error).message}\n`);
+    }
+  }
+
   // Persist errors to .gsd/audit-log.jsonl so they survive context resets.
   // Only error-severity entries are persisted — warnings are ephemeral (stderr + buffer)
   // to avoid log amplification from expected-control-flow catch paths.
@@ -282,8 +322,18 @@ function _push(
     try {
       const auditDir = join(_auditBasePath, ".gsd");
       mkdirSync(auditDir, { recursive: true });
+      const auditPath = join(auditDir, "audit-log.jsonl");
       const sanitized = _sanitizeForAudit(entry);
-      appendFileSync(join(auditDir, "audit-log.jsonl"), JSON.stringify(sanitized) + "\n", "utf-8");
+      // Ensure file exists so proper-lockfile can acquire a lock against it.
+      if (!existsSync(auditPath)) closeSync(openSync(auditPath, "a"));
+      // onLocked: "skip" — never block error logging on lock contention.
+      withFileLockSync(
+        auditPath,
+        () => {
+          appendFileSync(auditPath, JSON.stringify(sanitized) + "\n", "utf-8");
+        },
+        { onLocked: "skip" },
+      );
     } catch (auditErr) {
       // Best-effort — never let audit write failures bubble up
       _writeStderr(`[gsd:audit] failed to persist log entry: ${(auditErr as Error).message}\n`);

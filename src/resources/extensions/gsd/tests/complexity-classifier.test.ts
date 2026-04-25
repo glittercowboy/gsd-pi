@@ -21,9 +21,9 @@ test("tierOrdinal returns correct ordering", () => {
 
 // ─── Unit Type Classification ────────────────────────────────────────────────
 
-test("complete-slice classifies as light", () => {
+test("complete-slice classifies as standard", () => {
   const result = classifyUnitComplexity("complete-slice", "M001/S01", "/tmp/fake");
-  assert.equal(result.tier, "light");
+  assert.equal(result.tier, "standard");
 });
 
 test("run-uat classifies as light", () => {
@@ -145,7 +145,7 @@ test("budget pressure at 90% downgrades standard to light", () => {
   assert.equal(result.downgraded, true);
 });
 
-test("budget pressure at 90% downgrades light stays light", () => {
+test("budget pressure at 90% downgrades complete-slice standard to light", () => {
   const result = classifyUnitComplexity("complete-slice", "M001/S01", "/tmp/fake", 0.95);
   assert.equal(result.tier, "light");
 });

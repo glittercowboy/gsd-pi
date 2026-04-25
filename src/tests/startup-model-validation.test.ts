@@ -150,4 +150,17 @@ describe("validateConfiguredModel — regression #3534", () => {
 		// Thinking level resets because the original model was replaced
 		assert.equal(settings._thinking, "off");
 	});
+
+	it("preserves claude-opus-4-7 when registered and configured (#4348)", () => {
+		const registry = createMockRegistry([
+			{ provider: "anthropic", id: "claude-opus-4-6" },
+			{ provider: "anthropic", id: "claude-opus-4-7" },
+		]);
+		const settings = createMockSettings({ provider: "anthropic", model: "claude-opus-4-7" });
+
+		validateConfiguredModel(registry, settings);
+
+		assert.equal(settings._provider, "anthropic");
+		assert.equal(settings._model, "claude-opus-4-7");
+	});
 });

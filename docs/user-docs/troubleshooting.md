@@ -413,3 +413,27 @@ osascript -e 'display notification "test" with title "GSD"'
 ```bash
 terminal-notifier -title "GSD" -message "working!" -sound Glass
 ```
+
+### Telegram notifications not arriving
+
+**Symptoms:** Auto-mode is running, Telegram is configured as the remote channel, but milestone completions, budget alerts, and other informational notifications are not appearing in the Telegram chat.
+
+**Causes and fixes:**
+
+- **`notifications.enabled` is not set** — ensure `notifications.enabled: true` is present in preferences alongside the `remote_questions` configuration. Informational notifications require both to be set.
+- **Bot token is incorrect or expired** — run `/gsd remote status` to confirm the configuration is saved, then `/gsd remote telegram` to re-run setup and re-validate the token.
+- **Bot is not a member of the target chat** — the bot must be added to the group chat (or the configured chat ID must match a private chat with the bot). Send `/help` directly to the bot in Telegram to confirm it is reachable.
+- **Wrong `channel_id`** — verify the chat ID in `~/.gsd/PREFERENCES.md` matches the chat where you expect notifications. For group chats, the ID is typically a negative number (e.g., `-1001234567890`).
+- **Network or firewall issue** — GSD must be able to reach `api.telegram.org`. Test with `curl https://api.telegram.org` from the machine running GSD.
+
+### Telegram commands not responding
+
+**Symptoms:** Sending `/status`, `/pause`, or other Telegram commands to the bot produces no response.
+
+**Causes and fixes:**
+
+- **Auto-mode is not running** — background polling only operates while auto-mode is active. Start auto-mode with `/gsd auto` and then retry the command.
+- **Wrong chat** — commands are only processed from the chat configured in `remote_questions.channel_id`. Confirm you are sending from the correct chat.
+- **Bot token mismatch** — the `TELEGRAM_BOT_TOKEN` environment variable or the token in `~/.gsd/PREFERENCES.md` may not match the bot you are messaging. Run `/gsd remote status` to confirm which bot token is active.
+- **Polling not started** — if GSD was already running when the Telegram configuration was added, restart auto-mode (`/gsd stop`, then `/gsd auto`) so polling initializes with the new configuration.
+- **Send `/help` first** — if the bot responds to `/help`, polling is working correctly. If a specific command like `/pause` does not respond, check for typos (commands are case-sensitive).

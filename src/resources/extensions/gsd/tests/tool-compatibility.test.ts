@@ -14,6 +14,7 @@ import {
   isToolCompatibleWithProvider,
   filterToolsForProvider,
   adjustToolSet,
+  GROQ_MAX_TOOLS,
 } from "../model-router.js";
 
 import {
@@ -195,5 +196,111 @@ describe("adjustToolSet", () => {
     assert.ok(result.includes("screenshot")); // Google supports images
     assert.ok(!result.includes("mcp_complex")); // patternProperties not supported
     assert.deepEqual(removedTools, ["mcp_complex"]);
+  });
+});
+
+// ─── GROQ_MAX_TOOLS constant ─────────────────────────────────────────────────
+
+describe("GROQ_MAX_TOOLS", () => {
+  test("equals 128", () => {
+    assert.equal(GROQ_MAX_TOOLS, 128);
+  });
+});
+
+// ─── Groq tool-count cap (#4376) ────────────────────────────────────────────
+
+describe("filterToolsForProvider — Groq 128-tool cap", () => {
+  beforeEach(() => {
+    resetToolCompatibilityRegistry();
+  });
+
+  test("does not cap when provider is not groq", () => {
+    const toolNames = Array.from({ length: 200 }, (_, i) => `tool_${i}`);
+    const { compatible, filtered } = filterToolsForProvider(toolNames, "openai-completions");
+    assert.equal(compatible.length, 200);
+    assert.equal(filtered.length, 0);
+  });
+
+  test("does not cap when <= 128 tools with groq provider", () => {
+    const toolNames = Array.from({ length: 128 }, (_, i) => `tool_${i}`);
+    const { compatible, filtered } = filterToolsForProvider(toolNames, "openai-completions", "groq");
+    assert.equal(compatible.length, 128);
+    assert.equal(filtered.length, 0);
+  });
+
+  test("caps to 128 when >128 tools with groq provider", () => {
+    const toolNames = Array.from({ length: 200 }, (_, i) => `tool_${i}`);
+    const { compatible, filtered } = filterToolsForProvider(toolNames, "openai-completions", "groq");
+    assert.equal(compatible.length, 128);
+    assert.equal(filtered.length, 72);
+  });
+
+  test("keeps the first 128 tools when capping", () => {
+    const toolNames = Array.from({ length: 200 }, (_, i) => `tool_${i}`);
+    const { compatible } = filterToolsForProvider(toolNames, "openai-completions", "groq");
+    assert.equal(compatible[0], "tool_0");
+    assert.equal(compatible[127], "tool_127");
+  });
+
+  test("trimmed tools appear in filtered list", () => {
+    const toolNames = Array.from({ length: 130 }, (_, i) => `tool_${i}`);
+    const { filtered } = filterToolsForProvider(toolNames, "openai-completions", "groq");
+    assert.equal(filtered.length, 2);
+    assert.equal(filtered[0], "tool_128");
+    assert.equal(filtered[1], "tool_129");
+  });
+
+  test("emits a warning when tools are trimmed", () => {
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(String(args[0])); };
+    try {
+      const toolNames = Array.from({ length: 129 }, (_, i) => `tool_${i}`);
+      filterToolsForProvider(toolNames, "openai-completions", "groq");
+      assert.equal(warnings.length, 1);
+      assert.ok(warnings[0].includes("128"), "warning mentions Groq limit");
+    } finally {
+      console.warn = original;
+    }
+  });
+
+  test("does not warn when tools are at the limit", () => {
+    const warnings: string[] = [];
+    const original = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(String(args[0])); };
+    try {
+      const toolNames = Array.from({ length: 128 }, (_, i) => `tool_${i}`);
+      filterToolsForProvider(toolNames, "openai-completions", "groq");
+      assert.equal(warnings.length, 0);
+    } finally {
+      console.warn = original;
+    }
+  });
+});
+
+describe("adjustToolSet — Groq 128-tool cap", () => {
+  beforeEach(() => {
+    resetToolCompatibilityRegistry();
+  });
+
+  test("caps to 128 tools when provider is groq and >128 tools active", () => {
+    const toolNames = Array.from({ length: 150 }, (_, i) => `tool_${i}`);
+    const { toolNames: result, removedTools } = adjustToolSet(toolNames, "openai-completions", "groq");
+    assert.equal(result.length, 128);
+    assert.equal(removedTools.length, 22);
+  });
+
+  test("does not cap for non-groq providers even with >128 tools", () => {
+    const toolNames = Array.from({ length: 150 }, (_, i) => `tool_${i}`);
+    const { toolNames: result, removedTools } = adjustToolSet(toolNames, "openai-completions", "openai");
+    assert.equal(result.length, 150);
+    assert.equal(removedTools.length, 0);
+  });
+
+  test("does not cap when provider is omitted", () => {
+    const toolNames = Array.from({ length: 150 }, (_, i) => `tool_${i}`);
+    const { toolNames: result, removedTools } = adjustToolSet(toolNames, "openai-completions");
+    assert.equal(result.length, 150);
+    assert.equal(removedTools.length, 0);
   });
 });

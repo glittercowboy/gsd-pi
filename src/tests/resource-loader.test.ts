@@ -110,7 +110,7 @@ test("initResources manifest tracks all bundled extension subdirectories includi
   const fakeAgentDir = join(tmp, "agent");
 
   try {
-    initResources(fakeAgentDir);
+    initResources(fakeAgentDir, join(tmp, "skills"));
 
     const manifestPath = join(fakeAgentDir, "managed-resources.json");
     assert.equal(existsSync(manifestPath), true, "managed-resources.json should exist after initResources");
@@ -146,7 +146,7 @@ test("initResources prunes stale top-level extension siblings next to bundled co
 
   t.after(() => { rmSync(tmp, { recursive: true, force: true }); });
 
-  initResources(fakeAgentDir);
+  initResources(fakeAgentDir, join(tmp, "skills"));
 
   const bundledPath = existsSync(bundledJsPath)
     ? bundledJsPath
@@ -170,7 +170,7 @@ test("initResources prunes stale top-level extension siblings next to bundled co
   manifest.contentHash = "force-resync";
   writeFileSync(manifestPath, JSON.stringify(manifest));
 
-  initResources(fakeAgentDir);
+  initResources(fakeAgentDir, join(tmp, "skills"));
 
   if (siblingWasBundled) {
     assert.equal(existsSync(staleSiblingPath), true, "bundled sibling should be restored during sync");
@@ -188,7 +188,7 @@ test("pruneRemovedBundledExtensions removes stale subdirectory extensions not in
 
   try {
     // First sync — seeds the agent dir and writes the manifest.
-    initResources(fakeAgentDir);
+    initResources(fakeAgentDir, join(tmp, "skills"));
 
     // Simulate a stale subdirectory extension left from a previous GSD version.
     // This mirrors the mcporter scenario: it was bundled before, synced to
@@ -215,7 +215,7 @@ test("pruneRemovedBundledExtensions removes stale subdirectory extensions not in
     writeFileSync(manifestPath, JSON.stringify(manifest));
 
     // Second sync — the bundle no longer contains mcporter/, so it must be pruned.
-    initResources(fakeAgentDir);
+    initResources(fakeAgentDir, join(tmp, "skills"));
 
     assert.equal(
       existsSync(staleExtDir),

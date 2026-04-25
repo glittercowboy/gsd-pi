@@ -44,6 +44,9 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { debugCount, debugTime } from './debug-logger.js';
 import { logWarning, logError } from './workflow-logger.js';
 import { extractVerdict } from './verdict-parser.js';
+import { loadEffectiveGSDPreferences } from './preferences.js';
+import { detectPendingEscalation } from './escalation.js';
+import { isTerminalMilestoneSummaryContent } from './milestone-summary-classifier.js';
 
 import {
   isDbAvailable,
@@ -60,6 +63,7 @@ import {
   updateSliceStatus,
   updateTaskStatus,
   getPendingGateCountForTurn,
+  autoHealSketchFlags,
   type MilestoneRow,
   type SliceRow,
   type TaskRow,
@@ -136,6 +140,14 @@ export function isValidationTerminal(validationContent: string): boolean {
   return extractVerdict(validationContent) != null;
 }
 
+async function isTerminalMilestoneSummaryFile(
+  path: string,
+  loader: (path: string) => Promise<string | null>,
+): Promise<boolean> {
+  const content = await loader(path);
+  return content != null && isTerminalMilestoneSummaryContent(content);
+}
+
 // ─── State Derivation ──────────────────────────────────────────────────────
 
 // ── deriveState memoization ─────────────────────────────────────────────────
@@ -208,15 +220,15 @@ export async function getActiveMilestoneId(basePath: string): Promise<string | n
     const content = roadmapFile ? await loadFile(roadmapFile) : null;
     if (!content) {
       const summaryFile = resolveMilestoneFile(basePath, mid, "SUMMARY");
-      if (summaryFile) continue;
+      if (summaryFile && await isTerminalMilestoneSummaryFile(summaryFile, loadFile)) continue;
       if (isGhostMilestone(basePath, mid)) continue;
       return mid;
     }
     const roadmap = parseRoadmap(content);
-    if (!isMilestoneComplete(roadmap)) {
-      const summaryFile = resolveMilestoneFile(basePath, mid, "SUMMARY");
-      if (!summaryFile) return mid;
-    }
+    const summaryFile = resolveMilestoneFile(basePath, mid, "SUMMARY");
+    if (summaryFile && await isTerminalMilestoneSummaryFile(summaryFile, loadFile)) continue;
+    if (!isMilestoneComplete(roadmap)) return mid;
+    return mid;
   }
   return null;
 }
@@ -345,8 +357,15 @@ function reconcileDiskToDb(basePath: string): MilestoneRow[] {
     const dbSliceIds = new Set(dbSlices.map(s => s.id));
 
     let roadmapContent: string;
-    try { roadmapContent = readFileSync(roadmapPath, "utf-8"); }
-    catch { continue; }
+    try {
+      roadmapContent = readFileSync(roadmapPath, "utf-8");
+    } catch (err) {
+      logWarning("state", "reconcileDiskToDb: roadmap read failed, skipping milestone", {
+        mid,
+        error: (err as Error).message,
+      });
+      continue;
+    }
 
     const parsed = parseRoadmap(roadmapContent);
     for (const s of parsed.slices) {
@@ -603,12 +622,30 @@ async function handleAllSlicesDone(
   const validationTerminal = validationContent ? isValidationTerminal(validationContent) : false;
   const verdict = validationContent ? extractVerdict(validationContent) : undefined;
 
-  if (!validationTerminal || verdict === 'needs-remediation') {
+  if (!validationTerminal) {
     return {
       activeMilestone, activeSlice: null, activeTask: null,
       phase: 'validating-milestone',
       recentDecisions: [], blockers: [],
       nextAction: `Validate milestone ${activeMilestone.id} before completion.`,
+      registry, requirements,
+      progress: { milestones: milestoneProgress, slices: sliceProgress },
+    };
+  }
+
+  // All roadmap slices are done (enforced by caller) and verdict is
+  // needs-remediation — remediation cannot progress without new slices.
+  // Return blocked instead of re-dispatching validate-milestone (#4506).
+  if (verdict === 'needs-remediation') {
+    return {
+      activeMilestone, activeSlice: null, activeTask: null,
+      phase: 'blocked',
+      recentDecisions: [],
+      blockers: [
+        `Milestone ${activeMilestone.id} validation verdict is needs-remediation but all slices are complete. ` +
+          `Add remediation slices via gsd_reassess_roadmap or override the verdict manually.`,
+      ],
+      nextAction: `Resolve ${activeMilestone.id} remediation before proceeding.`,
       registry, requirements,
       progress: { milestones: milestoneProgress, slices: sliceProgress },
     };
@@ -640,7 +677,6 @@ function resolveSliceDependencies(activeMilestoneSlices: SliceRow[]): { activeSl
     }
   }
 
-  // First pass: find a slice with ALL dependencies satisfied (strict)
   let bestFallback: SliceRow | null = null;
   let bestFallbackSatisfied = -1;
 
@@ -650,7 +686,6 @@ function resolveSliceDependencies(activeMilestoneSlices: SliceRow[]): { activeSl
     if (s.depends.every(dep => doneSliceIds.has(dep))) {
       return { activeSlice: { id: s.id, title: s.title }, activeSliceRow: s };
     }
-    // Track the slice with the most satisfied dependencies as fallback
     const satisfied = s.depends.filter(dep => doneSliceIds.has(dep)).length;
     if (satisfied > bestFallbackSatisfied || (satisfied === bestFallbackSatisfied && !bestFallback)) {
       bestFallback = s;
@@ -658,16 +693,13 @@ function resolveSliceDependencies(activeMilestoneSlices: SliceRow[]): { activeSl
     }
   }
 
-  // Fallback: if no slice has all deps met but there ARE incomplete non-deferred
-  // slices, pick the one with the most deps satisfied. This prevents hard-blocking
-  // when dependency metadata is stale (e.g. after reassessment added/removed slices)
-  // or when deps reference slices from previous milestones.
   if (bestFallback) {
     const unmet = bestFallback.depends.filter(dep => !doneSliceIds.has(dep));
-    logWarning("state",
+    logWarning(
+      "state",
       `No slice has all deps satisfied — falling back to ${bestFallback.id} ` +
-      `(${bestFallbackSatisfied}/${bestFallback.depends.length} deps met, ` +
-      `unmet: ${unmet.join(", ")})`,
+        `(${bestFallbackSatisfied}/${bestFallback.depends.length} deps met, ` +
+        `unmet: ${unmet.join(", ")})`,
       { mid: activeMilestoneSlices[0]?.milestone_id, sid: bestFallback.id },
     );
     return { activeSlice: { id: bestFallback.id, title: bestFallback.title }, activeSliceRow: bestFallback };
@@ -842,7 +874,15 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
     return handleAllSlicesDone(basePath, activeMilestone, registry, requirements, milestoneProgress, sliceProgress);
   }
 
-  const activeSliceContext = resolveSliceDependencies(activeMilestoneSlices);
+  // ADR-011 auto-heal: if a slice has a PLAN on disk but is still flagged is_sketch=1
+  // (e.g. a crash between plan-slice write and the sketch flip), reconcile before
+  // running phase derivation so the flag doesn't misroute state.
+  autoHealSketchFlags(activeMilestone.id, (sid) =>
+    !!resolveSliceFile(basePath, activeMilestone.id, sid, "PLAN"),
+  );
+  // Re-read slices after auto-heal so downstream reads see fresh is_sketch values.
+  const healedSlices = getMilestoneSlices(activeMilestone.id);
+  const activeSliceContext = resolveSliceDependencies(healedSlices);
   if (!activeSliceContext.activeSlice) {
     // If locked slice wasn't found, it returns null but logs warning, we need to return 'blocked'
     if (process.env.GSD_SLICE_LOCK) {
@@ -862,10 +902,24 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
       progress: { milestones: milestoneProgress, slices: sliceProgress },
     };
   }
-  const { activeSlice } = activeSliceContext;
+  const { activeSlice, activeSliceRow } = activeSliceContext;
 
   const planFile = resolveSliceFile(basePath, activeMilestone.id, activeSlice.id, "PLAN");
   if (!planFile) {
+    // ADR-011: sketch slices with progressive_planning enabled enter the
+    // `refining` phase — a refine-slice unit expands the sketch into a full plan
+    // before execution. When the flag is off, sketches are indistinguishable
+    // from a missing plan and fall through to the normal `planning` phase.
+    const progressive = loadEffectiveGSDPreferences()?.preferences?.phases?.progressive_planning === true;
+    if (progressive && activeSliceRow?.is_sketch === 1) {
+      return {
+        activeMilestone, activeSlice, activeTask: null,
+        phase: 'refining', recentDecisions: [], blockers: [],
+        nextAction: `Refine sketch slice ${activeSlice.id} (${activeSlice.title}) using prior slice context.`,
+        registry, requirements,
+        progress: { milestones: milestoneProgress, slices: sliceProgress },
+      };
+    }
     return {
       activeMilestone, activeSlice, activeTask: null,
       phase: 'planning', recentDecisions: [], blockers: [],
@@ -956,6 +1010,29 @@ export async function deriveStateFromDb(basePath: string): Promise<GSDState> {
         progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
       };
     }
+  }
+
+  // ADR-011 Phase 2: pause-on-escalation takes precedence over dispatching the
+  // next task. `awaiting_review` tasks (continueWithDefault=true) are NOT
+  // surfaced here — they let the loop continue.
+  //
+  // We do NOT gate this on `phases.mid_execution_escalation` — creation of
+  // new escalations is gated at the write site (tools/complete-task.ts:315),
+  // but any escalation_pending row already persisted in the DB must be
+  // honored even if the user later toggles the flag off. Otherwise those
+  // rows would silently orphan, the loop would advance past the paused task,
+  // and the user's prior resolution never lands.
+  const escalatingTaskId = detectPendingEscalation(tasks, basePath);
+  if (escalatingTaskId) {
+    return {
+      activeMilestone, activeSlice, activeTask,
+      phase: 'escalating-task', recentDecisions: [],
+      blockers: [`Task ${escalatingTaskId} requires a user decision before the loop can proceed`],
+      nextAction: `Run /gsd escalate show ${escalatingTaskId} to review, then /gsd escalate resolve ${escalatingTaskId} <choice> to proceed.`,
+      activeWorkspace: undefined,
+      registry, requirements,
+      progress: { milestones: milestoneProgress, slices: sliceProgress, tasks: taskProgress },
+    };
   }
 
   if (!blockerTaskId) {
@@ -1087,7 +1164,7 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
     const rc = rf ? await cachedLoadFile(rf) : null;
     if (!rc) {
       const sf = resolveMilestoneFile(basePath, mid, "SUMMARY");
-      if (sf) completeMilestoneIds.add(mid);
+      if (sf && await isTerminalMilestoneSummaryFile(sf, cachedLoadFile)) completeMilestoneIds.add(mid);
       continue;
     }
     const rmap = parseRoadmap(rc);
@@ -1096,11 +1173,11 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       // Summary is the terminal artifact — if it exists, the milestone is
       // complete even when roadmap checkboxes weren't ticked (#864).
       const sf = resolveMilestoneFile(basePath, mid, "SUMMARY");
-      if (sf) completeMilestoneIds.add(mid);
+      if (sf && await isTerminalMilestoneSummaryFile(sf, cachedLoadFile)) completeMilestoneIds.add(mid);
       continue;
     }
     const sf = resolveMilestoneFile(basePath, mid, "SUMMARY");
-    if (sf) completeMilestoneIds.add(mid);
+    if (sf && await isTerminalMilestoneSummaryFile(sf, cachedLoadFile)) completeMilestoneIds.add(mid);
   }
 
   // Phase 2: Build registry using cached roadmaps (no re-parsing or re-reading)
@@ -1128,12 +1205,14 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       const summaryFile = resolveMilestoneFile(basePath, mid, "SUMMARY");
       if (summaryFile) {
         const summaryContent = await cachedLoadFile(summaryFile);
-        const summaryTitle = summaryContent
-          ? (parseSummary(summaryContent).title || mid)
-          : mid;
-        registry.push({ id: mid, title: summaryTitle, status: 'complete' });
-        completeMilestoneIds.add(mid);
-        continue;
+        if (summaryContent != null && isTerminalMilestoneSummaryContent(summaryContent)) {
+          const summaryTitle = summaryContent
+            ? (parseSummary(summaryContent).title || mid)
+            : mid;
+          registry.push({ id: mid, title: summaryTitle, status: 'complete' });
+          completeMilestoneIds.add(mid);
+          continue;
+        }
       }
       // Ghost milestone (only META.json, no CONTEXT/ROADMAP/SUMMARY) — skip entirely
       if (isGhostMilestone(basePath, mid)) continue;
@@ -1189,7 +1268,7 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       // needs-remediation is terminal but requires re-validation (#3596)
       const needsRevalidation = !validationTerminal || verdict === 'needs-remediation';
 
-      if (summaryFile) {
+      if (summaryFile && await isTerminalMilestoneSummaryFile(summaryFile, cachedLoadFile)) {
         // Summary exists → milestone is complete regardless of validation state.
         // The summary is the terminal artifact (#864).
         registry.push({ id: mid, title, status: 'complete' });
@@ -1215,7 +1294,7 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       // Roadmap slices not all checked — but if a summary exists, the milestone
       // is still complete. The summary is the terminal artifact (#864).
       const summaryFile = resolveMilestoneFile(basePath, mid, "SUMMARY");
-      if (summaryFile) {
+      if (summaryFile && await isTerminalMilestoneSummaryFile(summaryFile, cachedLoadFile)) {
         registry.push({ id: mid, title, status: 'complete' });
       } else if (!activeMilestoneFound) {
         // Check milestone-level dependencies before promoting to active.
@@ -1395,9 +1474,11 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       total: activeRoadmap.slices.length,
     };
 
-    // Force re-validation when verdict is needs-remediation — remediation slices
-    // may have completed since the stale validation was written (#3596).
-    if (!validationTerminal || verdict === 'needs-remediation') {
+    // Force re-validation when VALIDATION.md is absent or non-terminal —
+    // remediation slices may have completed since the stale validation was
+    // written (#3596). But needs-remediation with all slices done is a dead
+    // end — return blocked to avoid an infinite dispatch loop (#4506).
+    if (!validationTerminal) {
       return {
         activeMilestone,
         activeSlice: null,
@@ -1406,6 +1487,27 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
         recentDecisions: [],
         blockers: [],
         nextAction: `Validate milestone ${activeMilestone.id} before completion.`,
+        registry,
+        requirements,
+        progress: {
+          milestones: milestoneProgress,
+          slices: sliceProgress,
+        },
+      };
+    }
+
+    if (verdict === 'needs-remediation') {
+      return {
+        activeMilestone,
+        activeSlice: null,
+        activeTask: null,
+        phase: 'blocked',
+        recentDecisions: [],
+        blockers: [
+          `Milestone ${activeMilestone.id} validation verdict is needs-remediation but all slices are complete. ` +
+            `Add remediation slices via gsd_reassess_roadmap or override the verdict manually.`,
+        ],
+        nextAction: `Resolve ${activeMilestone.id} remediation before proceeding.`,
         registry,
         requirements,
         progress: {
@@ -1476,7 +1578,6 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
         activeSlice = { id: s.id, title: s.title };
         break;
       }
-      // Track best fallback
       const satisfied = s.depends.filter(dep => doneSliceIds.has(dep)).length;
       if (satisfied > bestFallbackLegacySatisfied) {
         bestFallbackLegacy = s;
@@ -1484,13 +1585,13 @@ export async function _deriveStateImpl(basePath: string): Promise<GSDState> {
       }
     }
 
-    // Fallback: if no slice has all deps met, pick the one with the most deps satisfied
     if (!activeSlice && bestFallbackLegacy) {
       const unmet = bestFallbackLegacy.depends.filter(dep => !doneSliceIds.has(dep));
-      logWarning("state",
+      logWarning(
+        "state",
         `No slice has all deps satisfied — falling back to ${bestFallbackLegacy.id} ` +
-        `(${bestFallbackLegacySatisfied}/${bestFallbackLegacy.depends.length} deps met, ` +
-        `unmet: ${unmet.join(", ")})`,
+          `(${bestFallbackLegacySatisfied}/${bestFallbackLegacy.depends.length} deps met, ` +
+          `unmet: ${unmet.join(", ")})`,
       );
       activeSlice = { id: bestFallbackLegacy.id, title: bestFallbackLegacy.title };
     }

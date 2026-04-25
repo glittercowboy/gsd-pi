@@ -60,6 +60,41 @@ const TIER_EMOJI = {
   low:      '🟢',
 };
 
+// Maps each system label to the specific verification task a reviewer/agent should perform.
+const SYSTEM_CHECKS = {
+  'State Machine':     'test state persistence across a session restart',
+  'Agent Core':        'check for race conditions and loop exit paths in the agent loop',
+  'Auth/OAuth':        'verify auth token lifecycle (create, refresh, revoke)',
+  'Permissions':       'audit permission escalation paths and boundary enforcement',
+  'Auto Engine':       'validate auto-mode trigger conditions and loop termination',
+  'MCP Server/Client': 'confirm no breaking changes to RPC/MCP protocol compatibility',
+  'Native/Rust Tools': 'run native tool smoke tests and check FFI boundary safety',
+  'GSD Workflow':      'verify GSD workflow state transitions end-to-end',
+  'Tool System':       'verify tool call and response contracts are unchanged',
+  'AI Providers':      'confirm provider API contract and error handling are intact',
+  'Extension Registry':'check extension registration and lifecycle hooks',
+  'Session Management':'test session creation, restoration, and teardown',
+  'Extensions':        'verify extension event dispatch and hook ordering',
+  'Modes':             'test mode switching transitions and state isolation',
+  'Event System':      'confirm event emission ordering and listener cleanup',
+  'Node.js Bindings':  'run Node.js native binding smoke tests',
+  'Compaction':        'verify compaction does not drop or corrupt context',
+};
+
+/**
+ * Builds a single copy-paste prompt for a coding agent based on the actual
+ * flagged systems in this PR. Returns null if no actionable systems are found.
+ */
+function buildAgentPrompt(systemRisks) {
+  const relevant = systemRisks.filter(({ tier }) => tier === 'critical' || tier === 'high');
+  const checks = relevant.map(({ system }) => SYSTEM_CHECKS[system]).filter(Boolean);
+  if (checks.length === 0) return null;
+
+  const systemNames = relevant.map(({ system }) => system).join(', ');
+  const checkList = checks.map((c, i) => `${i + 1}) ${c}`).join('; ');
+  return `Review this PR for risks in: ${systemNames}. Verify: ${checkList}. Report all findings before I merge.`;
+}
+
 // ---------------------------------------------------------------------------
 // Parse FILE-SYSTEM-MAP.md
 // ---------------------------------------------------------------------------
@@ -269,17 +304,21 @@ function renderConsole(report) {
   }
 
   // Reviewer checklist
-  if (risk === 'critical') {
-    console.log('⚠️  Reviewer checklist for CRITICAL changes:');
-    console.log('  • Test state persistence across session restart');
-    console.log('  • Verify auth token lifecycle (create, refresh, revoke)');
-    console.log('  • Check for race conditions in agent loop');
-    console.log('  • Ensure no breaking changes to RPC protocol');
-  } else if (risk === 'high') {
-    console.log('⚠️  Reviewer checklist for HIGH-risk changes:');
-    console.log('  • Run full integration test suite');
-    console.log('  • Verify tool call/response contracts unchanged');
-    console.log('  • Check extension event dispatch still works');
+  if (risk === 'critical' || risk === 'high') {
+    const label = risk === 'critical' ? 'CRITICAL' : 'HIGH-risk';
+    console.log(`⚠️  Reviewer checklist for ${label} changes:`);
+    for (const { system } of systemRisks.filter(r => r.tier === 'critical' || r.tier === 'high')) {
+      const check = SYSTEM_CHECKS[system];
+      if (check) console.log(`  • [${system}] ${check}`);
+    }
+    const prompt = buildAgentPrompt(systemRisks);
+    if (prompt) {
+      console.log('');
+      console.log('  Ask your coding agent before submitting:');
+      console.log(`  "${prompt}"`);
+      console.log('');
+      console.log('  Have a Codex subscription? Run: codex review --adversarial');
+    }
   }
 
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
@@ -329,10 +368,42 @@ function renderGitHubSummary(report) {
     lines.push('');
   }
 
-  if (risk === 'critical') {
-    lines.push('> ⚠️ **Critical risk** — please verify: state persistence, auth token lifecycle, agent loop race conditions, RPC protocol compatibility.');
-  } else if (risk === 'high') {
-    lines.push('> ⚠️ **High risk** — please run full integration tests and verify tool/extension contracts.');
+  if (risk === 'critical' || risk === 'high') {
+    const label = risk === 'critical' ? '🔴 Critical' : '🟠 High';
+    const flagged = systemRisks.filter(r => r.tier === 'critical' || r.tier === 'high');
+    lines.push(`> ⚠️ **${label} risk** — the following systems require verification before merge:`);
+    lines.push('>');
+    for (const { system, tier } of flagged) {
+      const check = SYSTEM_CHECKS[system];
+      if (check) lines.push(`> - ${TIER_EMOJI[tier]} **${system}**: ${check}`);
+    }
+    const relevant = flagged.filter(({ system }) => SYSTEM_CHECKS[system]);
+    if (relevant.length > 0) {
+      const systemNames = relevant.map(({ system }) => system).join(', ');
+      lines.push('>');
+      lines.push('> **⛔ This PR should not be merged without executing this follow-up prompt.**');
+      lines.push('>');
+      lines.push('> **Ask your coding agent to verify before submitting:**');
+      lines.push('>');
+      lines.push('> ```');
+      lines.push(`> Review this PR for risks in: ${systemNames}. Verify:`);
+      lines.push('>');
+      relevant.forEach(({ system }, i) => {
+        lines.push(`> ${i + 1}. ${SYSTEM_CHECKS[system]}`);
+      });
+      lines.push('>');
+      lines.push('> Before modifying any code, assess the scope of this fix:');
+      lines.push('>');
+      lines.push('> - Identify the root cause, not just the reported symptom.');
+      lines.push('> - Search the codebase for other call sites, similar patterns, or duplicated logic that may share the same bug.');
+      lines.push('> - List affected tests, documentation, and any downstream consumers that depend on the current behavior.');
+      lines.push('> - Flag any changes that extend beyond the immediate file or function.');
+      lines.push('>');
+      lines.push('> Report findings first. Then propose a fix scoped to the actual root cause, and wait for confirmation before applying changes outside the originally reported location.');
+      lines.push('> ```');
+      lines.push('>');
+      lines.push('> 💡 **Have a Codex subscription?** Get an independent second opinion: `codex review --adversarial`');
+    }
   }
 
   return lines.join('\n');

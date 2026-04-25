@@ -16,6 +16,7 @@
 
 import { existsSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import type { TaskRow } from "./gsd-db.ts";
 import type { PreExecutionCheckJSON } from "./verification-evidence.ts";
@@ -90,8 +91,13 @@ export function extractPackageReferences(description: string): string[] {
     }
   }
 
-  // require('pkg') or import from 'pkg' in code blocks
-  const importPattern = /(?:require\s*\(\s*['"]|from\s+['"])([a-zA-Z0-9@/_-]+)['"\)]/g;
+  // require('pkg') or `import ... from 'pkg'` in code blocks.
+  // The `from\s+['"]` branch MUST be preceded by an `import` keyword so that
+  // natural-language prose like `from "What's Next"` or `from 'master'` does
+  // not produce false package-existence failures.  Requiring the leading import
+  // keyword anchors the match to JavaScript/TypeScript syntax.
+  // See: https://github.com/gsd-build/gsd-2/issues/4388
+  const importPattern = /(?:require\s*\(\s*['"]|import\b[\s\S]*?\bfrom\s+['"])([a-zA-Z0-9@/_-]+)['"\)]/g;
   let importMatch: RegExpExecArray | null;
   while ((importMatch = importPattern.exec(description)) !== null) {
     // Skip relative imports and node builtins
@@ -245,21 +251,72 @@ export function normalizeFilePath(filePath: string): string {
 
   // Normalize path separators to forward slashes
   normalized = normalized.replace(/\\/g, "/");
-  
+
+  // Expand a leading ~ or ~/ so downstream resolve()/set lookups hit the real
+  // home directory instead of treating the tilde as a literal path segment.
+  if (normalized === "~") {
+    normalized = homedir();
+  } else if (normalized.startsWith("~/")) {
+    normalized = resolve(homedir(), normalized.slice(2));
+  }
+  // homedir()/resolve() can emit platform separators (e.g. "\" on Windows).
+  normalized = normalized.replace(/\\/g, "/");
+
   // Remove leading ./
   while (normalized.startsWith("./")) {
     normalized = normalized.slice(2);
   }
-  
+
   // Remove duplicate slashes
   normalized = normalized.replace(/\/+/g, "/");
-  
+
   // Remove trailing slash unless it's the root
   if (normalized.length > 1 && normalized.endsWith("/")) {
     normalized = normalized.slice(0, -1);
   }
-  
+
   return normalized;
+}
+
+/**
+ * Planning units sometimes pass a directory reference as task.inputs
+ * (e.g. `artifacts/M009-S03/`). The trailing slash is meaningful — the task
+ * reads whatever lands inside — but normalizeFilePath strips it, so call this
+ * helper against the raw input before normalization.
+ */
+function isDirectoryReference(raw: string): boolean {
+  const candidate = extractPathFromAnnotation(raw.trim());
+  if (!candidate) return false;
+  if (containsGlobPattern(candidate)) return false;
+  return candidate.endsWith("/");
+}
+
+/**
+ * True when any of `knownOutputs` lives under `normalizedDir` (i.e. the task
+ * directory input is the parent of something a prior/same task produces).
+ */
+function anyOutputUnderDirectory(
+  normalizedDir: string,
+  knownOutputs: Iterable<string>,
+): boolean {
+  const prefix = normalizedDir + "/";
+  for (const output of knownOutputs) {
+    if (output === normalizedDir) return true;
+    if (output.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
+const URL_SCHEME_PATTERN = /^(https?|ftp|file|ssh|git):\/\//i;
+const SCP_PATTERN = /^[\w.-]+@[\w.-]+:[^/]/;
+
+function looksLikePathOrUrl(token: string): boolean {
+  if (URL_SCHEME_PATTERN.test(token)) return true;
+  if (SCP_PATTERN.test(token)) return true;
+  if (/^[./~]/.test(token)) return true;
+  if (/[\\/]/.test(token)) return true;
+  if (/\.[A-Za-z0-9]{1,8}$/.test(token)) return true;
+  return false;
 }
 
 function extractPathFromAnnotation(raw: string): string {
@@ -271,9 +328,38 @@ function extractPathFromAnnotation(raw: string): string {
     return backtickMatch[2].trim();
   }
 
+  // Strip leading/trailing double or single quotes wrapping the whole value.
+  // Plan documents sometimes emit `"src/foo.ts"` or `'src/bar.ts'` as input
+  // annotations. Stripping the wrapper allows the inner path to be checked
+  // correctly instead of producing a false-positive "file not found" error
+  // for a literal string with quote characters in it (#3747).
+  const quoteMatch = trimmed.match(/^(["'])([^"']+)\1$/);
+  if (quoteMatch) {
+    return quoteMatch[2].trim();
+  }
+
   const annotatedMatch = trimmed.match(/^(.+?)\s+[—–-]\s+.+$/);
   if (annotatedMatch) {
-    return annotatedMatch[1].trim();
+    const prefix = annotatedMatch[1].trim();
+    const prefixBacktickMatch = prefix.match(/`([^`]+)`/);
+    if (prefixBacktickMatch && looksLikePathOrUrl(prefixBacktickMatch[1].trim())) {
+      return prefixBacktickMatch[1].trim();
+    }
+    return prefix.replace(/`/g, "").trim();
+  }
+
+  // Fallback: scan all backticked tokens and return the first one that looks
+  // like a path or URL. Handles prose-annotated bullets such as:
+  //   `path/` directory listing (...)
+  //   Prefix prose `https://...` suffix prose
+  //   Citing `.gsd/REQUIREMENTS.md` mid-sentence
+  // Skips non-path backticked tokens like `note` or `npm test`.
+  const backtickTokens = trimmed.matchAll(/`([^`]+)`/g);
+  for (const match of backtickTokens) {
+    const token = match[1].trim();
+    if (looksLikePathOrUrl(token)) {
+      return token;
+    }
   }
 
   // Fall back to the original behavior for already-plain paths.
@@ -291,12 +377,16 @@ function shouldValidateInputAsPath(raw: string): boolean {
   const trimmed = raw.trim();
   if (!trimmed) return false;
 
+  const candidate = extractPathFromAnnotation(trimmed);
+  if (!candidate) return false;
+
+  // URLs and remote repo refs are not filesystem paths.
+  if (URL_SCHEME_PATTERN.test(candidate)) return false;
+  if (SCP_PATTERN.test(candidate)) return false;
+
   if (/^`+[^`]+`+/.test(trimmed)) {
     return true;
   }
-
-  const candidate = extractPathFromAnnotation(trimmed);
-  if (!candidate) return false;
 
   if (!/\s/.test(candidate)) {
     return true;
@@ -312,15 +402,25 @@ function shouldValidateInputAsPath(raw: string): boolean {
   );
 }
 
+function containsGlobPattern(candidate: string): boolean {
+  return ["*", "?", "[", "]", "{", "}"].some((char) => candidate.includes(char));
+}
+
 /**
  * Build a set of files that will be created by tasks up to (but not including) taskIndex.
+ * Also includes outputs of completed tasks at any position — a completed task has already
+ * run and its outputs are available regardless of sequence position or disk state (#4071).
  * All paths are normalized for consistent comparison.
  */
 function getExpectedOutputsUpTo(tasks: TaskRow[], taskIndex: number): Set<string> {
   const outputs = new Set<string>();
-  for (let i = 0; i < taskIndex; i++) {
-    for (const file of tasks[i].expected_output) {
-      outputs.add(normalizeFilePath(file));
+  for (let i = 0; i < tasks.length; i++) {
+    const task = tasks[i];
+    // Include prior tasks (i < taskIndex) OR completed tasks at any position
+    if (i < taskIndex || task.status === "completed") {
+      for (const file of task.expected_output) {
+        outputs.add(normalizeFilePath(file));
+      }
     }
   }
   return outputs;
@@ -329,10 +429,13 @@ function getExpectedOutputsUpTo(tasks: TaskRow[], taskIndex: number): Set<string
 /**
  * Check that all files referenced in task.inputs either:
  *   1. Exist on disk, OR
- *   2. Are in a prior task's expected_output
+ *   2. Are in a prior task's expected_output, OR
+ *   3. Are in the current task's own expected_output — the task produces them,
+ *      so they don't need to pre-exist (#4459, mirroring the exemption #3626
+ *      introduced for task.files).
  *
- * task.files ("files likely touched") is excluded — it intentionally includes
- * files the task will create, so they don't need to pre-exist (#3626).
+ * task.files ("files likely touched") is excluded entirely from this check —
+ * it intentionally includes files the task will create (#3626).
  *
  * All paths are normalized before comparison to ensure ./src/a.ts matches src/a.ts.
  */
@@ -345,6 +448,7 @@ export function checkFilePathConsistency(
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i];
     const priorOutputs = getExpectedOutputsUpTo(tasks, i);
+    const ownOutputs = new Set<string>(task.expected_output.map(normalizeFilePath));
     const filesToCheck = [...task.inputs];
 
     for (const file of filesToCheck) {
@@ -354,6 +458,7 @@ export function checkFilePathConsistency(
 
       // Normalize path for consistent comparison
       const normalizedFile = normalizeFilePath(file);
+      if (containsGlobPattern(normalizedFile)) continue;
 
       // Check if file exists on disk
       const absolutePath = resolve(basePath, normalizedFile);
@@ -361,13 +466,23 @@ export function checkFilePathConsistency(
 
       // Check if file is in prior expected outputs (priorOutputs already normalized)
       const inPriorOutputs = priorOutputs.has(normalizedFile);
+      const inOwnOutputs = ownOutputs.has(normalizedFile);
 
-      if (!existsOnDisk && !inPriorOutputs) {
+      // Directory inputs are satisfied when something produces a file beneath
+      // them — either a prior task or the current task itself.
+      let directorySatisfied = false;
+      if (!existsOnDisk && !inPriorOutputs && !inOwnOutputs && isDirectoryReference(file)) {
+        directorySatisfied =
+          anyOutputUnderDirectory(normalizedFile, priorOutputs) ||
+          anyOutputUnderDirectory(normalizedFile, ownOutputs);
+      }
+
+      if (!existsOnDisk && !inPriorOutputs && !inOwnOutputs && !directorySatisfied) {
         results.push({
           category: "file",
           target: file,
           passed: false,
-          message: `Task ${task.id} references '${file}' which doesn't exist and isn't created by prior tasks`,
+          message: `Task ${task.id} references '${file}' which doesn't exist and isn't created by prior or same-task outputs`,
           blocking: true,
         });
       }
@@ -392,13 +507,19 @@ export function checkTaskOrdering(
   const results: PreExecutionCheckJSON[] = [];
 
   // Build map: normalized file → task index that creates it
-  const fileCreators = new Map<string, { taskId: string; index: number; originalPath: string }>();
+  const fileCreators = new Map<string, { taskId: string; index: number; originalPath: string; completed: boolean }>();
   for (let i = 0; i < tasks.length; i++) {
     const task = tasks[i];
     for (const file of task.expected_output) {
       const normalizedFile = normalizeFilePath(file);
-      if (!fileCreators.has(normalizedFile)) {
-        fileCreators.set(normalizedFile, { taskId: task.id, index: i, originalPath: file });
+      const existing = fileCreators.get(normalizedFile);
+      if (!existing || (!existing.completed && task.status === "completed")) {
+        fileCreators.set(normalizedFile, {
+          taskId: task.id,
+          index: i,
+          originalPath: file,
+          completed: task.status === "completed",
+        });
       }
     }
   }
@@ -414,10 +535,19 @@ export function checkTaskOrdering(
       if (!shouldValidateInputAsPath(file)) continue;
 
       const normalizedFile = normalizeFilePath(file);
+      if (containsGlobPattern(normalizedFile)) continue;
+      // A directory reference like `artifacts/M009-S03/` is never a concrete
+      // read-before-create dependency: the fileCreators map is keyed by leaf
+      // files, and a same-task output under the directory satisfies it.
+      if (isDirectoryReference(file)) continue;
       const creator = fileCreators.get(normalizedFile);
       const absolutePath = resolve(basePath, normalizedFile);
       const existsOnDisk = existsSync(absolutePath);
-      if (creator && creator.index > i && !existsOnDisk) {
+      // Skip if the creating task has already completed — its output is available
+      // regardless of disk state (e.g. file was a temp artifact cleaned up after
+      // the task ran, or a replan introduced a new earlier-sequence task that
+      // reads this pre-execution output). (#4071)
+      if (creator && creator.index > i && !existsOnDisk && !creator.completed) {
         // Task reads file that is created later — impossible ordering
         results.push({
           category: "file",

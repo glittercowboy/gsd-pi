@@ -672,7 +672,15 @@ export class TUI extends Container {
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
-			if (clear) buffer += "\x1b[2J\x1b[H"; // Clear screen and home (no scrollback clear — preserves view position)
+			if (clear) {
+				// Clear viewport (scrollback preserved) and anchor the rendered
+				// block to the terminal bottom so the editor / belowEditor
+				// widgets do not jump to row 1 after a chat clear. When the
+				// block is taller than the viewport, Math.max(1, …) falls back
+				// to row 1 — same as the prior `\x1b[H` behavior.
+				const startRow = Math.max(1, height - Math.max(1, newLines.length) + 1);
+				buffer += `\x1b[2J\x1b[${startRow};1H`;
+			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
 				let line = newLines[i];

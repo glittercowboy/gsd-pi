@@ -21,7 +21,8 @@ test("postUnitPreVerification rebuilds STATE.md before worktree sync", () => {
   const fnStart = source.indexOf("export async function postUnitPreVerification");
   assert.ok(fnStart > 0, "postUnitPreVerification should exist");
 
-  const section = source.slice(fnStart, fnStart + 8000);
+  const fnEnd = source.indexOf("export async function postUnitPostVerification", fnStart);
+  const section = source.slice(fnStart, fnEnd > fnStart ? fnEnd : undefined);
   const rebuildIdx = section.indexOf('await runSafely("postUnit", "state-rebuild"');
   const syncIdx = section.indexOf('await runSafely("postUnit", "worktree-sync"');
 

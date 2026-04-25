@@ -13,6 +13,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const src = readFileSync(
   resolve(process.cwd(), 'src', 'resources', 'extensions', 'gsd', 'guided-flow.ts'),
@@ -37,7 +38,7 @@ describe('restore tools after discuss flow scoping (#3628)', () => {
     assert.ok(discussCheck !== -1)
 
     // Look for savedTools assignment within the discuss block
-    const blockAfter = src.slice(discussCheck, discussCheck + 500)
+    const blockAfter = extractSourceRegion(src, 'if (unitType?.startsWith("discuss-"))')
     assert.ok(
       blockAfter.includes('savedTools = currentTools'),
       'savedTools must be assigned from currentTools inside the discuss block',
@@ -45,12 +46,20 @@ describe('restore tools after discuss flow scoping (#3628)', () => {
   })
 
   it('savedTools is restored after sendMessage', () => {
-    // Find the sendMessage call
-    const sendMsg = src.indexOf('triggerTurn: true')
-    assert.ok(sendMsg !== -1, 'sendMessage with triggerTurn must exist')
+    // #4573: guided-flow.ts now contains multiple `triggerTurn: true` calls
+    // (ready-phrase and empty-turn recovery paths). The discuss-flow scoping
+    // sendMessage is the one that follows `savedTools = currentTools`, so
+    // anchor the search there rather than at the first `triggerTurn: true`.
+    const savedToolsAssign = src.indexOf('savedTools = currentTools')
+    assert.ok(savedToolsAssign !== -1, 'savedTools = currentTools must exist')
 
-    // After sendMessage, savedTools should be restored via setActiveTools
-    const afterSend = src.slice(sendMsg, sendMsg + 500)
+    const sendMsg = src.indexOf('triggerTurn: true', savedToolsAssign)
+    assert.ok(sendMsg !== -1, 'discuss-flow sendMessage with triggerTurn must exist after savedTools capture')
+
+    // After sendMessage, savedTools should be restored via setActiveTools.
+    // Use fromIdx to anchor at the discuss-flow sendMessage, not the first
+    // triggerTurn: true occurrence in the file.
+    const afterSend = extractSourceRegion(src, 'triggerTurn: true', { fromIdx: savedToolsAssign })
     assert.ok(
       afterSend.includes('if (savedTools)'),
       'savedTools restoration guard must exist after sendMessage',

@@ -23,7 +23,9 @@ import { checkForUpdates } from './update-check.js'
 import { printHelp, printSubcommandHelp } from './help-text.js'
 import { applySecurityOverrides } from './security-overrides.js'
 import { validateConfiguredModel } from './startup-model-validation.js'
+import { migrateAnthropicDefaultToClaudeCode } from './provider-migrations.js'
 import {
+  buildHeadlessAutoArgs,
   parseCliArgs,
   runWebCliBranch,
   migrateLegacyFlatSessions,
@@ -99,6 +101,18 @@ function printExtensionErrors(errors: ReadonlyArray<{ error: string }>): void {
 }
 
 /**
+ * Print extension load warnings (non-fatal, e.g. missing declared deps from
+ * the topological sort). Complements printExtensionErrors — fatal errors go
+ * there, advisory warnings go here.
+ */
+function printExtensionWarnings(warnings: ReadonlyArray<{ message: string }> | undefined): void {
+  if (!warnings) return
+  for (const w of warnings) {
+    process.stderr.write(`[gsd] Extension warning: ${w.message}\n`)
+  }
+}
+
+/**
  * Re-apply the validated model to the session when `createAgentSession()`
  * reports that it had to use a fallback. Prevents silently overriding the
  * persisted model of resumed conversations (#3534).
@@ -169,6 +183,84 @@ function ensureRtkBootstrap(): Promise<void> {
 if (cliFlags.messages[0] === 'update') {
   const { runUpdate } = await import('./update-cmd.js')
   await runUpdate()
+  process.exit(0)
+}
+
+// ---------------------------------------------------------------------------
+// Graph subcommand — `gsd graph build|status|query|diff`
+// ---------------------------------------------------------------------------
+if (cliFlags.messages[0] === 'graph') {
+  const sub = cliFlags.messages[1]
+  const { buildGraph, writeGraph, graphStatus, graphQuery, graphDiff, resolveGsdRoot } = await import('@gsd-build/mcp-server')
+
+  const projectDir = process.cwd()
+  const gsdRoot = resolveGsdRoot(projectDir)
+
+  if (!sub || sub === 'build') {
+    try {
+      const graph = await buildGraph(projectDir)
+      await writeGraph(gsdRoot, graph)
+      process.stdout.write(`Graph built: ${graph.nodes.length} nodes, ${graph.edges.length} edges\n`)
+    } catch (err) {
+      process.stderr.write(`[gsd] graph build failed: ${err instanceof Error ? err.message : String(err)}\n`)
+      process.exit(1)
+    }
+  } else if (sub === 'status') {
+    try {
+      const result = await graphStatus(projectDir)
+      if (!result.exists) {
+        process.stdout.write('Graph: not built yet. Run: gsd graph build\n')
+      } else {
+        process.stdout.write(`Graph status:\n`)
+        process.stdout.write(`  exists:    ${result.exists}\n`)
+        process.stdout.write(`  nodes:     ${result.nodeCount}\n`)
+        process.stdout.write(`  edges:     ${result.edgeCount}\n`)
+        process.stdout.write(`  stale:     ${result.stale}\n`)
+        process.stdout.write(`  ageHours:  ${result.ageHours !== undefined ? result.ageHours.toFixed(2) : 'n/a'}\n`)
+        process.stdout.write(`  lastBuild: ${result.lastBuild ?? 'n/a'}\n`)
+      }
+    } catch (err) {
+      process.stderr.write(`[gsd] graph status failed: ${err instanceof Error ? err.message : String(err)}\n`)
+      process.exit(1)
+    }
+  } else if (sub === 'query') {
+    const term = cliFlags.messages[2]
+    if (!term) {
+      process.stderr.write('Usage: gsd graph query <term>\n')
+      process.exit(1)
+    }
+    try {
+      const result = await graphQuery(projectDir, term)
+      if (result.nodes.length === 0) {
+        process.stdout.write(`No nodes found for term: "${term}"\n`)
+      } else {
+        process.stdout.write(`Query results for "${term}" (${result.nodes.length} nodes, ${result.edges.length} edges):\n`)
+        for (const node of result.nodes) {
+          process.stdout.write(`  [${node.type}] ${node.label} (${node.confidence})\n`)
+        }
+      }
+    } catch (err) {
+      process.stderr.write(`[gsd] graph query failed: ${err instanceof Error ? err.message : String(err)}\n`)
+      process.exit(1)
+    }
+  } else if (sub === 'diff') {
+    try {
+      const result = await graphDiff(projectDir)
+      process.stdout.write(`Graph diff:\n`)
+      process.stdout.write(`  nodes added:    ${result.nodes.added.length}\n`)
+      process.stdout.write(`  nodes removed:  ${result.nodes.removed.length}\n`)
+      process.stdout.write(`  nodes changed:  ${result.nodes.changed.length}\n`)
+      process.stdout.write(`  edges added:    ${result.edges.added.length}\n`)
+      process.stdout.write(`  edges removed:  ${result.edges.removed.length}\n`)
+    } catch (err) {
+      process.stderr.write(`[gsd] graph diff failed: ${err instanceof Error ? err.message : String(err)}\n`)
+      process.exit(1)
+    }
+  } else {
+    process.stderr.write(`Unknown graph command: ${sub}\n`)
+    process.stderr.write('Commands: build, status, query <term>, diff\n')
+    process.exit(1)
+  }
   process.exit(0)
 }
 
@@ -319,11 +411,19 @@ async function runHeadlessFromAuto(headlessArgs: string[]): Promise<never> {
   process.exit(0)
 }
 
+function flushPendingProviderRegistrations(resourceLoader: DefaultResourceLoader, modelRegistry: ModelRegistry): void {
+  const { runtime } = resourceLoader.getExtensions()
+  for (const { name, config } of runtime.pendingProviderRegistrations) {
+    modelRegistry.registerProvider(name, config)
+  }
+  runtime.pendingProviderRegistrations = []
+}
+
 // `gsd auto [args...]` — shorthand for `gsd headless auto [args...]` (#2732)
 // Without this, `gsd auto` falls through to the interactive TUI which hangs
 // when stdin/stdout are piped (non-TTY environments).
 if (cliFlags.messages[0] === 'auto') {
-  await runHeadlessFromAuto(cliFlags.messages)
+  await runHeadlessFromAuto(buildHeadlessAutoArgs(cliFlags))
 }
 
 // Pi's tool bootstrap can mis-detect already-installed fd/rg on some systems
@@ -473,6 +573,13 @@ if (isPrintMode) {
   })
   await resourceLoader.reload()
   markStartup('resourceLoader.reload')
+  flushPendingProviderRegistrations(resourceLoader, modelRegistry)
+  migrateAnthropicDefaultToClaudeCode({
+    authStorage,
+    isClaudeCodeReady: modelRegistry.isProviderRequestReady('claude-code'),
+    settingsManager,
+    modelRegistry,
+  })
 
   const { session, extensionsResult, modelFallbackMessage } = await createAgentSession({
     authStorage,
@@ -490,6 +597,7 @@ if (isPrintMode) {
   validateConfiguredModel(modelRegistry, settingsManager)
   await reapplyValidatedModelOnFallback(session, modelRegistry, settingsManager, modelFallbackMessage)
   printExtensionErrors(extensionsResult.errors)
+  printExtensionWarnings(extensionsResult.warnings)
 
   // Apply --model override if specified
   if (cliFlags.model) {
@@ -628,6 +736,13 @@ const resourceLoadPromise = resourceLoader.reload()
 // Then await the resource promise before creating the agent session.
 await resourceLoadPromise
 markStartup('resourceLoader.reload')
+flushPendingProviderRegistrations(resourceLoader, modelRegistry)
+migrateAnthropicDefaultToClaudeCode({
+  authStorage,
+  isClaudeCodeReady: modelRegistry.isProviderRequestReady('claude-code'),
+  settingsManager,
+  modelRegistry,
+})
 
 const { session, extensionsResult, modelFallbackMessage: interactiveFallbackMsg } = await createAgentSession({
   authStorage,
@@ -645,6 +760,7 @@ markStartup('createAgentSession')
 validateConfiguredModel(modelRegistry, settingsManager)
 await reapplyValidatedModelOnFallback(session, modelRegistry, settingsManager, interactiveFallbackMsg)
 printExtensionErrors(extensionsResult.errors)
+printExtensionWarnings(extensionsResult.warnings)
 
 // Restore scoped models from settings on startup.
 // The upstream InteractiveMode reads enabledModels from settings when /scoped-models is opened,

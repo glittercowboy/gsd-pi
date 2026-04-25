@@ -255,6 +255,31 @@ test("dispatch guard skips completed milestone with SUMMARY even if it has unche
   );
 });
 
+test("dispatch guard does not skip failed milestone SUMMARY without blocker prose", (t) => {
+  const repo = setupRepo();
+  t.after(() => teardownRepo(repo));
+
+  mkdirSync(join(repo, ".gsd", "milestones", "M001"), { recursive: true });
+  mkdirSync(join(repo, ".gsd", "milestones", "M002"), { recursive: true });
+
+  insertMilestone({ id: "M001", title: "Previous" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Core", status: "complete", depends: [], sequence: 1 });
+  insertSlice({ id: "S02", milestoneId: "M001", title: "Unfinished", status: "pending", depends: ["S01"], sequence: 2 });
+
+  insertMilestone({ id: "M002", title: "Current" });
+  insertSlice({ id: "S01", milestoneId: "M002", title: "Start", status: "pending", depends: [], sequence: 1 });
+
+  writeFileSync(join(repo, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# M001\n");
+  writeFileSync(join(repo, ".gsd", "milestones", "M001", "M001-SUMMARY.md"),
+    "---\nstatus: failed\n---\n# M001 Summary\nRecovery stopped.\n");
+  writeFileSync(join(repo, ".gsd", "milestones", "M002", "M002-ROADMAP.md"), "# M002\n");
+
+  assert.equal(
+    getPriorSliceCompletionBlocker(repo, "main", "plan-slice", "M002/S01"),
+    "Cannot dispatch plan-slice M002/S01: earlier slice M001/S02 is not complete.",
+  );
+});
+
 test("dispatch guard works without git repo", (t) => {
   const repo = setupRepo();
   t.after(() => teardownRepo(repo));

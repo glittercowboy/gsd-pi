@@ -13,6 +13,7 @@ import {
   isValidationTerminal,
   isGhostMilestone,
   invalidateStateCache,
+  getActiveMilestoneId,
 } from "../state.ts";
 import {
   openDatabase,
@@ -666,6 +667,29 @@ describe("state-machine-full-walkthrough", () => {
 
       assert.notEqual(state.phase, "completing-milestone", "should be complete, not completing");
       assert.equal(state.phase, "complete");
+    });
+
+    test("failure-path milestone SUMMARY is not terminal completion", async () => {
+      const base = createFixtureBase();
+      writeRoadmap(base, "M001", doneSliceRoadmap());
+      writeMilestoneValidation(base, "M001", "pass");
+      const dir = join(base, ".gsd", "milestones", "M001");
+      writeFileSync(join(dir, "M001-SUMMARY.md"), [
+        "---",
+        "status: failed",
+        "---",
+        "",
+        "# BLOCKER",
+        "",
+        "auto-mode recovery failed; milestone is not complete.",
+      ].join("\n"));
+      invalidateStateCache();
+
+      const state = await deriveState(base);
+
+      assert.equal(state.phase, "completing-milestone");
+      assert.equal(state.registry[0]?.status, "active");
+      assert.equal(await getActiveMilestoneId(base), "M001");
     });
   });
 

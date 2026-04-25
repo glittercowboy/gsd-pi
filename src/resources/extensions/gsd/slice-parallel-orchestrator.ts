@@ -32,6 +32,7 @@ import {
 } from "./session-status-io.js";
 import { hasFileConflict } from "./slice-parallel-conflict.js";
 import { getErrorMessage } from "./error-utils.js";
+import { selectConflictFreeBatch } from "./uok/execution-graph.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -61,6 +62,7 @@ export interface SliceOrchestratorState {
 export interface StartSliceParallelOpts {
   maxWorkers?: number;
   budgetCeiling?: number;
+  useExecutionGraph?: boolean;
 }
 
 // ─── Module State ──────────────────────────────────────────────────────────
@@ -118,7 +120,12 @@ export async function startSliceParallel(
   const errors: Array<{ sid: string; error: string }> = [];
 
   // Filter out conflicting slices (conservative: check all pairs)
-  const safeSlices = filterConflictingSlices(basePath, milestoneId, eligibleSlices);
+  const safeSlices = filterConflictingSlices(
+    basePath,
+    milestoneId,
+    eligibleSlices,
+    opts.useExecutionGraph === true,
+  );
 
   // Limit to maxWorkers
   const toSpawn = safeSlices.slice(0, maxWorkers);
@@ -245,7 +252,19 @@ function filterConflictingSlices(
   basePath: string,
   milestoneId: string,
   slices: Array<{ id: string }>,
+  useExecutionGraph: boolean,
 ): Array<{ id: string }> {
+  if (useExecutionGraph) {
+    const selectedIds = selectConflictFreeBatch({
+      orderedIds: slices.map((slice) => slice.id),
+      maxParallel: slices.length,
+      hasConflict: (candidate, existing) =>
+        hasFileConflict(basePath, milestoneId, candidate, existing),
+    });
+    const selected = new Set(selectedIds);
+    return slices.filter((slice) => selected.has(slice.id));
+  }
+
   const safe: Array<{ id: string }> = [];
 
   for (const candidate of slices) {

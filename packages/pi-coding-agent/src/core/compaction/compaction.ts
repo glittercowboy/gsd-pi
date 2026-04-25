@@ -16,6 +16,7 @@ import {
 	computeFileLists,
 	createFileOps,
 	createSummarizationMessage,
+	estimateSerializedTokens,
 	extractFileOpsFromMessage,
 	extractTextContent,
 	type FileOperations,
@@ -500,7 +501,13 @@ export function chunkMessages(messages: AgentMessage[], maxTokensPerChunk: numbe
 	let currentTokens = 0;
 
 	for (const msg of messages) {
-		const msgTokens = estimateTokens(msg);
+		// Use POST-truncation token estimate: serializeConversation caps every
+		// large content block to TOOL_RESULT_MAX_CHARS before sending to the LLM,
+		// so chunk sizing must reflect what the LLM will actually see. Using the
+		// pre-truncation `estimateTokens` here was the root cause of issue #4665:
+		// a single 400K-char tool result looked like 100K tokens but serialized
+		// to ~600 tokens, producing tens of tiny information-starved chunks.
+		const msgTokens = estimateSerializedTokens(msg);
 
 		if (currentChunk.length > 0 && currentTokens + msgTokens > maxTokensPerChunk) {
 			// Current chunk is full — start a new one
@@ -518,6 +525,39 @@ export function chunkMessages(messages: AgentMessage[], maxTokensPerChunk: numbe
 	}
 
 	return chunks;
+}
+
+// ============================================================================
+// Degenerate summary detection (issue #4665)
+// ============================================================================
+
+/**
+ * Heuristic: does this summary look like the "empty conversation" degenerate
+ * output that poisons the iterative UPDATE_SUMMARIZATION_PROMPT chain?
+ *
+ * The LLM occasionally returns short empty-sounding summaries when a chunk
+ * contains only truncated tool-call preambles without results. If the chain
+ * propagates this forward, every subsequent chunk is told to "PRESERVE all
+ * existing information" — which preserves the emptiness.
+ *
+ * Conservative match: an explicit substring hit OR length < 100 chars. We keep
+ * this deterministic (no fuzzy scoring) because fuzzy matching is where
+ * quality gates become flaky and hard to test.
+ *
+ * Exported for test access only.
+ */
+export function isDegenerateSummary(summary: string | undefined): boolean {
+	// undefined means "no summary was produced yet" (first chunk before any call)
+	// — not degenerate. Empty string IS degenerate: the LLM returned nothing.
+	if (summary === undefined) return false;
+	const lower = summary.toLowerCase();
+	if (lower.includes("empty conversation")) return true;
+	if (lower.includes("no conversation to summarize")) return true;
+	if (lower.includes("no messages to summarize")) return true;
+	// Length guard: any summary shorter than 100 chars is almost certainly
+	// degenerate for a multi-chunk pipeline.
+	if (summary.trim().length < 100) return true;
+	return false;
 }
 
 /** Type for the completion function, allowing injection for tests. */
@@ -545,10 +585,12 @@ export async function generateSummary(
 ): Promise<string> {
 	const complete = _completeFn ?? completeSimple;
 
-	// Estimate total tokens for the messages to summarize
+	// Estimate total tokens using the POST-truncation serializer view (issue #4665).
+	// serializeConversation caps large content blocks to TOOL_RESULT_MAX_CHARS
+	// before sending, so asking "does this fit in one pass?" must reflect that.
 	let totalTokens = 0;
 	for (const msg of currentMessages) {
-		totalTokens += estimateTokens(msg);
+		totalTokens += estimateSerializedTokens(msg);
 	}
 
 	// Overhead for the prompt framing, system prompt, and response budget
@@ -561,12 +603,12 @@ export async function generateSummary(
 		return singlePassSummary(currentMessages, model, reserveTokens, apiKey, signal, customInstructions, previousSummary, complete);
 	}
 
-	// Chunked fallback: split messages and iteratively summarize
+	// Chunked fallback: split messages and iteratively summarize.
 	const chunks = chunkMessages(currentMessages, maxInputTokens);
 	let runningSummary = previousSummary;
 
 	for (let i = 0; i < chunks.length; i++) {
-		runningSummary = await singlePassSummary(
+		const chunkSummary = await singlePassSummary(
 			chunks[i],
 			model,
 			reserveTokens,
@@ -576,9 +618,83 @@ export async function generateSummary(
 			runningSummary,
 			complete,
 		);
+
+		// Degenerate-summary guard (issue #4665). UPDATE_SUMMARIZATION_PROMPT says
+		// "PRESERVE all existing information" — so if a chunk summary is empty or
+		// near-empty, propagating it forward actively reinforces the emptiness
+		// for every subsequent chunk.
+		//
+		// Strategy per chunk:
+		//   1. If degenerate, retry once. For the FIRST chunk with no prior
+		//      context, retry with the initial prompt (undefined previousSummary)
+		//      to break the poison chain at its source. For later chunks, retry
+		//      with the same prompt state (runningSummary preserved) since the
+		//      first failure may have been transient.
+		//   2. If the retry is also degenerate, warn and continue WITHOUT
+		//      updating runningSummary — losing that chunk's content is still
+		//      preferable to propagating emptiness forward, but the drop is now
+		//      observable in logs.
+		if (isDegenerateSummary(chunkSummary)) {
+			const retryPreviousSummary = i === 0 && runningSummary === undefined
+				? undefined
+				: runningSummary;
+			const retry = await singlePassSummary(
+				chunks[i],
+				model,
+				reserveTokens,
+				apiKey,
+				signal,
+				customInstructions,
+				retryPreviousSummary,
+				complete,
+			);
+			if (!isDegenerateSummary(retry)) {
+				runningSummary = retry;
+				continue;
+			}
+			// Both attempts degenerate — log and skip without poisoning the chain.
+			// Using process.stderr directly so this doesn't require the logger
+			// dependency graph. Visible to operators reviewing compaction health.
+			process.stderr.write(
+				`[compaction] WARN: chunk ${i + 1}/${chunks.length} produced a degenerate summary on both attempts; dropping chunk content from summary.\n`,
+			);
+			continue;
+		}
+
+		runningSummary = chunkSummary;
 	}
 
-	return runningSummary!;
+	// R6 (issue #4665 follow-up): if every chunk was degenerate and we have no
+	// runningSummary, do NOT silently return "" — the caller would write an
+	// empty compaction entry, destroying all context with no signal. Fall back
+	// to the original previousSummary if available; otherwise throw a named
+	// error so the compaction pipeline can skip appending the entry.
+	if (runningSummary === undefined) {
+		if (previousSummary !== undefined) {
+			process.stderr.write(
+				"[compaction] WARN: every chunk produced a degenerate summary; falling back to existing previousSummary.\n",
+			);
+			return previousSummary;
+		}
+		throw new CompactionProducedNoSummaryError(
+			`Compaction produced no usable summary: all ${chunks.length} chunk(s) were degenerate and no previousSummary was available.`,
+		);
+	}
+
+	return runningSummary;
+}
+
+/**
+ * Thrown when `generateSummary` could not produce any non-degenerate summary
+ * from the provided messages AND no previous summary was available to fall
+ * back to. Callers should catch this and skip writing a compaction entry
+ * rather than writing an empty string to the session history (issue #4665).
+ */
+export class CompactionProducedNoSummaryError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "CompactionProducedNoSummaryError";
+	}
 }
 
 /**

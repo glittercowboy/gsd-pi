@@ -9,7 +9,7 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import type { AutoSession } from "./session.js";
 import type { GSDPreferences } from "../preferences.js";
 import type { GSDState } from "../types.js";
-import type { CmuxLogLevel } from "../../cmux/index.js";
+import type { CmuxLogLevel } from "../../shared/cmux-events.js";
 import type { LoopDeps } from "./loop-deps.js";
 
 /**

@@ -25,6 +25,8 @@ export interface SafetyHarnessConfig {
   checkpoints: boolean;
   auto_rollback: boolean;
   timeout_scale_cap: number;
+  /** Glob patterns for files excluded from unexpected-change warnings (#4385). */
+  file_change_allowlist: string[];
 }
 
 // ─── Defaults ───────────────────────────────────────────────────────────────
@@ -39,6 +41,7 @@ const DEFAULTS: SafetyHarnessConfig = {
   checkpoints: true,
   auto_rollback: false,
   timeout_scale_cap: 6,
+  file_change_allowlist: [],
 };
 
 // ─── Public API ─────────────────────────────────────────────────────────────
@@ -62,6 +65,9 @@ export function resolveSafetyHarnessConfig(
     checkpoints: typeof raw.checkpoints === "boolean" ? raw.checkpoints : DEFAULTS.checkpoints,
     auto_rollback: typeof raw.auto_rollback === "boolean" ? raw.auto_rollback : DEFAULTS.auto_rollback,
     timeout_scale_cap: typeof raw.timeout_scale_cap === "number" ? raw.timeout_scale_cap : DEFAULTS.timeout_scale_cap,
+    file_change_allowlist: Array.isArray(raw.file_change_allowlist)
+      ? (raw.file_change_allowlist as unknown[]).filter((p): p is string => typeof p === "string")
+      : DEFAULTS.file_change_allowlist,
   };
 }
 
@@ -86,6 +92,9 @@ export {
   getFilePaths,
   recordToolCall,
   recordToolResult,
+  saveEvidenceToDisk,
+  loadEvidenceFromDisk,
+  clearEvidenceFromDisk,
 } from "./evidence-collector.js";
 
 export type { EvidenceEntry, BashEvidence, FileWriteEvidence, FileEditEvidence } from "./evidence-collector.js";

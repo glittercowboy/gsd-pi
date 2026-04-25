@@ -227,6 +227,18 @@ export async function nextDecisionId(): Promise<string> {
   }
 }
 
+/** Synchronous variant for use inside db.transaction(). */
+function nextDecisionIdSync(adapter: ReturnType<typeof import('./gsd-db.js')._getAdapter>): string {
+  if (!adapter) return 'D001';
+  const row = adapter
+    .prepare('SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) as max_num FROM decisions')
+    .get();
+  const maxNum = row ? (row['max_num'] as number | null) : null;
+  if (maxNum == null || isNaN(maxNum)) return 'D001';
+  const next = maxNum + 1;
+  return `D${String(next).padStart(3, '0')}`;
+}
+
 // ─── Next Requirement ID ─────────────────────────────────────────────────
 
 /**
@@ -346,8 +358,7 @@ export async function saveRequirementToDb(
     } catch (diskErr) {
       logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveRequirementToDb', error: String((diskErr as Error).message) });
       try {
-        const rollbackAdapter = db._getAdapter();
-        rollbackAdapter?.prepare('DELETE FROM requirements WHERE id = :id').run({ ':id': id });
+        db.deleteRequirementById(id);
       } catch (rollbackErr) {
         logError('manifest', 'SPLIT BRAIN: disk write failed AND DB rollback failed — DB has orphaned row', { fn: 'saveRequirementToDb', id, error: String((rollbackErr as Error).message) });
       }
@@ -364,6 +375,18 @@ export async function saveRequirementToDb(
   }
 }
 
+// ─── Async Mutex for Decision Saves ───────────────────────────────────────
+//
+// Serializes the entire saveDecisionToDb operation (ID generation + DB upsert
+// + file read + markdown regeneration + file write) so that parallel callers
+// cannot interleave and produce a last-writer-wins race on DECISIONS.md.
+let _decisionSaveLock: Promise<unknown> = Promise.resolve();
+
+/** Reset the mutex — only for tests. */
+export function _resetDecisionSaveLock(): void {
+  _decisionSaveLock = Promise.resolve();
+}
+
 // ─── Save Decision to DB + Regenerate Markdown ────────────────────────────
 
 export interface SaveDecisionFields {
@@ -374,15 +397,18 @@ export interface SaveDecisionFields {
   revisable?: string;
   when_context?: string;
   made_by?: import('./types.js').DecisionMadeBy;
+  /** ADR-011 Phase 2: origin of the decision — "discussion" (default), "planning", "escalation". */
+  source?: string;
 }
 
 /**
  * Save a new decision to DB and regenerate DECISIONS.md.
  * Auto-assigns the next ID via nextDecisionId().
  *
- * The ID computation (SELECT MAX) and insert are wrapped in a single
- * transaction to prevent parallel tool calls from computing the same ID
- * and silently overwriting each other (#3326, #3339, #3459).
+ * Concurrency: uses an async mutex (promise chain) to serialize the entire
+ * operation — ID generation, DB upsert, file read, markdown regeneration,
+ * and file write — preventing parallel callers from overwriting each other's
+ * output (last-writer-wins race condition).
  *
  * Returns the assigned ID.
  */
@@ -390,23 +416,25 @@ export async function saveDecisionToDb(
   fields: SaveDecisionFields,
   basePath: string,
 ): Promise<{ id: string }> {
+  // Serialize via async mutex: each call waits for the previous one to
+  // complete before starting, preventing interleaved DB + file writes.
+  let release: () => void;
+  const prev = _decisionSaveLock;
+  _decisionSaveLock = new Promise<void>(r => { release = r; });
+
+  try {
+    await prev;
+  } catch {
+    // Previous call failed — proceed regardless; the lock chain must continue.
+  }
+
   try {
     const db = await import('./gsd-db.js');
 
-    // Atomic ID assignment + insert inside a transaction to prevent
-    // parallel calls from racing on the same MAX(id) value.
+    const adapter = db._getAdapter();
+
     const id = db.transaction(() => {
-      const adapter = db._getAdapter();
-      if (!adapter) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
-
-      const row = adapter
-        .prepare('SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) as max_num FROM decisions')
-        .get();
-      const maxNum = row ? (row['max_num'] as number | null) : null;
-      const nextId = (maxNum == null || isNaN(maxNum))
-        ? 'D001'
-        : `D${String(maxNum + 1).padStart(3, '0')}`;
-
+      const nextId = nextDecisionIdSync(adapter);
       db.upsertDecision({
         id: nextId,
         when_context: fields.when_context ?? '',
@@ -416,14 +444,15 @@ export async function saveDecisionToDb(
         rationale: fields.rationale,
         revisable: fields.revisable ?? 'Yes',
         made_by: fields.made_by ?? 'agent',
+        source: fields.source ?? 'discussion',
         superseded_by: null,
       });
+
 
       return nextId;
     });
 
     // Fetch all decisions (including superseded for the full register)
-    const adapter = db._getAdapter();
     let allDecisions: Decision[] = [];
     if (adapter) {
       const rows = adapter.prepare('SELECT * FROM decisions ORDER BY seq').all();
@@ -471,7 +500,7 @@ export async function saveDecisionToDb(
     } catch (diskErr) {
       logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveDecisionToDb', error: String((diskErr as Error).message) });
       try {
-        adapter?.prepare('DELETE FROM decisions WHERE id = :id').run({ ':id': id });
+        db.deleteDecisionById(id);
       } catch (rollbackErr) {
         logError('manifest', 'SPLIT BRAIN: disk write failed AND DB rollback failed — DB has orphaned row', { fn: 'saveDecisionToDb', id, error: String((rollbackErr as Error).message) });
       }
@@ -500,10 +529,54 @@ export async function saveDecisionToDb(
     clearPathCache();
     clearParseCache();
 
+    // ADR-013 dual-write: keep the memory store in sync with every decision
+    // persisted via the legacy gsd_save_decision path. Without this, prompts
+    // that still call gsd_save_decision (discuss.md, plan-milestone.md,
+    // guided-plan-slice.md, et al. during the deprecation window) would
+    // create decisions rows invisible to memory_query and loadMemoryBlock.
+    // Best-effort — never throw, never roll back the decision on failure.
+    try {
+      const { createMemory } = await import('./memory-store.js');
+      const decisionText = (fields.decision ?? '').trim();
+      const choiceText = (fields.choice ?? '').trim();
+      const rationaleText = (fields.rationale ?? '').trim();
+      const contentParts: string[] = [];
+      if (decisionText) contentParts.push(decisionText);
+      if (choiceText) contentParts.push(`Chose: ${choiceText}.`);
+      if (rationaleText) contentParts.push(`Rationale: ${rationaleText}.`);
+      const content = contentParts.join(' ').slice(0, 600);
+      if (content) {
+        createMemory({
+          category: 'architecture',
+          content,
+          scope: fields.scope || 'project',
+          confidence: 0.85,
+          structuredFields: {
+            sourceDecisionId: id,
+            when_context: fields.when_context ?? '',
+            scope: fields.scope,
+            decision: fields.decision,
+            choice: fields.choice,
+            rationale: fields.rationale,
+            made_by: fields.made_by ?? 'agent',
+            revisable: fields.revisable ?? '',
+          },
+        });
+      }
+    } catch (mirrorErr) {
+      logError('manifest', 'memory-store mirror write failed (non-fatal)', {
+        fn: 'saveDecisionToDb',
+        decisionId: id,
+        error: String((mirrorErr as Error).message),
+      });
+    }
+
     return { id };
   } catch (err) {
     logError('manifest', 'saveDecisionToDb failed', { fn: 'saveDecisionToDb', error: String((err as Error).message) });
     throw err;
+  } finally {
+    release!();
   }
 }
 
@@ -714,8 +787,7 @@ export async function saveArtifactToDb(
         await saveFile(fullPath, opts.content);
       } catch (diskErr) {
         logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveArtifactToDb', error: String((diskErr as Error).message) });
-        const rollbackAdapter = db._getAdapter();
-        rollbackAdapter?.prepare('DELETE FROM artifacts WHERE path = :path').run({ ':path': opts.path });
+        db.deleteArtifactByPath(opts.path);
         throw diskErr;
       }
     }

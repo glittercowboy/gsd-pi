@@ -621,6 +621,19 @@ export class AgentSession {
 			await this._extensionRunner.emit({ type: "agent_start" });
 		} else if (event.type === "agent_end") {
 			await this._extensionRunner.emit({ type: "agent_end", messages: event.messages });
+			// `stop` fires on true quiescence: the agent cleanly completed and is now
+			// waiting for the user. Use the last assistant message's stopReason to
+			// distinguish clean completion from error/cancellation.
+			const last = event.messages[event.messages.length - 1];
+			const stopReason: "completed" | "cancelled" | "error" | "blocked" =
+				last?.role === "assistant"
+					? last.stopReason === "aborted"
+						? "cancelled"
+						: last.stopReason === "error"
+							? "error"
+							: "completed"
+					: "completed";
+			await this._extensionRunner.emitStop({ reason: stopReason, lastMessage: last });
 		} else if (event.type === "turn_start") {
 			const extensionEvent: TurnStartEvent = {
 				type: "turn_start",
@@ -1523,12 +1536,24 @@ export class AgentSession {
 		await this.agent.waitForIdle();
 		// Ensure agent_end is emitted even when abort interrupts a tool call (#1414).
 		// The agent may go idle without emitting agent_end if the abort happens
-		// between tool execution and response processing.
+		// between tool execution and response processing. Also fire Stop so
+		// Layer 0 hooks see a consistent view of session quiescence.
 		if (!this.isStreaming && this._extensionRunner) {
+			const messages = this.agent.state.messages;
 			await this._extensionRunner.emit({
 				type: "agent_end",
-				messages: this.agent.state.messages,
+				messages,
 			});
+			const last = messages[messages.length - 1];
+			const stopReason: "completed" | "cancelled" | "error" | "blocked" =
+				last?.role === "assistant"
+					? last.stopReason === "aborted"
+						? "cancelled"
+						: last.stopReason === "error"
+							? "error"
+							: "completed"
+					: "cancelled";
+			await this._extensionRunner.emitStop({ reason: stopReason, lastMessage: last });
 		}
 	}
 
@@ -1543,6 +1568,8 @@ export class AgentSession {
 	async newSession(options?: {
 		parentSession?: string;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
+		/** See ExtensionCommandContext.newSession for docs (#3731). */
+		abortSignal?: AbortSignal;
 	}): Promise<boolean> {
 		const previousSessionFile = this.sessionFile;
 
@@ -1558,9 +1585,21 @@ export class AgentSession {
 			}
 		}
 
-		this._disconnectFromAgent();
-		await this.abort();
-		this.agent.reset();
+	// #4243: Must call abort() BEFORE _disconnectFromAgent() so that
+	// message_end/agent_end events fire and the #4216 finalization code
+	// can run before we unsubscribe from the event bus.
+	await this.abort();
+
+		// #3731: If the caller aborted (e.g. runUnit() timed out and restored cwd to
+		// project root), discard this session before capturing process.cwd() and
+		// rebuilding the tool runtime. Without this check, the late newSession()
+		// would rebuild tools with root cwd, breaking worktree isolation.
+		if (options?.abortSignal?.aborted) {
+			return false;
+		}
+
+	this._disconnectFromAgent();
+	this.agent.reset();
 		// Update cwd to current process directory — auto-mode may have chdir'd
 		// into a worktree since the original session was created.
 		const previousCwd = this._cwd;
@@ -2411,9 +2450,12 @@ export class AgentSession {
 			}
 		}
 
-		this._disconnectFromAgent();
-		await this.abort();
-		this._steeringMessages = [];
+	// #4243: Must call abort() BEFORE _disconnectFromAgent() so that
+	// message_end/agent_end events fire and the #4216 finalization code
+	// can run before we unsubscribe from the event bus.
+	await this.abort();
+	this._disconnectFromAgent();
+	this._steeringMessages = [];
 		this._followUpMessages = [];
 		this._pendingNextTurnMessages = [];
 

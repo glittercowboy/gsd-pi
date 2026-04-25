@@ -58,8 +58,24 @@ export type {
 	AppAction,
 	BashToolCallEvent,
 	BeforeAgentStartEvent,
+	BeforeCommitEvent,
+	BeforeCommitEventResult,
+	BeforePrEvent,
+	BeforePrEventResult,
+	BeforePushEvent,
+	BeforePushEventResult,
+	BeforeVerifyEvent,
+	BeforeVerifyEventResult,
+	BudgetThresholdEvent,
+	BudgetThresholdEventResult,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
+	CommitEvent,
+	NotificationEvent,
+	PrOpenedEvent,
+	PushEvent,
+	VerifyFailure,
+	VerifyResultEvent,
 	CompactOptions,
 	ContextEvent,
 	ContextUsage,
@@ -172,6 +188,7 @@ export type { PackageCommand, PackageCommandOptions, PackageCommandRunnerOptions
 export { getPackageCommandUsage, parsePackageCommand, runPackageCommand } from "./core/package-commands.js";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
 export { DefaultResourceLoader } from "./core/resource-loader.js";
+export { RETRYABLE_ERROR_RE } from "./core/retryable-error-regex.js";
 // SDK for programmatic usage
 export {
 	type CreateAgentSessionOptions,

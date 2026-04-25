@@ -152,8 +152,12 @@
 |------|-----------------|-------------|
 | index.ts | AI Providers | Main export hub for providers and streaming |
 | api-registry.ts | AI Providers | Registry for managing multiple AI provider implementations |
-| models.ts | AI Providers | Model definitions and metadata |
-| models.generated.ts | AI Providers | Auto-generated model list from provider registries |
+| models.ts | AI Providers | Backward-compatible shim re-exporting the split model registry |
+| models/index.ts | AI Providers | Primary model registry composition and lookup helpers |
+| models/custom.ts | AI Providers | Manually curated providers not covered by models.dev |
+| models/capability-patches.ts | AI Providers | Capability patch rules for generated/custom models |
+| models/generated/index.ts | AI Providers | Auto-generated provider catalog aggregator |
+| models/generated/*.ts | AI Providers | Auto-generated model lists split by provider |
 | stream.ts | AI Providers | Main streaming interface dispatching to registered providers |
 | types.ts | AI Providers | Core types for models, APIs, streaming options |
 | env-api-keys.ts | AI Providers, Auth/OAuth | Environment variable API key resolution |

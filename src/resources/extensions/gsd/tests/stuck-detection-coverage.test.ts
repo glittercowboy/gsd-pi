@@ -79,6 +79,21 @@ test("Rule 2: interrupted sequence does not trigger", () => {
   );
 });
 
+test("Rule 2b: same unit repeated 3 times in the window triggers stuck even with an intervening unit", () => {
+  const result = detectStuck([
+    { key: "execute-task/M002/S03/T01" },
+    { key: "execute-task/M002/S03/T01" },
+    { key: "reassess-roadmap/M002/S02" },
+    { key: "execute-task/M002/S03/T01" },
+  ]);
+  assert.notEqual(result, null);
+  assert.equal(result!.stuck, true);
+  assert.ok(
+    result!.reason.includes("3 times in last 4 attempts"),
+    `reason was: ${result!.reason}`,
+  );
+});
+
 // ─── Rule 3: Oscillation A→B→A→B ─────────────────────────────────────────────
 
 test("Rule 3: A-B-A-B oscillation triggers stuck", () => {
@@ -127,9 +142,9 @@ test("Rule 3: A-A-A-A triggers Rule 2 not Rule 3", () => {
 
 test("Rule 4: same ENOENT path in two entries triggers stuck", () => {
   const result = detectStuck([
-    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.gsd/agent/skills/debug-like-expert/SKILL.md'" },
+    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.agents/skills/debug-like-expert/SKILL.md'" },
     { key: "B" },
-    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.gsd/agent/skills/debug-like-expert/SKILL.md'" },
+    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.agents/skills/debug-like-expert/SKILL.md'" },
   ]);
   assert.notEqual(result, null);
   assert.equal(result!.stuck, true);

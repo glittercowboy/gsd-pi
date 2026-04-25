@@ -6,11 +6,41 @@
  * Falls back to simple text on narrow terminals (<70 cols) or non-TTY.
  */
 
-import { execFileSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import os from 'node:os'
 import chalk from 'chalk'
 import stripAnsi from 'strip-ansi'
 import { GSD_LOGO } from './logo.js'
+
+interface GsdState {
+  milestone?: string
+  phase?: string
+  slice?: string
+  nextAction?: string
+}
+
+function readGsdState(): GsdState | undefined {
+  try {
+    const raw = readFileSync(join(process.cwd(), '.gsd', 'STATE.md'), 'utf-8')
+    const state: GsdState = {}
+    const milestone = raw.match(/^\*\*Active Milestone:\*\*\s*(.+)$/m)
+    if (milestone) state.milestone = milestone[1].trim()
+    const slice = raw.match(/^\*\*Active Slice:\*\*\s*(.+)$/m)
+    if (slice) state.slice = slice[1].trim()
+    const phase = raw.match(/^\*\*Phase:\*\*\s*(.+)$/m)
+    if (phase) state.phase = phase[1].trim()
+    // Accept both template shapes: inline "**Next Action:** ..." and the
+    // "## Next Action\n<line>" heading format. Prefer the inline match.
+    const nextInline = raw.match(/^\*\*Next Action:\*\*\s*(.+)$/m)
+    const nextHeading = raw.match(/^##\s*Next Action\s*\n+([^\n]+)/m)
+    const nextMatch = nextInline ?? nextHeading
+    if (nextMatch) state.nextAction = nextMatch[1].trim()
+    return state
+  } catch {
+    return undefined
+  }
+}
 
 export interface WelcomeScreenOptions {
   version: string
@@ -35,25 +65,11 @@ function rpad(s: string, w: number): string {
   return s + ' '.repeat(Math.max(0, w - visLen(s)))
 }
 
-/** Read the current git branch name. Returns undefined on failure. */
-function getGitBranch(): string | undefined {
-  try {
-    return execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
-      encoding: 'utf-8',
-      timeout: 2000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim() || undefined
-  } catch {
-    return undefined
-  }
-}
-
 export function printWelcomeScreen(opts: WelcomeScreenOptions): void {
   if (!process.stderr.isTTY) return
 
-  const { version, modelName, provider, remoteChannel } = opts
+  const { version, remoteChannel } = opts
   const shortCwd = getShortCwd()
-  const branch = getGitBranch()
   const termWidth = (process.stderr.columns || 80) - 1
 
   // Narrow terminal fallback
@@ -94,15 +110,28 @@ export function printWelcomeScreen(opts: WelcomeScreenOptions): void {
   const footerFill = RIGHT_INNER - visLen(toolsLeft) - visLen(hintRight)
   const footerRow  = toolsLeft + ' '.repeat(Math.max(1, footerFill)) + hintRight
 
-  // Combined session line: "provider / model" or just model or just provider
-  const sessionParts = [provider, modelName].filter(Boolean)
-  const sessionLine = sessionParts.length > 0
-    ? `  Session    ${chalk.dim(sessionParts.join(' / '))}`
-    : ''
-
-  // Combined project line: "~/path [branch]"
-  const branchSuffix = branch ? ` [${branch}]` : ''
-  const projectLine = `  Project    ${chalk.dim(shortCwd + branchSuffix)}`
+  // "Welcome back" context lines — GSD state if available, else hint.
+  // Intentionally avoids data already shown in the footer (model, provider,
+  // pwd, branch).
+  const state = readGsdState()
+  let line1 = ''
+  let line2 = ''
+  if (state?.milestone) {
+    const statusParts = [state.milestone, state.phase, state.slice].filter(Boolean)
+    const activePrefix = '  Active     '
+    const maxActiveLen = RIGHT_INNER - activePrefix.length - 1
+    let activeText = statusParts.join(' · ')
+    if (activeText.length > maxActiveLen) activeText = activeText.slice(0, maxActiveLen - 1) + '…'
+    line1 = `${activePrefix}${chalk.dim(activeText)}`
+    line2 = state.nextAction
+      ? `  Next       ${chalk.dim(state.nextAction)}`
+      : ''
+  } else {
+    line1 = `  Status     ${chalk.dim('No active GSD project')}`
+    line2 = `             ${chalk.dim('/gsd to begin')}`
+  }
+  const sessionLine = line1
+  const projectLine = line2
 
   const DIVIDER = null
   const rightRows: (string | null)[] = [

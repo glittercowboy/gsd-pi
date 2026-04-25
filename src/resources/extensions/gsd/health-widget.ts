@@ -108,6 +108,7 @@ export function initHealthWidget(ctx: ExtensionContext): void {
     let data = initialData;
     let cachedLines: string[] | undefined;
     let refreshInFlight = false;
+    let isDisposed = false;
 
     const refresh = async () => {
       if (refreshInFlight) return;
@@ -115,7 +116,7 @@ export function initHealthWidget(ctx: ExtensionContext): void {
       try {
         data = loadHealthWidgetData(basePath);
         cachedLines = undefined;
-        _tui.requestRender();
+        if (!isDisposed) _tui.requestRender();
       } catch { /* non-fatal */ } finally {
         refreshInFlight = false;
       }
@@ -129,13 +130,18 @@ export function initHealthWidget(ctx: ExtensionContext): void {
       void refresh();
     }, REFRESH_INTERVAL_MS);
 
+    let cachedWidth: number | undefined;
     return {
-      render(_width: number): string[] {
-        if (!cachedLines) cachedLines = buildHealthLines(data);
+      render(width: number): string[] {
+        if (!cachedLines || cachedWidth !== width) {
+          cachedLines = buildHealthLines(data, width);
+          cachedWidth = width;
+        }
         return cachedLines;
       },
-      invalidate(): void { cachedLines = undefined; },
+      invalidate(): void { cachedLines = undefined; cachedWidth = undefined; },
       dispose(): void {
+        isDisposed = true;
         clearInterval(refreshTimer);
       },
     };

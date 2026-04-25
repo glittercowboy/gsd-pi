@@ -69,7 +69,14 @@ test("Markdown trims trailing empty lines", () => {
 	const text = "Some text\n\n";
 	const md = new Markdown(text, 0, 0, noopTheme());
 	const lines = md.render(80);
-	// Last line should not be empty (trailing empties are trimmed)
+	// Previous assertion was `lastLine.trim().length > 0 || lines.length === 1`
+	// — the `|| lines.length === 1` disjunction trivially passed for any
+	// single-line render, so a regression that returned `['']` still
+	// passed (#4796). Assert the trim invariant directly.
+	assert.ok(lines.length > 0, "render must produce at least one line");
 	const lastLine = lines[lines.length - 1];
-	assert.ok(lastLine.trim().length > 0 || lines.length === 1, "trailing empty lines should be trimmed");
+	assert.ok(
+		lastLine.trim().length > 0,
+		`last line must have visible content after trim, got: ${JSON.stringify(lastLine)}`,
+	);
 });

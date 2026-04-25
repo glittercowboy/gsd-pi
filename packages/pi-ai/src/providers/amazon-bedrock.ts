@@ -45,6 +45,7 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.js";
 import { transformMessagesWithReport } from "./transform-messages.js";
 
+/** Stream options specific to the Amazon Bedrock converse-stream provider, including region, reasoning, and caching knobs. */
 export interface BedrockOptions extends StreamOptions {
 	region?: string;
 	profile?: string;
@@ -57,8 +58,10 @@ export interface BedrockOptions extends StreamOptions {
 	interleavedThinking?: boolean;
 }
 
+/** Internal working type that annotates content blocks with a streaming index and partial JSON accumulator. */
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
 
+/** Stream a conversation turn via Amazon Bedrock's converse-stream API. */
 export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOptions> = (
 	model: Model<"bedrock-converse-stream">,
 	context: Context,
@@ -216,6 +219,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 	return stream;
 };
 
+/** Simplified entry point for Bedrock streaming; resolves thinking budgets and adaptive-thinking support. */
 export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", SimpleStreamOptions> = (
 	model: Model<"bedrock-converse-stream">,
 	context: Context,
@@ -260,6 +264,7 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
 	} satisfies BedrockOptions);
 };
 
+/** Handle a `contentBlockStart` event, initialising a new tool-call block when a tool-use start arrives. */
 function handleContentBlockStart(
 	event: ContentBlockStartEvent,
 	blocks: Block[],
@@ -283,6 +288,7 @@ function handleContentBlockStart(
 	}
 }
 
+/** Handle a `contentBlockDelta` event, appending text, tool-input JSON, or reasoning content to the active block. */
 function handleContentBlockDelta(
 	event: ContentBlockDeltaEvent,
 	blocks: Block[],
@@ -341,6 +347,7 @@ function handleContentBlockDelta(
 	}
 }
 
+/** Handle a `metadata` event, updating token-usage counters and cost on the output message. */
 function handleMetadata(
 	event: ConverseStreamMetadataEvent,
 	model: Model<"bedrock-converse-stream">,
@@ -356,6 +363,7 @@ function handleMetadata(
 	}
 }
 
+/** Handle a `contentBlockStop` event, finalising the block and pushing the appropriate completion event. */
 function handleContentBlockStop(
 	event: ContentBlockStopEvent,
 	blocks: Block[],
@@ -383,21 +391,33 @@ function handleContentBlockStop(
 }
 
 /**
- * Check if the model supports adaptive thinking (Opus 4.6 and Sonnet 4.6).
+ * Check if the model supports adaptive thinking (Opus 4.6/4.7, Sonnet 4.6/4.7, Haiku 4.5).
+ * @internal exported for testing only
  */
-function supportsAdaptiveThinking(modelId: string): boolean {
+export function supportsAdaptiveThinking(modelId: string): boolean {
 	return (
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
+		modelId.includes("opus-4-7") ||
+		modelId.includes("opus-4.7") ||
 		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
+		modelId.includes("sonnet-4.6") ||
+		modelId.includes("sonnet-4-7") ||
+		modelId.includes("sonnet-4.7") ||
+		modelId.includes("haiku-4-5") ||
+		modelId.includes("haiku-4.5")
 	);
 }
 
-function mapThinkingLevelToEffort(
+/**
+ * Maps a reasoning/thinking level to the Bedrock effort string for the given model.
+ * Returns `"xhigh"` for 4.7+ models and `"max"` for older ones; `"low"` for minimal/low.
+ * @internal exported for testing only
+ */
+export function mapThinkingLevelToEffort(
 	level: SimpleStreamOptions["reasoning"],
 	modelId: string,
-): "low" | "medium" | "high" | "max" {
+): "low" | "medium" | "high" | "xhigh" | "max" {
 	switch (level) {
 		case "minimal":
 		case "low":
@@ -407,7 +427,9 @@ function mapThinkingLevelToEffort(
 		case "high":
 			return "high";
 		case "xhigh":
-			return modelId.includes("opus-4-6") || modelId.includes("opus-4.6") ? "max" : "high";
+			if (modelId.includes("opus-4-7") || modelId.includes("opus-4.7")) return "xhigh";
+			if (modelId.includes("opus-4-6") || modelId.includes("opus-4.6")) return "max";
+			return "high";
 		default:
 			return "high";
 	}
@@ -457,6 +479,7 @@ function supportsThinkingSignature(model: Model<"bedrock-converse-stream">): boo
 	return id.includes("anthropic.claude") || id.includes("anthropic/claude");
 }
 
+/** Build the Bedrock system-prompt block array, appending a cache point for supported models when caching is enabled. */
 function buildSystemPrompt(
 	systemPrompt: string | undefined,
 	model: Model<"bedrock-converse-stream">,
@@ -476,11 +499,13 @@ function buildSystemPrompt(
 	return blocks;
 }
 
+/** Sanitise a tool-call ID to alphanumeric, underscore, and hyphen characters (max 64 chars) for Bedrock compatibility. */
 function normalizeToolCallId(id: string): string {
 	const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, "_");
 	return sanitized.length > 64 ? sanitized.slice(0, 64) : sanitized;
 }
 
+/** Convert GSD context messages to the Bedrock `Message[]` format, collapsing consecutive tool-result turns into a single user message. */
 function convertMessages(
 	context: Context,
 	model: Model<"bedrock-converse-stream">,
@@ -630,6 +655,7 @@ function convertMessages(
 	return result;
 }
 
+/** Convert GSD tool definitions and tool-choice preference to a Bedrock `ToolConfiguration`, appending a cache point for supported models. */
 function convertToolConfig(
 	tools: Tool[] | undefined,
 	toolChoice: BedrockOptions["toolChoice"],
@@ -673,6 +699,7 @@ function convertToolConfig(
 	return { tools: bedrockTools, toolChoice: bedrockToolChoice };
 }
 
+/** Map a Bedrock stop-reason string to GSD's internal `StopReason`. */
 function mapStopReason(reason: string | undefined): StopReason {
 	switch (reason) {
 		case BedrockStopReason.END_TURN:
@@ -688,7 +715,13 @@ function mapStopReason(reason: string | undefined): StopReason {
 	}
 }
 
-function buildAdditionalModelRequestFields(
+/**
+ * Builds the Bedrock `additionalModelRequestFields` payload for Claude models.
+ * Handles adaptive vs. budget-based thinking, beta flags, and xhigh-to-max clamping
+ * for models that lack native xhigh support.
+ * @internal exported for testing only
+ */
+export function buildAdditionalModelRequestFields(
 	model: Model<"bedrock-converse-stream">,
 	options: BedrockOptions,
 ): Record<string, any> | undefined {
@@ -733,6 +766,7 @@ function buildAdditionalModelRequestFields(
 	return undefined;
 }
 
+/** Convert a base64-encoded image to a Bedrock image content block with the appropriate `ImageFormat`. */
 function createImageBlock(mimeType: string, data: string) {
 	let format: ImageFormat;
 	switch (mimeType) {

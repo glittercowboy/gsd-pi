@@ -1,5 +1,10 @@
 import type { AuthStorage } from '@gsd/pi-coding-agent'
 
+type ApiKeyCredential = {
+  type?: string
+  key?: string
+}
+
 // ─── Env hydration ────────────────────────────────────────────────────────────
 
 /**
@@ -18,6 +23,8 @@ export function loadStoredEnvKeys(authStorage: AuthStorage): void {
     ['discord_bot',   'DISCORD_BOT_TOKEN'],
     ['telegram_bot',  'TELEGRAM_BOT_TOKEN'],
     ['groq',          'GROQ_API_KEY'],
+    ['minimax',       'MINIMAX_API_KEY'],
+    ['minimax-cn',    'MINIMAX_CN_API_KEY'],
     ['ollama-cloud',  'OLLAMA_API_KEY'],
     ['custom-openai', 'CUSTOM_OPENAI_API_KEY'],
   ]
@@ -26,9 +33,9 @@ export function loadStoredEnvKeys(authStorage: AuthStorage): void {
       // Use getCredentialsForProvider to skip empty-key entries at index 0
       // (left by legacy removeProviderToken which used set() with empty key)
       const creds = authStorage.getCredentialsForProvider(provider)
-      const cred = creds.find((c: any) => c.type === 'api_key' && c.key)
-      if (cred?.type === 'api_key' && (cred as any).key) {
-        process.env[envVar] = (cred as any).key as string
+      const cred = creds.find((c: ApiKeyCredential) => c.type === 'api_key' && typeof c.key === 'string' && c.key.length > 0)
+      if (cred?.type === 'api_key' && typeof cred.key === 'string') {
+        process.env[envVar] = cred.key
       }
     }
   }

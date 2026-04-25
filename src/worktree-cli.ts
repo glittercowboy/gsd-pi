@@ -37,7 +37,7 @@ interface ExtensionModules {
   listWorktrees: (basePath: string) => Array<{ name: string; path: string; branch: string }>
   removeWorktree: (basePath: string, name: string, opts?: { deleteBranch?: boolean }) => void
   mergeWorktreeToMain: (basePath: string, name: string, commitMessage: string) => void
-  diffWorktreeAll: (basePath: string, name: string) => { added: any[]; modified: any[]; removed: any[] }
+  diffWorktreeAll: (basePath: string, name: string) => WorktreeDiff
   diffWorktreeNumstat: (basePath: string, name: string) => Array<{ added: number; removed: number }>
   worktreeBranchName: (name: string) => string
   worktreePath: (basePath: string, name: string) => string
@@ -49,14 +49,59 @@ interface ExtensionModules {
   autoCommitCurrentBranch: (wtPath: string, reason: string, name: string) => void
 }
 
+interface WorktreeDiff {
+  added: string[]
+  modified: string[]
+  removed: string[]
+}
+
+interface WorktreeManagerModule {
+  createWorktree: ExtensionModules['createWorktree']
+  listWorktrees: ExtensionModules['listWorktrees']
+  removeWorktree: ExtensionModules['removeWorktree']
+  mergeWorktreeToMain: ExtensionModules['mergeWorktreeToMain']
+  diffWorktreeAll: ExtensionModules['diffWorktreeAll']
+  diffWorktreeNumstat: ExtensionModules['diffWorktreeNumstat']
+  worktreeBranchName: ExtensionModules['worktreeBranchName']
+  worktreePath: ExtensionModules['worktreePath']
+}
+
+interface AutoWorktreeModule {
+  runWorktreePostCreateHook: ExtensionModules['runWorktreePostCreateHook']
+}
+
+interface NativeGitBridgeModule {
+  nativeHasChanges: ExtensionModules['nativeHasChanges']
+  nativeDetectMainBranch: ExtensionModules['nativeDetectMainBranch']
+  nativeCommitCountBetween: ExtensionModules['nativeCommitCountBetween']
+}
+
+interface GitServiceModule {
+  inferCommitType: ExtensionModules['inferCommitType']
+}
+
+interface WorktreeModule {
+  autoCommitCurrentBranch: ExtensionModules['autoCommitCurrentBranch']
+}
+
+function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function logDebugFailure(scope: string, error: unknown): void {
+  if (process.env.GSD_DEBUG === '1') {
+    process.stderr.write(chalk.dim(`[gsd] ${scope} failed: ${toErrorMessage(error)}\n`))
+  }
+}
+
 async function loadExtensionModules(): Promise<ExtensionModules> {
   if (_ext) return _ext
   const [wtMgr, autoWt, gitBridge, gitSvc, wt] = await Promise.all([
-    jiti.import(gsdExtensionPath('worktree-manager.ts'), {}) as Promise<any>,
-    jiti.import(gsdExtensionPath('auto-worktree.ts'), {}) as Promise<any>,
-    jiti.import(gsdExtensionPath('native-git-bridge.ts'), {}) as Promise<any>,
-    jiti.import(gsdExtensionPath('git-service.ts'), {}) as Promise<any>,
-    jiti.import(gsdExtensionPath('worktree.ts'), {}) as Promise<any>,
+    jiti.import(gsdExtensionPath('worktree-manager.ts'), {}) as Promise<WorktreeManagerModule>,
+    jiti.import(gsdExtensionPath('auto-worktree.ts'), {}) as Promise<AutoWorktreeModule>,
+    jiti.import(gsdExtensionPath('native-git-bridge.ts'), {}) as Promise<NativeGitBridgeModule>,
+    jiti.import(gsdExtensionPath('git-service.ts'), {}) as Promise<GitServiceModule>,
+    jiti.import(gsdExtensionPath('worktree.ts'), {}) as Promise<WorktreeModule>,
   ])
   _ext = {
     createWorktree: wtMgr.createWorktree,
@@ -102,13 +147,19 @@ function getWorktreeStatus(ext: ExtensionModules, basePath: string, name: string
   for (const s of numstat) { linesAdded += s.added; linesRemoved += s.removed }
 
   let uncommitted = false
-  try { uncommitted = existsSync(wtPath) && ext.nativeHasChanges(wtPath) } catch { /* */ }
+  try {
+    uncommitted = existsSync(wtPath) && ext.nativeHasChanges(wtPath)
+  } catch (error) {
+    logDebugFailure('native worktree dirty check', error)
+  }
 
   let commits = 0
   try {
     const mainBranch = ext.nativeDetectMainBranch(basePath)
     commits = ext.nativeCommitCountBetween(basePath, mainBranch, ext.worktreeBranchName(name))
-  } catch { /* */ }
+  } catch (error) {
+    logDebugFailure('native commit count', error)
+  }
 
   return {
     name,
@@ -203,7 +254,9 @@ async function doMerge(ext: ExtensionModules, basePath: string, name: string): P
     try {
       ext.autoCommitCurrentBranch(wt.path, 'worktree-merge', name)
       process.stderr.write(chalk.dim('  Auto-committed dirty work before merge.\n'))
-    } catch { /* best-effort */ }
+    } catch (error) {
+      process.stderr.write(chalk.yellow(`  Auto-commit before merge failed: ${toErrorMessage(error)}\n`))
+    }
   }
 
   const commitType = ext.inferCommitType(name)
@@ -243,8 +296,8 @@ async function handleClean(basePath: string): Promise<void> {
         ext.removeWorktree(basePath, wt.name, { deleteBranch: true })
         process.stderr.write(chalk.green(`  ✓ Removed ${chalk.bold(wt.name)} (clean)\n`))
         cleaned++
-      } catch {
-        process.stderr.write(chalk.yellow(`  ✗ Failed to remove ${wt.name}\n`))
+      } catch (error) {
+        process.stderr.write(chalk.yellow(`  ✗ Failed to remove ${wt.name}: ${toErrorMessage(error)}\n`))
       }
     } else {
       process.stderr.write(chalk.dim(`  ─ Kept ${chalk.bold(wt.name)} (${status.filesChanged} changed files)\n`))
@@ -295,7 +348,10 @@ async function handleStatusBanner(basePath: string): Promise<void> {
     try {
       const diff = ext.diffWorktreeAll(basePath, wt.name)
       return diff.added.length + diff.modified.length + diff.removed.length > 0
-    } catch { return false }
+    } catch (error) {
+      logDebugFailure(`status scan for ${wt.name}`, error)
+      return false
+    }
   })
 
   if (withChanges.length === 0) return
@@ -323,7 +379,10 @@ async function handleWorktreeFlag(worktreeFlag: boolean | string): Promise<void>
       try {
         const diff = ext.diffWorktreeAll(basePath, wt.name)
         return diff.added.length + diff.modified.length + diff.removed.length > 0
-      } catch { return false }
+      } catch (error) {
+        logDebugFailure(`worktree -w scan for ${wt.name}`, error)
+        return false
+      }
     })
 
     if (withChanges.length === 1) {

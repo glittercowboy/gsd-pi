@@ -37,11 +37,27 @@ describe("Input", () => {
 		const input = new Input();
 		input.secure = true;
 		input.focused = true;
-		input.handleInput("secret123");
+		const SECRET = "secret123";
+		input.handleInput(SECRET);
 
 		const line = input.render(40)[0] ?? "";
-		assert.ok(!line.includes("secret123"), "rendered line must not expose raw secret text");
-		assert.ok(line.includes("*********"), "rendered line should include masked characters");
+		// Previous assertion was `line.includes("*********")` — a literal
+		// 9-star string that silently goes stale if SECRET is renamed to
+		// a different length (#4796). Match any run of asterisks and
+		// assert its length covers the secret.
+		assert.ok(
+			!line.includes(SECRET),
+			"rendered line must not expose raw secret text",
+		);
+		const maskMatch = line.match(/\*+/);
+		assert.ok(
+			maskMatch,
+			`rendered line must include masked characters, got: ${JSON.stringify(line)}`,
+		);
+		assert.ok(
+			maskMatch[0].length >= SECRET.length,
+			`mask must cover at least the secret length (${SECRET.length}), got ${maskMatch[0].length} asterisks`,
+		);
 	});
 
 	it("maps kitty keypad digits to text instead of inserting private-use glyphs", () => {

@@ -74,7 +74,7 @@ test("#2885: cost table includes openai-codex provider models", () => {
   const ids = BUNDLED_COST_TABLE.map(e => e.id);
   const codexModels = [
     "gpt-5.1", "gpt-5.1-codex-max", "gpt-5.1-codex-mini",
-    "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.4",
+    "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5",
   ];
   for (const model of codexModels) {
     assert.ok(ids.includes(model), `cost table should include openai-codex model "${model}"`);
@@ -94,10 +94,18 @@ test("#2885: cost table includes modern OpenAI models", () => {
 });
 
 test("#2885: lookupModelCost returns costs for new models (not 999 fallback)", () => {
-  const newModels = ["o4-mini", "gpt-4.1", "gpt-5", "gpt-5.4", "gpt-5.1-codex-mini"];
+  const newModels = ["o4-mini", "gpt-4.1", "gpt-5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.1-codex-mini"];
   for (const model of newModels) {
     const entry = lookupModelCost(model);
     assert.ok(entry, `lookupModelCost should find "${model}"`);
     assert.ok(entry.inputPer1k < 999, `${model} should have a real cost, not the 999 fallback`);
   }
+});
+
+test("gpt-5.5 uses official OpenAI list pricing", () => {
+  const entry = lookupModelCost("gpt-5.5");
+  assert.ok(entry, "lookupModelCost should find gpt-5.5");
+  assert.equal(entry.inputPer1k, 0.005);
+  assert.equal(entry.outputPer1k, 0.03);
+  assert.equal(entry.updatedAt, "2026-04-23");
 });

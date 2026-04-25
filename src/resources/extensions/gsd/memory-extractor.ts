@@ -18,7 +18,10 @@ import type { MemoryAction } from './memory-store.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
-export type LLMCallFn = (system: string, user: string) => Promise<string>;
+export type LLMCallFn = ((system: string, user: string) => Promise<string>) & {
+  /** Promise resolving once the provider API key has been fetched (for tests). */
+  apiKeyReady?: Promise<string | undefined>;
+};
 
 // ─── Concurrency Guard ──────────────────────────────────────────────────────
 
@@ -92,8 +95,9 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
     // which returns undefined for OAuth users (Claude Max / Claude Pro).
     // See: https://github.com/gsd-build/gsd-2/issues/2959
     const resolvedKeyPromise = ctx.modelRegistry.getApiKey(selectedModel).catch(() => undefined);
-
-    return async (system: string, user: string): Promise<string> => {
+    // Expose on the returned fn so tests can await resolution deterministically
+    // (avoids arbitrary setTimeout polling for an internal microtask).
+    const llmCall = async (system: string, user: string): Promise<string> => {
       const { completeSimple } = await import('@gsd/pi-ai');
       const resolvedApiKey = await resolvedKeyPromise;
       const result: AssistantMessage = await completeSimple(selectedModel, {
@@ -111,6 +115,10 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
         .map(c => c.text);
       return textParts.join('');
     };
+    // Attach the in-flight API-key resolution so tests (and callers) can
+    // `await llmCall.apiKeyReady` rather than relying on setTimeout polling.
+    (llmCall as LLMCallFn & { apiKeyReady?: Promise<string | undefined> }).apiKeyReady = resolvedKeyPromise;
+    return llmCall;
   } catch {
     return null;
   }
@@ -128,6 +136,14 @@ Actions (return JSON array):
 - UPDATE: {"action": "UPDATE", "id": "<MEM###>", "content": "<revised text>"}
 - REINFORCE: {"action": "REINFORCE", "id": "<MEM###>"}
 - SUPERSEDE: {"action": "SUPERSEDE", "id": "<MEM###>", "superseded_by": "<MEM###>"}
+- LINK: {"action": "LINK", "from": "<MEM###>", "to": "<MEM###>", "rel": "<rel>", "confidence": <0.6-0.95>}
+
+Link relation types:
+- related_to   — two memories cover the same area
+- depends_on   — "to" is a prerequisite for "from"
+- contradicts  — "from" conflicts with "to"
+- elaborates   — "from" expands on "to"
+- supersedes   — "from" replaces "to" (rarely needed; prefer SUPERSEDE)
 
 Rules:
 - Don't create memories for one-off bug fixes or temporary state
@@ -135,6 +151,7 @@ Rules:
 - Keep content to 1-3 sentences
 - Confidence: 0.6 tentative, 0.8 solid, 0.95 well-confirmed
 - Prefer fewer high-quality memories over many low-quality ones
+- Only LINK memories that genuinely relate — don't fabricate edges
 - Return empty array [] if nothing worth remembering
 - NEVER include secrets, API keys, or passwords
 
@@ -262,6 +279,21 @@ export function parseMemoryResponse(raw: string): MemoryAction[] {
             });
           }
           break;
+        case 'LINK':
+          if (
+            typeof item.from === 'string' &&
+            typeof item.to === 'string' &&
+            typeof item.rel === 'string'
+          ) {
+            actions.push({
+              action: 'LINK',
+              from: item.from,
+              to: item.to,
+              rel: item.rel,
+              confidence: typeof item.confidence === 'number' ? item.confidence : undefined,
+            });
+          }
+          break;
       }
     }
 
@@ -273,6 +305,77 @@ export function parseMemoryResponse(raw: string): MemoryAction[] {
 
 // ─── Main Extraction Function ───────────────────────────────────────────────
 
+export interface ExtractFromTranscriptOptions {
+  /** Logical source type (e.g. "execute-task", "note", "file", "url", "artifact"). */
+  sourceType: string;
+  /** Stable identifier for the source (unit id, source id, URL, etc.). */
+  sourceId: string;
+  /** Optional scope for any CREATE actions ("project" / "global" / custom). */
+  scope?: string;
+  /** Optional tags applied to any CREATE actions. */
+  tags?: string[];
+  /** Bypass the mutex + rate-limit when caller has already vetted them. */
+  force?: boolean;
+}
+
+/**
+ * Core extractor — shared by unit post-processing and explicit ingest.
+ * Returns the applied actions for observability. Never throws.
+ */
+export async function extractMemoriesFromTranscript(
+  transcript: string,
+  llmCallFn: LLMCallFn,
+  opts: ExtractFromTranscriptOptions,
+): Promise<import('./memory-store.js').MemoryAction[]> {
+  if (!opts.force) {
+    if (_extracting) return [];
+    const now = Date.now();
+    if (now - _lastExtractionTime < MIN_EXTRACTION_INTERVAL_MS) return [];
+    _lastExtractionTime = now;
+  }
+
+  const acquireMutex = !_extracting;
+  if (acquireMutex) _extracting = true;
+  try {
+    const trimmed = transcript.trim();
+    if (!trimmed) return [];
+
+    const safeTranscript = redactSecrets(trimmed);
+    const activeMemories = getActiveMemories().map((m) => ({
+      id: m.id,
+      category: m.category,
+      content: m.content,
+    }));
+
+    const userPrompt = buildExtractionUserPrompt(
+      opts.sourceType,
+      opts.sourceId,
+      activeMemories,
+      safeTranscript,
+    );
+
+    const response = await llmCallFn(EXTRACTION_SYSTEM, userPrompt);
+    const actions = parseMemoryResponse(response);
+
+    if (actions.length === 0) return [];
+
+    const decorated = actions.map((action): import('./memory-store.js').MemoryAction => {
+      if (action.action !== 'CREATE') return action;
+      return {
+        ...action,
+        scope: action.scope ?? opts.scope,
+        tags: action.tags ?? opts.tags,
+      };
+    });
+    applyMemoryActions(decorated, opts.sourceType, opts.sourceId);
+    return decorated;
+  } catch {
+    return [];
+  } finally {
+    if (acquireMutex) _extracting = false;
+  }
+}
+
 /**
  * Extract memories from a completed unit's activity log.
  * Fire-and-forget — never throws, mutex-guarded, respects rate limiting.
@@ -283,22 +386,16 @@ export async function extractMemoriesFromUnit(
   unitId: string,
   llmCallFn: LLMCallFn,
 ): Promise<void> {
-  // Mutex guard
   if (_extracting) return;
 
-  // Rate limit
   const now = Date.now();
   if (now - _lastExtractionTime < MIN_EXTRACTION_INTERVAL_MS) return;
 
-  // Skip certain unit types
   if (SKIP_TYPES.has(unitType)) return;
 
   const unitKey = `${unitType}/${unitId}`;
-
-  // Already processed
   if (isUnitProcessed(unitKey)) return;
 
-  // Check file size
   try {
     const stat = statSync(activityFile);
     if (stat.size < MIN_ACTIVITY_SIZE) return;
@@ -308,41 +405,18 @@ export async function extractMemoriesFromUnit(
 
   _extracting = true;
   _lastExtractionTime = now;
-
   try {
-    // Read and parse activity file
     const raw = readFileSync(activityFile, 'utf-8');
     const transcript = extractTranscriptFromActivity(raw);
     if (!transcript.trim()) return;
 
-    // Redact secrets
-    const safeTranscript = redactSecrets(transcript);
+    await extractMemoriesFromTranscript(transcript, llmCallFn, {
+      sourceType: unitType,
+      sourceId: unitId,
+      force: true,
+    });
 
-    // Get current memories for context
-    const activeMemories = getActiveMemories().map(m => ({
-      id: m.id,
-      category: m.category,
-      content: m.content,
-    }));
-
-    // Build prompts
-    const userPrompt = buildExtractionUserPrompt(unitType, unitId, activeMemories, safeTranscript);
-
-    // Call LLM
-    const response = await llmCallFn(EXTRACTION_SYSTEM, userPrompt);
-
-    // Parse response
-    const actions = parseMemoryResponse(response);
-
-    // Apply actions
-    if (actions.length > 0) {
-      applyMemoryActions(actions, unitType, unitId);
-    }
-
-    // Decay stale memories periodically
     decayStaleMemories(20);
-
-    // Mark unit as processed
     markUnitProcessed(unitKey, activityFile);
   } catch {
     // Non-fatal — memory extraction failure should never affect auto-mode

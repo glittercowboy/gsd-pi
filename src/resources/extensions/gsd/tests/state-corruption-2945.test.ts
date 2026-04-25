@@ -93,6 +93,8 @@ function makeSliceRow(id: string, overrides: Partial<SliceRow> = {}): SliceRow {
     integration_closure: "",
     observability_impact: "",
     replan_triggered_at: null,
+    is_sketch: 0,
+    sketch_scope: "",
     ...overrides,
   };
 }
@@ -295,6 +297,7 @@ describe("#2945 Bug 3: mergeAndExit must teardown worktree after successful merg
       loadEffectiveGSDPreferences: () => undefined,
       invalidateAllCaches: () => {},
       captureIntegrationBranch: () => {},
+      enterBranchModeForMilestone: () => {},
     };
 
     // Import and create resolver

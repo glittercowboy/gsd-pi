@@ -79,8 +79,9 @@ function seedTask(milestoneId: string, sliceId: string, taskId: string, status: 
 test("registerQueryTools registers gsd_milestone_status tool", () => {
   const pi = makeMockPi();
   registerQueryTools(pi);
-  assert.equal(pi.tools.length, 1, "Should register exactly one tool");
-  assert.equal(pi.tools[0].name, "gsd_milestone_status");
+  const names = pi.tools.map((t: { name: string }) => t.name);
+  assert.ok(names.includes("gsd_milestone_status"), "Should register gsd_milestone_status");
+  assert.ok(names.includes("gsd_checkpoint_db"), "Should register gsd_checkpoint_db");
 });
 
 test("gsd_milestone_status has promptGuidelines mentioning prohibited alternatives", () => {

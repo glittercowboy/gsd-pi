@@ -1,7 +1,8 @@
 import type { AssistantMessage } from "@gsd/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@gsd/pi-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
-import { formatTimestamp, type TimestampFormat } from "./timestamp.js";
+import { type TimestampFormat } from "./timestamp.js";
+import { renderChatFrame } from "./chat-frame.js";
 
 export interface ContentRange {
 	startIndex: number;
@@ -89,10 +90,10 @@ export class AssistantMessageComponent extends Container {
 		);
 		const hasTextContent = message.content.some((c) => c.type === "text" && c.text.trim().length > 0);
 		const hasToolContent = message.content.some((c) => c.type === "toolCall" || c.type === "serverToolUse");
-
-		if (hasVisibleContent) {
-			this.contentContainer.addChild(new Spacer(1));
-		}
+		// Claude Code often emits long reasoning blocks ahead of user-visible text/tool
+		// output in the same lifecycle. Keep chat output visible without requiring a
+		// manual thinking toggle every turn.
+		const shouldCapThinking = hasTextContent || hasToolContent || message.provider === "claude-code";
 
 		// Render content in order; non-text/thinking blocks are silently skipped
 		for (let i = 0; i < slice.length; i++) {
@@ -122,7 +123,7 @@ export class AssistantMessageComponent extends Container {
 					});
 					// Keep visible chat output readable when thinking traces are long.
 					// Tool-bearing turns can stream text in a later assistant message.
-					if (hasTextContent || hasToolContent) {
+					if (shouldCapThinking) {
 						thinkingMarkdown.maxLines = 8;
 					}
 					this.contentContainer.addChild(thinkingMarkdown);
@@ -156,10 +157,24 @@ export class AssistantMessageComponent extends Container {
 				}
 			}
 
-			if (message.stopReason && message.timestamp) {
-				const timeStr = formatTimestamp(message.timestamp, this.timestampFormat);
-				this.contentContainer.addChild(new Text(theme.fg("dim", timeStr), 1, 0));
-			}
 		}
+	}
+
+	override render(width: number): string[] {
+		const frameWidth = Math.max(20, width);
+		const contentWidth = Math.max(1, frameWidth - 4);
+		const lines = super.render(contentWidth);
+		const headerLabel = this.lastMessage?.model ? `GSD - ${this.lastMessage.model}` : "GSD";
+		const framed = renderChatFrame(lines, frameWidth, {
+			label: headerLabel,
+			tone: "assistant",
+			timestamp: this.lastMessage?.timestamp,
+			timestampFormat: this.timestampFormat,
+			showTimestamp: this.showMetadata,
+		});
+		if (framed.length === 0) {
+			return framed;
+		}
+		return ["", ...framed];
 	}
 }

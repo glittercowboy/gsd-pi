@@ -134,49 +134,6 @@ const { assertTrue, assertEq, report } = createTestContext();
   assertEq(result.timedOut, false, "should not time out");
 }
 
-// ═══ Test: runFinalize wraps BOTH pre and post verification with withTimeout ═
-
-{
-  console.log("\n=== #3757: runFinalize wraps preVerification with timeout guard ===");
-
-  const { readFileSync } = await import("node:fs");
-  const phasesSource = readFileSync(
-    new URL("../auto/phases.ts", import.meta.url),
-    "utf-8",
-  );
-
-  // Find the runFinalize function body
-  const fnIdx = phasesSource.indexOf("export async function runFinalize(");
-  assertTrue(fnIdx > 0, "runFinalize function should exist in phases.ts");
-
-  const fnBody = phasesSource.slice(fnIdx, fnIdx + 8000);
-
-  // postUnitPreVerification must be wrapped in withTimeout
-  const preTimeoutIdx = fnBody.indexOf("withTimeout(");
-  assertTrue(preTimeoutIdx > 0, "withTimeout should appear in runFinalize");
-
-  const preVerIdx = fnBody.indexOf("postUnitPreVerification");
-  assertTrue(preVerIdx > 0, "postUnitPreVerification should appear in runFinalize");
-
-  // The first withTimeout should wrap postUnitPreVerification (not postUnitPostVerification)
-  const firstWithTimeout = fnBody.slice(preTimeoutIdx, preTimeoutIdx + 200);
-  assertTrue(
-    firstWithTimeout.includes("postUnitPreVerification"),
-    "first withTimeout in runFinalize should wrap postUnitPreVerification",
-  );
-
-  // postUnitPostVerification must also be wrapped
-  const postVerIdx = fnBody.indexOf("postUnitPostVerification");
-  assertTrue(postVerIdx > 0, "postUnitPostVerification should appear in runFinalize");
-
-  // Count withTimeout occurrences — should be at least 2 (pre + post)
-  const timeoutCount = (fnBody.match(/withTimeout\(/g) || []).length;
-  assertTrue(
-    timeoutCount >= 2,
-    `runFinalize should have at least 2 withTimeout guards (found ${timeoutCount})`,
-  );
-}
-
 // ═══ Test: MAX_FINALIZE_TIMEOUTS is defined and reasonable ═══════════════════
 
 {
@@ -196,46 +153,13 @@ const { assertTrue, assertEq, report } = createTestContext();
   );
 }
 
-// ═══ Test: timeout handlers escalate after consecutive timeouts ══════════════
-
-{
-  console.log("\n=== #3757: timeout handlers escalate and detach currentUnit ===");
-
-  const { readFileSync } = await import("node:fs");
-  const phasesSource = readFileSync(
-    new URL("../auto/phases.ts", import.meta.url),
-    "utf-8",
-  );
-
-  const fnIdx = phasesSource.indexOf("export async function runFinalize(");
-  const fnBody = phasesSource.slice(fnIdx, fnIdx + 8000);
-
-  // Both timeout handlers should increment consecutiveFinalizeTimeouts
-  const incrementCount = (fnBody.match(/consecutiveFinalizeTimeouts\+\+/g) || []).length;
-  assertTrue(
-    incrementCount >= 2,
-    `should increment consecutiveFinalizeTimeouts in both pre and post handlers (found ${incrementCount})`,
-  );
-
-  // Both timeout handlers should check MAX_FINALIZE_TIMEOUTS for escalation
-  const escalationCount = (fnBody.match(/MAX_FINALIZE_TIMEOUTS/g) || []).length;
-  assertTrue(
-    escalationCount >= 2,
-    `should check MAX_FINALIZE_TIMEOUTS in both handlers (found ${escalationCount})`,
-  );
-
-  // Both timeout handlers should null out s.currentUnit to prevent late mutations
-  const detachCount = (fnBody.match(/s\.currentUnit\s*=\s*null/g) || []).length;
-  assertTrue(
-    detachCount >= 2,
-    `should detach s.currentUnit in both timeout handlers (found ${detachCount})`,
-  );
-
-  // Successful finalize should reset the counter
-  assertTrue(
-    fnBody.includes("consecutiveFinalizeTimeouts = 0"),
-    "should reset consecutiveFinalizeTimeouts on successful finalize",
-  );
-}
+// Note: the two previous source-grep blocks that scanned phases.ts for
+// `withTimeout(` / `failClosedOnFinalizeTimeout(` occurrences were removed
+// under #4825 — they encoded implementation shape (Goodhart) and broke on
+// any helper/loop refactor without catching a real regression. The intended
+// behavioural invariant (pre+post verification hangs → pauseAuto called,
+// unit-end emitted, escalation counter incremented) should be covered by a
+// runFinalize integration test with mocked hanging verification — tracked
+// separately. Refs #4825.
 
 report();

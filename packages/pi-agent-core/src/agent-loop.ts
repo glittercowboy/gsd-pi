@@ -222,6 +222,20 @@ async function runLoop(
 				// backoff, network unavailable). Convert to a graceful error message so the
 				// agent loop can end cleanly instead of crashing with an unhandled rejection.
 				const errorText = error instanceof Error ? error.message : String(error);
+				if (config.onStreamError) {
+					try {
+						await config.onStreamError(
+							{
+								error: error instanceof Error ? error : new Error(errorText),
+								partialText: "",
+								willRetry: false,
+							},
+							signal,
+						);
+					} catch {
+						// Hook failures must not crash the loop.
+					}
+				}
 				message = {
 					role: "assistant",
 					content: [],

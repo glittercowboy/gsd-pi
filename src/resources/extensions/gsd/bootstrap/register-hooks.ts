@@ -3,6 +3,10 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import { isToolCallEventType } from "@gsd/pi-coding-agent";
 
+import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-extension-api.js";
+import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
+import { getEcosystemReadyPromise } from "../ecosystem/loader.js";
+
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
 import { buildBeforeAgentStartResult } from "./system-context.js";
 import { handleAgentEnd } from "./agent-end-recovery.js";
@@ -14,11 +18,13 @@ import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
 import { deriveState } from "../state.js";
 import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart, recordToolInvocationError } from "../auto.js";
+
 import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
 import { resetAskUserQuestionsCache } from "../../ask-user-questions.js";
-import { recordToolCall as safetyRecordToolCall, recordToolResult as safetyRecordToolResult } from "../safety/evidence-collector.js";
+import { recordToolCall as safetyRecordToolCall, recordToolResult as safetyRecordToolResult, saveEvidenceToDisk } from "../safety/evidence-collector.js";
+import { parseUnitId } from "../unit-id.js";
 import { classifyCommand } from "../safety/destructive-guard.js";
 import { logWarning as safetyLogWarning } from "../workflow-logger.js";
 import { installNotifyInterceptor } from "./notify-interceptor.js";
@@ -35,18 +41,27 @@ async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
   ctx.ui.setStatus("gsd-fast", formatServiceTierFooterStatus(getEffectiveServiceTier(), ctx.model?.id));
 }
 
-export function registerHooks(pi: ExtensionAPI): void {
+export function registerHooks(
+  pi: ExtensionAPI,
+  ecosystemHandlers: GSDEcosystemBeforeAgentStartHandler[],
+): void {
   pi.on("session_start", async (_event, ctx) => {
     initNotificationStore(process.cwd());
     installNotifyInterceptor(ctx);
     initNotificationWidget(ctx);
-    initHealthWidget(ctx);
+    if (!isAutoActive()) {
+      initHealthWidget(ctx);
+    }
     resetWriteGateState();
     resetToolCallLoopGuard();
     resetAskUserQuestionsCache();
     await syncServiceTierStatus(ctx);
-    const { prepareWorkflowMcpForProject } = await import("../workflow-mcp-auto-prep.js");
-    prepareWorkflowMcpForProject(ctx, process.cwd());
+    // Skip MCP auto-prep when running inside an auto-worktree (see session_switch below).
+    const { isInAutoWorktree } = await import("../auto-worktree.js");
+    if (!isInAutoWorktree(process.cwd())) {
+      const { prepareWorkflowMcpForProject } = await import("../workflow-mcp-auto-prep.js");
+      prepareWorkflowMcpForProject(ctx, process.cwd());
+    }
 
     // Apply show_token_cost preference (#1515)
     try {
@@ -77,6 +92,9 @@ export function registerHooks(pi: ExtensionAPI): void {
       } catch { /* non-fatal */ }
     }
     loadToolApiKeys();
+    if (isAutoActive()) {
+      ctx.ui.setWidget("gsd-health", undefined);
+    }
   });
 
   pi.on("session_switch", async (_event, ctx) => {
@@ -87,13 +105,66 @@ export function registerHooks(pi: ExtensionAPI): void {
     resetAskUserQuestionsCache();
     clearDiscussionFlowState();
     await syncServiceTierStatus(ctx);
-    const { prepareWorkflowMcpForProject } = await import("../workflow-mcp-auto-prep.js");
-    prepareWorkflowMcpForProject(ctx, process.cwd());
+    // Skip MCP auto-prep when running inside an auto-worktree. The worktree
+    // already has .mcp.json from createAutoWorktree, and re-running the writer
+    // post-chdir rewrites the file mid-run (non-idempotent due to cwd-relative
+    // CLI path resolution), dirtying the tree and breaking the milestone merge.
+    const { isInAutoWorktree } = await import("../auto-worktree.js");
+    if (!isInAutoWorktree(process.cwd())) {
+      const { prepareWorkflowMcpForProject } = await import("../workflow-mcp-auto-prep.js");
+      prepareWorkflowMcpForProject(ctx, process.cwd());
+    }
     loadToolApiKeys();
+    if (isAutoActive()) {
+      ctx.ui.setWidget("gsd-health", undefined);
+    }
   });
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
-    return buildBeforeAgentStartResult(event, ctx);
+    // Wait for ecosystem loader to finish (no-op after first turn).
+    await getEcosystemReadyPromise();
+
+    // GSD's own context injection (existing behavior — unchanged).
+    const gsdResult = await buildBeforeAgentStartResult(event, ctx);
+
+    // Refresh the snapshot used by ecosystem getPhase()/getActiveUnit().
+    // deriveState has its own ~100ms cache so this is cheap on repeat calls.
+    try {
+      const state = await deriveState(process.cwd());
+      updateSnapshot(state);
+    } catch {
+      updateSnapshot(null);
+    }
+
+    // Chain ecosystem handlers using pi's runner.ts chaining protocol:
+    // each handler sees the systemPrompt mutated by prior handlers.
+    let currentSystemPrompt = gsdResult?.systemPrompt ?? event.systemPrompt;
+    // `any` because pi's BeforeAgentStartEventResult.message uses an internal
+    // CustomMessage type that's not re-exported (see ecosystem/gsd-extension-api.ts).
+    let lastMessage: any = gsdResult?.message;
+
+    for (const handler of ecosystemHandlers) {
+      try {
+        const r = await handler(
+          { ...event, systemPrompt: currentSystemPrompt },
+          ctx,
+        );
+        if (r?.systemPrompt !== undefined) currentSystemPrompt = r.systemPrompt;
+        if (r?.message) lastMessage = r.message;
+      } catch (err) {
+        safetyLogWarning(
+          "ecosystem",
+          `before_agent_start handler failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    // Compose result. Return undefined if nothing changed (preserves runner contract).
+    if (currentSystemPrompt === event.systemPrompt && !lastMessage) return undefined;
+    return {
+      systemPrompt: currentSystemPrompt !== event.systemPrompt ? currentSystemPrompt : undefined,
+      message: lastMessage,
+    };
   });
 
   pi.on("agent_end", async (event, ctx: ExtensionContext) => {
@@ -125,7 +196,10 @@ export function registerHooks(pi: ExtensionAPI): void {
     await ensureDbOpen();
     const state = await deriveState(basePath);
     if (!state.activeMilestone || !state.activeSlice || !state.activeTask) return;
-    if (state.phase !== "executing") return;
+    // Write checkpoint for ALL phases, not just "executing" — discuss, research,
+    // and planning also carry in-memory state (user answers, gate verification)
+    // that would be lost on compaction (#4258).
+    // if (state.phase !== "executing") return;
 
     const sliceDir = resolveSlicePath(basePath, state.activeMilestone.id, state.activeSlice.id);
     if (!sliceDir) return;
@@ -152,6 +226,42 @@ export function registerHooks(pi: ExtensionAPI): void {
       context: "Session was auto-compacted by Pi. Resume with /gsd.",
       nextAction: `Resume task ${state.activeTask.id}: ${state.activeTask.title}.`,
     }));
+  });
+
+  // Context-mode snapshot: write .gsd/last-snapshot.md before compaction so
+  // agents can call gsd_resume (or Read the file) to re-orient. Opt-in via
+  // preferences.context_mode.enabled. Runs after the auto-cancel handler
+  // above — if that one returned cancel:true, pi still fires us but the
+  // compaction won't actually happen; the snapshot is still useful then,
+  // since auto may pause and resume later.
+  pi.on("session_before_compact", async () => {
+    try {
+      const { loadEffectiveGSDPreferences } = await import("../preferences.js");
+      const { isContextModeEnabled } = await import("../preferences-types.js");
+      const prefs = loadEffectiveGSDPreferences();
+      if (!isContextModeEnabled(prefs?.preferences)) return;
+      const { writeCompactionSnapshot } = await import("../compaction-snapshot.js");
+      const { ensureDbOpen } = await import("./dynamic-tools.js");
+      await ensureDbOpen();
+      const basePath = process.cwd();
+      let activeContext: string | null = null;
+      try {
+        const state = await deriveState(basePath);
+        if (state.activeMilestone && state.activeSlice && state.activeTask) {
+          activeContext =
+            `Active: ${state.activeMilestone.id} / ${state.activeSlice.id} / ${state.activeTask.id}` +
+            (state.activeTask.title ? ` — ${state.activeTask.title}` : "");
+        }
+      } catch {
+        /* non-fatal */
+      }
+      writeCompactionSnapshot(basePath, { activeContext });
+    } catch (err) {
+      safetyLogWarning(
+        "context-mode",
+        `failed to write compaction snapshot: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   });
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
@@ -261,7 +371,8 @@ export function registerHooks(pi: ExtensionAPI): void {
   // ── Safety harness: evidence collection + destructive command warnings ──
   pi.on("tool_call", async (event, ctx) => {
     if (!isAutoActive()) return;
-    safetyRecordToolCall(event.toolName, event.input as Record<string, unknown>);
+    markToolStart(event.toolCallId, event.toolName);
+    safetyRecordToolCall(event.toolCallId, event.toolName, event.input as Record<string, unknown>);
 
     // Destructive command classification (warn only, never block)
     if (isToolCallEventType("bash", event)) {
@@ -279,6 +390,20 @@ export function registerHooks(pi: ExtensionAPI): void {
   });
 
   pi.on("tool_result", async (event) => {
+    if (isAutoActive() && typeof event.toolCallId === "string") {
+      markToolEnd(event.toolCallId);
+    }
+    if (isAutoActive() && event.isError && event.toolName.startsWith("gsd_")) {
+      const resultPayload = ("result" in event ? event.result : undefined) as any;
+      const errorText = typeof resultPayload === "string"
+        ? resultPayload
+        : (typeof resultPayload?.content?.[0]?.text === "string"
+            ? resultPayload.content[0].text
+            : (typeof (event as any).content === "string"
+                ? (event as any).content
+                : String(resultPayload ?? "")));
+      recordToolInvocationError(event.toolName, errorText);
+    }
     if (event.toolName !== "ask_user_questions") return;
     const milestoneId = getDiscussionMilestoneId(process.cwd());
     const queueActive = isQueuePhaseActive();
@@ -359,7 +484,7 @@ export function registerHooks(pi: ExtensionAPI): void {
 
   pi.on("tool_execution_start", async (event) => {
     if (!isAutoActive()) return;
-    markToolStart(event.toolCallId);
+    markToolStart(event.toolCallId, event.toolName);
   });
 
   pi.on("tool_execution_end", async (event) => {
@@ -375,6 +500,15 @@ export function registerHooks(pi: ExtensionAPI): void {
     // Safety harness: record tool execution results for evidence cross-referencing
     if (isAutoActive()) {
       safetyRecordToolResult(event.toolCallId, event.toolName, event.result, event.isError);
+      // Persist evidence to disk after each tool result so it survives a session
+      // restart mid-unit (Bug #4385 — non-persisted evidence false positives).
+      const dash = getAutoDashboardData();
+      if (dash.basePath && dash.currentUnit?.type === "execute-task") {
+        const { milestone: pMid, slice: pSid, task: pTid } = parseUnitId(dash.currentUnit.id);
+        if (pMid && pSid && pTid) {
+          saveEvidenceToDisk(dash.basePath, pMid, pSid, pTid);
+        }
+      }
     }
   });
 

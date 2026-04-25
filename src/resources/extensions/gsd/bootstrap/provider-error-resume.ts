@@ -6,11 +6,14 @@ import type {
 
 import { getAutoDashboardData, startAuto, type AutoDashboardData } from "../auto.js";
 import { resetTransientRetryState } from "./agent-end-recovery.js";
+import { resetSessionTimeoutState } from "../auto/phases.js";
 
 type AutoResumeSnapshot = Pick<AutoDashboardData, "active" | "paused" | "stepMode" | "basePath">;
 
 export interface ProviderErrorResumeDeps {
   getSnapshot(): AutoResumeSnapshot;
+  resetTransientRetryState(): void;
+  resetSessionTimeoutState(): void;
   startAuto(
     ctx: ExtensionCommandContext,
     pi: ExtensionAPI,
@@ -22,6 +25,8 @@ export interface ProviderErrorResumeDeps {
 
 const defaultDeps: ProviderErrorResumeDeps = {
   getSnapshot: () => getAutoDashboardData(),
+  resetTransientRetryState,
+  resetSessionTimeoutState,
   startAuto,
 };
 
@@ -43,10 +48,11 @@ export async function resumeAutoAfterProviderDelay(
     return "missing-base";
   }
 
-  // Reset the transient retry counter before restarting — without this,
-  // consecutiveTransientCount accumulates across pause/resume cycles and
-  // permanently locks out auto-resume after MAX_TRANSIENT_AUTO_RESUMES errors.
-  resetTransientRetryState();
+  // Reset retry counters before restarting — without this, counters
+  // accumulate across pause/resume cycles and permanently lock out
+  // auto-resume after their respective MAX thresholds.
+  deps.resetTransientRetryState();
+  deps.resetSessionTimeoutState();
 
   await deps.startAuto(
     ctx as ExtensionCommandContext,

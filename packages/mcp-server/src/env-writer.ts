@@ -5,9 +5,9 @@
 // destinations, and checking existing keys. Used by secure_env_collect
 // MCP tool. No TUI dependencies — pure filesystem + process.env operations.
 
-import { readFile, writeFile } from "node:fs/promises";
-import { existsSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { open, readFile, rename, rm } from "node:fs/promises";
+import { constants, existsSync, lstatSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // checkExistingEnvKeys
@@ -71,10 +71,19 @@ export async function writeEnvKey(filePath: string, key: string, value: string):
   if (typeof value !== "string") {
     throw new TypeError(`writeEnvKey expects a string value for key "${key}", got ${typeof value}`);
   }
+  assertWritableEnvFileTarget(filePath);
   let content = "";
   try {
-    content = await readFile(filePath, "utf8");
-  } catch {
+    const handle = await open(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      content = await handle.readFile("utf8");
+    } finally {
+      await handle.close();
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw err;
+    }
     content = "";
   }
   const escaped = value.replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/\r/g, "");
@@ -86,7 +95,42 @@ export async function writeEnvKey(filePath: string, key: string, value: string):
     if (content.length > 0 && !content.endsWith("\n")) content += "\n";
     content += `${line}\n`;
   }
-  await writeFile(filePath, content, "utf8");
+  const tempPath = join(
+    dirname(filePath),
+    `.${basename(filePath)}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`,
+  );
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(tempPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
+    await handle.writeFile(content, "utf8");
+    await handle.close();
+    handle = undefined;
+    assertWritableEnvFileTarget(filePath);
+    await rename(tempPath, filePath);
+  } catch (err) {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch {
+        // Best-effort cleanup.
+      }
+    }
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw err;
+  }
+}
+
+function assertWritableEnvFileTarget(filePath: string): void {
+  try {
+    if (lstatSync(filePath).isSymbolicLink()) {
+      throw new Error("Refusing to write symlinked env file");
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -99,6 +143,32 @@ export function isSafeEnvVarKey(key: string): boolean {
 
 export function isSupportedDeploymentEnvironment(env: string): boolean {
   return env === "development" || env === "preview" || env === "production";
+}
+
+function isWithinProjectRoot(projectRoot: string, candidatePath: string): boolean {
+  const rel = relative(projectRoot, candidatePath);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+export function resolveProjectEnvFilePath(projectDir: string, envFilePath = ".env"): string {
+  const projectRoot = realpathSync.native(resolve(projectDir));
+  const candidate = resolve(projectRoot, envFilePath);
+  if (!isWithinProjectRoot(projectRoot, candidate)) {
+    throw new Error("envFilePath must resolve inside the project directory");
+  }
+  if (existsSync(candidate)) {
+    const targetRealPath = realpathSync.native(candidate);
+    if (isWithinProjectRoot(projectRoot, targetRealPath)) {
+      return candidate;
+    }
+    throw new Error("envFilePath must resolve inside the project directory");
+  }
+  const candidateParent = dirname(candidate);
+  const parentRealPath = realpathSync.native(candidateParent);
+  if (isWithinProjectRoot(projectRoot, parentRealPath)) {
+    return candidate;
+  }
+  throw new Error("envFilePath must resolve inside the project directory");
 }
 
 // ---------------------------------------------------------------------------

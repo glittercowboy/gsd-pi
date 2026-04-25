@@ -8,6 +8,7 @@
  * All provider logic lives in provider.ts (S01) — this is pure UI wiring.
  */
 
+import { supportsNativeWebSearch } from './native-search.js'
 import type { ExtensionAPI } from '@gsd/pi-coding-agent'
 import type { AutocompleteItem } from '@gsd/pi-tui'
 import {
@@ -90,7 +91,10 @@ export function registerSearchProviderCommand(pi: ExtensionAPI): void {
 
       setSearchProviderPreference(chosen)
       const effective = resolveSearchProvider()
-      const isAnthropic = ctx.model?.provider === 'anthropic'
+      // Gate on api shape + provider allowlist: the info note must match the
+      // actual runtime behavior in native-search.ts. Claude served via copilot
+      // / minimax / kimi is anthropic-shaped but does NOT run native search.
+      const isAnthropic = supportsNativeWebSearch(ctx.model)
       const nativeNote = isAnthropic ? '\nNote: Native Anthropic web search is also active (automatic, no API key needed).' : ''
       ctx.ui.notify(
         `Search provider set to ${chosen}. Effective provider: ${effective ?? 'none (no API keys)'}${nativeNote}`,

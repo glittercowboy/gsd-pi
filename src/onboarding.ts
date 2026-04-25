@@ -17,6 +17,13 @@ import type { AuthStorage } from '@gsd/pi-coding-agent'
 import { renderLogo } from './logo.js'
 import { agentDir } from './app-paths.js'
 import { isClaudeCliReady } from './claude-cli-check.js'
+import {
+  markOnboardingComplete,
+  markStepCompleted,
+  markStepSkipped,
+  isOnboardingComplete,
+} from './resources/extensions/gsd/onboarding-state.js'
+import { getLlmProviderIds } from './resources/extensions/gsd/setup-catalog.js'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +34,18 @@ interface ToolKeyConfig {
   hint: string
 }
 
+type ApiKeyCredential = { type?: string; key?: string }
+type LoginProviderId = Parameters<AuthStorage["login"]>[0]
+type LoginCallbacks = Parameters<AuthStorage["login"]>[1]
+type SlackAuthTestResponse = { ok?: boolean; user?: string }
+type TelegramGetMeResponse = {
+  ok?: boolean
+  result?: { id?: string | number; first_name?: string; username?: string }
+  description?: string
+}
+type DiscordUserResponse = { id?: string; username?: string }
+type DiscordChannel = { id: string; name: string; type: number }
+
 type ClackModule = typeof import('@clack/prompts')
 type PicoModule = {
   cyan: (s: string) => string
@@ -36,6 +55,11 @@ type PicoModule = {
   bold: (s: string) => string
   red: (s: string) => string
   reset: (s: string) => string
+}
+
+interface RunOnboardingOptions {
+  /** Show logo + intro banner. Disable when onboarding is launched inside an active TUI session. */
+  showIntro?: boolean
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -61,25 +85,17 @@ const TOOL_KEYS: ToolKeyConfig[] = [
   },
 ]
 
-/** Known LLM provider IDs that, if authed, mean the user doesn't need onboarding */
-const LLM_PROVIDER_IDS = [
-  'anthropic',
+/**
+ * Known LLM provider IDs that, if authed, mean the user doesn't need onboarding.
+ * Sourced from the shared setup-catalog so adding a provider lands in one place.
+ * 'anthropic-vertex' and 'ollama' aren't in PROVIDER_REGISTRY but are still
+ * treated as "authed = no onboarding needed" for back-compat.
+ */
+const LLM_PROVIDER_IDS = Array.from(new Set([
+  ...getLlmProviderIds(),
   'anthropic-vertex',
-  'claude-code',
-  'openai',
-  'github-copilot',
-  'openai-codex',
-  'google-gemini-cli',
-  'google-antigravity',
-  'google',
-  'groq',
-  'xai',
-  'openrouter',
-  'mistral',
   'ollama',
-  'ollama-cloud',
-  'custom-openai',
-]
+]))
 
 /** API key prefix validation — loose checks to catch obvious mistakes */
 const API_KEY_PREFIXES: Record<string, string[]> = {
@@ -93,6 +109,8 @@ const OTHER_PROVIDERS = [
   { value: 'xai', label: 'xAI (Grok)', hint: 'console.x.ai' },
   { value: 'openrouter', label: 'OpenRouter', hint: '200+ models — openrouter.ai/keys' },
   { value: 'mistral', label: 'Mistral', hint: 'console.mistral.ai/api-keys' },
+  { value: 'minimax', label: 'MiniMax', hint: 'platform.minimax.io (Anthropic-compatible recommended)' },
+  { value: 'minimax-cn', label: 'MiniMax CN', hint: 'api.minimaxi.com (Anthropic-compatible)' },
   { value: 'ollama-cloud', label: 'Ollama Cloud' },
   { value: 'custom-openai', label: 'Custom (OpenAI-compatible)', hint: 'Ollama, LM Studio, vLLM, proxies — see docs/providers.md' },
 ]
@@ -148,6 +166,55 @@ function openBrowser(url: string): void {
   }
 }
 
+/**
+ * Persist the selected default provider to settings.json.
+ *
+ * This ensures first startup after onboarding prefers the provider the user
+ * just configured, instead of falling back to the first "available" provider
+ * (which can be influenced by unrelated env auth like AWS_PROFILE).
+ */
+function persistDefaultProvider(providerId: string): void {
+  const settingsPath = join(agentDir, 'settings.json')
+  try {
+    const raw = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {}
+    raw.defaultProvider = providerId
+    mkdirSync(dirname(settingsPath), { recursive: true })
+    writeFileSync(settingsPath, JSON.stringify(raw, null, 2), 'utf-8')
+  } catch {
+    // Non-fatal: startup fallback logic will still run.
+  }
+}
+
+/**
+ * Persist the selected default model to settings.json.
+ */
+function persistDefaultModel(modelId: string): void {
+  const settingsPath = join(agentDir, 'settings.json')
+  try {
+    const raw = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {}
+    raw.defaultModel = modelId
+    mkdirSync(dirname(settingsPath), { recursive: true })
+    writeFileSync(settingsPath, JSON.stringify(raw, null, 2), 'utf-8')
+  } catch {
+    // Non-fatal: startup fallback logic will still run.
+  }
+}
+
+function detectNativeProviderFromBaseUrl(baseUrl: string): 'minimax' | 'minimax-cn' | null {
+  try {
+    const hostname = new URL(baseUrl).hostname.toLowerCase()
+    if (hostname === 'api.minimax.io' || hostname.endsWith('.minimax.io')) {
+      return 'minimax'
+    }
+    if (hostname === 'api.minimaxi.com' || hostname.endsWith('.minimaxi.com')) {
+      return 'minimax-cn'
+    }
+  } catch {
+    // ignore parse failures; handled by prior validation
+  }
+  return null
+}
+
 /** Sentinel returned by runStep when the user cancels — tells the caller
  *  to abort the entire wizard. */
 const STEP_CANCELLED = Symbol('step-cancelled')
@@ -195,6 +262,9 @@ async function runStep<T>(
  */
 export function shouldRunOnboarding(authStorage: AuthStorage, settingsDefaultProvider?: string): boolean {
   if (!process.stdin.isTTY) return false
+  // Explicit completion record wins — user has already finished onboarding (and
+  // our flowVersion hasn't bumped since).
+  if (isOnboardingComplete()) return false
   if (settingsDefaultProvider) return false
   // Check if any LLM provider has credentials
   const hasLlmAuth = LLM_PROVIDER_IDS.some(id => authStorage.hasAuth(id))
@@ -213,7 +283,10 @@ export function shouldRunOnboarding(authStorage: AuthStorage, settingsDefaultPro
  * All steps are skippable. All errors are recoverable.
  * Writes status to stderr during execution.
  */
-export async function runOnboarding(authStorage: AuthStorage): Promise<void> {
+export async function runOnboarding(
+  authStorage: AuthStorage,
+  opts: RunOnboardingOptions = {},
+): Promise<void> {
   let p: ClackModule
   let pc: PicoModule
   try {
@@ -225,34 +298,42 @@ export async function runOnboarding(authStorage: AuthStorage): Promise<void> {
   }
 
   // ── Intro ─────────────────────────────────────────────────────────────────
-  process.stderr.write(renderLogo(pc.cyan))
-  p.intro(pc.bold('Welcome to GSD — let\'s get you set up'))
+  if (opts.showIntro !== false) {
+    process.stderr.write(renderLogo(pc.cyan))
+    p.intro(pc.bold('Welcome to GSD — let\'s get you set up'))
+  }
+
+  const completedSteps: string[] = []
 
   // ── LLM Provider Selection ────────────────────────────────────────────────
   const llmResult = await runStep(p, 'LLM setup failed', () => runLlmStep(p, pc, authStorage), {
-    cancelMessage: 'Setup cancelled — you can run /login inside GSD later.',
+    cancelMessage: 'Setup cancelled — you can run /gsd onboarding --resume later.',
     errorInfo: 'You can configure your LLM provider later with /login inside GSD.',
   })
   if (llmResult === STEP_CANCELLED) return
   const llmConfigured = llmResult ?? false
+  if (llmConfigured) { markStepCompleted('llm'); completedSteps.push('llm') } else { markStepSkipped('llm') }
 
   // ── Web Search Provider ──────────────────────────────────────────────────
   const searchResult = await runStep(p, 'Web search setup failed',
     () => runWebSearchStep(p, pc, authStorage, llmConfigured))
   if (searchResult === STEP_CANCELLED) return
   const searchConfigured = searchResult
+  if (searchConfigured) { markStepCompleted('search'); completedSteps.push('search') } else { markStepSkipped('search') }
 
   // ── Remote Questions ─────────────────────────────────────────────────────
   const remoteResult = await runStep(p, 'Remote questions setup failed',
     () => runRemoteQuestionsStep(p, pc, authStorage))
   if (remoteResult === STEP_CANCELLED) return
   const remoteConfigured = remoteResult
+  if (remoteConfigured) { markStepCompleted('remote'); completedSteps.push('remote') } else { markStepSkipped('remote') }
 
   // ── Tool API Keys ─────────────────────────────────────────────────────────
   const toolResult = await runStep(p, 'Tool key setup failed',
     () => runToolKeysStep(p, pc, authStorage))
   if (toolResult === STEP_CANCELLED) return
   const toolKeyCount = toolResult ?? 0
+  if (toolKeyCount > 0) { markStepCompleted('tool-keys'); completedSteps.push('tool-keys') } else { markStepSkipped('tool-keys') }
 
   // ── Summary ───────────────────────────────────────────────────────────────
   const summaryLines: string[] = []
@@ -287,13 +368,21 @@ export async function runOnboarding(authStorage: AuthStorage): Promise<void> {
     summaryLines.push(`${pc.dim('↷')} Tool keys: none configured`)
   }
 
+  // Persist completion record so re-entry, web boot probe, and shouldRunOnboarding
+  // all agree the wizard finished. Required steps drive the "complete" semantics
+  // in onboarding-state.ts; here we mark wizard-level completion regardless.
+  markOnboardingComplete(completedSteps)
+
+  summaryLines.push('')
+  summaryLines.push(`${pc.dim('Tip:')} re-run anytime with ${pc.cyan('/gsd onboarding')}`)
+
   p.note(summaryLines.join('\n'), 'Setup complete')
   p.outro(pc.dim('Launching GSD...'))
 }
 
 // ─── LLM Authentication Step ──────────────────────────────────────────────────
 
-async function runLlmStep(p: ClackModule, pc: PicoModule, authStorage: AuthStorage): Promise<boolean> {
+export async function runLlmStep(p: ClackModule, pc: PicoModule, authStorage: AuthStorage): Promise<boolean> {
   // Build the OAuth provider list dynamically from what's registered
   const oauthProviders = authStorage.getOAuthProviders()
   const oauthMap = new Map(oauthProviders.map(op => [op.id, op]))
@@ -337,15 +426,8 @@ async function runLlmStep(p: ClackModule, pc: PicoModule, authStorage: AuthStora
     p.log.info('Your Claude subscription will be used for inference. No API key needed.')
     // Store sentinel so hasAuth('claude-code') returns true on future boots
     authStorage.set('claude-code', { type: 'api_key', key: 'cli' })
-    // Persist claude-code as the default provider so the startup migration in
-    // cli.ts does not need to fire and the user is not left on "anthropic".
-    const settingsPath = join(agentDir, 'settings.json')
-    try {
-      const raw = existsSync(settingsPath) ? JSON.parse(readFileSync(settingsPath, 'utf-8')) : {}
-      raw.defaultProvider = 'claude-code'
-      mkdirSync(dirname(settingsPath), { recursive: true })
-      writeFileSync(settingsPath, JSON.stringify(raw, null, 2), 'utf-8')
-    } catch { /* non-fatal — startup migration will catch it */ }
+    // Persist claude-code so startup does not keep users on anthropic direct API.
+    persistDefaultProvider('claude-code')
     return true
   }
 
@@ -409,7 +491,7 @@ async function runOAuthFlow(
   s.start(`Authenticating with ${providerName}...`)
 
   try {
-    await authStorage.login(providerId as any, {
+    const loginCallbacks: LoginCallbacks = {
       onAuth: (info: { url: string; instructions?: string }) => {
         s.stop(`Opening browser for ${providerName}`)
         openBrowser(info.url)
@@ -439,7 +521,10 @@ async function runOAuthFlow(
             return result as string
           }
         : undefined,
-    } as any)
+    }
+
+    await authStorage.login(providerId as LoginProviderId, loginCallbacks)
+    persistDefaultProvider(providerId)
 
     p.log.success(`Authenticated with ${pc.green(providerName)}`)
     return true
@@ -488,6 +573,7 @@ async function runApiKeyFlow(
   }
 
   authStorage.set(providerId, { type: 'api_key', key: trimmed })
+  persistDefaultProvider(providerId)
   p.log.success(`API key saved for ${pc.green(providerLabel)}`)
 
   // Provider-specific post-setup hints
@@ -521,6 +607,7 @@ async function runOllamaLocalFlow(
       s.stop(`Ollama is running at ${pc.green(host)}`)
       // Store a placeholder so the provider is recognized as authenticated
       authStorage.set('ollama', { type: 'api_key', key: 'ollama' })
+      persistDefaultProvider('ollama')
       p.log.success(`${pc.green('Ollama (Local)')} configured — no API key needed`)
       p.log.info(pc.dim('Models are discovered automatically from your local Ollama instance.'))
       return true
@@ -543,6 +630,7 @@ async function runOllamaLocalFlow(
   if (p.isCancel(proceed) || !proceed) return false
 
   authStorage.set('ollama', { type: 'api_key', key: 'ollama' })
+  persistDefaultProvider('ollama')
   p.log.success(`${pc.green('Ollama (Local)')} saved — models will appear when Ollama is running`)
   return true
 }
@@ -593,8 +681,24 @@ async function runCustomOpenAIFlow(
   if (p.isCancel(modelId) || !modelId) return false
   const trimmedModelId = (modelId as string).trim()
 
+  const nativeProvider = detectNativeProviderFromBaseUrl(trimmedUrl)
+  if (nativeProvider) {
+    const envVar = nativeProvider === 'minimax' ? 'MINIMAX_API_KEY' : 'MINIMAX_CN_API_KEY'
+    authStorage.set(nativeProvider, { type: 'api_key', key: trimmedKey })
+    persistDefaultProvider(nativeProvider)
+    persistDefaultModel(trimmedModelId)
+    process.env[envVar] = trimmedKey
+
+    p.log.success(`${pc.green('MiniMax')} detected — configured as native provider (${pc.cyan(nativeProvider)})`)
+    p.log.info(`Model: ${pc.cyan(trimmedModelId)}`)
+    p.log.info(pc.dim('Using Anthropic-compatible MiniMax integration for full model metadata and clean thinking output.'))
+    return true
+  }
+
   // Save API key to auth storage
   authStorage.set('custom-openai', { type: 'api_key', key: trimmedKey })
+  persistDefaultProvider('custom-openai')
+  persistDefaultModel(trimmedModelId)
 
   // Write or merge into models.json
   const modelsJsonPath = join(agentDir, 'models.json')
@@ -647,7 +751,7 @@ async function runCustomOpenAIFlow(
 
 // ─── Web Search Provider Step ─────────────────────────────────────────────────
 
-async function runWebSearchStep(
+export async function runWebSearchStep(
   p: ClackModule,
   pc: PicoModule,
   authStorage: AuthStorage,
@@ -728,7 +832,7 @@ async function runWebSearchStep(
 
 // ─── Tool API Keys Step ───────────────────────────────────────────────────────
 
-async function runToolKeysStep(
+export async function runToolKeysStep(
   p: ClackModule,
   pc: PicoModule,
   authStorage: AuthStorage,
@@ -771,14 +875,16 @@ async function runToolKeysStep(
 
 // ─── Remote Questions Step ────────────────────────────────────────────────────
 
-async function runRemoteQuestionsStep(
+export async function runRemoteQuestionsStep(
   p: ClackModule,
   pc: PicoModule,
   authStorage: AuthStorage,
 ): Promise<string | null> {
   // Check existing config — use getCredentialsForProvider to skip empty-key entries
   const hasValidKey = (provider: string) =>
-    authStorage.getCredentialsForProvider(provider).some((c: any) => c.type === 'api_key' && c.key)
+    authStorage
+      .getCredentialsForProvider(provider)
+      .some((c: ApiKeyCredential) => c.type === 'api_key' && typeof c.key === 'string' && c.key.length > 0)
   const hasDiscord = hasValidKey('discord_bot')
   const hasSlack = hasValidKey('slack_bot')
   const hasTelegram = hasValidKey('telegram_bot')
@@ -841,7 +947,7 @@ async function runRemoteQuestionsStep(
         headers: { Authorization: `Bearer ${trimmed}` },
         signal: AbortSignal.timeout(15_000),
       })
-      const data = await res.json() as any
+      const data = await res.json() as SlackAuthTestResponse
       if (!data?.ok) {
         s.stop('Slack token validation failed')
         return null
@@ -888,7 +994,7 @@ async function runRemoteQuestionsStep(
       const res = await fetch(`https://api.telegram.org/bot${trimmed}/getMe`, {
         signal: AbortSignal.timeout(15_000),
       })
-      const data = await res.json() as any
+      const data = await res.json() as TelegramGetMeResponse
       if (!data?.ok || !data?.result?.id) {
         s.stop('Telegram token validation failed')
         return null
@@ -921,7 +1027,7 @@ async function runRemoteQuestionsStep(
         body: JSON.stringify({ chat_id: trimmedChatId, text: 'GSD remote questions connected.' }),
         signal: AbortSignal.timeout(15_000),
       })
-      const data = await res.json() as any
+      const data = await res.json() as TelegramGetMeResponse
       if (!data?.ok) {
         ts.stop(`Could not send to chat: ${data?.description ?? 'unknown error'}`)
         return null
@@ -947,7 +1053,7 @@ async function runDiscordChannelStep(p: ClackModule, pc: PicoModule, token: stri
   // Validate token
   const s = p.spinner()
   s.start('Validating Discord bot token...')
-  let auth: any
+  let auth: DiscordUserResponse
   try {
     const res = await fetch('https://discord.com/api/v10/users/@me', { headers, signal: AbortSignal.timeout(15_000) })
     auth = await res.json()
@@ -995,11 +1101,19 @@ async function runDiscordChannelStep(p: ClackModule, pc: PicoModule, token: stri
   }
 
   // Fetch channels
-  let channels: Array<{ id: string; name: string; type: number }>
+  let channels: DiscordChannel[]
   try {
     const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, { headers, signal: AbortSignal.timeout(15_000) })
     const data = await res.json()
-    channels = Array.isArray(data) ? data.filter((ch: any) => ch.type === 0 || ch.type === 5) : []
+    channels = Array.isArray(data)
+      ? data.filter((ch): ch is DiscordChannel =>
+          typeof ch === 'object' &&
+          ch !== null &&
+          typeof (ch as { id?: unknown }).id === 'string' &&
+          typeof (ch as { name?: unknown }).name === 'string' &&
+          ((ch as { type?: unknown }).type === 0 || (ch as { type?: unknown }).type === 5),
+        )
+      : []
   } catch {
     p.log.warn('Could not fetch channels — configure later with /gsd remote discord')
     return null
@@ -1043,4 +1157,3 @@ async function runDiscordChannelStep(p: ClackModule, pc: PicoModule, token: stri
   p.log.success(`Discord channel: ${pc.green(channelName ? `#${channelName}` : channelId)}`)
   return channelName ?? null
 }
-

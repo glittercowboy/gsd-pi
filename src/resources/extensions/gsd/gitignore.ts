@@ -26,6 +26,7 @@ import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
  */
 const GSD_RUNTIME_PATTERNS = [
   ".gsd/activity/",
+  ".gsd/audit/",
   ".gsd/forensics/",
   ".gsd/runtime/",
   ".gsd/worktrees/",
@@ -48,6 +49,7 @@ const BASELINE_PATTERNS = [
   // ── GSD state directory (symlink to external storage) ──
   ".gsd",
   ".gsd-id",
+  ".mcp.json",
   ".bg-shell/",
 
   // ── OS junk ──
@@ -319,4 +321,3 @@ custom_instructions:
   writeFileSync(preferencesPath, template, "utf-8");
   return true;
 }
-

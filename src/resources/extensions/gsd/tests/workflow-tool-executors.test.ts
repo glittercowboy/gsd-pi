@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, readFileSync, existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -11,6 +11,7 @@ import {
   _getAdapter,
   insertGateRow,
 } from "../gsd-db.ts";
+import { markDepthVerified, clearDiscussionFlowState, loadWriteGateSnapshot } from "../bootstrap/write-gate.ts";
 import {
   executeCompleteMilestone,
   executePlanMilestone,
@@ -641,6 +642,165 @@ test("executeReplanSlice rewrites pending tasks and renders replan artifacts", a
     assert.equal(updatedTask?.title, "Pending task (updated)");
     assert.equal(insertedTask?.title, "Remediation task");
   } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSummarySave removes sibling CONTEXT-DRAFT when writing milestone CONTEXT (#4442)", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+    markDepthVerified("M001", base);
+
+    const milestoneDir = join(base, ".gsd", "milestones", "M001");
+    mkdirSync(milestoneDir, { recursive: true });
+    const draftPath = join(milestoneDir, "M001-CONTEXT-DRAFT.md");
+    writeFileSync(draftPath, "# Draft\n\nincremental notes");
+    assert.ok(existsSync(draftPath), "precondition: draft exists");
+
+    const result = await inProjectDir(base, () => executeSummarySave({
+      milestone_id: "M001",
+      artifact_type: "CONTEXT",
+      content: "# Context\n\nfinal discussion output",
+    }, base));
+
+    assert.equal(result.details.operation, "save_summary");
+    assert.equal(result.details.artifact_type, "CONTEXT");
+
+    const contextPath = join(milestoneDir, "M001-CONTEXT.md");
+    assert.ok(existsSync(contextPath), "CONTEXT.md should be written");
+    assert.equal(
+      existsSync(draftPath),
+      false,
+      "CONTEXT-DRAFT.md should be removed after final CONTEXT.md is written",
+    );
+  } finally {
+    clearDiscussionFlowState();
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSummarySave removes sibling CONTEXT-DRAFT when writing slice CONTEXT (#4442)", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    mkdirSync(sliceDir, { recursive: true });
+    const draftPath = join(sliceDir, "S01-CONTEXT-DRAFT.md");
+    writeFileSync(draftPath, "# Slice Draft\n\nincremental slice notes");
+    assert.ok(existsSync(draftPath), "precondition: slice draft exists");
+
+    const result = await inProjectDir(base, () => executeSummarySave({
+      milestone_id: "M001",
+      slice_id: "S01",
+      artifact_type: "CONTEXT",
+      content: "# Slice Context\n\nfinal slice output",
+    }, base));
+
+    assert.equal(result.details.operation, "save_summary");
+    assert.equal(result.details.artifact_type, "CONTEXT");
+
+    const contextPath = join(sliceDir, "S01-CONTEXT.md");
+    assert.ok(existsSync(contextPath), "slice CONTEXT.md should be written");
+    assert.equal(
+      existsSync(draftPath),
+      false,
+      "slice CONTEXT-DRAFT.md should be removed after final CONTEXT.md is written",
+    );
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSummarySave leaves sibling CONTEXT-DRAFT intact for non-CONTEXT artifacts (#4442)", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+
+    const milestoneDir = join(base, ".gsd", "milestones", "M001");
+    mkdirSync(milestoneDir, { recursive: true });
+    const draftPath = join(milestoneDir, "M001-CONTEXT-DRAFT.md");
+    writeFileSync(draftPath, "# Draft\n\nstill in progress");
+
+    const result = await inProjectDir(base, () => executeSummarySave({
+      milestone_id: "M001",
+      artifact_type: "RESEARCH",
+      content: "# Research\n\nresearch notes",
+    }, base));
+
+    assert.equal(result.details.artifact_type, "RESEARCH");
+    assert.ok(
+      existsSync(draftPath),
+      "CONTEXT-DRAFT.md must survive RESEARCH/SUMMARY/ASSESSMENT writes",
+    );
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSummarySave CONTEXT HARD BLOCK clears after write-gate state file is deleted (#4343)", async () => {
+  const base = makeTmpBase();
+  const originalEnv = process.env.GSD_PERSIST_WRITE_GATE_STATE;
+  process.env.GSD_PERSIST_WRITE_GATE_STATE = "1";
+  try {
+    openTestDb(base);
+    clearDiscussionFlowState();
+
+    // First call: CONTEXT artifact without depth verification → HARD BLOCK
+    const blocked = await inProjectDir(base, () => executeSummarySave({
+      milestone_id: "M001",
+      artifact_type: "CONTEXT",
+      content: "# Context\n\ncontent",
+    }, base));
+    assert.equal(blocked.isError, true, "should be blocked without depth verification");
+    assert.match(
+      blocked.content[0].text,
+      /HARD BLOCK/,
+      "blocked result should mention HARD BLOCK",
+    );
+
+    // Verify the state file was written (persist mode is active)
+    const stateFilePath = join(base, ".gsd", "runtime", "write-gate-state.json");
+    // The state file may or may not exist at this point (block doesn't write state).
+    // Write a fake state file simulating stale persisted block state.
+    mkdirSync(join(base, ".gsd", "runtime"), { recursive: true });
+    writeFileSync(stateFilePath, JSON.stringify({
+      verifiedDepthMilestones: [],
+      activeQueuePhase: false,
+      pendingGateId: "depth_verification_M001",
+    }));
+
+    // User deletes the state file to reset the block
+    unlinkSync(stateFilePath);
+    assert.ok(!existsSync(stateFilePath), "state file deleted");
+
+    // The snapshot loaded after deletion should be clean (no pending gate, no block)
+    const snapshot = loadWriteGateSnapshot(base);
+    assert.equal(snapshot.pendingGateId, null, "pendingGateId should be null after file deletion");
+    assert.deepEqual(snapshot.verifiedDepthMilestones, [], "verifiedDepthMilestones should be empty after file deletion");
+
+    // Depth-verify and re-attempt: should succeed after deletion clears stale state
+    markDepthVerified("M001", base);
+
+    const unblocked = await inProjectDir(base, () => executeSummarySave({
+      milestone_id: "M001",
+      artifact_type: "CONTEXT",
+      content: "# Context\n\nfinal content",
+    }, base));
+    assert.equal(unblocked.isError, undefined, "should not be blocked after depth verification");
+    assert.equal(unblocked.details.operation, "save_summary");
+  } finally {
+    if (originalEnv === undefined) {
+      delete process.env.GSD_PERSIST_WRITE_GATE_STATE;
+    } else {
+      process.env.GSD_PERSIST_WRITE_GATE_STATE = originalEnv;
+    }
+    clearDiscussionFlowState();
     closeDatabase();
     cleanup(base);
   }

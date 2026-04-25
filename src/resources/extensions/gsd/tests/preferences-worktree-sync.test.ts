@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { readFileSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 test("#2684: preferences files are NOT in ROOT_STATE_FILES (forward-only sync)", () => {
   const srcPath = join(import.meta.dirname, "..", "auto-worktree.ts");
@@ -49,7 +50,7 @@ test("copyPlanningArtifacts prefers canonical PREFERENCES.md with lowercase fall
   assert.ok(fnIdx !== -1, "copyPlanningArtifacts function exists");
 
   // Extract function body (up to the next top-level function)
-  const fnBody = src.slice(fnIdx, fnIdx + 2200);
+  const fnBody = extractSourceRegion(src, "function copyPlanningArtifacts");
 
   assert.ok(
     fnBody.includes("PROJECT_PREFERENCES_FILE") && fnBody.includes("LEGACY_PROJECT_PREFERENCES_FILE"),

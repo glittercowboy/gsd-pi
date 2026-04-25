@@ -126,6 +126,43 @@ test("uses explicit tier_models when configured", () => {
   assert.equal(result.wasDowngraded, true);
 });
 
+test("preserves explicit provider-qualified tier_models when duplicate bare IDs exist", () => {
+  const config: DynamicRoutingConfig = {
+    ...defaultRoutingConfig(),
+    enabled: true,
+    capability_routing: false,
+    tier_models: {
+      light: "custom-openai/gpt-5.3-codex-spark",
+      standard: "custom-openai/gpt-5.4",
+    },
+  };
+  const providerModels = [
+    "openai-codex/gpt-5.4",
+    "custom-openai/gpt-5.4",
+    "openai-codex/gpt-5.3-codex-spark",
+    "custom-openai/gpt-5.3-codex-spark",
+    "custom-anthropic/claude-opus-4-7",
+  ];
+
+  const standard = resolveModelForComplexity(
+    makeClassification("standard"),
+    { primary: "custom-anthropic/claude-opus-4-7", fallbacks: [] },
+    config,
+    providerModels,
+  );
+  assert.equal(standard.modelId, "custom-openai/gpt-5.4");
+  assert.equal(standard.wasDowngraded, true);
+
+  const light = resolveModelForComplexity(
+    makeClassification("light"),
+    { primary: "custom-anthropic/claude-opus-4-7", fallbacks: [] },
+    config,
+    providerModels,
+  );
+  assert.equal(light.modelId, "custom-openai/gpt-5.3-codex-spark");
+  assert.equal(light.wasDowngraded, true);
+});
+
 // ─── Fallback chain construction ─────────────────────────────────────────────
 
 test("fallback chain includes configured primary as last resort", () => {
@@ -218,6 +255,19 @@ test("defaultRoutingConfig includes capability_routing: true", () => {
   assert.equal(config.capability_routing, true);
 });
 
+test("scoreEligibleModels uses bare capability profiles for provider-qualified IDs", () => {
+  const scored = scoreEligibleModels(
+    ["custom-openai/gpt-5.4", "custom-openai/gpt-5.3-codex-spark"],
+    { coding: 1 },
+  );
+
+  assert.equal(scored[0]?.modelId, "custom-openai/gpt-5.4");
+  assert.ok(
+    (scored[0]?.score ?? 0) > (scored[1]?.score ?? 0),
+    "provider-qualified IDs should still use the built-in bare model capability profile",
+  );
+});
+
 test("scoreModel computes weighted average of capability × requirement", () => {
   const caps: ModelCapabilities = {
     coding: 90, debugging: 80, research: 70,
@@ -298,7 +348,7 @@ test("MODEL_CAPABILITY_PROFILES has entries for all tier-mapped models", () => {
 
 test("#2885: openai-codex light-tier models are recognized", () => {
   const config = { ...defaultRoutingConfig(), enabled: true };
-  const lightModels = ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-5-mini", "gpt-5-nano", "gpt-5.1-codex-mini", "gpt-5.3-codex-spark"];
+  const lightModels = ["gpt-4.1-mini", "gpt-4.1-nano", "gpt-5-mini", "gpt-5-nano", "gpt-5.1-codex-mini", "gpt-5.3-codex-spark", "gpt-5.4-mini"];
   for (const model of lightModels) {
     const result = resolveModelForComplexity(
       makeClassification("light"),
@@ -332,7 +382,7 @@ test("#2885: openai-codex standard-tier models are recognized", () => {
 
 test("#2885: openai-codex heavy-tier models are recognized", () => {
   const config = { ...defaultRoutingConfig(), enabled: true };
-  const heavyModels = ["gpt-5", "gpt-5-pro", "gpt-5.1", "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.4", "o4-mini", "o4-mini-deep-research"];
+  const heavyModels = ["gpt-5", "gpt-5-pro", "gpt-5.1", "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.4", "gpt-5.5", "o4-mini", "o4-mini-deep-research"];
   for (const model of heavyModels) {
     const result = resolveModelForComplexity(
       makeClassification("heavy"),

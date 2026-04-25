@@ -191,6 +191,7 @@ test("session_start bootstraps the health widget alongside notifications", async
   });
 
   const widgets: string[] = [];
+  const statuses: string[] = [];
   const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void> | void>();
   const pi = {
     on(event: string, handler: (event: unknown, ctx: any) => Promise<void> | void) {
@@ -198,7 +199,7 @@ test("session_start bootstraps the health widget alongside notifications", async
     },
   } as any;
 
-  registerHooks(pi);
+  registerHooks(pi, []);
   const sessionStart = handlers.get("session_start");
   assert.ok(sessionStart, "session_start handler is registered");
 
@@ -206,7 +207,9 @@ test("session_start bootstraps the health widget alongside notifications", async
     hasUI: true,
     ui: {
       notify: () => {},
-      setStatus: () => {},
+      setStatus: (key: string) => {
+        statuses.push(key);
+      },
       setWorkingMessage: () => {},
       onTerminalInput: () => () => {},
       setWidget: (key: string) => {
@@ -220,5 +223,8 @@ test("session_start bootstraps the health widget alongside notifications", async
   } as any);
 
   assert.ok(widgets.includes("gsd-health"), "health widget is bootstrapped");
-  assert.ok(widgets.includes("gsd-notifications"), "notification widget still boots");
+  assert.ok(
+    statuses.some((k) => k.includes("notifications")),
+    "notification status chip is registered",
+  );
 });

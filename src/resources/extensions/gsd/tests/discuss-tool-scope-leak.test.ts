@@ -22,6 +22,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { DISCUSS_TOOLS_ALLOWLIST } from "../constants.ts";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const guidedFlowSource = readFileSync(join(__dirname, "..", "guided-flow.ts"), "utf-8");
@@ -58,7 +59,7 @@ describe("#3616 — discuss tool scoping must not leak across sessions", () => {
 		);
 		const newSessionStart = agentSessionSource.indexOf("async newSession(options?:");
 		assert.ok(newSessionStart >= 0, "should find newSession");
-		const body = agentSessionSource.slice(newSessionStart, newSessionStart + 3000);
+		const body = extractSourceRegion(agentSessionSource, "async newSession(options?:");
 
 		// Both branches (cwd-changed and cwd-unchanged) must include extension tools
 		assert.ok(

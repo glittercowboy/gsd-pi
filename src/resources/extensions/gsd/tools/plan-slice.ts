@@ -1,5 +1,5 @@
 import { clearParseCache } from "../files.js";
-import { isClosedStatus } from "../status-guards.js";
+import { isClosedStatus, isDeferredStatus } from "../status-guards.js";
 import { isNonEmptyString, validateStringArray } from "../validation.js";
 import {
   transaction,
@@ -9,6 +9,7 @@ import {
   upsertSlicePlanning,
   upsertTaskPlanning,
   insertGateRow,
+  updateSliceStatus,
 } from "../gsd-db.js";
 import type { GateId } from "../types.js";
 import { invalidateStateCache } from "../state.js";
@@ -164,6 +165,10 @@ export async function handlePlanSlice(
       if (isClosedStatus(parentSlice.status)) {
         guardError = `cannot re-plan slice ${params.sliceId}: it is already complete — use gsd_slice_reopen first`;
         return;
+      }
+
+      if (isDeferredStatus(parentSlice.status)) {
+        updateSliceStatus(params.milestoneId, params.sliceId, "pending");
       }
 
       upsertSlicePlanning(params.milestoneId, params.sliceId, {

@@ -1,0 +1,76 @@
+# Docs Sync workflow — mode: yaml-step
+#
+# Iterate over undocumented public exports, write JSDoc / TSDoc / equivalent
+# for each, and verify the docs stay coherent with the code.
+
+version: 1
+name: docs-sync
+mode: yaml-step
+description: >-
+  Find undocumented public exports across the source tree, write
+  per-symbol documentation, and produce a summary of what changed.
+
+params:
+  src_glob: "src/**/*.ts"
+  doc_style: "TSDoc"
+
+steps:
+  - id: inventory
+    name: Inventory undocumented exports
+    prompt: >-
+      Scan {{src_glob}} for exported symbols (functions, classes, types,
+      constants) that lack a leading doc comment. Write one line per
+      undocumented export:
+
+        - <file_path>::<symbol_name> — <symbol kind>
+
+      Skip internal helpers, private exports, and generated code. If
+      everything is already documented, write "all documented" and no
+      list items. Save to `undocumented.md`.
+    requires: []
+    produces:
+      - undocumented.md
+    verify:
+      policy: content-heuristic
+      minSize: 1
+
+  - id: document
+    name: Document one export
+    prompt: >-
+      Add {{doc_style}} documentation to the symbol indicated by
+      {{_iter_capture_1}} (format: `<file_path>::<symbol_name>`).
+
+      - Describe what it does, not how.
+      - Document all parameters and the return type.
+      - Note any thrown errors or side effects.
+      - Keep it concise — one short paragraph + `@param` / `@returns`.
+
+      Append a log line to `docs-log.md`:
+      `- <symbol_name> — <file:line>`.
+    requires:
+      - inventory
+    context_from:
+      - inventory
+    produces:
+      - docs-log.md
+    iterate:
+      source: undocumented.md
+      pattern: "^- (.+::.+?) — "
+    verify:
+      policy: content-heuristic
+
+  - id: summary
+    name: Docs sync summary
+    prompt: >-
+      Produce a short summary at `docs-summary.md` listing: the total
+      number of exports documented, any that were intentionally skipped
+      with a reason, and a suggested follow-up (e.g. regenerate API docs
+      if the project has a generator).
+    requires:
+      - document
+    context_from:
+      - document
+    produces:
+      - docs-summary.md
+    verify:
+      policy: content-heuristic

@@ -7,12 +7,13 @@
  */
 
 import type { ExtensionAPI, ExtensionContext, ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import type { GSDState } from "./types.js";
 import { showNextAction } from "../shared/tui.js";
 import { loadFile, saveFile } from "./files.js";
 import { isDbAvailable, getMilestoneSlices } from "./gsd-db.js";
 import { parseRoadmapSlices } from "./roadmap-slices.js";
 import { loadPrompt, inlineTemplate } from "./prompt-loader.js";
-import { buildSkillActivationBlock } from "./auto-prompts.js";
+import { buildDiscussMilestonePrompt, buildSkillActivationBlock } from "./auto-prompts.js";
 import { deriveState } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { startAutoDetached } from "./auto.js";
@@ -36,7 +37,9 @@ import { nativeIsRepo, nativeInit } from "./native-git-bridge.js";
 import { isInheritedRepo } from "./repo-identity.js";
 import { ensureGitignore, ensurePreferences, untrackRuntimeFiles } from "./gitignore.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
-import { detectProjectState } from "./detection.js";
+import { resolveUokFlags } from "./uok/flags.js";
+import { ensurePlanV2Graph, isMissingFinalizedContextResult } from "./uok/plan-v2.js";
+import { detectProjectState, hasGsdBootstrapArtifacts } from "./detection.js";
 import { showProjectInit, offerMigration } from "./init-wizard.js";
 import { validateDirectory } from "./validate-directory.js";
 import { showConfirm } from "../shared/tui.js";
@@ -83,6 +86,38 @@ function nextMilestoneIdReserved(existingIds: string[], uniqueEnabled: boolean):
   return id;
 }
 
+function needsPlanV2Gate(state: GSDState): boolean {
+  return state.phase === "executing"
+    || state.phase === "summarizing"
+    || state.phase === "validating-milestone"
+    || state.phase === "completing-milestone";
+}
+
+type PlanV2GateDecision = "pass" | "recover-missing-context" | "block";
+
+function runPlanV2Gate(
+  ctx: ExtensionContext,
+  basePath: string,
+  state: GSDState,
+): PlanV2GateDecision {
+  const prefs = loadEffectiveGSDPreferences()?.preferences;
+  const uokFlags = resolveUokFlags(prefs);
+  if (!uokFlags.planV2 || !needsPlanV2Gate(state)) return "pass";
+  const compiled = ensurePlanV2Graph(basePath, state);
+  if (!compiled.ok) {
+    if (isMissingFinalizedContextResult(compiled)) {
+      return "recover-missing-context";
+    }
+    const reason = compiled.reason ?? "plan-v2 compilation failed";
+    ctx.ui.notify(
+      `Plan gate failed-closed: ${reason}. Complete plan/discuss artifacts before execution.\n\nIf this keeps happening, try: /gsd doctor heal`,
+      "error",
+    );
+    return "block";
+  }
+  return "pass";
+}
+
 // ─── Commit Instruction Helpers ──────────────────────────────────────────────
 
 /** Build commit instruction for planning prompts. .gsd/ is managed externally and always gitignored. */
@@ -100,7 +135,19 @@ interface PendingAutoStartEntry {
   milestoneId: string; // the milestone being discussed
   step?: boolean; // preserve step mode through discuss → auto transition
   createdAt: number; // timestamp for staleness detection (#3274)
+  // #4573: counter for how many times the LLM emitted the ready phrase
+  // without writing the required artifacts. Cleared on entry delete/recreate.
+  readyRejectCount?: number;
 }
+
+// #4573: cap for how many times we nudge the LLM after a premature ready
+// phrase before giving up and asking the user to re-run /gsd.
+const MAX_READY_REJECTS = 2;
+
+// #4573: matches the canonical ready phrase the discuss prompt asks the LLM
+// to emit. Accepts any M-prefixed milestone ID (three digits + optional
+// suffix) with optional trailing punctuation.
+const READY_PHRASE_RE = /\bMilestone\s+M\d{3}[A-Z0-9-]*\s+ready\.?/i;
 
 const pendingAutoStartMap = new Map<string, PendingAutoStartEntry>();
 
@@ -239,11 +286,222 @@ export function checkAutoStartAfterDiscuss(): boolean {
   } catch (e) { logWarning("guided", `CONTEXT-DRAFT.md unlink failed: ${(e as Error).message}`); }
 
   // Cleanup: remove discussion manifest after auto-start (only needed during discussion)
-  try { unlinkSync(manifestPath); } catch (e) { logWarning("guided", `manifest unlink failed: ${(e as Error).message}`); }
+  if (existsSync(manifestPath)) {
+    try { unlinkSync(manifestPath); } catch (e) { logWarning("guided", `manifest unlink failed: ${(e as Error).message}`); }
+  }
 
   pendingAutoStartMap.delete(basePath);
-  ctx.ui.notify(`Milestone ${milestoneId} ready.`, "info");
+  ctx.ui.notify(`Milestone ${milestoneId} ready.`, "success");
   startAutoDetached(ctx, pi, basePath, false, { step });
+  return true;
+}
+
+/**
+ * Extract the concatenated text content from an assistant message, whether it
+ * stores content as a string or as an array of text blocks.
+ */
+function extractAssistantText(msg: any): string {
+  if (!msg) return "";
+  const content = msg.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    if (block.type === "text" && typeof block.text === "string") parts.push(block.text);
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Return true if the assistant message contains any tool-use block.
+ */
+function hasToolUse(msg: any): boolean {
+  if (!msg) return false;
+  const content = msg.content;
+  if (!Array.isArray(content)) return false;
+  return content.some((b: any) => b && typeof b === "object" && (b.type === "tool_use" || b.type === "tool-use"));
+}
+
+/**
+ * #4573 — Detect and recover from the "ready phrase without files" failure mode.
+ *
+ * When the LLM emits "Milestone {{id}} ready." but has not written CONTEXT.md
+ * or ROADMAP.md, `checkAutoStartAfterDiscuss()` silently returns false and the
+ * next /gsd invocation loops into the "All milestones complete" warning.
+ *
+ * This function, called from `handleAgentEnd` after `checkAutoStartAfterDiscuss`
+ * returns false, pattern-matches the ready phrase on the last assistant message.
+ * If it fired AND neither CONTEXT.md nor ROADMAP.md exists, it:
+ *   1. Notifies the user that the signal was rejected.
+ *   2. Injects a system message via `pi.sendMessage(..., {triggerTurn:true})`
+ *      telling the LLM the signal was premature and to emit the writes now.
+ *   3. Caps at `MAX_READY_REJECTS` per-entry; beyond that, gives up and asks
+ *      the user to re-run /gsd.
+ *
+ * Returns true when a nudge (or give-up) was emitted, signaling the caller to
+ * skip `resolveAgentEnd`.
+ */
+export function maybeHandleReadyPhraseWithoutFiles(event: { messages: any[] }): boolean {
+  const entry = _getPendingAutoStart();
+  if (!entry) return false;
+  const { ctx, pi, basePath, milestoneId } = entry;
+
+  // Gate: last assistant message must contain the ready phrase
+  const lastMsg = event.messages[event.messages.length - 1];
+  const text = extractAssistantText(lastMsg);
+  if (!READY_PHRASE_RE.test(text)) return false;
+
+  // Gate: artifacts must still be missing — if they exist, the happy path
+  // already fired and we have nothing to do.
+  const contextFile = resolveMilestoneFile(basePath, milestoneId, "CONTEXT");
+  const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+  if (contextFile || roadmapFile) return false;
+
+  entry.readyRejectCount = (entry.readyRejectCount ?? 0) + 1;
+
+  if (entry.readyRejectCount > MAX_READY_REJECTS) {
+    // Give up: clear state and tell the user to re-run /gsd. Avoids an
+    // infinite nudge loop when the LLM never produces the writes.
+    pendingAutoStartMap.delete(basePath);
+    ctx.ui.notify(
+      `Milestone ${milestoneId}: LLM signaled "ready" ${entry.readyRejectCount} times without writing files. ` +
+      `Stopping auto-nudge. Run /gsd to try again.`,
+      "error",
+    );
+    return true;
+  }
+
+  ctx.ui.notify(
+    `Milestone ${milestoneId}: "ready" signal rejected — CONTEXT.md and ROADMAP.md are missing. Asking the LLM to complete the writes.`,
+    "warning",
+  );
+
+  const nudge =
+    `You emitted "Milestone ${milestoneId} ready." but neither ` +
+    `.gsd/milestones/${milestoneId}/${milestoneId}-CONTEXT.md nor ` +
+    `.gsd/milestones/${milestoneId}/${milestoneId}-ROADMAP.md exists on disk. ` +
+    `The ready phrase is a POST-WRITE signal and has been rejected. ` +
+    `In this turn: (1) write PROJECT.md, REQUIREMENTS.md, and the milestone ` +
+    `CONTEXT.md, (2) call gsd_plan_milestone, then (3) emit the ready phrase. ` +
+    `Do not describe these steps — execute them as tool calls. ` +
+    `This is retry ${entry.readyRejectCount}/${MAX_READY_REJECTS}; further ` +
+    `premature signals will clear the session.`;
+
+  try {
+    pi.sendMessage(
+      { customType: "gsd-ready-no-files", content: nudge, display: false },
+      { triggerTurn: true },
+    );
+  } catch (e) {
+    logWarning("guided", `ready-phrase nudge sendMessage failed: ${(e as Error).message}`);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * #4573 — Detect and recover from the "announces tool, never calls it" stall.
+ *
+ * The LLM emits text like "I'll now write the CONTEXT.md file" but the turn
+ * ends with zero tool-use blocks. The harness has no post-turn tool-call
+ * validation, so the unit promise resolves and the user sees a stalled state.
+ *
+ * This function, called from `handleAgentEnd`, inspects the last assistant
+ * message. If ALL of the following are true, it injects a recovery message:
+ *   - Text-only (no tool-use blocks)
+ *   - Contains a commit-intent phrase ("I'll write", "I'll call", etc.)
+ *   - Auto-mode is active OR a discussion autostart is pending
+ *   - `emptyTurnRetryCount` is under the cap
+ *
+ * Per-handler state is held on the `PendingAutoStartEntry` when present, and
+ * on a module-level map otherwise. The counter resets on any successful
+ * tool-use turn via `resetEmptyTurnCounter`.
+ */
+const emptyTurnCounterByBase = new Map<string, number>();
+const MAX_EMPTY_TURN_RETRIES = 2;
+
+// Phrases that indicate the LLM is about to do something but has not yet.
+// Kept tight to avoid flagging legitimate narration like "I'll wait for your answer."
+const COMMIT_INTENT_RE =
+  /\b(?:I['’]ll|I will|Next,? I['’]ll|Now I['’]ll|Let me|I['’]m going to|I am going to)\s+(?:now\s+)?(?:write|create|call|invoke|update|add|make|run|execute|generate|produce|emit|compose|implement|save|apply|commit)\b/i;
+
+/**
+ * Reset the empty-turn counter for a basePath after a successful tool-use turn.
+ * Called from handleAgentEnd when the last message contains tool_use blocks.
+ */
+export function resetEmptyTurnCounter(basePath?: string): void {
+  if (basePath) emptyTurnCounterByBase.delete(basePath);
+  else emptyTurnCounterByBase.clear();
+}
+
+export function maybeHandleEmptyIntentTurn(
+  event: { messages: any[] },
+  isAuto: boolean,
+): boolean {
+  // Gate: only fire when there is system-driven work in flight. Interactive
+  // /gsd discuss (user-driven) produces legitimate text-only turns.
+  if (!isAuto && pendingAutoStartMap.size === 0) return false;
+
+  const lastMsg = event.messages[event.messages.length - 1];
+  if (!lastMsg) return false;
+  if (hasToolUse(lastMsg)) return false;
+
+  const text = extractAssistantText(lastMsg).trim();
+  if (!text) return false;
+
+  // Skip if the LLM is emitting the ready phrase — that is the ready-no-files
+  // path, handled by maybeHandleReadyPhraseWithoutFiles.
+  if (READY_PHRASE_RE.test(text)) return false;
+
+  // Skip if the LLM is clearly handing back to the user. Keep the heuristic
+  // tight: a trailing question mark on the last non-empty line is the common
+  // signal for "I asked the user a question and stopped."
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const lastLine = lines[lines.length - 1] ?? "";
+  if (lastLine.endsWith("?")) return false;
+
+  // Must contain a commit-intent phrase — this is the stall we care about.
+  if (!COMMIT_INTENT_RE.test(text)) return false;
+
+  // Resolve the target basePath + pi for injection. Prefer the pending
+  // autostart entry (discuss flow); otherwise we cannot inject.
+  const entry = _getPendingAutoStart();
+  if (!entry) return false;
+  const { ctx, pi, basePath } = entry;
+
+  const count = (emptyTurnCounterByBase.get(basePath) ?? 0) + 1;
+  emptyTurnCounterByBase.set(basePath, count);
+
+  if (count > MAX_EMPTY_TURN_RETRIES) {
+    ctx.ui.notify(
+      `Empty-turn recovery: LLM announced intent ${count} times without calling any tool. ` +
+      `Stopping auto-nudge.`,
+      "error",
+    );
+    return false; // let the normal flow resolve/pause the unit
+  }
+
+  ctx.ui.notify(
+    `Empty-turn detected: LLM announced intent but called no tool. Prompting it to execute.`,
+    "info",
+  );
+
+  const nudge =
+    `Your last turn announced an action (e.g. "I'll write…" or "Let me call…") ` +
+    `but contained no tool call. The system records zero tool-use blocks for ` +
+    `that turn. Execute the announced action NOW as a tool call in this turn. ` +
+    `Do not describe it again. Retry ${count}/${MAX_EMPTY_TURN_RETRIES}.`;
+
+  try {
+    pi.sendMessage(
+      { customType: "gsd-empty-turn-recovery", content: nudge, display: false },
+      { triggerTurn: true },
+    );
+  } catch (e) {
+    logWarning("guided", `empty-turn nudge sendMessage failed: ${(e as Error).message}`);
+    return false;
+  }
   return true;
 }
 
@@ -572,8 +830,13 @@ export async function showHeadlessMilestoneCreation(
   // Set pending auto start (auto-mode triggers on "Milestone X ready." via checkAutoStartAfterDiscuss)
   pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId: nextId, createdAt: Date.now() });
 
-  // Dispatch — headless milestone creation is a planning activity
-  await dispatchWorkflow(pi, prompt, "gsd-run", ctx, "plan-milestone");
+  // Dispatch as discuss-milestone. The LLM writes PROJECT.md, REQUIREMENTS.md,
+  // and CONTEXT.md, then calls gsd_plan_milestone — this is semantically the
+  // discuss path, just non-interactive. Using "plan-milestone" here caused
+  // model/tool routing to skip discuss-flow tool scoping and
+  // `checkAutoStartAfterDiscuss` guardrails that rely on the
+  // "discuss-"-prefixed unitType.
+  await dispatchWorkflow(pi, prompt, "gsd-run", ctx, "discuss-milestone");
 }
 
 
@@ -1228,9 +1491,7 @@ export async function showSmartEntry(
   // A zombie .gsd/ state (symlink exists but missing PREFERENCES.md and
   // milestones/) must trigger the init wizard, not skip it (#2942).
   const gsdPath = gsdRoot(basePath);
-  const hasBootstrapArtifacts = existsSync(gsdPath)
-    && (existsSync(join(gsdPath, "PREFERENCES.md"))
-        || existsSync(join(gsdPath, "milestones")));
+  const hasBootstrapArtifacts = hasGsdBootstrapArtifacts(gsdPath);
 
   if (!hasBootstrapArtifacts) {
     const detection = detectProjectState(basePath);
@@ -1320,6 +1581,9 @@ export async function showSmartEntry(
     logWarning("guided", `STATE.md rebuild failed: ${(err as Error).message}`);
   }
 
+  const planV2GateDecision = runPlanV2Gate(ctx, basePath, state);
+  if (planV2GateDecision === "block") return;
+
   if (!state.activeMilestone?.id) {
     // Guard: if a discuss session is already in flight, don't re-inject the prompt.
     // Both /gsd and /gsd auto reach this branch when no milestone exists yet.
@@ -1405,6 +1669,23 @@ export async function showSmartEntry(
 
   const milestoneId = state.activeMilestone.id;
   const milestoneTitle = state.activeMilestone.title;
+
+  if (planV2GateDecision === "recover-missing-context") {
+    pendingAutoStartMap.set(basePath, { ctx, pi, basePath, milestoneId, step: stepMode, createdAt: Date.now() });
+    await dispatchWorkflow(
+      pi,
+      await buildDiscussMilestonePrompt(
+        milestoneId,
+        milestoneTitle,
+        basePath,
+        getStructuredQuestionsAvailability(pi, ctx),
+      ),
+      "gsd-discuss",
+      ctx,
+      "discuss-milestone",
+    );
+    return;
+  }
 
   // ── All milestones complete → New milestone ──────────────────────────
   if (state.phase === "complete") {

@@ -2042,30 +2042,18 @@ export function ChatPane({ className, onOpenAction }: ChatPaneProps) {
 
   const placeholderCTA = useMemo((): { label: string; icon: LucideIcon } | null => {
     if (!workflowAction.primary || workflowAction.disabled) return null
-    const phase = state.boot?.workspace?.active.phase ?? "pre-planning"
-    const autoActive = state.boot?.auto?.active ?? false
-    const autoPaused = state.boot?.auto?.paused ?? false
+    const primary = workflowAction.primary
+    const iconByCommand: Record<string, LucideIcon> = {
+      "/gsd stop": Square,
+      "/gsd auto": Zap,
+      "/gsd next": Play,
+    }
 
-    if (autoActive && !autoPaused) {
-      return { label: "Stop Auto", icon: Square }
+    return {
+      label: primary.label,
+      icon: iconByCommand[primary.command] ?? (primary.label === "New Milestone" ? Milestone : Play),
     }
-    if (autoPaused) {
-      return { label: "Resume Auto", icon: Play }
-    }
-    if (phase === "complete") {
-      return { label: "New Milestone", icon: Milestone }
-    }
-    if (phase === "planning") {
-      return { label: "Plan", icon: Play }
-    }
-    if (phase === "executing" || phase === "summarizing") {
-      return { label: "Start Auto", icon: Zap }
-    }
-    if (phase === "pre-planning") {
-      return { label: "Initialize Project", icon: Play }
-    }
-    return { label: "Continue", icon: Play }
-  }, [workflowAction, state.boot?.workspace?.active.phase, state.boot?.auto?.active, state.boot?.auto?.paused])
+  }, [workflowAction])
 
   const handlePlaceholderCTA = useCallback(() => {
     if (!workflowAction.primary) return

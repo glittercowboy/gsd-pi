@@ -14,3 +14,15 @@ export { readKnowledge } from './knowledge.js';
 export type { KnowledgeResult, KnowledgeEntry } from './knowledge.js';
 export { runDoctorLite } from './doctor-lite.js';
 export type { DoctorResult, DoctorIssue } from './doctor-lite.js';
+export { buildGraph, writeGraph, writeSnapshot, graphStatus, graphQuery, graphDiff } from './graph.js';
+export type {
+  NodeType,
+  EdgeType,
+  ConfidenceTier,
+  GraphNode,
+  GraphEdge,
+  KnowledgeGraph,
+  GraphStatusResult,
+  GraphQueryResult,
+  GraphDiffResult,
+} from './graph.js';

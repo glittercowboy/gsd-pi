@@ -28,6 +28,7 @@ import {
   buildReplanSlicePrompt,
 } from "./auto-prompts.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import type { MinimalModelRegistry } from "./context-budget.js";
 import { pauseAuto } from "./auto.js";
 import {
   getWorkflowTransportSupportError,
@@ -104,7 +105,13 @@ export async function dispatchDirectPhase(
         }
         unitType = "plan-slice";
         unitId = `${mid}/${sid}`;
-        prompt = await buildPlanSlicePrompt(mid, midTitle, sid, sTitle, base);
+        prompt = await buildPlanSlicePrompt(
+          mid, midTitle, sid, sTitle, base, undefined,
+          {
+            sessionContextWindow: ctx.model?.contextWindow,
+            modelRegistry: ctx.modelRegistry as MinimalModelRegistry | undefined,
+          },
+        );
       } else {
         unitType = "plan-milestone";
         unitId = mid;
@@ -129,7 +136,13 @@ export async function dispatchDirectPhase(
       }
       unitType = "execute-task";
       unitId = `${mid}/${sid}/${tid}`;
-      prompt = await buildExecuteTaskPrompt(mid, sid, sTitle, tid, tTitle, base);
+      prompt = await buildExecuteTaskPrompt(
+        mid, sid, sTitle, tid, tTitle, base,
+        {
+          sessionContextWindow: ctx.model?.contextWindow,
+          modelRegistry: ctx.modelRegistry as MinimalModelRegistry | undefined,
+        },
+      );
       break;
     }
 

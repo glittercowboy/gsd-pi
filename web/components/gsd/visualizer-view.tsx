@@ -21,6 +21,7 @@ import {
   RotateCcw,
   ChevronRight,
   AlertCircle,
+  SkipForward,
 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useGSDWorkspaceState, buildProjectUrl } from "@/lib/gsd-workspace-store"
@@ -54,7 +55,7 @@ type TabValue = (typeof TABS)[number]["value"]
 
 // ─── Shared Primitives ────────────────────────────────────────────────────────
 
-function statusIcon(status: "complete" | "active" | "pending" | "done") {
+function statusIcon(status: "complete" | "active" | "pending" | "done" | "parked") {
   switch (status) {
     case "complete":
     case "done":
@@ -63,6 +64,8 @@ function statusIcon(status: "complete" | "active" | "pending" | "done") {
       return <Play className="h-4 w-4 shrink-0 text-info" />
     case "pending":
       return <Circle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+    case "parked":
+      return <SkipForward className="h-4 w-4 shrink-0 text-muted-foreground" />
   }
 }
 
@@ -274,14 +277,16 @@ function ProgressTab({ data }: { data: VisualizerData }) {
                     ? "bg-success/15 text-success"
                     : ms.status === "active"
                       ? "bg-info/15 text-info"
-                      : "bg-muted text-muted-foreground",
+                      : ms.status === "parked"
+                        ? "bg-warning/15 text-warning"
+                        : "bg-muted text-muted-foreground",
                 )}
               >
                 {ms.status}
               </span>
             </div>
 
-            {ms.status === "pending" && ms.dependsOn.length > 0 && (
+            {(ms.status === "pending" || ms.status === "parked") && ms.dependsOn.length > 0 && (
               <div className="px-5 py-2.5 text-xs text-muted-foreground border-b border-border/50">
                 Depends on {ms.dependsOn.join(", ")}
               </div>

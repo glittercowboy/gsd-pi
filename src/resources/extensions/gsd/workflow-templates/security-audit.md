@@ -3,6 +3,7 @@
 <template_meta>
 name: security-audit
 version: 1
+mode: markdown-phase
 requires_project: false
 artifact_dir: .gsd/workflows/audits/
 </template_meta>

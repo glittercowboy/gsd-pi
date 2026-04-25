@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve, relative, dirname, basename } from "node:path";
+import { join, dirname } from "node:path";
 
 import { requireProjectCwd } from "../../../../src/web/bridge-service.ts";
+import { resolveSecurePath } from "../../../lib/secure-path.ts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,27 +42,6 @@ function getGsdRoot(projectCwd: string): string {
 
 function getRootForMode(mode: RootMode, projectCwd: string): string {
   return mode === "project" ? projectCwd : getGsdRoot(projectCwd);
-}
-
-/**
- * Validate and resolve a requested path against the given root directory.
- * Returns the resolved absolute path or null if the path is invalid.
- */
-function resolveSecurePath(requestedPath: string, root: string): string | null {
-  if (requestedPath.startsWith("/") || requestedPath.startsWith("\\")) {
-    return null;
-  }
-  if (requestedPath.includes("..")) {
-    return null;
-  }
-
-  const resolved = resolve(root, requestedPath);
-  const rel = relative(root, resolved);
-  if (rel.startsWith("..") || resolve(root, rel) !== resolved) {
-    return null;
-  }
-
-  return resolved;
 }
 
 function buildTree(dirPath: string, skipDirs?: Set<string>, depth = 0, maxDepth = Infinity): FileNode[] {

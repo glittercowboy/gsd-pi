@@ -87,7 +87,7 @@ import {
 } from "./auto-tool-tracking.js";
 import { closeoutUnit } from "./auto-unit-closeout.js";
 import { recoverTimedOutUnit } from "./auto-timeout-recovery.js";
-import { selectAndApplyModel, resolveModelId } from "./auto-model-selection.js";
+import { selectAndApplyModel, resolveModelId, clearToolBaseline } from "./auto-model-selection.js";
 import { resetRoutingHistory, recordOutcome } from "./routing-history.js";
 import {
   checkPostUnitHooks,
@@ -126,8 +126,9 @@ import {
   formatTokenCount,
 } from "./metrics.js";
 import { setLogBasePath, logWarning, logError } from "./workflow-logger.js";
+import { preflightCleanRoot, postflightPopStash } from "./clean-root-preflight.js";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { readFileSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { atomicWriteSync } from "./atomic-write.js";
@@ -146,6 +147,7 @@ import { getPriorSliceCompletionBlocker } from "./dispatch-guard.js";
 import {
   createAutoWorktree,
   enterAutoWorktree,
+  enterBranchModeForMilestone,
   teardownAutoWorktree,
   isInAutoWorktree,
   getAutoWorktreePath,
@@ -160,14 +162,17 @@ import {
   escapeStaleWorktree,
 } from "./auto-worktree.js";
 import { pruneQueueOrder } from "./queue-order.js";
+import { startCommandPolling as _startCommandPolling, isRemoteConfigured } from "../remote-questions/manager.js";
 
 import { debugLog, isDebugEnabled, writeDebugSummary } from "./debug-logger.js";
 import {
   buildLoopRemediationSteps,
   reconcileMergeState,
 } from "./auto-recovery.js";
+import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 import { resolveDispatch, DISPATCH_RULES } from "./auto-dispatch.js";
 import { getErrorMessage } from "./error-utils.js";
+import { recoverFailedMigration } from "./migrate-external.js";
 import { initRegistry, convertDispatchRules } from "./rule-registry.js";
 import { emitJournalEvent as _emitJournalEvent, type JournalEntry } from "./journal.js";
 import {
@@ -179,7 +184,6 @@ import {
   unitVerb,
   formatAutoElapsed as _formatAutoElapsed,
   formatWidgetTokens,
-  hideFooter,
   type WidgetStateAccessors,
 } from "./auto-dashboard.js";
 import {
@@ -189,18 +193,32 @@ import {
 } from "./auto-supervisor.js";
 import { isDbAvailable, getMilestone } from "./gsd-db.js";
 import { countPendingCaptures } from "./captures.js";
-import { clearCmuxSidebar, logCmuxEvent, syncCmuxSidebar } from "../cmux/index.js";
+import { CMUX_CHANNELS, type CmuxLogLevel } from "../shared/cmux-events.js";
+
+function makeCmuxEmitters(pi: ExtensionAPI) {
+  return {
+    syncCmuxSidebar: (preferences: GSDPreferences | undefined, state: GSDState) =>
+      pi.events.emit(CMUX_CHANNELS.SIDEBAR, { action: "sync" as const, preferences, state }),
+    logCmuxEvent: (preferences: GSDPreferences | undefined, message: string, level?: CmuxLogLevel) =>
+      pi.events.emit(CMUX_CHANNELS.LOG, { preferences, message, level: level ?? "info" }),
+    clearCmuxSidebar: (preferences: GSDPreferences | undefined) =>
+      pi.events.emit(CMUX_CHANNELS.SIDEBAR, { action: "clear" as const, preferences }),
+  };
+}
 
 // ── Extracted modules ──────────────────────────────────────────────────────
 import { startUnitSupervision } from "./auto-timers.js";
 import { runPostUnitVerification } from "./auto-verification.js";
 import {
+  autoCommitUnit,
   postUnitPreVerification,
   postUnitPostVerification,
 } from "./auto-post-unit.js";
 import { bootstrapAutoSession, openProjectDbIfPresent, type BootstrapDeps } from "./auto-start.js";
 import { initHealthWidget } from "./health-widget.js";
-import { autoLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
+import { runLegacyAutoLoop, runUokKernelLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
+import { runAutoLoopWithUok } from "./uok/kernel.js";
+import { resolveUokFlags } from "./uok/flags.js";
 // Slice-level parallelism (#2340)
 import { getEligibleSlices } from "./slice-parallel-eligibility.js";
 import { startSliceParallel } from "./slice-parallel-orchestrator.js";
@@ -304,6 +322,21 @@ function restoreMilestoneLockEnv(): void {
   s.milestoneLockEnvCaptured = false;
 }
 
+function normalizeSessionFilePath(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  if (!firstLine) return null;
+
+  // Guard against accidental message concatenation by trimming to .jsonl.
+  const jsonlIndex = firstLine.toLowerCase().indexOf(".jsonl");
+  const candidate = jsonlIndex >= 0 ? firstLine.slice(0, jsonlIndex + ".jsonl".length) : firstLine;
+  if (!isAbsolute(candidate)) return null;
+  if (!candidate.toLowerCase().endsWith(".jsonl")) return null;
+  return candidate;
+}
+
 export function startAutoDetached(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
@@ -323,8 +356,9 @@ export function startAutoDetached(
   });
 }
 
-export function shouldUseWorktreeIsolation(): boolean {
-  const prefs = loadEffectiveGSDPreferences()?.preferences?.git;
+/** Returns true if the project is configured for `isolation:worktree` mode. */
+export function shouldUseWorktreeIsolation(basePath?: string): boolean {
+  const prefs = loadEffectiveGSDPreferences(basePath)?.preferences?.git;
   if (prefs?.isolation === "worktree") return true;
   // Default is false — worktree isolation requires explicit opt-in
   return false;
@@ -387,6 +421,27 @@ function deregisterSigtermHandler(): void {
   s.sigtermHandler = null;
 }
 
+/**
+ * Wrapper: start background command polling for the configured remote channel
+ * (currently Telegram only). Stores the cleanup function on the session so
+ * every exit path can stop the interval via stopCommandPolling().
+ * No-op when no remote channel is configured.
+ */
+function startAutoCommandPolling(basePath: string): void {
+  if (!isRemoteConfigured()) return;
+  // Clear any existing interval before starting a new one (e.g. resume path).
+  stopAutoCommandPolling();
+  s.commandPollingCleanup = _startCommandPolling(basePath);
+}
+
+/** Wrapper: stop background command polling and clear the stored cleanup. */
+function stopAutoCommandPolling(): void {
+  if (s.commandPollingCleanup) {
+    s.commandPollingCleanup();
+    s.commandPollingCleanup = null;
+  }
+}
+
 export { type AutoDashboardData } from "./auto-dashboard.js";
 
 export function getAutoDashboardData(): AutoDashboardData {
@@ -396,7 +451,7 @@ export function getAutoDashboardData(): AutoDashboardData {
   const rtkSavings = sessionId && s.basePath
     ? getRtkSessionSavings(s.basePath, sessionId)
     : null;
-  const rtkEnabled = loadEffectiveGSDPreferences()?.preferences.experimental?.rtk === true;
+  const rtkEnabled = loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences.experimental?.rtk === true;
   // Pending capture count — lazy check, non-fatal
   let pendingCaptureCount = 0;
   try {
@@ -431,6 +486,11 @@ export function isAutoActive(): boolean {
   return s.active;
 }
 
+/** Test-only seam for validating auto-mode guards (#4704). Do not use in production code. */
+export function _setAutoActiveForTest(active: boolean): void {
+  s.active = active;
+}
+
 export function isAutoPaused(): boolean {
   return s.paused;
 }
@@ -461,6 +521,15 @@ export function getAutoModeStartModel(): {
   id: string;
 } | null {
   return s.autoModeStartModel;
+}
+
+/**
+ * Update the dashboard-facing dispatched model label.
+ * Used when runtime recovery switches models mid-unit (e.g. provider fallback)
+ * so the AUTO box reflects the active model immediately.
+ */
+export function setCurrentDispatchedModelId(model: { provider: string; id: string } | null): void {
+  s.currentDispatchedModelId = model ? `${model.provider}/${model.id}` : null;
 }
 
 // Tool tracking — delegates to auto-tool-tracking.ts
@@ -604,11 +673,29 @@ function buildSnapshotOpts(
   continueHereFired?: boolean;
   promptCharCount?: number;
   baselineCharCount?: number;
+  traceId?: string;
+  turnId?: string;
+  gitAction?: "commit" | "snapshot" | "status-only";
+  gitPush?: boolean;
+  gitStatus?: "ok" | "failed";
+  gitError?: string;
 } & Record<string, unknown> {
+  const prefs = loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences;
+  const uokFlags = resolveUokFlags(prefs);
   return {
     ...(s.autoStartTime > 0 ? { autoSessionKey: String(s.autoStartTime) } : {}),
     promptCharCount: s.lastPromptCharCount,
     baselineCharCount: s.lastBaselineCharCount,
+    traceId: s.currentTraceId ?? undefined,
+    turnId: s.currentTurnId ?? undefined,
+    ...(uokFlags.gitops
+      ? {
+          gitAction: uokFlags.gitopsTurnAction,
+          gitPush: uokFlags.gitopsTurnPush,
+          gitStatus: s.lastGitActionStatus ?? undefined,
+          gitError: s.lastGitActionFailure ?? undefined,
+        }
+      : {}),
     ...(s.currentUnitRouting ?? {}),
   };
 }
@@ -627,10 +714,10 @@ function handleLostSessionLock(
   s.paused = false;
   deactivateGSD();
   clearUnitTimeout();
+  stopAutoCommandPolling();
   restoreProjectRootEnv();
   restoreMilestoneLockEnv();
   deregisterSigtermHandler();
-  clearCmuxSidebar(loadEffectiveGSDPreferences()?.preferences);
   const base = lockBase();
   const lockFilePath = base ? join(gsdRoot(base), "auto.lock") : "unknown";
   const recoverySuggestion = "\nTo recover, run: gsd doctor --fix";
@@ -650,7 +737,6 @@ function handleLostSessionLock(
   );
   ctx?.ui.setStatus("gsd-auto", undefined);
   ctx?.ui.setWidget("gsd-progress", undefined);
-  ctx?.ui.setFooter(undefined);
   if (ctx) initHealthWidget(ctx);
 }
 
@@ -666,6 +752,7 @@ function cleanupAfterLoopExit(ctx: ExtensionContext): void {
   s.active = false;
   deactivateGSD();
   clearUnitTimeout();
+  stopAutoCommandPolling();
   restoreProjectRootEnv();
   restoreMilestoneLockEnv();
 
@@ -685,7 +772,6 @@ function cleanupAfterLoopExit(ctx: ExtensionContext): void {
   if (!s.paused) {
     ctx.ui.setStatus("gsd-auto", undefined);
     ctx.ui.setWidget("gsd-progress", undefined);
-    ctx.ui.setFooter(undefined);
     initHealthWidget(ctx);
   }
 
@@ -707,13 +793,51 @@ export async function stopAuto(
   reason?: string,
 ): Promise<void> {
   if (!s.active && !s.paused) return;
-  const loadedPreferences = loadEffectiveGSDPreferences()?.preferences;
+  const loadedPreferences = loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences;
   const reasonSuffix = reason ? ` — ${reason}` : "";
+
+  // #4764 — telemetry: record the exit reason and whether the current milestone
+  // was merged before we entered stopAuto. This is the producer-side signal for
+  // the #4761 orphan class: milestoneMerged=false + currentMilestoneId present
+  // is exactly the pattern that strands work.
+  try {
+    const { emitAutoExit } = await import("./worktree-telemetry.js");
+    type AutoExitReason =
+      | "pause" | "stop" | "blocked" | "merge-conflict" | "merge-failed"
+      | "slice-merge-conflict" | "all-complete" | "no-active-milestone" | "other";
+    // Normalize the free-form reason to a closed set so the telemetry
+    // aggregator buckets stably. Raw detail is preserved in the phases.ts
+    // notification and the notify'd error string.
+    const rawReason = reason ?? "stop";
+    const normalizedReason: AutoExitReason = rawReason.startsWith("Blocked:")
+      ? "blocked"
+      : rawReason.startsWith("Merge conflict")
+        ? "merge-conflict"
+        : rawReason.startsWith("Merge error") || rawReason.startsWith("Merge failed")
+          ? "merge-failed"
+          : rawReason.startsWith("slice-merge-conflict")
+            ? "slice-merge-conflict"
+            : rawReason === "All milestones complete"
+              ? "all-complete"
+              : rawReason === "No active milestone"
+                ? "no-active-milestone"
+                : rawReason === "stop" || rawReason === "pause"
+                  ? rawReason
+                  : "other";
+    emitAutoExit(s.originalBasePath || s.basePath, {
+      reason: normalizedReason,
+      milestoneId: s.currentMilestoneId ?? undefined,
+      milestoneMerged: s.milestoneMergedInPhases === true,
+    });
+  } catch (err) {
+    logWarning("engine", `auto-exit telemetry failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   try {
     // ── Step 1: Timers and locks ──
     try {
       clearUnitTimeout();
+      stopAutoCommandPolling();
       if (lockBase()) clearLock(lockBase());
       if (lockBase()) releaseSessionLock(lockBase());
     } catch (e) {
@@ -871,12 +995,12 @@ export async function stopAuto(
 
     // ── Step 9: Cmux sidebar / event log ──
     try {
-      clearCmuxSidebar(loadedPreferences);
-      logCmuxEvent(
-        loadedPreferences,
-        `Auto-mode stopped${reasonSuffix || ""}.`,
-        reason?.startsWith("Blocked:") ? "warning" : "info",
-      );
+      pi?.events.emit(CMUX_CHANNELS.SIDEBAR, { action: "clear" as const, preferences: loadedPreferences });
+      pi?.events.emit(CMUX_CHANNELS.LOG, {
+        preferences: loadedPreferences,
+        message: `Auto-mode stopped${reasonSuffix || ""}.`,
+        level: reason?.startsWith("Blocked:") ? "warning" : "info",
+      });
     } catch (e) {
       debugLog("stop-cleanup-cmux", { error: e instanceof Error ? e.message : String(e) });
     }
@@ -911,7 +1035,7 @@ export async function stopAuto(
       logWarning("engine", `file unlink failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
     }
 
-    // ── Step 13: Restore original model (before reset clears IDs) ──
+    // ── Step 13: Restore original model + thinking (before reset clears IDs) ──
     try {
       if (pi && ctx && s.originalModelId && s.originalModelProvider) {
         const original = ctx.modelRegistry.find(
@@ -919,6 +1043,9 @@ export async function stopAuto(
           s.originalModelId,
         );
         if (original) await pi.setModel(original);
+      }
+      if (pi && s.originalThinkingLevel) {
+        pi.setThinkingLevel(s.originalThinkingLevel);
       }
     } catch (e) {
       debugLog("stop-cleanup-model", { error: e instanceof Error ? e.message : String(e) });
@@ -957,10 +1084,15 @@ export async function stopAuto(
     // UI cleanup
     ctx?.ui.setStatus("gsd-auto", undefined);
     ctx?.ui.setWidget("gsd-progress", undefined);
-    ctx?.ui.setFooter(undefined);
     if (ctx) initHealthWidget(ctx);
     restoreProjectRootEnv();
     restoreMilestoneLockEnv();
+
+    // Drop the active-tool baseline so a subsequent /gsd auto run on the
+    // same `pi` instance recaptures from the live tool set rather than
+    // restoring this session's snapshot and silently undoing any tool
+    // changes the user made between sessions (#4959 / CodeRabbit).
+    if (pi) clearToolBaseline(pi);
 
     // Reset all session state in one call
     s.reset();
@@ -979,6 +1111,7 @@ export async function pauseAuto(
 ): Promise<void> {
   if (!s.active) return;
   clearUnitTimeout();
+  stopAutoCommandPolling();
 
   // Flush queued follow-up messages (#3512).
   // Late async notifications (async_job_result, gsd-auto-wrapup) can trigger
@@ -997,7 +1130,7 @@ export async function pauseAuto(
   // from provider-error pause and avoid hard-stopping (#2762).
   resolveAgentEndCancelled(_errorContext);
 
-  s.pausedSessionFile = ctx?.sessionManager?.getSessionFile() ?? null;
+  s.pausedSessionFile = normalizeSessionFilePath(ctx?.sessionManager?.getSessionFile() ?? null);
 
   // Persist paused-session metadata so resume survives /exit (#1383).
   // The fresh-start bootstrap checks for this file and restores worktree context.
@@ -1059,7 +1192,6 @@ export async function pauseAuto(
   s.verificationRetryCount.clear();
   ctx?.ui.setStatus("gsd-auto", "paused");
   ctx?.ui.setWidget("gsd-progress", undefined);
-  ctx?.ui.setFooter(undefined);
   if (ctx) initHealthWidget(ctx);
   const resumeCmd = s.stepMode ? "/gsd next" : "/gsd auto";
   ctx?.ui.notify(
@@ -1082,6 +1214,7 @@ function buildResolverDeps(): WorktreeResolverDeps {
     teardownAutoWorktree,
     createAutoWorktree,
     enterAutoWorktree,
+    enterBranchModeForMilestone,
     getAutoWorktreePath,
     autoCommitCurrentBranch,
     getCurrentBranch,
@@ -1111,11 +1244,13 @@ function buildResolver(): WorktreeResolver {
  * Build the LoopDeps object from auto.ts private scope.
  * This bundles all private functions that autoLoop needs without exporting them.
  */
-function buildLoopDeps(): LoopDeps {
+function buildLoopDeps(pi: ExtensionAPI): LoopDeps {
   // Initialize the unified rule registry with converted dispatch rules.
   // Must happen before LoopDeps is assembled so facade functions
   // (resolveDispatch, runPreDispatchHooks, etc.) delegate to the registry.
   initRegistry(convertDispatchRules(DISPATCH_RULES));
+
+  const cmux = makeCmuxEmitters(pi);
 
   return {
     lockBase,
@@ -1124,8 +1259,11 @@ function buildLoopDeps(): LoopDeps {
     pauseAuto,
     clearUnitTimeout,
     updateProgressWidget,
-    syncCmuxSidebar,
-    logCmuxEvent,
+    ...cmux,
+    handleLostSessionLock: (ctx: ExtensionContext | undefined, lockStatus: SessionLockStatus | undefined) => {
+      cmux.clearCmuxSidebar(loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences);
+      handleLostSessionLock(ctx, lockStatus);
+    },
 
     // State and cache
     invalidateAllCaches,
@@ -1145,7 +1283,6 @@ function buildLoopDeps(): LoopDeps {
     // Session lock
     validateSessionLock: getSessionLockStatus,
     updateSessionLock,
-    handleLostSessionLock,
 
     // Milestone transition
     sendDesktopNotification,
@@ -1180,6 +1317,7 @@ function buildLoopDeps(): LoopDeps {
     getMainBranch,
     // Unit closeout + runtime records
     closeoutUnit,
+    autoCommitUnit,
     recordOutcome,
     writeLock,
     captureAvailableSkills,
@@ -1228,9 +1366,18 @@ function buildLoopDeps(): LoopDeps {
 
     // Journal
     emitJournalEvent: (entry: JournalEntry) => _emitJournalEvent(s.basePath, entry),
+
+    // Clean-root preflight gate (#2909)
+    preflightCleanRoot,
+    postflightPopStash,
   } as unknown as LoopDeps;
 }
 
+/**
+ * Start auto-mode. Handles both fresh-start and resume paths, sets up session
+ * state, enters the milestone worktree or branch, and dispatches the first unit.
+ * No-ops if auto-mode is already active.
+ */
 export async function startAuto(
   ctx: ExtensionCommandContext,
   pi: ExtensionAPI,
@@ -1247,6 +1394,15 @@ export async function startAuto(
     return;
   }
 
+  // On a *fresh* start, drop any stale active-tool baseline left by a prior
+  // auto session that didn't run stopAuto cleanly.  Skip on resume: pauseAuto
+  // leaves the last provider-trimmed active tools in place, so clearing here
+  // would let the next selectAndApplyModel recapture that already-narrowed
+  // set as the new baseline — exactly the cross-unit poisoning this PR is
+  // fixing (#4959 / CodeRabbit Major).  The pre-pause baseline survives in
+  // the WeakMap keyed by `pi`.
+  if (!s.paused) clearToolBaseline(pi);
+
   const requestedStepMode = options?.step ?? false;
   const interruptedAssessment = options?.interrupted ?? null;
   if (options?.milestoneLock !== undefined) {
@@ -1258,6 +1414,13 @@ export async function startAuto(
 
   // Escape stale worktree cwd from a previous milestone (#608).
   base = escapeStaleWorktree(base);
+
+  // Heal .gsd.migrating before any branching — covers both fresh-start and
+  // resume paths (#4416). The matching call in auto-start.ts covers the
+  // bootstrap-only path; this call ensures the resume path is also protected.
+  if (recoverFailedMigration(base)) {
+    ctx.ui.notify("Recovered unfinished migration (.gsd.migrating → .gsd).", "info");
+  }
 
   const freshStartAssessment = interruptedAssessment
     ?? await assessInterruptedSession(base);
@@ -1288,7 +1451,11 @@ export async function startAuto(
         s.autoStartTime = meta.autoStartTime || Date.now();
         s.sessionMilestoneLock = meta.milestoneLock ?? null;
         s.paused = true;
-        try { unlinkSync(pausedPath); } catch (e) { logWarning("session", `pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" }); }
+        try { unlinkSync(pausedPath); } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+            logWarning("session", `pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" });
+          }
+        }
         ctx.ui.notify(
           `Resuming paused custom workflow${meta.activeRunDir ? ` (${meta.activeRunDir})` : ""}.`,
           "info",
@@ -1305,9 +1472,19 @@ export async function startAuto(
           // Validate the milestone still exists and isn't already complete (#1664).
           const mDir = resolveMilestonePath(base, meta.milestoneId);
           const summaryFile = resolveMilestoneFile(base, meta.milestoneId, "SUMMARY");
-          if (!mDir || summaryFile) {
+          let summaryIsTerminal = false;
+          if (summaryFile) {
+            try {
+              summaryIsTerminal = classifyMilestoneSummaryContent(readFileSync(summaryFile, "utf-8")) !== "failure";
+            } catch {
+              summaryIsTerminal = false;
+            }
+          }
+          if (!mDir || summaryIsTerminal) {
             try { unlinkSync(pausedPath); } catch (err) {
-              logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+              if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+                logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+              }
             }
             ctx.ui.notify(
               `Paused milestone ${meta.milestoneId} is ${!mDir ? "missing" : "already complete"}. Starting fresh.`,
@@ -1317,20 +1494,28 @@ export async function startAuto(
             s.currentMilestoneId = meta.milestoneId;
             s.originalBasePath = meta.originalBasePath || base;
             s.stepMode = meta.stepMode ?? requestedStepMode;
-            s.pausedSessionFile = meta.sessionFile ?? null;
+            s.pausedSessionFile = normalizeSessionFilePath(meta.sessionFile ?? null);
             s.pausedUnitType = meta.unitType ?? null;
             s.pausedUnitId = meta.unitId ?? null;
             s.autoStartTime = meta.autoStartTime || Date.now();
             s.sessionMilestoneLock = meta.milestoneLock ?? null;
             s.paused = true;
-            try { unlinkSync(pausedPath); } catch (e) { logWarning("session", `pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" }); }
+            try { unlinkSync(pausedPath); } catch (e) {
+              if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+                logWarning("session", `pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" });
+              }
+            }
             ctx.ui.notify(
               `Resuming paused session for ${meta.milestoneId}${meta.worktreePath && existsSync(meta.worktreePath) ? ` (worktree)` : ""}.`,
               "info",
             );
           }
         } else if (existsSync(pausedPath)) {
-          try { unlinkSync(pausedPath); } catch (e) { logWarning("session", `stale pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" }); }
+          try { unlinkSync(pausedPath); } catch (e) {
+            if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
+              logWarning("session", `stale pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" });
+            }
+          }
         }
       }
     } catch (err) {
@@ -1389,7 +1574,9 @@ export async function startAuto(
     // Lock acquired — now safe to delete the pause file
     if (s.pausedSessionFile) {
       try { unlinkSync(s.pausedSessionFile); } catch (err) {
-        logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+        }
       }
       s.pausedSessionFile = null;
     }
@@ -1400,6 +1587,22 @@ export async function startAuto(
     s.stepMode = requestedStepMode;
     s.cmdCtx = ctx;
     s.basePath = base;
+    // ── Resume worktree: if the paused session was inside a milestone worktree,
+    // apply that path as the dispatch basePath immediately (#3723).
+    // This ensures the dispatch loop runs from the worktree directory even when
+    // enterMilestone guard conditions differ between the original and resumed
+    // session (e.g. isolation mode changed, detectWorktreeName differs across
+    // process restarts).  We guard with existsSync so a stale or deleted
+    // worktree directory safely falls back to the project root.
+    const resumeWorktreePath = freshStartAssessment.pausedSession?.worktreePath;
+    if (resumeWorktreePath && existsSync(resumeWorktreePath)) {
+      s.basePath = resumeWorktreePath;
+    }
+    // Ensure the workflow-logger audit log is pinned to the project root
+    // even when auto-mode is entered via a path that bypasses the
+    // bootstrap/dynamic-tools ensureDbOpen() → setLogBasePath() chain
+    // (e.g. /clear resume, hot-reload).
+    setLogBasePath(base);
     s.unitDispatchCount.clear();
     s.unitLifetimeDispatches.clear();
     if (!getLedger()) initMetrics(base);
@@ -1411,10 +1614,10 @@ export async function startAuto(
       ctx.ui.notify(summary, level as "info" | "warning" | "error");
     });
 
-    // ── Auto-worktree: re-enter worktree on resume ──
+    // ── Auto-worktree / branch-mode: re-enter on resume ──
     if (
       s.currentMilestoneId &&
-      shouldUseWorktreeIsolation() &&
+      getIsolationMode(s.originalBasePath || s.basePath) !== "none" &&
       s.originalBasePath &&
       !isInAutoWorktree(s.basePath) &&
       !detectWorktreeName(s.basePath) &&
@@ -1428,7 +1631,7 @@ export async function startAuto(
     registerSigtermHandler(lockBase());
 
     ctx.ui.setStatus("gsd-auto", s.stepMode ? "next" : "auto");
-    ctx.ui.setFooter(hideFooter);
+    ctx.ui.setWidget("gsd-health", undefined);
     ctx.ui.notify(
       s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.",
       "info",
@@ -1453,7 +1656,7 @@ export async function startAuto(
     await openProjectDbIfPresent(s.basePath);
     try {
       await rebuildState(s.basePath);
-      syncCmuxSidebar(loadEffectiveGSDPreferences()?.preferences, await deriveState(s.basePath));
+      pi.events.emit(CMUX_CHANNELS.SIDEBAR, { action: "sync" as const, preferences: loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences, state: await deriveState(s.basePath) });
     } catch (e) {
       debugLog("resume-rebuild-state-failed", {
         error: e instanceof Error ? e.message : String(e),
@@ -1503,10 +1706,18 @@ export async function startAuto(
       "resuming",
       s.currentMilestoneId ?? "unknown",
     );
-    logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.", "progress");
+    pi.events.emit(CMUX_CHANNELS.LOG, { preferences: loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences, message: s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.", level: "progress" });
 
     captureProjectRootEnv(s.originalBasePath || s.basePath);
-    await autoLoop(ctx, pi, s, buildLoopDeps());
+    startAutoCommandPolling(s.basePath);
+    await runAutoLoopWithUok({
+      ctx,
+      pi,
+      s,
+      deps: buildLoopDeps(pi),
+      runKernelLoop: runUokKernelLoop,
+      runLegacyLoop: runLegacyAutoLoop,
+    });
     cleanupAfterLoopExit(ctx);
     return;
   }
@@ -1533,41 +1744,27 @@ export async function startAuto(
 
   captureProjectRootEnv(s.originalBasePath || s.basePath);
   try {
-    syncCmuxSidebar(loadEffectiveGSDPreferences()?.preferences, await deriveState(s.basePath));
+    pi.events.emit(CMUX_CHANNELS.SIDEBAR, { action: "sync" as const, preferences: loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences, state: await deriveState(s.basePath) });
   } catch (err) {
     // Best-effort only — sidebar sync must never block auto-mode startup
     logWarning("engine", `cmux sync failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
   }
-  logCmuxEvent(loadEffectiveGSDPreferences()?.preferences, requestedStepMode ? "Step-mode started." : "Auto-mode started.", "progress");
+  pi.events.emit(CMUX_CHANNELS.LOG, { preferences: loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences, message: requestedStepMode ? "Step-mode started." : "Auto-mode started.", level: "progress" });
+
+  startAutoCommandPolling(s.basePath);
 
   // Dispatch the first unit
-  await autoLoop(ctx, pi, s, buildLoopDeps());
+  await runAutoLoopWithUok({
+    ctx,
+    pi,
+    s,
+    deps: buildLoopDeps(pi),
+    runKernelLoop: runUokKernelLoop,
+    runLegacyLoop: runLegacyAutoLoop,
+  });
   cleanupAfterLoopExit(ctx);
 }
 
-// ─── Agent End Handler ────────────────────────────────────────────────────────
-
-/**
- * Deprecated thin wrapper — kept as export for backward compatibility.
- * The actual agent_end processing now happens via resolveAgentEnd() in auto-loop.ts,
- * which is called directly from index.ts. The autoLoop() while loop handles all
- * post-unit processing (verification, hooks, dispatch) that this function used to do.
- *
- * If called by straggler code, it simply resolves the pending promise so the loop
- * can continue.
- */
-export async function handleAgentEnd(
-  ctx: ExtensionContext,
-  pi: ExtensionAPI,
-): Promise<void> {
-  if (!s.active || !s.cmdCtx) {
-    // Even when inactive, resolve any pending promise so the loop is unblocked.
-    resolveAgentEndCancelled();
-    return;
-  }
-  clearUnitTimeout();
-  resolveAgentEnd({ messages: [] });
-}
 // describeNextUnit is imported from auto-dashboard.ts and re-exported
 export { describeNextUnit } from "./auto-dashboard.js";
 
@@ -1701,12 +1898,12 @@ export async function dispatchHookUnit(
     }
   }
 
-  const sessionFile = ctx.sessionManager.getSessionFile();
+  const sessionFile = normalizeSessionFilePath(ctx.sessionManager.getSessionFile());
   writeLock(
     lockBase(),
     hookUnitType,
     triggerUnitId,
-    sessionFile,
+    sessionFile ?? undefined,
   );
 
   clearUnitTimeout();

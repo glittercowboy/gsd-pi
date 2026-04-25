@@ -358,6 +358,57 @@ test('writeBlockerPlaceholder: does NOT update DB for non-execute-task types', a
   }
 });
 
+test('writeBlockerPlaceholder: updates execute-task plan checkbox after DB recovery (#4126)', async () => {
+  const base = createFixtureBase();
+  try {
+    const {
+      openDatabase,
+      closeDatabase,
+      insertMilestone,
+      insertSlice,
+      insertTask,
+      getTask,
+      isDbAvailable,
+    } = await import("../../gsd-db.ts");
+
+    const dbPath = join(base, ".gsd", "gsd.db");
+    const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+    const tasksDir = join(sliceDir, "tasks");
+
+    mkdirSync(tasksDir, { recursive: true });
+    writeFileSync(join(sliceDir, "S01-PLAN.md"), [
+      "# S01: Test Slice",
+      "",
+      "## Tasks",
+      "",
+      "- [ ] **T01: Recoverable task** `est:5m`",
+    ].join("\n"));
+
+    openDatabase(dbPath);
+    try {
+      insertMilestone({ id: "M001", title: "Test", status: "active" });
+      insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "active" });
+      insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Recoverable task", status: "pending" });
+
+      writeBlockerPlaceholder("execute-task", "M001/S01/T01", base, "context exhaustion recovery");
+
+      const task = getTask("M001", "S01", "T01");
+      assert.equal(task?.status, "complete", "execute-task recovery should still mark the DB task complete");
+
+      const planContent = readFileSync(join(sliceDir, "S01-PLAN.md"), "utf-8");
+      assert.match(
+        planContent,
+        /\- \[x\] \*\*T01: Recoverable task\*\*/,
+        "execute-task recovery should re-render the slice plan checkbox after marking the DB row complete",
+      );
+    } finally {
+      if (isDbAvailable()) closeDatabase();
+    }
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('writeBlockerPlaceholder: updates DB slice status for complete-slice (#2653)', async () => {
   const base = createFixtureBase();
   try {
@@ -384,6 +435,36 @@ test('writeBlockerPlaceholder: updates DB slice status for complete-slice (#2653
       // Note: the placeholder writes a SUMMARY file, but complete-slice also needs UAT.
       // The placeholder itself doesn't write UAT, so artifact verification may still fail
       // for complete-slice — but the DB status is now correct, breaking the circular dep.
+    } finally {
+      if (isDbAvailable()) closeDatabase();
+    }
+  } finally {
+    cleanup(base);
+  }
+});
+
+test('writeBlockerPlaceholder: inserts placeholder slice for plan-milestone so deriveState exits pre-planning (#4378)', async () => {
+  const base = createFixtureBase();
+  try {
+    const { openDatabase, closeDatabase, insertMilestone, getMilestoneSlices, isDbAvailable } =
+      await import("../../gsd-db.ts");
+
+    const dbPath = join(base, ".gsd", "gsd.db");
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+
+    openDatabase(dbPath);
+    try {
+      insertMilestone({ id: "M001", title: "Test", status: "active" });
+
+      // Before fix: writeBlockerPlaceholder wrote the placeholder ROADMAP.md but
+      // never updated the DB, so activeMilestoneSlices.length === 0 on next deriveState
+      // call → state.phase stays 'pre-planning' → plan-milestone dispatches again → infinite loop
+      writeBlockerPlaceholder("plan-milestone", "M001", base, "idle recovery exhausted");
+
+      const slices = getMilestoneSlices("M001");
+      assert.ok(slices.length > 0,
+        "writeBlockerPlaceholder must insert a placeholder slice for plan-milestone so " +
+        "deriveState sees activeMilestoneSlices.length > 0 and exits pre-planning phase (#4378)");
     } finally {
       if (isDbAvailable()) closeDatabase();
     }

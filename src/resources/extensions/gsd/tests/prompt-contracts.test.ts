@@ -223,6 +223,30 @@ test("replan-slice prompt uses gsd_replan_slice as canonical DB-backed tool", ()
   assert.doesNotMatch(prompt, /Degraded fallback/i);
 });
 
+// ─── ADR-011 refine-slice prompt contracts ────────────────────────────
+
+test("refine-slice prompt names gsd_plan_slice as the DB-backed write path", () => {
+  const prompt = readPrompt("refine-slice");
+  assert.match(prompt, /gsd_plan_slice/, "refine-slice must call gsd_plan_slice to persist");
+});
+
+test("refine-slice prompt does not instruct direct PLAN.md writes", () => {
+  const prompt = readPrompt("refine-slice");
+  assert.match(
+    prompt,
+    /do NOT rely on direct `PLAN\.md` writes/i,
+    "refine-slice must not frame direct file writes as authoritative",
+  );
+});
+
+test("refine-slice prompt frames the unit as a transformation, not blank-sheet planning", () => {
+  const prompt = readPrompt("refine-slice");
+  // The framing language is load-bearing — the model should treat this as
+  // expanding an approved sketch, not planning from scratch.
+  assert.match(prompt, /expands an approved sketch/i);
+  assert.match(prompt, /Sketch Scope/);
+});
+
 test("reassess-roadmap prompt references gsd_reassess_roadmap tool", () => {
   const prompt = readPrompt("reassess-roadmap");
   assert.match(prompt, /gsd_reassess_roadmap/);

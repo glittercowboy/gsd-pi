@@ -2,6 +2,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const systemContextSrc = readFileSync(
   join(import.meta.dirname, "..", "bootstrap", "system-context.ts"),
@@ -29,7 +30,7 @@ describe("bootstrap deriveState DB guards (#3844)", () => {
   test("register-hooks opens DB before deriveState in session_before_compact", () => {
     const compactIdx = registerHooksSrc.indexOf('pi.on("session_before_compact"');
     assert.ok(compactIdx > -1, "register-hooks should define session_before_compact");
-    const compactSection = registerHooksSrc.slice(compactIdx, compactIdx + 1600);
+    const compactSection = extractSourceRegion(registerHooksSrc, 'pi.on("session_before_compact"');
     const ensureIdx = compactSection.indexOf("ensureDbOpen()");
     const deriveIdx = compactSection.indexOf("deriveState(basePath)");
     assert.ok(ensureIdx > -1, "session_before_compact should call ensureDbOpen()");

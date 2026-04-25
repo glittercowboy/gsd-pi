@@ -55,6 +55,7 @@ export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedMode
       break;
     case "plan-milestone":
     case "plan-slice":
+    case "refine-slice":
     case "replan-slice":
       phaseConfig = m.planning;
       break;
@@ -355,7 +356,7 @@ export function resolveAutoSupervisorConfig(): AutoSupervisorConfig {
 
 // ─── Token Profile Resolution ─────────────────────────────────────────────
 
-const VALID_TOKEN_PROFILES = new Set<TokenProfile>(["budget", "balanced", "quality"]);
+const VALID_TOKEN_PROFILES = new Set<TokenProfile>(["budget", "balanced", "quality", "burn-max"]);
 
 /**
  * Resolve profile defaults for a given token profile tier.
@@ -400,6 +401,22 @@ export function resolveProfileDefaults(profile: TokenProfile): Partial<GSDPrefer
           skip_reassess: true,
         },
       };
+    case "burn-max":
+      return {
+        // Quality-first profile: keep user-selected models, disable downgrade routing.
+        // Policy constraints still apply at dispatch time.
+        dynamic_routing: {
+          enabled: false,
+        },
+        context_selection: "full",
+        phases: {
+          skip_research: false,
+          skip_slice_research: false,
+          skip_reassess: false,
+          skip_milestone_validation: false,
+          reassess_after_slice: true,
+        },
+      };
   }
 }
 
@@ -416,7 +433,7 @@ export function resolveEffectiveProfile(): TokenProfile {
 
 /**
  * Resolve the inline level from the active token profile.
- * budget -> minimal, balanced -> standard, quality -> full.
+ * budget -> minimal, balanced -> standard, quality/burn-max -> full.
  */
 export function resolveInlineLevel(): InlineLevel {
   const profile = resolveEffectiveProfile();
@@ -424,12 +441,13 @@ export function resolveInlineLevel(): InlineLevel {
     case "budget": return "minimal";
     case "balanced": return "standard";
     case "quality": return "full";
+    case "burn-max": return "full";
   }
 }
 
 /**
  * Resolve the context selection mode from the active token profile.
- * budget -> "smart", balanced/quality -> "full".
+ * budget -> "smart", balanced/quality/burn-max -> "full".
  * Explicit preference always wins.
  */
 export function resolveContextSelection(): import("./types.js").ContextSelectionMode {

@@ -31,7 +31,7 @@ version: 1
 # Model selection
 models:
   research: claude-sonnet-4-6
-  planning: claude-opus-4-6
+  planning: claude-opus-4-7
   execution: claude-sonnet-4-6
   completion: claude-sonnet-4-6
 
@@ -52,6 +52,9 @@ git:
   auto_push: true
   merge_strategy: squash
   isolation: worktree
+  collapse_cadence: milestone   # or "slice" — see Git & Worktrees docs
+  # milestone_resquash applies only when collapse_cadence: "slice"
+  # milestone_resquash: true    # collapse slice commits into one at milestone end
 
 # Verification
 verification_commands:
@@ -75,7 +78,7 @@ Per-phase model selection. See [Choosing a Model](../getting-started/choosing-a-
 models:
   research: claude-sonnet-4-6
   planning:
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     fallbacks:
       - openrouter/z-ai/glm-5
   execution: claude-sonnet-4-6

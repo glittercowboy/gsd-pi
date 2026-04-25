@@ -42,7 +42,7 @@ describe('isolation:none stale branch guard (#3675)', () => {
   });
 
   test('guard is conditional on isolation mode "none"', () => {
-    assert.match(source, /getIsolationMode\(\)\s*===\s*["']none["']/,
+    assert.match(source, /getIsolationMode\([^)]*\)\s*===\s*["']none["']/,
       'guard should only activate when isolation mode is "none"');
   });
 

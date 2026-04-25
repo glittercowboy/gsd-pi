@@ -11,6 +11,10 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync, unlinkSync, existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import {
   isDepthConfirmationAnswer,
   shouldBlockContextWrite,
@@ -20,8 +24,10 @@ import {
   markDepthVerified,
   isMilestoneDepthVerified,
   shouldBlockContextArtifactSave,
+  shouldBlockContextArtifactSaveInSnapshot,
   clearDiscussionFlowState,
   resetWriteGateState,
+  loadWriteGateSnapshot,
 } from '../bootstrap/write-gate.ts';
 
 // ─── Scenario 1: Blocks CONTEXT.md write during discussion without depth verification (absolute path) ──
@@ -487,4 +493,62 @@ test('write-gate: isDepthConfirmationAnswer falls back to (Recommended) match wi
     false,
     'should reject non-Recommended via fallback',
   );
+});
+
+// ─── Scenario 29: loadWriteGateSnapshot returns clean state when persist file deleted (#4343) ──
+
+test('write-gate: loadWriteGateSnapshot returns empty default when persist file is deleted (#4343)', () => {
+  const base = join(tmpdir(), `gsd-write-gate-4343-${randomUUID()}`);
+  mkdirSync(join(base, '.gsd', 'runtime'), { recursive: true });
+  const stateFilePath = join(base, '.gsd', 'runtime', 'write-gate-state.json');
+  const originalEnv = process.env.GSD_PERSIST_WRITE_GATE_STATE;
+
+  try {
+    process.env.GSD_PERSIST_WRITE_GATE_STATE = '1';
+
+    // Write a state file with a pending gate and verified milestone
+    writeFileSync(stateFilePath, JSON.stringify({
+      verifiedDepthMilestones: ['M001'],
+      activeQueuePhase: false,
+      pendingGateId: 'depth_verification_M001',
+    }));
+    assert.ok(existsSync(stateFilePath), 'precondition: state file exists');
+
+    // While file exists, snapshot reflects its contents
+    const beforeDeletion = loadWriteGateSnapshot(base);
+    assert.strictEqual(beforeDeletion.pendingGateId, 'depth_verification_M001', 'pending gate from file');
+    assert.deepEqual(beforeDeletion.verifiedDepthMilestones, ['M001'], 'verified milestones from file');
+
+    // User deletes the state file to clear the HARD BLOCK
+    unlinkSync(stateFilePath);
+    assert.ok(!existsSync(stateFilePath), 'state file deleted');
+
+    // After deletion in persist mode, snapshot should be clean (not stale in-memory)
+    const afterDeletion = loadWriteGateSnapshot(base);
+    assert.strictEqual(afterDeletion.pendingGateId, null, 'pendingGateId cleared after file deletion');
+    assert.deepEqual(afterDeletion.verifiedDepthMilestones, [], 'verifiedDepthMilestones cleared after file deletion');
+    assert.strictEqual(afterDeletion.activeQueuePhase, false, 'activeQueuePhase cleared after file deletion');
+
+    // The CONTEXT artifact block check must also resolve to unblocked after deletion+verification
+    // (simulate the re-verify flow users would do: delete → depth verify → save)
+    const stillBlocked = shouldBlockContextArtifactSaveInSnapshot(afterDeletion, 'CONTEXT', 'M001', null);
+    assert.strictEqual(stillBlocked.block, true, 'still blocked without new depth verification');
+
+    const verifiedSnapshot = {
+      ...afterDeletion,
+      verifiedDepthMilestones: ['M001'],
+    };
+    const unblocked = shouldBlockContextArtifactSaveInSnapshot(verifiedSnapshot, 'CONTEXT', 'M001', null);
+    assert.strictEqual(unblocked.block, false, 'unblocked after fresh depth verification');
+  } finally {
+    if (originalEnv === undefined) {
+      delete process.env.GSD_PERSIST_WRITE_GATE_STATE;
+    } else {
+      process.env.GSD_PERSIST_WRITE_GATE_STATE = originalEnv;
+    }
+    clearDiscussionFlowState();
+    try {
+      rmSync(base, { recursive: true, force: true });
+    } catch { /* swallow */ }
+  }
 });

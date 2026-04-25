@@ -222,52 +222,61 @@ test("headless exits with code 11 after SIGINT", async (t) => {
     tmpDir,
   );
 
-  // Wait for stderr output to confirm the process has started and registered
-  // its SIGINT handler (handler is registered before client.start in runHeadlessOnce).
+  // Wait for the explicit signal-handlers-ready marker that runHeadlessOnce()
+  // emits to stderr immediately after registering the SIGINT handler. Earlier
+  // stderr lines (extension load warnings, phase banners) come from before
+  // the handler is registered, so matching the first byte is unsafe. Poll
+  // deterministically rather than fixed-sleep.
+  const READY_MARKER = "[headless] signal-handlers-ready";
   let stderrSoFar = "";
-  await new Promise<void>((resolve) => {
-    const check = () => {
-      if (stderrSoFar.length > 0) {
-        resolve();
-      }
-    };
-    child.stderr!.on("data", (chunk: Buffer) => {
-      stderrSoFar += chunk.toString();
-      check();
-    });
-    // Fallback: resolve after 4s even if no stderr
-    setTimeout(resolve, 4000);
+  child.stderr!.on("data", (chunk: Buffer) => {
+    stderrSoFar += chunk.toString();
   });
+  const readyDeadline = Date.now() + 15_000;
+  while (!stderrSoFar.includes(READY_MARKER) && Date.now() < readyDeadline) {
+    if (child.exitCode !== null) break;
+    await new Promise((r) => setTimeout(r, 25));
+  }
 
-  // Send SIGINT
+  // If the child exited without ever emitting the ready marker, the test
+  // environment prevented the child from reaching SIGINT-handler registration
+  // (e.g. an existing gsd session forced an immediate auto-mode conflict exit).
+  // Skip explicitly rather than silently passing via a 0|1|11 branch.
+  if (child.exitCode !== null && !stderrSoFar.includes(READY_MARKER)) {
+    const earlyResult = await resultPromise;
+    t.skip(
+      `headless exited (code=${earlyResult.code}) before signal handler registration — ` +
+      `cannot assert SIGINT contract in this environment.\n` +
+      `stdout: ${earlyResult.stdout.slice(0, 200)}\n` +
+      `stderr: ${earlyResult.stderr.slice(0, 200)}`,
+    );
+    return;
+  }
+  if (!stderrSoFar.includes(READY_MARKER)) {
+    child.kill("SIGKILL");
+    await resultPromise;
+    assert.fail("headless did not emit signal-handlers-ready within 15s — SIGINT handler cannot be confirmed live");
+  }
+
+  // Handler is live. SIGINT must produce exit code 11 and the Interrupted
+  // stderr marker — no false-negative escape branch.
   child.kill("SIGINT");
 
   const result = await resultPromise;
   assert.ok(!result.timedOut, "test harness should not time out");
 
   const stderr = stripAnsi(result.stderr);
+  const combined = stripAnsi(result.stdout + result.stderr);
+  assertNoCrashMarkers(combined);
 
-  // In environments where the process completes before SIGINT arrives
-  // (e.g., existing auto-mode session causes immediate conflict exit),
-  // exit code may be 0 or 1 instead of 11. The test verifies the
-  // handler's behavior when it can be observed.
-  if (stderr.includes("Interrupted")) {
-    // SIGINT handler fired — verify exit code 11
-    assert.strictEqual(
-      result.code, 11,
-      `SIGINT handler fired but exit code was ${result.code}, expected 11 (EXIT_CANCELLED)`,
-    );
-  } else {
-    // Process exited before SIGINT arrived — acceptable in environments
-    // with running gsd sessions that cause auto-mode conflict.
-    // Verify it at least didn't crash.
-    const combined = stripAnsi(result.stdout + result.stderr);
-    assertNoCrashMarkers(combined);
-    assert.ok(
-      result.code === 0 || result.code === 1 || result.code === 11,
-      `expected clean exit (0, 1, or 11), got ${result.code}`,
-    );
-  }
+  assert.ok(
+    stderr.includes("Interrupted"),
+    `expected stderr to contain the '[headless] Interrupted' marker after SIGINT, got:\n${stderr.slice(0, 600)}`,
+  );
+  assert.strictEqual(
+    result.code, 11,
+    `SIGINT contract: expected exit 11 (EXIT_CANCELLED), got ${result.code}\nstderr: ${stderr.slice(0, 600)}`,
+  );
 });
 
 // ===========================================================================
@@ -292,30 +301,33 @@ test("headless --output-format stream-json emits NDJSON on stdout", async (t) =>
   assert.ok(result.code !== null, "process should exit with a code");
 
   const stdout = result.stdout.trim();
-
-  // stream-json may produce zero events if the process errors before any
-  // events fire — that's valid. But if there IS stdout, every line must
-  // be valid JSON (NDJSON format).
-  if (stdout.length > 0) {
-    const lines = stdout.split("\n").filter((l: string) => l.trim().length > 0);
-    assert.ok(lines.length > 0, "if stdout has content, it should have at least one line");
-
-    for (let i = 0; i < lines.length; i++) {
-      try {
-        JSON.parse(lines[i]);
-      } catch (e) {
-        assert.fail(
-          `stdout line ${i + 1} is not valid JSON: ${(e as Error).message}\nline: ${lines[i].slice(0, 300)}`,
-        );
-      }
-    }
-
-    // Multiple NDJSON lines (not a single batch object) is expected
-    // for stream-json mode when events fire
-  }
-
   const combined = stripAnsi(result.stdout + result.stderr);
   assertNoCrashMarkers(combined);
+
+  // A zero-event exit (stream-json produces no stdout) is possible when the
+  // process errors before any event fires. The contract we care about —
+  // "stream-json emits newline-delimited JSON" — is unverifiable in that
+  // window. Skip explicitly rather than silently passing (#4843).
+  if (stdout.length === 0) {
+    t.skip(
+      `stream-json produced no stdout events before exit (code=${result.code}) — ` +
+      `NDJSON contract is unverifiable. stderr: ${stripAnsi(result.stderr).slice(0, 200)}`,
+    );
+    return;
+  }
+
+  const lines = stdout.split("\n").filter((l: string) => l.trim().length > 0);
+  assert.ok(lines.length > 0, "non-empty stdout should decompose into at least one NDJSON line");
+
+  for (let i = 0; i < lines.length; i++) {
+    try {
+      JSON.parse(lines[i]);
+    } catch (e) {
+      assert.fail(
+        `stdout line ${i + 1} is not valid JSON: ${(e as Error).message}\nline: ${lines[i].slice(0, 300)}`,
+      );
+    }
+  }
 });
 
 // ===========================================================================

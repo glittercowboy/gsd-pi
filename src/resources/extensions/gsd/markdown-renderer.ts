@@ -169,7 +169,7 @@ function renderRoadmapMarkdown(milestone: MilestoneRow, slices: SliceRow[]): str
   lines.push("## Slices");
   lines.push("");
   for (const slice of slices) {
-    const done = slice.status === "complete" ? "x" : " ";
+    const done = isClosedStatus(slice.status) ? "x" : " ";
     const depends = `[${(slice.depends ?? []).join(",")}]`;
     lines.push(`- [${done}] **${slice.id}: ${slice.title}** \`risk:${slice.risk}\` \`depends:${depends}\``);
     lines.push(`  > After this: ${slice.demo}`);
@@ -496,7 +496,7 @@ export async function renderRoadmapCheckboxes(
   // Apply checkbox patches for each slice
   let updated = content;
   for (const slice of slices) {
-    const isDone = slice.status === "complete";
+    const isDone = isClosedStatus(slice.status);
     const sid = slice.id;
 
     if (isDone) {
@@ -821,19 +821,19 @@ export function detectStaleRenders(basePath: string): StaleEntry[] {
         const parsed = parseRoadmap(content);
 
         for (const slice of slices) {
-          const isCompleteInDb = slice.status === "complete";
+          const isCompleteInDb = isClosedStatus(slice.status);
           const roadmapSlice = parsed.slices.find((s: { id: string }) => s.id === slice.id);
           if (!roadmapSlice) continue;
 
           if (isCompleteInDb && !roadmapSlice.done) {
             stale.push({
               path: roadmapPath,
-              reason: `${slice.id} is complete in DB but unchecked in roadmap`,
+              reason: `${slice.id} is closed in DB but unchecked in roadmap`,
             });
           } else if (!isCompleteInDb && roadmapSlice.done) {
             stale.push({
               path: roadmapPath,
-              reason: `${slice.id} is not complete in DB but checked in roadmap`,
+              reason: `${slice.id} is not closed in DB but checked in roadmap`,
             });
           }
         }

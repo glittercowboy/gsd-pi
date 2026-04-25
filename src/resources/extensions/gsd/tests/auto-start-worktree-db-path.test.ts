@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { createTestContext } from "./test-helpers.ts";
+import {createTestContext, extractSourceRegion } from "./test-helpers.ts";
 
 const { assertTrue, report } = createTestContext();
 
@@ -13,7 +13,7 @@ console.log("\n=== #3822: worktree bootstrap uses project DB path ===");
 const dbLifecycleIdx = src.indexOf("// ── DB lifecycle ──");
 assertTrue(dbLifecycleIdx > 0, "auto-start.ts has a DB lifecycle section");
 
-const dbLifecycleRegion = dbLifecycleIdx > 0 ? src.slice(dbLifecycleIdx, dbLifecycleIdx + 600) : "";
+const dbLifecycleRegion = dbLifecycleIdx > 0 ? extractSourceRegion(src, "// ── DB lifecycle ──") : "";
 
 assertTrue(
   dbLifecycleRegion.includes("const gsdDbPath = resolveProjectRootDbPath(s.basePath);"),

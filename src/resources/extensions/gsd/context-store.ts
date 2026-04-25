@@ -211,7 +211,13 @@ export function queryProject(): string | null {
 
 /**
  * Filter KNOWLEDGE.md sections by keyword matching.
- * Uses H2 sections, matches keywords case-insensitively against:
+ *
+ * Structure-adaptive (issue #4719): files that organise entries as H3 items
+ * under one or more H2 topics are filtered at H3 granularity. Files with only
+ * H2 topic headers (no H3) fall back to H2-level filtering for backwards
+ * compatibility.
+ *
+ * Matches keywords case-insensitively against:
  * 1. Section header text
  * 2. First paragraph of section content (up to first blank line or next heading)
  *
@@ -220,7 +226,7 @@ export function queryProject(): string | null {
  *
  * @param content - Full KNOWLEDGE.md content
  * @param keywords - Keywords to match (case-insensitive)
- * @returns Concatenated matching sections with H2 headers, or empty string
+ * @returns Concatenated matching sections with their original heading prefix, or empty string
  */
 export async function queryKnowledge(content: string, keywords: string[]): Promise<string> {
   if (!content || keywords.length === 0) return '';
@@ -228,11 +234,23 @@ export async function queryKnowledge(content: string, keywords: string[]): Promi
   // Lazy import to avoid circular dependency
   const { extractAllSections } = await import('./files.js');
 
-  const sections = extractAllSections(content, 2);
+  // Prefer H3 granularity when available; fall back to H2 for H2-only files.
+  // This prevents single-H2-with-many-H3 layouts from returning the entire
+  // file on a keyword match against the H2 header or its first paragraph.
+  const h3Sections = extractAllSections(content, 3);
+  const useH3 = h3Sections.size > 0;
+  const sections = useH3 ? h3Sections : extractAllSections(content, 2);
   if (sections.size === 0) return '';
+  const prefix = useH3 ? '###' : '##';
 
-  // Normalize keywords for case-insensitive matching
-  const normalizedKeywords = keywords.map(k => k.toLowerCase());
+  // Trim, lowercase, drop empties, and de-dupe so callers can pass raw
+  // user-provided strings without risking empty-string / whitespace matches.
+  const normalizedKeywords = [...new Set(
+    keywords
+      .map(k => k.trim().toLowerCase())
+      .filter(k => k.length > 0),
+  )];
+  if (normalizedKeywords.length === 0) return '';
 
   const matchingSections: string[] = [];
 
@@ -240,16 +258,15 @@ export async function queryKnowledge(content: string, keywords: string[]): Promi
     // Extract first paragraph: everything up to first blank line or next heading
     const firstParagraph = body.split(/\n\s*\n|\n#/)[0] || '';
 
-    // Check if any keyword matches header or first paragraph
     const headerLower = header.toLowerCase();
     const paragraphLower = firstParagraph.toLowerCase();
 
     const matches = normalizedKeywords.some(kw =>
-      headerLower.includes(kw) || paragraphLower.includes(kw)
+      headerLower.includes(kw) || paragraphLower.includes(kw),
     );
 
     if (matches) {
-      matchingSections.push(`## ${header}\n\n${body}`);
+      matchingSections.push(`${prefix} ${header}\n\n${body}`);
     }
   }
 

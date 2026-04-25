@@ -52,7 +52,7 @@ test("withFileLock: executes callback when file does not exist", async () => {
   }
 });
 
-test("withFileLockSync: falls back to unlocked callback on ELOCKED", () => {
+test("withFileLockSync: throws ELOCKED by default (no silent fallback)", () => {
   if (!hasProperLockfile() || process.platform === "win32") {
     return;
   }
@@ -65,19 +65,56 @@ test("withFileLockSync: falls back to unlocked callback on ELOCKED", () => {
   const release = lockfile.lockSync(filePath, { retries: 0, stale: 10000 });
   try {
     let called = 0;
-    const result = withFileLockSync(filePath, () => {
-      called++;
-      return "fallback-ok";
-    });
-    assert.equal(result, "fallback-ok");
-    assert.equal(called, 1, "callback should run even when lock acquisition fails");
+    assert.throws(
+      () => {
+        withFileLockSync(
+          filePath,
+          () => {
+            called++;
+            return "should-not-return";
+          },
+          { retries: 0 },
+        );
+      },
+      (err: any) => err?.code === "ELOCKED",
+    );
+    assert.equal(called, 0, "callback must not run when lock cannot be acquired");
   } finally {
     release();
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test("withFileLock: falls back to unlocked callback on ELOCKED", async () => {
+test("withFileLockSync: onLocked=\"skip\" runs callback unlocked on ELOCKED", () => {
+  if (!hasProperLockfile() || process.platform === "win32") {
+    return;
+  }
+
+  const lockfile = require("proper-lockfile");
+  const dir = mkdtempSync(join(tmpdir(), "gsd-file-lock-test-"));
+  const filePath = join(dir, "locked.jsonl");
+  writeFileSync(filePath, "{}\n", "utf-8");
+
+  const release = lockfile.lockSync(filePath, { retries: 0, stale: 10000 });
+  try {
+    let called = 0;
+    const result = withFileLockSync(
+      filePath,
+      () => {
+        called++;
+        return "fallback-ok";
+      },
+      { retries: 0, onLocked: "skip" },
+    );
+    assert.equal(result, "fallback-ok");
+    assert.equal(called, 1, "callback should run when onLocked is skip");
+  } finally {
+    release();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("withFileLock: throws ELOCKED by default (no silent fallback)", async () => {
   if (!hasProperLockfile() || process.platform === "win32") {
     return;
   }
@@ -90,12 +127,49 @@ test("withFileLock: falls back to unlocked callback on ELOCKED", async () => {
   const release = await lockfile.lock(filePath, { retries: 0, stale: 10000 });
   try {
     let called = 0;
-    const result = await withFileLock(filePath, async () => {
-      called++;
-      return "fallback-ok";
-    });
+    await assert.rejects(
+      async () => {
+        await withFileLock(
+          filePath,
+          async () => {
+            called++;
+            return "should-not-return";
+          },
+          { retries: 0 },
+        );
+      },
+      (err: any) => err?.code === "ELOCKED",
+    );
+    assert.equal(called, 0, "callback must not run when lock cannot be acquired");
+  } finally {
+    await release();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("withFileLock: onLocked=\"skip\" runs callback unlocked on ELOCKED", async () => {
+  if (!hasProperLockfile() || process.platform === "win32") {
+    return;
+  }
+
+  const lockfile = require("proper-lockfile");
+  const dir = mkdtempSync(join(tmpdir(), "gsd-file-lock-test-"));
+  const filePath = join(dir, "locked.jsonl");
+  writeFileSync(filePath, "{}\n", "utf-8");
+
+  const release = await lockfile.lock(filePath, { retries: 0, stale: 10000 });
+  try {
+    let called = 0;
+    const result = await withFileLock(
+      filePath,
+      async () => {
+        called++;
+        return "fallback-ok";
+      },
+      { retries: 0, onLocked: "skip" },
+    );
     assert.equal(result, "fallback-ok");
-    assert.equal(called, 1, "callback should run even when lock acquisition fails");
+    assert.equal(called, 1, "callback should run when onLocked is skip");
   } finally {
     await release();
     rmSync(dir, { recursive: true, force: true });

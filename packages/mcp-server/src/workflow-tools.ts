@@ -2,7 +2,8 @@
  * Workflow MCP tools — exposes the core GSD mutation/read handlers over MCP.
  */
 
-import { isAbsolute, relative, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 
@@ -21,10 +22,12 @@ type WorkflowToolExecutors = {
         depends: string[];
         demo: string;
         goal: string;
-        successCriteria: string;
-        proofLevel: string;
-        integrationClosure: string;
-        observabilityImpact: string;
+        successCriteria?: string;
+        proofLevel?: string;
+        integrationClosure?: string;
+        observabilityImpact?: string;
+        isSketch?: boolean;
+        sketchScope?: string;
       }>;
       status?: string;
       dependsOn?: string[];
@@ -208,6 +211,13 @@ type WorkflowToolExecutors = {
       keyFiles?: string[];
       keyDecisions?: string[];
       blockerDiscovered?: boolean;
+      escalation?: {
+        question: string;
+        options: Array<{ id: string; label: string; tradeoffs: string }>;
+        recommendation: string;
+        recommendationRationale: string;
+        continueWithDefault: boolean;
+      };
       verificationEvidence?: Array<
         { command: string; exitCode: number; verdict: string; durationMs: number } | string
       >;
@@ -262,34 +272,132 @@ function isWithinRoot(candidatePath: string, rootPath: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function validateProjectDir(projectDir: string, env: NodeJS.ProcessEnv = process.env): string {
+/**
+ * Resolve the symlink target of `<allowedRoot>/.gsd` when it points into the
+ * external state layout (`~/.gsd/projects/<hash>/`). Returns the realpath of
+ * that target so callers can accept worktree paths that live under
+ * `<external-state>/worktrees/<MID>/`. Returns null when `.gsd` is absent or
+ * resolution fails — the caller should fall back to the direct containment
+ * check in that case.
+ */
+function resolveExternalStateRoot(allowedRoot: string): string | null {
+  try {
+    return realpathSync(join(allowedRoot, ".gsd"));
+  } catch {
+    return null;
+  }
+}
+
+export function validateProjectDir(projectDir: string, env: NodeJS.ProcessEnv = process.env): string {
   if (!isAbsolute(projectDir)) {
     throw new Error(`projectDir must be an absolute path. Received: ${projectDir}`);
   }
 
-  const resolvedProjectDir = resolve(projectDir);
+  const lexicallyResolved = resolve(projectDir);
+  // Resolve symlinks on the candidate before the containment check so that a
+  // symlink inside the allowed root pointing outside of it cannot bypass the
+  // guard. Falls back to the lexical path if the candidate does not exist yet
+  // (legitimate for a brand-new worktree dir about to be created).
+  const resolvedProjectDir = safeRealpath(lexicallyResolved);
+
   const allowedRoot = getAllowedProjectRoot(env);
-  if (allowedRoot && !isWithinRoot(resolvedProjectDir, allowedRoot)) {
-    throw new Error(
-      `projectDir must stay within the configured workflow project root. Received: ${resolvedProjectDir}; allowed root: ${allowedRoot}`,
-    );
+  if (!allowedRoot) return resolvedProjectDir;
+
+  const resolvedAllowedRoot = safeRealpath(allowedRoot);
+  if (isWithinRoot(resolvedProjectDir, resolvedAllowedRoot)) return resolvedProjectDir;
+
+  // External state layout: `<allowedRoot>/.gsd` may be a symlink into
+  // `~/.gsd/projects/<hash>/`, and auto-worktrees live under
+  // `~/.gsd/projects/<hash>/worktrees/<MID>/`. Accept candidates that are
+  // under the realpath of `<allowedRoot>/.gsd` — they belong to this project
+  // even though their absolute path is outside allowedRoot (#issue-a44).
+  const externalRoot = resolveExternalStateRoot(resolvedAllowedRoot);
+  if (externalRoot && isWithinRoot(resolvedProjectDir, externalRoot)) {
+    return resolvedProjectDir;
   }
 
-  return resolvedProjectDir;
+  throw new Error(
+    `projectDir must stay within the configured workflow project root. Received: ${resolvedProjectDir}; allowed root: ${resolvedAllowedRoot}`,
+  );
+}
+
+function safeRealpath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch (err) {
+    // Only fall back for non-existent paths — a legitimate case when a worktree
+    // directory hasn't been created yet. Permission errors (EACCES), not-a-
+    // directory (ENOTDIR), etc. must propagate so we do not silently degrade
+    // to a lexical-only containment check that a restricted symlink could
+    // bypass.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return path;
+    throw err;
+  }
 }
 
 function parseToolArgs<T>(schema: z.ZodType<T>, args: Record<string, unknown>): T {
   return schema.parse(args);
 }
 
-function parseWorkflowArgs<T extends { projectDir: string }>(
+/**
+ * Extract a milestone ID from parsed tool args, trying common field names.
+ * Returns null when no field is present or the value is not a string.
+ */
+function extractMilestoneId(parsed: Record<string, unknown>): string | null {
+  const candidates = [parsed.milestoneId, parsed.milestone_id, parsed.mid];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim() !== "") return c.trim();
+  }
+  return null;
+}
+
+/**
+ * If an auto-worktree exists for the given milestone under
+ * `<projectRoot>/.gsd/worktrees/<milestoneId>/`, return that path as the
+ * basePath the tool should write against. Returns null when no worktree
+ * exists for this milestone, leaving the caller to use the project root.
+ *
+ * This unbreaks the external-state layout where the MCP server's process.cwd()
+ * is the project root (set at Claude Code launch) but auto-mode is actually
+ * working inside a per-milestone worktree. Without this, tool writes go to
+ * the shared project `.gsd/` and auto-mode's verifyExpectedArtifact (which
+ * uses the worktree `.gsd/`) fails, triggering a guaranteed retry per unit.
+ */
+function resolveActiveWorktreeBasePath(
+  projectRoot: string,
+  milestoneId: string | null,
+): string | null {
+  if (!milestoneId) return null;
+  const wtPath = join(projectRoot, ".gsd", "worktrees", milestoneId);
+  if (!existsSync(wtPath)) return null;
+  // Sanity check: a real git worktree has a `.git` file with a gitdir pointer.
+  // Bare directories without it shouldn't hijack the write path.
+  if (!existsSync(join(wtPath, ".git"))) return null;
+  return wtPath;
+}
+
+function parseWorkflowArgs<T extends { projectDir?: string }>(
   schema: z.ZodType<T>,
   args: Record<string, unknown>,
-): T {
+): T & { projectDir: string } {
   const parsed = parseToolArgs(schema, args);
+  // Step 1: figure out the project root. The agent shouldn't need to pass
+  // projectDir — default to process.cwd() which the MCP server inherited from
+  // Claude Code (launched at the project root).
+  const projectRootCandidate = parsed.projectDir ?? process.cwd();
+  const projectRoot = validateProjectDir(projectRootCandidate);
+
+  // Step 2: if this tool call is scoped to a milestone that has an active
+  // auto-worktree, re-route writes to the worktree's .gsd rather than the
+  // project's shared .gsd. auto-mode's verifyExpectedArtifact runs against
+  // the worktree, and a mismatch here causes every unit to retry once.
+  const milestoneId = extractMilestoneId(parsed as Record<string, unknown>);
+  const worktreeBasePath = resolveActiveWorktreeBasePath(projectRoot, milestoneId);
+  const effectiveBasePath = worktreeBasePath ?? projectRoot;
+
   return {
     ...parsed,
-    projectDir: validateProjectDir(parsed.projectDir),
+    projectDir: effectiveBasePath,
   };
 }
 
@@ -491,11 +599,84 @@ export const WORKFLOW_TOOL_NAMES = [
   "gsd_complete_task",
   "gsd_milestone_status",
   "gsd_journal_query",
+  // ADR-013 step 3: memory-store tools exposed to external MCP clients.
+  // gsd_memory_graph is namespaced to avoid collision with the existing
+  // gsd_graph tool (project knowledge graph from .gsd/ artifacts).
+  "gsd_capture_thought",
+  "gsd_memory_query",
+  "gsd_memory_graph",
 ] as const;
+
+const DEFAULT_WORKFLOW_OP_TIMEOUT_MS = 5 * 60 * 1000;
+
+function getWorkflowOpTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.GSD_MCP_WORKFLOW_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_WORKFLOW_OP_TIMEOUT_MS;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_WORKFLOW_OP_TIMEOUT_MS;
+  return parsed; // 0 disables the timeout
+}
+
+/**
+ * Adapt an executor `ToolExecutionResult` ({ content, details?, isError? }) to
+ * the MCP `CallToolResult` shape ({ content, structuredContent?, isError? }).
+ *
+ * MCP transports (including stdio) only serialize fields declared in the
+ * protocol, so a non-standard `details` field is silently dropped over the
+ * wire. Mirroring it into `structuredContent` — the protocol's supported
+ * channel for structured tool payloads — preserves the data for clients that
+ * render from it (e.g. the save_gate_result renderer that reads gateId /
+ * verdict). See #4472.
+ *
+ * Discard policy for non-plain-object `details`: the `isPlainObject` guard
+ * accepts the canonical case (a record literal) and intentionally drops bare
+ * primitives (string, number, boolean), bare arrays, and class instances /
+ * Date objects. This is deliberate — MCP `structuredContent` is specified as
+ * a JSON object; non-object payloads can't round-trip cleanly. No current
+ * executor returns a non-object `details`, so this never fires in practice.
+ * Future executors needing to return a primitive should wrap it
+ * (`details: { value: 42 }`) rather than relying on the discard.
+ */
+function adaptExecutorResult(result: unknown): unknown {
+  if (!result || typeof result !== "object") return result;
+  const r = result as Record<string, unknown>;
+  if (!("details" in r)) return result;
+  const { details, ...rest } = r;
+  return isPlainObject(details) ? { ...rest, structuredContent: details } : rest;
+}
+
+/**
+ * Strict plain-object guard. True only for object literals and
+ * `Object.create(null)` — not for `Date`, `URL`, `Map`, `Set`, class instances,
+ * or arrays. Used to gate `structuredContent` forwarding so the MCP transport
+ * receives only true JSON objects (the protocol contract).
+ *
+ * Mirrored in `src/mcp-server.ts` for the agent-tool registry path's
+ * structured-content gate. Keep both copies in sync if the contract definition
+ * needs to evolve. See #4477 review.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === null || proto === Object.prototype;
+}
 
 async function runSerializedWorkflowOperation<T>(fn: () => Promise<T>): Promise<T> {
   // The shared DB adapter and workflow log base path are process-global, so
   // workflow MCP mutations must not overlap within a single server process.
+  // A per-operation deadline prevents a single stuck call from wedging every
+  // subsequent write for the lifetime of the process.
+  //
+  // Known limitation: on timeout we surface an error and release the queue,
+  // but Promise.race cannot cancel the underlying `fn()` — it may continue
+  // running in the background and overlap with the next admitted operation.
+  // Proper cancellation requires threading an AbortSignal through every
+  // workflow executor (`workflow-tool-executors.ts` and friends), which is
+  // a larger change. The current trade-off: risk a theoretical overlap after
+  // a 5-minute wall-clock timeout vs permanently wedging the server. The
+  // overlap window is bounded by how long the zombie `fn()` keeps running;
+  // in practice DB writes complete quickly even when the caller gave up.
   const prior = workflowExecutionQueue;
   let release!: () => void;
   workflowExecutionQueue = new Promise<void>((resolve) => {
@@ -503,8 +684,22 @@ async function runSerializedWorkflowOperation<T>(fn: () => Promise<T>): Promise<
   });
 
   await prior;
+  const timeoutMs = getWorkflowOpTimeoutMs();
   try {
-    return await fn();
+    if (timeoutMs === 0) {
+      return await fn();
+    }
+    let timer: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(new Error(`Workflow operation exceeded ${timeoutMs}ms deadline (GSD_MCP_WORKFLOW_TIMEOUT_MS)`));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([fn(), timeoutPromise]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   } finally {
     release();
   }
@@ -559,39 +754,15 @@ async function handleTaskComplete(
   args: Omit<z.infer<typeof taskCompleteSchema>, "projectDir">,
 ): Promise<unknown> {
   await enforceWorkflowWriteGate("gsd_task_complete", projectDir, args.milestoneId);
-  const {
-    taskId,
-    sliceId,
-    milestoneId,
-    oneLiner,
-    narrative,
-    verification,
-    deviations,
-    knownIssues,
-    keyFiles,
-    keyDecisions,
-    blockerDiscovered,
-    verificationEvidence,
-  } = args;
   const { executeTaskComplete } = await getWorkflowToolExecutors();
-  return runSerializedWorkflowOperation(() =>
-    executeTaskComplete(
-      {
-        taskId,
-        sliceId,
-        milestoneId,
-        oneLiner,
-        narrative,
-        verification,
-        deviations,
-        knownIssues,
-        keyFiles,
-        keyDecisions,
-        blockerDiscovered,
-        verificationEvidence,
-      },
-      projectDir,
-    ),
+  // Pass `args` through directly rather than destructure-then-rebuild. The
+  // previous implementation re-listed each field, which silently dropped
+  // schema fields that weren't in the rebuild list (e.g., ADR-011's
+  // `escalation` payload). The destructure-then-rebuild pattern is the bug
+  // class; matching the spread shape used by sibling handlers (handleSliceComplete,
+  // handleReplanSlice) eliminates the recurrence risk by construction.
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeTaskComplete(args, projectDir)),
   );
 }
 
@@ -602,7 +773,9 @@ async function handleSliceComplete(
   await enforceWorkflowWriteGate("gsd_slice_complete", projectDir, args.milestoneId);
   const { executeSliceComplete } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeSliceComplete(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeSliceComplete(params, projectDir)),
+  );
 }
 
 async function handleReplanSlice(
@@ -612,7 +785,9 @@ async function handleReplanSlice(
   await enforceWorkflowWriteGate("gsd_replan_slice", projectDir, args.milestoneId);
   const { executeReplanSlice } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeReplanSlice(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeReplanSlice(params, projectDir)),
+  );
 }
 
 async function handleCompleteMilestone(
@@ -622,7 +797,9 @@ async function handleCompleteMilestone(
   await enforceWorkflowWriteGate("gsd_complete_milestone", projectDir, args.milestoneId);
   const { executeCompleteMilestone } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeCompleteMilestone(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeCompleteMilestone(params, projectDir)),
+  );
 }
 
 async function handleValidateMilestone(
@@ -632,7 +809,9 @@ async function handleValidateMilestone(
   await enforceWorkflowWriteGate("gsd_validate_milestone", projectDir, args.milestoneId);
   const { executeValidateMilestone } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeValidateMilestone(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeValidateMilestone(params, projectDir)),
+  );
 }
 
 async function handleReassessRoadmap(
@@ -642,7 +821,9 @@ async function handleReassessRoadmap(
   await enforceWorkflowWriteGate("gsd_reassess_roadmap", projectDir, args.milestoneId);
   const { executeReassessRoadmap } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeReassessRoadmap(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeReassessRoadmap(params, projectDir)),
+  );
 }
 
 async function handleSaveGateResult(
@@ -652,7 +833,9 @@ async function handleSaveGateResult(
   await enforceWorkflowWriteGate("gsd_save_gate_result", projectDir, args.milestoneId);
   const { executeSaveGateResult } = await getWorkflowToolExecutors();
   const { projectDir: _projectDir, ...params } = args;
-  return runSerializedWorkflowOperation(() => executeSaveGateResult(params, projectDir));
+  return adaptExecutorResult(
+    await runSerializedWorkflowOperation(() => executeSaveGateResult(params, projectDir)),
+  );
 }
 
 async function ensureMilestoneDbRow(milestoneId: string): Promise<void> {
@@ -664,36 +847,103 @@ async function ensureMilestoneDbRow(milestoneId: string): Promise<void> {
   }
 }
 
-const projectDirParam = z.string().describe("Absolute path to the project directory within the configured workflow root");
+// projectDir is optional. When omitted, the server uses process.cwd(). This
+// prevents the agent from burning tokens reasoning about which absolute path
+// to pass (git root vs worktree vs symlink-resolved external state layout) —
+// the server already knows where it is running.
+const projectDirParam = z
+  .string()
+  .optional()
+  .describe("Optional. Omit this field — the server defaults to its current working directory, which is already the correct project or worktree root.");
+
+const nonEmptyString = (field: string) =>
+  z.string().trim().min(1, `${field} must be a non-empty string`);
+
+// Optional non-empty string: accepts omitted/undefined but rejects "" or
+// whitespace. Mirrors executor guards of the form
+// `value !== undefined && !isNonEmptyString(value)` — e.g. plan-task's
+// observabilityImpact. Do not preprocess "" to undefined; the executor
+// treats them differently.
+const optionalNonEmptyString = (field: string) => nonEmptyString(field).optional();
+
+// Array of non-empty strings. Mirrors executor guards that call
+// `validateStringArray` or `arr.some((item) => !isNonEmptyString(item))`.
+const nonEmptyStringArray = (field: string) =>
+  z.array(nonEmptyString(`${field}[]`));
+
+// Matches the executor's `isNonEmptyString` (trim + length>0) so Zod rejects
+// empty/whitespace fields at parse time. Without this, MCP callers pass "" for
+// the heavy planning fields, Zod accepts it, and the executor rejects one
+// field per call — forcing the agent into a retry loop to discover every gap.
+//
+// #4759 follow-up: the four heavy fields are Zod-optional because sketch
+// slices (isSketch=true) legitimately omit them, but they are REQUIRED for
+// every other slice. The conditional requirement is invisible in the JSON
+// Schema `required` array, so callers can only discover it from the
+// descriptions or by hitting the runtime superRefine below. The `.describe()`
+// calls below make that contract unmistakable in the tool schema sent to
+// agents; the superRefine enforces it at parse time.
+const HEAVY_FIELD_DESCRIBE = (field: string) =>
+  `${field} for this slice. REQUIRED unless isSketch=true (sketch slices defer this to refine-slice).`;
+
+const planMilestoneSliceSchema = z.object({
+  sliceId: nonEmptyString("sliceId"),
+  title: nonEmptyString("title"),
+  risk: nonEmptyString("risk"),
+  depends: z.array(z.string()),
+  demo: nonEmptyString("demo"),
+  goal: nonEmptyString("goal"),
+  // ADR-011: heavy planning fields are optional for sketch slices; required for full slices.
+  successCriteria: z.string().optional().describe(HEAVY_FIELD_DESCRIBE("successCriteria")),
+  proofLevel: z.string().optional().describe(HEAVY_FIELD_DESCRIBE("proofLevel")),
+  integrationClosure: z.string().optional().describe(HEAVY_FIELD_DESCRIBE("integrationClosure")),
+  observabilityImpact: z.string().optional().describe(HEAVY_FIELD_DESCRIBE("observabilityImpact")),
+  // ADR-011 sketch-then-refine fields.
+  isSketch: z.boolean().optional().describe("ADR-011: true marks this slice as a sketch awaiting refine-slice expansion. When true, successCriteria/proofLevel/integrationClosure/observabilityImpact may be omitted and sketchScope becomes required."),
+  sketchScope: z.string().optional().describe("ADR-011: 2-3 sentence scope boundary, required when isSketch=true"),
+}).describe(
+  "Planned slice. For full slices (isSketch omitted or false): successCriteria, proofLevel, integrationClosure, and observabilityImpact are all required. For sketch slices (isSketch=true): those four fields may be omitted, but sketchScope is required.",
+).superRefine((slice, ctx) => {
+  if (slice.isSketch === true) {
+    if (typeof slice.sketchScope !== "string" || slice.sketchScope.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sketchScope"],
+        message: "sketchScope must be a non-empty string when isSketch is true",
+      });
+    }
+    return;
+  }
+  const required = ["successCriteria", "proofLevel", "integrationClosure", "observabilityImpact"] as const;
+  for (const field of required) {
+    const value = slice[field];
+    if (typeof value !== "string" || value.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: `${field} must be a non-empty string`,
+      });
+    }
+  }
+});
 
 const planMilestoneParams = {
   projectDir: projectDirParam,
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
-  title: z.string().describe("Milestone title"),
-  vision: z.string().describe("Milestone vision"),
-  slices: z.array(z.object({
-    sliceId: z.string(),
-    title: z.string(),
-    risk: z.string(),
-    depends: z.array(z.string()),
-    demo: z.string(),
-    goal: z.string(),
-    successCriteria: z.string(),
-    proofLevel: z.string(),
-    integrationClosure: z.string(),
-    observabilityImpact: z.string(),
-  })).describe("Planned slices for the milestone"),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
+  title: nonEmptyString("title").describe("Milestone title"),
+  vision: nonEmptyString("vision").describe("Milestone vision"),
+  slices: z.array(planMilestoneSliceSchema).describe("Planned slices for the milestone"),
   status: z.string().optional().describe("Milestone status"),
   dependsOn: z.array(z.string()).optional().describe("Milestone dependencies"),
   successCriteria: z.array(z.string()).optional().describe("Top-level success criteria bullets"),
   keyRisks: z.array(z.object({
-    risk: z.string(),
-    whyItMatters: z.string(),
+    risk: nonEmptyString("risk"),
+    whyItMatters: nonEmptyString("whyItMatters"),
   })).optional().describe("Structured risk entries"),
   proofStrategy: z.array(z.object({
-    riskOrUnknown: z.string(),
-    retireIn: z.string(),
-    whatWillBeProven: z.string(),
+    riskOrUnknown: nonEmptyString("riskOrUnknown"),
+    retireIn: nonEmptyString("retireIn"),
+    whatWillBeProven: nonEmptyString("whatWillBeProven"),
   })).optional().describe("Structured proof strategy entries"),
   verificationContract: z.string().optional(),
   verificationIntegration: z.string().optional(),
@@ -707,19 +957,19 @@ const planMilestoneSchema = z.object(planMilestoneParams);
 
 const planSliceParams = {
   projectDir: projectDirParam,
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
-  sliceId: z.string().describe("Slice ID (e.g. S01)"),
-  goal: z.string().describe("Slice goal"),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
+  sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
+  goal: nonEmptyString("goal").describe("Slice goal"),
   tasks: z.array(z.object({
-    taskId: z.string(),
-    title: z.string(),
-    description: z.string(),
-    estimate: z.string(),
-    files: z.array(z.string()),
-    verify: z.string(),
-    inputs: z.array(z.string()),
-    expectedOutput: z.array(z.string()),
-    observabilityImpact: z.string().optional(),
+    taskId: nonEmptyString("taskId"),
+    title: nonEmptyString("title"),
+    description: nonEmptyString("description"),
+    estimate: nonEmptyString("estimate"),
+    files: nonEmptyStringArray("files"),
+    verify: nonEmptyString("verify"),
+    inputs: nonEmptyStringArray("inputs"),
+    expectedOutput: nonEmptyStringArray("expectedOutput"),
+    observabilityImpact: optionalNonEmptyString("observabilityImpact"),
   })).describe("Planned tasks for the slice"),
   successCriteria: z.string().optional(),
   proofLevel: z.string().optional(),
@@ -730,8 +980,8 @@ const planSliceSchema = z.object(planSliceParams);
 
 const completeMilestoneParams = {
   projectDir: projectDirParam,
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
-  title: z.string().describe("Milestone title"),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
+  title: nonEmptyString("title").describe("Milestone title"),
   oneLiner: z.string().describe("One-sentence summary of what the milestone achieved"),
   narrative: z.string().describe("Detailed narrative of what happened during the milestone"),
   verificationPassed: z.boolean().describe("Must be true after milestone verification succeeds"),
@@ -748,7 +998,7 @@ const completeMilestoneSchema = z.object(completeMilestoneParams);
 
 const validateMilestoneParams = {
   projectDir: projectDirParam,
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
   verdict: z.enum(["pass", "needs-attention", "needs-remediation"]).describe("Validation verdict"),
   remediationRound: z.number().describe("Remediation round (0 for first validation)"),
   successCriteriaChecklist: z.string().describe("Markdown checklist of success criteria with evidence"),
@@ -762,8 +1012,8 @@ const validateMilestoneParams = {
 const validateMilestoneSchema = z.object(validateMilestoneParams);
 
 const roadmapSliceChangeSchema = z.object({
-  sliceId: z.string(),
-  title: z.string(),
+  sliceId: nonEmptyString("sliceId"),
+  title: nonEmptyString("title"),
   risk: z.string().optional(),
   depends: z.array(z.string()).optional(),
   demo: z.string().optional(),
@@ -771,10 +1021,10 @@ const roadmapSliceChangeSchema = z.object({
 
 const reassessRoadmapParams = {
   projectDir: projectDirParam,
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
-  completedSliceId: z.string().describe("Slice ID that just completed"),
-  verdict: z.string().describe("Assessment verdict such as roadmap-confirmed or roadmap-adjusted"),
-  assessment: z.string().describe("Assessment text explaining the roadmap decision"),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
+  completedSliceId: nonEmptyString("completedSliceId").describe("Slice ID that just completed"),
+  verdict: nonEmptyString("verdict").describe("Assessment verdict such as roadmap-confirmed or roadmap-adjusted"),
+  assessment: nonEmptyString("assessment").describe("Assessment text explaining the roadmap decision"),
   sliceChanges: z.object({
     modified: z.array(roadmapSliceChangeSchema),
     added: z.array(roadmapSliceChangeSchema),
@@ -787,7 +1037,7 @@ const saveGateResultParams = {
   projectDir: projectDirParam,
   milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
   sliceId: z.string().describe("Slice ID (e.g. S01)"),
-  gateId: z.enum(["Q3", "Q4", "Q5", "Q6", "Q7", "Q8", "MV01", "MV02", "MV03", "MV04"]).describe("Gate ID"),
+  gateId: z.string().describe("Gate ID (e.g. Q3, Q4, Q5, Q6, Q7, Q8, MV01, MV02, MV03, MV04). Accepts any string for forward-compatibility with new gates."),
   taskId: z.string().optional().describe("Task ID for task-scoped gates"),
   verdict: z.enum(["pass", "flag", "omitted"]).describe("Gate verdict"),
   rationale: z.string().describe("One-sentence justification"),
@@ -797,14 +1047,14 @@ const saveGateResultSchema = z.object(saveGateResultParams);
 
 const replanSliceParams = {
   projectDir: projectDirParam,
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
-  sliceId: z.string().describe("Slice ID (e.g. S01)"),
-  blockerTaskId: z.string().describe("Task ID that discovered the blocker"),
-  blockerDescription: z.string().describe("Description of the blocker"),
-  whatChanged: z.string().describe("Summary of what changed in the plan"),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
+  sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
+  blockerTaskId: nonEmptyString("blockerTaskId").describe("Task ID that discovered the blocker"),
+  blockerDescription: nonEmptyString("blockerDescription").describe("Description of the blocker"),
+  whatChanged: nonEmptyString("whatChanged").describe("Summary of what changed in the plan"),
   updatedTasks: z.array(z.object({
-    taskId: z.string(),
-    title: z.string(),
+    taskId: nonEmptyString("taskId"),
+    title: nonEmptyString("title"),
     description: z.string(),
     estimate: z.string(),
     files: z.array(z.string()),
@@ -819,8 +1069,8 @@ const replanSliceSchema = z.object(replanSliceParams);
 
 const sliceCompleteParams = {
   projectDir: projectDirParam,
-  sliceId: z.string().describe("Slice ID (e.g. S01)"),
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
+  sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
   sliceTitle: z.string().describe("Title of the slice"),
   oneLiner: z.string().describe("One-line summary of what the slice accomplished"),
   narrative: z.string().describe("Detailed narrative of what happened across all tasks"),
@@ -915,17 +1165,17 @@ const milestoneGenerateIdSchema = z.object(milestoneGenerateIdParams);
 
 const planTaskParams = {
   projectDir: projectDirParam,
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
-  sliceId: z.string().describe("Slice ID (e.g. S01)"),
-  taskId: z.string().describe("Task ID (e.g. T01)"),
-  title: z.string().describe("Task title"),
-  description: z.string().describe("Task description / steps block"),
-  estimate: z.string().describe("Task estimate"),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
+  sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
+  taskId: nonEmptyString("taskId").describe("Task ID (e.g. T01)"),
+  title: nonEmptyString("title").describe("Task title"),
+  description: nonEmptyString("description").describe("Task description / steps block"),
+  estimate: nonEmptyString("estimate").describe("Task estimate"),
   files: z.array(z.string()).describe("Files likely touched"),
-  verify: z.string().describe("Verification command or block"),
+  verify: nonEmptyString("verify").describe("Verification command or block"),
   inputs: z.array(z.string()).describe("Input files or references"),
   expectedOutput: z.array(z.string()).describe("Expected output files or artifacts"),
-  observabilityImpact: z.string().optional().describe("Task observability impact"),
+  observabilityImpact: optionalNonEmptyString("observabilityImpact").describe("Task observability impact"),
 };
 const planTaskSchema = z.object(planTaskParams);
 
@@ -939,9 +1189,9 @@ const skipSliceSchema = z.object(skipSliceParams);
 
 const taskCompleteParams = {
   projectDir: projectDirParam,
-  taskId: z.string().describe("Task ID (e.g. T01)"),
-  sliceId: z.string().describe("Slice ID (e.g. S01)"),
-  milestoneId: z.string().describe("Milestone ID (e.g. M001)"),
+  taskId: nonEmptyString("taskId").describe("Task ID (e.g. T01)"),
+  sliceId: nonEmptyString("sliceId").describe("Slice ID (e.g. S01)"),
+  milestoneId: nonEmptyString("milestoneId").describe("Milestone ID (e.g. M001)"),
   oneLiner: z.string().describe("One-line summary of what was accomplished"),
   narrative: z.string().describe("Detailed narrative of what happened during the task"),
   verification: z.string().describe("What was verified and how"),
@@ -950,6 +1200,20 @@ const taskCompleteParams = {
   keyFiles: z.array(z.string()).optional().describe("List of key files created or modified"),
   keyDecisions: z.array(z.string()).optional().describe("List of key decisions made during this task"),
   blockerDiscovered: z.boolean().optional().describe("Whether a plan-invalidating blocker was discovered"),
+  // ADR-011 Phase 2: mid-execution escalation — agent asks the user to resolve an ambiguity.
+  escalation: z.object({
+    question: z.string().describe("The question the user needs to answer — one clear sentence."),
+    options: z.array(z.object({
+      id: z.string().describe("Short id (e.g. 'A', 'B') used by /gsd escalate resolve."),
+      label: z.string().describe("One-line label."),
+      tradeoffs: z.string().describe("1-2 sentences on the tradeoffs of this option."),
+    })).min(2).max(4).describe("2-4 options the user can choose between."),
+    recommendation: z.string().describe("Option id the executor recommends."),
+    recommendationRationale: z.string().describe("Why the recommendation — 1-2 sentences."),
+    continueWithDefault: z.boolean().describe(
+      "When true, loop continues (artifact logged for later review). When false, auto-mode pauses until the user resolves via /gsd escalate resolve.",
+    ),
+  }).optional().describe("ADR-011 Phase 2: optional escalation payload. Only honored when phases.mid_execution_escalation is true."),
   verificationEvidence: z.array(z.union([
     z.object({
       command: z.string(),
@@ -1097,7 +1361,19 @@ export function registerWorkflowTools(server: McpToolServer): void {
           return reserved;
         }
         const allIds = [...new Set([...findMilestoneIds(projectDir), ...getReservedMilestoneIds()])];
-        const nextId = nextMilestoneId(allIds);
+        const prefsMod = await importLocalModule<any>(
+          "../../../src/resources/extensions/gsd/preferences.js",
+        ).catch(() => null);
+        // Graceful degradation: a corrupt preferences file should not crash
+        // milestone-id generation. Fall back to non-unique IDs if anything
+        // throws here — matches the pre-fix behavior for missing prefs.
+        let uniqueEnabled = false;
+        try {
+          uniqueEnabled = !!prefsMod?.loadEffectiveGSDPreferences?.()?.preferences?.unique_milestone_ids;
+        } catch {
+          uniqueEnabled = false;
+        }
+        const nextId = nextMilestoneId(allIds, uniqueEnabled);
         await ensureMilestoneDbRow(nextId);
         return nextId;
       });
@@ -1125,7 +1401,19 @@ export function registerWorkflowTools(server: McpToolServer): void {
           return reserved;
         }
         const allIds = [...new Set([...findMilestoneIds(projectDir), ...getReservedMilestoneIds()])];
-        const nextId = nextMilestoneId(allIds);
+        const prefsMod = await importLocalModule<any>(
+          "../../../src/resources/extensions/gsd/preferences.js",
+        ).catch(() => null);
+        // Graceful degradation: a corrupt preferences file should not crash
+        // milestone-id generation. Fall back to non-unique IDs if anything
+        // throws here — matches the pre-fix behavior for missing prefs.
+        let uniqueEnabled = false;
+        try {
+          uniqueEnabled = !!prefsMod?.loadEffectiveGSDPreferences?.()?.preferences?.unique_milestone_ids;
+        } catch {
+          uniqueEnabled = false;
+        }
+        const nextId = nextMilestoneId(allIds, uniqueEnabled);
         await ensureMilestoneDbRow(nextId);
         return nextId;
       });
@@ -1142,7 +1430,9 @@ export function registerWorkflowTools(server: McpToolServer): void {
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_milestone", projectDir, params.milestoneId);
       const { executePlanMilestone } = await getWorkflowToolExecutors();
-      return runSerializedWorkflowOperation(() => executePlanMilestone(params, projectDir));
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() => executePlanMilestone(params, projectDir)),
+      );
     },
   );
 
@@ -1155,7 +1445,9 @@ export function registerWorkflowTools(server: McpToolServer): void {
       const { projectDir, ...params } = parsed;
       await enforceWorkflowWriteGate("gsd_plan_slice", projectDir, params.milestoneId);
       const { executePlanSlice } = await getWorkflowToolExecutors();
-      return runSerializedWorkflowOperation(() => executePlanSlice(params, projectDir));
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() => executePlanSlice(params, projectDir)),
+      );
     },
   );
 
@@ -1356,8 +1648,10 @@ export function registerWorkflowTools(server: McpToolServer): void {
           `artifact_type must be one of: ${supportedArtifactTypes.join(", ")}`,
         );
       }
-      return runSerializedWorkflowOperation(() =>
-        executors.executeSummarySave({ milestone_id, slice_id, task_id, artifact_type, content }, projectDir),
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() =>
+          executors.executeSummarySave({ milestone_id, slice_id, task_id, artifact_type, content }, projectDir),
+        ),
       );
     },
   );
@@ -1389,10 +1683,14 @@ export function registerWorkflowTools(server: McpToolServer): void {
     "Read the current status of a milestone and all its slices from the GSD database.",
     milestoneStatusParams,
     async (args: Record<string, unknown>) => {
+      // gsd_milestone_status is a read-only query. In-process (query-tools.ts)
+      // does not apply the write-gate; MCP must match to avoid blocking reads
+      // during pending-gate or queue-mode states.
       const { projectDir, milestoneId } = parseWorkflowArgs(milestoneStatusSchema, args);
-      await enforceWorkflowWriteGate("gsd_milestone_status", projectDir, milestoneId);
       const { executeMilestoneStatus } = await getWorkflowToolExecutors();
-      return runSerializedWorkflowOperation(() => executeMilestoneStatus({ milestoneId }, projectDir));
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() => executeMilestoneStatus({ milestoneId }, projectDir)),
+      );
     },
   );
 
@@ -1408,6 +1706,131 @@ export function registerWorkflowTools(server: McpToolServer): void {
         return { content: [{ type: "text" as const, text: "No matching journal entries found." }] };
       }
       return { content: [{ type: "text" as const, text: JSON.stringify(entries, null, 2) }] };
+    },
+  );
+
+  // ─── ADR-013 step 3 — memory-store tools for external MCP clients ────────
+  //
+  // The same three tools the LLM sees in-process as `capture_thought`,
+  // `memory_query`, and `gsd_graph` (the memory variant). MCP exposes them
+  // under the gsd_* prefix and renames the memory graph to gsd_memory_graph
+  // to avoid collision with the project knowledge graph tool registered as
+  // `gsd_graph` in server.ts.
+
+  const MEMORY_CATEGORY = z.enum([
+    "architecture",
+    "convention",
+    "gotcha",
+    "preference",
+    "environment",
+    "pattern",
+  ]);
+
+  const captureThoughtSchema = z.object({
+    projectDir: z.string().optional(),
+    category: MEMORY_CATEGORY,
+    // Reject empty / whitespace-only content at the schema layer so the LLM
+    // never produces a memory row with no searchable text.
+    content: z.string().trim().min(1, "content must be a non-empty trimmed string"),
+    confidence: z.number().min(0.1).max(0.99).optional(),
+    tags: z.array(z.string()).optional(),
+    scope: z.string().optional(),
+    structuredFields: z.record(z.string(), z.unknown()).optional(),
+  });
+  const captureThoughtParams = {
+    projectDir: z.string().optional().describe("Absolute path to the project directory (defaults to MCP server cwd)"),
+    category: MEMORY_CATEGORY.describe("Memory category"),
+    content: z.string().describe("Memory text (1-3 sentences, no secrets)"),
+    confidence: z.number().min(0.1).max(0.99).optional().describe("0.1-0.99, default 0.8"),
+    tags: z.array(z.string()).optional().describe("Free-form tags"),
+    scope: z.string().optional().describe("Scope name; defaults to 'project'"),
+    structuredFields: z.record(z.string(), z.unknown()).optional().describe("ADR-013 structured payload (e.g. decision fields)"),
+  };
+
+  server.tool(
+    "gsd_capture_thought",
+    "Record a durable project insight into the GSD memory store. Categories: architecture, convention, gotcha, preference, environment, pattern. Mirrors the in-process capture_thought tool for external MCP clients.",
+    captureThoughtParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(captureThoughtSchema, args);
+      await enforceWorkflowWriteGate("gsd_capture_thought", projectDir);
+      return runSerializedWorkflowDbOperation(projectDir, async () => {
+        const { executeMemoryCapture } = await importLocalModule<any>(
+          "../../../src/resources/extensions/gsd/tools/memory-tools.js",
+        );
+        return executeMemoryCapture(params);
+      });
+    },
+  );
+
+  const memoryQuerySchema = z.object({
+    projectDir: z.string().optional(),
+    // Match the documented "2+ char terms" contract in the in-process
+    // memory_query tool — reject sub-2-char queries at the schema layer.
+    query: z.string().trim().min(2, "query must be at least 2 characters"),
+    k: z.number().int().min(1).max(50).optional(),
+    category: MEMORY_CATEGORY.optional(),
+    scope: z.string().optional(),
+    tag: z.string().optional(),
+    include_superseded: z.boolean().optional(),
+    reinforce_hits: z.boolean().optional(),
+  });
+  const memoryQueryParams = {
+    projectDir: z.string().optional().describe("Absolute path to the project directory (defaults to MCP server cwd)"),
+    query: z.string().describe("Keyword query (2+ char terms)"),
+    k: z.number().int().min(1).max(50).optional().describe("Max results (default 10, max 50)"),
+    category: MEMORY_CATEGORY.optional().describe("Restrict to a single category"),
+    scope: z.string().optional().describe("Only include memories with this scope"),
+    tag: z.string().optional().describe("Only include memories tagged with this value"),
+    include_superseded: z.boolean().optional().describe("Include superseded memories (default false)"),
+    reinforce_hits: z.boolean().optional().describe("Increment hit_count on returned memories (default false)"),
+  };
+
+  server.tool(
+    "gsd_memory_query",
+    "Search the GSD memory store by keyword. Returns ranked memories with id, category, content, confidence, scope, and tags. Mirrors the in-process memory_query tool for external MCP clients.",
+    memoryQueryParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(memoryQuerySchema, args);
+      return runSerializedWorkflowDbOperation(projectDir, async () => {
+        const { executeMemoryQuery } = await importLocalModule<any>(
+          "../../../src/resources/extensions/gsd/tools/memory-tools.js",
+        );
+        return executeMemoryQuery(params);
+      });
+    },
+  );
+
+  const memoryGraphSchema = z.object({
+    projectDir: z.string().optional(),
+    mode: z.enum(["build", "query"]),
+    memoryId: z.string().optional(),
+    depth: z.number().int().min(0).max(5).optional(),
+    rel: z.enum(["related_to", "depends_on", "contradicts", "elaborates", "supersedes"]).optional(),
+  }).refine(
+    (val) => val.mode !== "query" || (typeof val.memoryId === "string" && val.memoryId.trim().length > 0),
+    { message: "memoryId is required and must be non-empty when mode=query", path: ["memoryId"] },
+  );
+  const memoryGraphParams = {
+    projectDir: z.string().optional().describe("Absolute path to the project directory (defaults to MCP server cwd)"),
+    mode: z.enum(["build", "query"]).describe("build = recompute graph (placeholder), query = inspect edges"),
+    memoryId: z.string().optional().describe("Memory ID (required when mode=query)"),
+    depth: z.number().int().min(0).max(5).optional().describe("Hops to traverse (0-5, default 1)"),
+    rel: z.enum(["related_to", "depends_on", "contradicts", "elaborates", "supersedes"]).optional().describe("Only include edges with this relation type"),
+  };
+
+  server.tool(
+    "gsd_memory_graph",
+    "Inspect the relationship graph between memories. mode=query walks edges from a given memoryId. mode=build is a placeholder reserved for future graph rebuilds. Distinct from gsd_graph (project knowledge graph) — see ADR-013.",
+    memoryGraphParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(memoryGraphSchema, args);
+      return runSerializedWorkflowDbOperation(projectDir, async () => {
+        const { executeGsdGraph } = await importLocalModule<any>(
+          "../../../src/resources/extensions/gsd/tools/memory-tools.js",
+        );
+        return executeGsdGraph(params);
+      });
     },
   );
 }

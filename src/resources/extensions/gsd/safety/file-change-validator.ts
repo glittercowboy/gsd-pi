@@ -4,14 +4,22 @@
  *
  * Uses tasks.expected_output (DB column, populated from per-task ## Expected Output)
  * and tasks.files (from slice PLAN.md - Files: subline) as the expected set.
- * Compares against git diff HEAD~1 --name-only after auto-commit.
+ * Compares against `git diff-tree --root --no-commit-id -r --name-only HEAD` after auto-commit.
+ * Using diff-tree --root handles initial commits, shallow clones, and merge commits correctly
+ * (Bug #4385 — git diff HEAD~1 failed on initial commits).
  *
  * Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
  */
 
+import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 import { normalizePlannedFileReference } from "../files.js";
 import { logWarning } from "../workflow-logger.js";
+
+const _require = createRequire(import.meta.url);
+type PicomatchMatcher = (input: string) => boolean;
+type PicomatchFn = (pattern: string, opts?: { dot?: boolean }) => PicomatchMatcher;
+const picomatch = _require("picomatch") as PicomatchFn;
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -43,6 +51,7 @@ export function validateFileChanges(
   basePath: string,
   expectedOutput: string[],
   plannedFiles: string[],
+  fileChangeAllowlist: string[] = [],
 ): FileChangeAudit | null {
   const allExpected = new Set([...expectedOutput, ...plannedFiles]);
 
@@ -63,8 +72,12 @@ export function validateFileChanges(
     ),
   );
 
-  // Compute symmetric difference
-  const unexpectedFiles = projectFiles.filter(f => !normalizedExpected.has(f));
+  // Build allowlist matchers once (dot: true so patterns like `**/.hidden` work).
+  const allowlistMatchers = fileChangeAllowlist.map(p => picomatch(p, { dot: true }));
+  const isAllowlisted = (f: string) => allowlistMatchers.some(m => m(f));
+
+  // Compute symmetric difference, excluding allowlisted files
+  const unexpectedFiles = projectFiles.filter(f => !normalizedExpected.has(f) && !isAllowlisted(f));
   const missingFiles = [...normalizedExpected].filter(f => !projectFiles.includes(f));
 
   const violations: FileViolation[] = [];
@@ -100,7 +113,7 @@ function getChangedFilesFromLastCommit(basePath: string): string[] | null {
   try {
     const result = execFileSync(
       "git",
-      ["diff", "--name-only", "HEAD~1", "HEAD"],
+      ["diff-tree", "--root", "--no-commit-id", "-r", "--name-only", "HEAD"],
       { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
     ).trim();
     return result ? result.split("\n").filter(Boolean) : [];

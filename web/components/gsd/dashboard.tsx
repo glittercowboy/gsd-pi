@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Circle,
   Play,
+  SkipForward,
   GitBranch,
   TrendingDown,
 } from "lucide-react"
@@ -91,6 +92,8 @@ function taskStatusIcon(status: ItemStatus) {
       return <Play className="h-4 w-4 text-foreground" />
     case "pending":
       return <Circle className="h-4 w-4 text-muted-foreground" />
+    case "parked":
+      return <SkipForward className="h-4 w-4 text-muted-foreground" />
   }
 }
 

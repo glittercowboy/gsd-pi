@@ -5,6 +5,7 @@
 import { type ChannelAdapter, type RemotePrompt, type RemoteDispatchResult, type RemoteAnswer, type RemotePromptRef } from "./types.js";
 import { formatForTelegram, parseTelegramResponse } from "./format.js";
 import { apiRequest } from "./http-client.js";
+import { isCommand, handleCommand, type CommandSender } from "./commands.js";
 
 const TELEGRAM_API = "https://api.telegram.org";
 
@@ -15,10 +16,12 @@ export class TelegramAdapter implements ChannelAdapter {
   private lastSentText = "";
   private readonly token: string;
   private readonly chatId: string;
+  private readonly basePath: string;
 
-  constructor(token: string, chatId: string) {
+  constructor(token: string, chatId: string, basePath: string) {
     this.token = token;
     this.chatId = chatId;
+    this.basePath = basePath;
   }
 
   async validate(): Promise<void> {
@@ -98,19 +101,83 @@ export class TelegramAdapter implements ChannelAdapter {
       // Handle text reply (reply_to_message)
       if (update.message) {
         const msg = update.message;
+        // Defensive: ensure command replies go back to our configured chat, not an unvalidated chat ID.
+        // ref.channelId is always set from this.chatId in sendPrompt, so this guard enforces that.
+        const replyChatId = String(msg.chat?.id) === this.chatId ? this.chatId : null;
+        if (!replyChatId) continue; // skip messages not from our configured chat
+
         if (
           String(msg.chat?.id) === ref.channelId &&
-          msg.reply_to_message &&
-          String(msg.reply_to_message.message_id) === ref.messageId &&
           msg.from?.id !== this.botUserId &&
           msg.text
         ) {
-          return parseTelegramResponse(null, msg.text, prompt.questions, prompt.id);
+          // Intercept slash commands — handle and continue polling for the answer
+          if (isCommand(msg.text)) {
+            const sender = this.makeCommandSender(replyChatId);
+            try {
+              await handleCommand(msg.text, sender, this.basePath);
+            } catch { /* best-effort — command errors must not disrupt polling */ }
+            continue;
+          }
+
+          if (
+            msg.reply_to_message &&
+            String(msg.reply_to_message.message_id) === ref.messageId
+          ) {
+            return parseTelegramResponse(null, msg.text, prompt.questions, prompt.id);
+          }
         }
       }
     }
 
     return null;
+  }
+
+  /**
+   * Poll Telegram for incoming slash commands and handle them.
+   * Intended for idle-time polling when no question prompt is active.
+   * Returns the number of commands handled.
+   */
+  async pollAndHandleCommands(basePath: string): Promise<number> {
+    if (!this.botUserId) {
+      try {
+        await this.validate();
+      } catch {
+        return 0;
+      }
+    }
+
+    const res = await this.telegramApi("getUpdates", {
+      offset: this.lastUpdateId + 1,
+      timeout: 0,
+      allowed_updates: ["message"],
+    });
+
+    if (!res.ok || !Array.isArray(res.result)) return 0;
+
+    let handled = 0;
+    for (const update of res.result) {
+      if (update.update_id > this.lastUpdateId) {
+        this.lastUpdateId = update.update_id;
+      }
+
+      const msg = update.message;
+      if (
+        msg &&
+        String(msg.chat?.id) === this.chatId &&
+        msg.from?.id !== this.botUserId &&
+        msg.text &&
+        isCommand(msg.text)
+      ) {
+        const sender = this.makeCommandSender(msg.chat?.id ?? this.chatId);
+        try {
+          await handleCommand(msg.text, sender, basePath);
+          handled++;
+        } catch { /* best-effort */ }
+      }
+    }
+
+    return handled;
   }
 
   /**
@@ -128,6 +195,21 @@ export class TelegramAdapter implements ChannelAdapter {
     } catch {
       // Best-effort — don't let acknowledgement failures affect the flow
     }
+  }
+
+  private makeCommandSender(chatId: string | number): CommandSender {
+    const targetChatId = String(chatId);
+    return {
+      send: async (text: string): Promise<void> => {
+        try {
+          await this.telegramApi("sendMessage", {
+            chat_id: targetChatId,
+            text,
+            parse_mode: "Markdown",
+          });
+        } catch { /* best-effort — command replies must not disrupt polling */ }
+      },
+    };
   }
 
   private buildMessageUrl(chatId: string, messageId: string): string | undefined {

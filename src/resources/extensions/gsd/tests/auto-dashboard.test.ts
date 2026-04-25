@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 
 import {
   unitVerb,
@@ -15,6 +16,10 @@ import {
   getWidgetMode,
   cycleWidgetMode,
   _resetWidgetModeForTests,
+  _resetLastCommitCacheForTests,
+  _refreshLastCommitForTests,
+  _getLastCommitForTests,
+  _getLastCommitFetchedAtForTests,
 } from "../auto-dashboard.ts";
 
 const autoSource = readFileSync(join(process.cwd(), "src", "resources", "extensions", "gsd", "auto.ts"), "utf-8");
@@ -213,6 +218,50 @@ test("auto progress widget renders RTK savings under the footer stats line", () 
   assert.match(dashboardSource, /formatRtkSavingsLabel/);
   assert.match(dashboardSource, /getRtkSessionSavings\(accessors\.getBasePath\(\), sessionId\)/);
   assert.match(dashboardSource, /lines\.push\(rightAlign\("", theme\.fg\("dim", cachedRtkLabel\), width\)\);/);
+});
+
+test("last commit refresh backs off cleanly when base path is not a git repo", (t) => {
+  const dir = makeTempDir("non-git");
+  mkdirSync(dir, { recursive: true });
+
+  t.after(() => {
+    cleanup(dir);
+    _resetLastCommitCacheForTests();
+  });
+
+  _resetLastCommitCacheForTests();
+  _refreshLastCommitForTests(dir);
+
+  assert.equal(_getLastCommitForTests(dir), null);
+  assert.ok(
+    _getLastCommitFetchedAtForTests() > 0,
+    "non-git refresh should still advance fetchedAt to avoid render-loop retries",
+  );
+});
+
+test("last commit refresh still returns commit info for a valid git repo", (t) => {
+  const dir = makeTempDir("git");
+  mkdirSync(dir, { recursive: true });
+
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", "GSD Test"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "gsd@example.com"], { cwd: dir, stdio: "pipe" });
+  writeFileSync(join(dir, "README.md"), "hello\n", "utf-8");
+  execFileSync("git", ["add", "README.md"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "test: seed dashboard repo"], { cwd: dir, stdio: "pipe" });
+
+  t.after(() => {
+    cleanup(dir);
+    _resetLastCommitCacheForTests();
+  });
+
+  _resetLastCommitCacheForTests();
+  _refreshLastCommitForTests(dir);
+
+  const lastCommit = _getLastCommitForTests(dir);
+  assert.ok(lastCommit, "git repo should produce last commit metadata");
+  assert.match(lastCommit!.message, /test: seed dashboard repo/);
+  assert.ok(lastCommit!.timeAgo.length > 0, "relative time should be populated");
 });
 
 // ─── extractUatSliceId ───────────────────────────────────────────────────

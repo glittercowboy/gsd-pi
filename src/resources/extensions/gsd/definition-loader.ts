@@ -331,7 +331,14 @@ export function validateDefinition(parsed: unknown): { valid: boolean; errors: s
  */
 export function loadDefinition(defsDir: string, name: string): WorkflowDefinition {
   const filePath = join(defsDir, `${name}.yaml`);
+  return loadDefinitionFromFile(filePath);
+}
 
+/**
+ * Load and validate a YAML workflow definition from an absolute file path.
+ * Accepts both `.yaml` and `.yml` extensions.
+ */
+export function loadDefinitionFromFile(filePath: string): WorkflowDefinition {
   if (!existsSync(filePath)) {
     throw new Error(`Definition file not found: ${filePath}`);
   }

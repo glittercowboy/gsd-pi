@@ -1,6 +1,6 @@
 "use client"
 
-import { CheckCircle2, Circle, Play, AlertTriangle, ChevronRight } from "lucide-react"
+import { CheckCircle2, Circle, Play, AlertTriangle, ChevronRight, SkipForward } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { getLiveWorkspaceIndex, useGSDWorkspaceState, type RiskLevel } from "@/lib/gsd-workspace-store"
 import { getMilestoneStatus, getSliceStatus, type ItemStatus } from "@/lib/workspace-status"
@@ -18,6 +18,9 @@ const StatusIcon = ({
   }
   if (status === "in-progress") {
     return <Play className={cn(sizeClass, "text-warning")} />
+  }
+  if (status === "parked") {
+    return <SkipForward className={cn(sizeClass, "text-muted-foreground")} />
   }
   return <Circle className={cn(sizeClass, "text-muted-foreground")} />
 }
@@ -114,6 +117,7 @@ export function Roadmap() {
                           "flex items-center gap-3 px-4 py-2.5",
                           sliceStatus === "in-progress" && "bg-accent/20",
                           sliceStatus === "pending" && "opacity-70",
+                          sliceStatus === "parked" && "opacity-70",
                         )}
                       >
                         <div className="w-4" />

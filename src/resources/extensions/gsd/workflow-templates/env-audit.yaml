@@ -1,0 +1,88 @@
+# Env Audit workflow — mode: yaml-step
+#
+# Inventory every environment variable referenced across code/docs/CI, then
+# audit each one for drift (documented? default? required vs optional?
+# mentioned in CI?).
+
+version: 1
+name: env-audit
+mode: yaml-step
+description: >-
+  Find every environment variable the project uses and flag drift —
+  variables referenced in code but not in docs, or vice versa.
+
+params:
+  src_glob: "src/**/*.{ts,js,py,go,rb}"
+  ci_paths: ".github/workflows .circleci .gitlab-ci.yml"
+  doc_paths: "README.md docs/ .env.example"
+
+steps:
+  - id: inventory
+    name: Inventory env-var references
+    prompt: >-
+      Find every environment variable referenced in the project. Check:
+
+      - Code ({{src_glob}}): look for `process.env.X`, `os.environ["X"]`,
+        `os.Getenv("X")`, and equivalent patterns.
+      - Docs and `.env.example` ({{doc_paths}}).
+      - CI configs ({{ci_paths}}).
+
+      Produce `env-inventory.md` with one line per variable:
+
+        - <VAR_NAME> — code: <y|n>, docs: <y|n>, ci: <y|n>
+
+      Sort alphabetically. If any variable appears in one location but not
+      another, that's the drift — the next step will audit each entry.
+    requires: []
+    produces:
+      - env-inventory.md
+    verify:
+      policy: content-heuristic
+
+  - id: audit-var
+    name: Audit a single env variable
+    prompt: >-
+      Assess the env variable referenced by {{_iter_capture_1}} against
+      the three locations. For this variable, write an entry in
+      `env-audit.md`:
+
+        ## <VAR_NAME>
+        - Code refs: <file:line list>
+        - Documented: <yes — link | no — gap>
+        - CI: <yes | no>
+        - Required / optional: <deduced from usage>
+        - Has a default: <yes — value | no>
+        - Drift: <one of: none | undocumented | unused-in-code | missing-in-ci | conflicting-default>
+        - Recommendation: <one sentence>
+
+      If the variable is used only in third-party code we can't control,
+      note that and move on.
+    requires:
+      - inventory
+    context_from:
+      - inventory
+    produces:
+      - env-audit.md
+    iterate:
+      source: env-inventory.md
+      pattern: "^- ([A-Z][A-Z0-9_]+) — "
+    verify:
+      policy: content-heuristic
+
+  - id: report
+    name: Final drift report
+    prompt: >-
+      Produce `env-drift-report.md` summarizing:
+      - Variables with drift (by category: undocumented, unused, missing-in-ci).
+      - Recommended `.env.example` diffs to close the gaps.
+      - Any variables whose defaults or required-ness look wrong.
+
+      Keep it scannable — prioritize drift that could cause runtime failures.
+    requires:
+      - audit-var
+    context_from:
+      - audit-var
+    produces:
+      - env-drift-report.md
+    verify:
+      policy: content-heuristic

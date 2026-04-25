@@ -20,11 +20,22 @@ type GeminiCredentials = OAuthCredentials & {
 	projectId: string;
 };
 
-const decode = (s: string) => atob(s);
-const CLIENT_ID = decode(
-	"NjgxMjU1ODA5Mzk1LW9vOGZ0Mm9wcmRybnA5ZTNhcWY2YXYzaG1kaWIxMzVqLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t",
-);
-const CLIENT_SECRET = decode("R09DU1BYLTR1SGdNUG0tMW83U2stZ2VWNkN1NWNsWEZzeGw=");
+// Gemini CLI OAuth credentials (Google Cloud Code Assist)
+//
+// NOTE: These credentials are public in the source code. They should NOT be
+// obfuscated because security scanners flag obfuscated data as potentially
+// malicious (see: https://socket.dev/npm/package/gsd-pi/alerts/2.70.1?alert_name=obfuscatedFile)
+//
+// Google's OAuth implementation requires client_secret for Desktop App OAuth
+// clients even though it cannot be kept secret in distributed applications.
+// The actual security relies on:
+// - PKCE (Proof Key for Code Exchange) via code_verifier
+// - Redirect URI validation (localhost only)
+// - User consent and token scope limits
+//
+// See: https://developers.google.com/identity/protocols/oauth2/native-app
+const CLIENT_ID = "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+const CLIENT_SECRET = "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";
 const REDIRECT_URI = "http://localhost:8085/oauth2callback";
 const SCOPES = [
 	"https://www.googleapis.com/auth/cloud-platform",

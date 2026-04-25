@@ -10,12 +10,47 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import type { GSDPreferences } from "./preferences.js";
 import { resolveModelWithFallbacksForUnit, resolveDynamicRoutingConfig } from "./preferences.js";
 import type { ComplexityTier } from "./complexity-classifier.js";
-import { classifyUnitComplexity, tierLabel } from "./complexity-classifier.js";
+import { classifyUnitComplexity, extractTaskMetadata, tierLabel } from "./complexity-classifier.js";
 import { resolveModelForComplexity, escalateTier, getEligibleModels, loadCapabilityOverrides, adjustToolSet, filterToolsForProvider } from "./model-router.js";
 import { getLedger, getProjectTotals } from "./metrics.js";
 import { unitPhaseLabel } from "./auto-dashboard.js";
 import { getSessionModelOverride } from "./session-model-override.js";
 import { logWarning } from "./workflow-logger.js";
+import { resolveUokFlags } from "./uok/flags.js";
+import { applyModelPolicyFilter } from "./uok/model-policy.js";
+import { isModelBlocked } from "./blocked-models.js";
+import { getRequiredWorkflowToolsForAutoUnit } from "./workflow-mcp.js";
+
+/**
+ * Thrown when the model-policy gate rejects every candidate model for a unit
+ * dispatch (#4959 / #4681 / #4850).  The auto-loop catches this specifically
+ * to classify the unit as `blocked` rather than counting it as a retryable
+ * iteration error — pre-send policy denial is a configuration problem, not a
+ * transient runtime failure, so retrying just burns the consecutive-error
+ * budget toward a hard stop.
+ */
+export class ModelPolicyDispatchBlockedError extends Error {
+  readonly unitType: string;
+  readonly unitId: string;
+  readonly reasons: ReadonlyArray<{ provider: string; modelId: string; reason: string }>;
+  constructor(
+    unitType: string,
+    unitId: string,
+    reasons: ReadonlyArray<{ provider: string; modelId: string; reason: string }>,
+  ) {
+    const summary = reasons.length === 0
+      ? "no candidate models"
+      : reasons
+          .slice(0, 4)
+          .map((r) => `${r.provider}/${r.modelId} (${r.reason})`)
+          .join("; ");
+    super(`Model policy denied dispatch for ${unitType}/${unitId} before prompt send. Rejected: ${summary}`);
+    this.name = "ModelPolicyDispatchBlockedError";
+    this.unitType = unitType;
+    this.unitId = unitId;
+    this.reasons = reasons;
+  }
+}
 
 export interface ModelSelectionResult {
   /** Routing metadata for metrics recording */
@@ -24,13 +59,77 @@ export interface ModelSelectionResult {
   appliedModel: Model<Api> | null;
 }
 
+export interface PreferredModelConfig {
+  primary: string;
+  fallbacks: string[];
+  source: "explicit" | "synthesized";
+}
+
+// Baseline active-tool set per-`pi` instance, captured the first time
+// `selectAndApplyModel` runs against that instance during an auto session
+// and re-applied before each subsequent dispatch.  WeakMap so that test
+// fakes / disposed sessions are garbage-collected normally.  See
+// #4959 / #4681 cross-unit poisoning notes at the call site below.
+//
+// LIFECYCLE: the baseline is tied to a single auto session, NOT to the
+// lifetime of the `pi` instance (which can outlive many auto runs and have
+// the user mutate tools between them).  `clearToolBaseline` MUST be called
+// at auto start AND auto stop so that a second `/gsd auto` run on the same
+// `pi` does not silently restore a stale snapshot from the prior run and
+// undo any tool changes the user made between sessions.
+const TOOL_BASELINE = new WeakMap<object, string[]>();
+
+/**
+ * Drop the captured tool baseline for `pi` so the next `selectAndApplyModel`
+ * call re-captures from the live active set.  Wired into `startAuto` and
+ * `stopAuto` in `auto.ts` to bound the baseline to a single auto session.
+ *
+ * Safe to call when no baseline is recorded (no-op).
+ */
+export function clearToolBaseline(pi: ExtensionAPI | object): void {
+  TOOL_BASELINE.delete(pi as unknown as object);
+}
+
+function restoreToolBaseline(pi: ExtensionAPI): void {
+  const key = pi as unknown as object;
+  const baseline = TOOL_BASELINE.get(key);
+  if (baseline === undefined) {
+    // First call: capture the canonical pre-dispatch tool set.  At auto-mode
+    // start the active set has not yet been narrowed for any provider.
+    // Guarded against test fakes that omit getActiveTools — record an empty
+    // baseline so subsequent calls don't keep re-probing.
+    const initial = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [];
+    TOOL_BASELINE.set(key, [...initial]);
+    return;
+  }
+  // Restore baseline before the next unit reads getActiveTools / applies
+  // post-selection adjustToolSet.  Older fakes that omit setActiveTools are
+  // tolerated — the test asserts call order on real fakes.
+  if (typeof pi.setActiveTools === "function") {
+    pi.setActiveTools([...baseline]);
+  }
+}
+
+function reapplyThinkingLevel(
+  pi: ExtensionAPI,
+  level: ReturnType<ExtensionAPI["getThinkingLevel"]> | null | undefined,
+): void {
+  if (!level) return;
+  pi.setThinkingLevel(level);
+}
+
 export function resolvePreferredModelConfig(
   unitType: string,
   autoModeStartModel: { provider: string; id: string; flatRateCtx?: FlatRateContext } | null,
   isAutoMode = true,
-) {
+): PreferredModelConfig | undefined {
   const explicitConfig = resolveModelWithFallbacksForUnit(unitType);
-  if (explicitConfig) return explicitConfig;
+  if (explicitConfig) {
+    return {
+      ...explicitConfig,
+      source: "explicit",
+    };
+  }
 
   // In interactive mode, don't synthesize a routing-based model config.
   // The user's session model (/model) should be used as-is (#3962).
@@ -40,7 +139,15 @@ export function resolvePreferredModelConfig(
   if (!routingConfig.enabled || !routingConfig.tier_models) return undefined;
 
   // Don't synthesize a routing config for flat-rate providers (#3453).
-  if (autoModeStartModel && isFlatRateProvider(autoModeStartModel.provider, autoModeStartModel.flatRateCtx)) return undefined;
+  // Users can opt into routing for flat-rate subscriptions (e.g. claude-code)
+  // via dynamic_routing.allow_flat_rate_providers (#4386).
+  if (
+    !routingConfig.allow_flat_rate_providers &&
+    autoModeStartModel &&
+    isFlatRateProvider(autoModeStartModel.provider, autoModeStartModel.flatRateCtx)
+  ) {
+    return undefined;
+  }
 
   const ceilingModel = routingConfig.tier_models.heavy
     ?? (autoModeStartModel ? `${autoModeStartModel.provider}/${autoModeStartModel.id}` : undefined);
@@ -49,6 +156,7 @@ export function resolvePreferredModelConfig(
   return {
     primary: ceilingModel,
     fallbacks: [],
+    source: "synthesized",
   };
 }
 
@@ -74,7 +182,10 @@ export async function selectAndApplyModel(
   isAutoMode = true,
   /** Explicit /gsd model pin captured at bootstrap for long-running auto loops. */
   sessionModelOverride?: { provider: string; id: string } | null,
+  /** Thinking level captured at auto-mode start and re-applied after model swaps. */
+  autoModeStartThinkingLevel?: ReturnType<ExtensionAPI["getThinkingLevel"]> | null,
 ): Promise<ModelSelectionResult> {
+  const uokFlags = resolveUokFlags(prefs);
   const effectiveSessionModelOverride = sessionModelOverride === undefined
     ? getSessionModelOverride(ctx.sessionManager.getSessionId())
     : (sessionModelOverride ?? undefined);
@@ -95,8 +206,26 @@ export async function selectAndApplyModel(
   let routing: { tier: string; modelDowngraded: boolean } | null = null;
   let appliedModel: Model<Api> | null = null;
 
+  // ── Restore active-tool baseline before policy evaluation (#4959, #4681, #4850) ──
+  // Per-unit narrowing at the bottom of this function (line ~417) calls
+  // `pi.setActiveTools(finalToolNames)` and monotonically narrows the active
+  // set across units.  Without restoration, a previously-dispatched unit on a
+  // narrow-API provider (e.g. openai-completions) leaves the active set
+  // missing tools that the next unit's selected model fully supports, but
+  // `pi.getActiveTools()` snapshot-as-hard-gate (the old behaviour) blocked
+  // dispatch with "tool policy denied" anyway.
+  //
+  // The baseline is captured once per `pi` instance via a WeakMap and
+  // re-applied here so each unit starts from a clean slate.  Soft adaptation
+  // (adjustToolSet at the bottom of this function) still trims for the
+  // selected model.
+  restoreToolBaseline(pi);
+
   if (modelConfig) {
     const availableModels = ctx.modelRegistry.getAvailable();
+    const modelPolicyTraceId = `model:${ctx.sessionManager.getSessionId()}:${Date.now()}`;
+    const modelPolicyTurnId = `${unitType}:${unitId}`;
+    let policyAllowedModelKeys: Set<string> | null = null;
 
     // ─── Dynamic Model Routing ─────────────────────────────────────────
     // Dynamic routing (complexity-based downgrading) only applies in auto-mode.
@@ -106,16 +235,68 @@ export async function selectAndApplyModel(
     if (!isAutoMode) {
       routingConfig.enabled = false;
     }
+    // burn-max defaults to quality-first dispatch (no downgrade routing).
+    if (prefs?.token_profile === "burn-max") {
+      routingConfig.enabled = false;
+    }
+    if (modelConfig.source === "explicit") {
+      // Explicit per-phase model preferences express hard user intent.
+      // Dynamic routing may only treat synthesized tier ceilings as downgradeable.
+      routingConfig.enabled = false;
+    }
     let effectiveModelConfig = modelConfig;
     let routingTierLabel = "";
+    let routingEligibleModels = availableModels;
+
+    const taskMetadataForPolicy = unitType === "execute-task"
+      ? extractTaskMetadata(unitId, basePath)
+      : undefined;
+
+    let policyDenyReasons: Array<{ provider: string; modelId: string; reason: string }> = [];
+    if (uokFlags.modelPolicy) {
+      // Use the workflow-spec required-tool subset for the unit type rather
+      // than the live `pi.getActiveTools()` snapshot (#4959).  The active set
+      // is poisoned by per-unit narrowing for narrow-API providers — using it
+      // as a hard gate promotes soft adaptation (adjustToolSet at line ~417)
+      // into a layering violation that throws before dispatch.  The smaller
+      // workflow-required subset reflects what the unit actually needs; soft
+      // adaptation post-selection still trims provider-incompatible tools.
+      const requiredTools = getRequiredWorkflowToolsForAutoUnit(unitType);
+      const policy = applyModelPolicyFilter(
+        availableModels,
+        {
+          basePath,
+          traceId: modelPolicyTraceId,
+          turnId: modelPolicyTurnId,
+          unitType,
+          taskMetadata: taskMetadataForPolicy,
+          currentProvider: ctx.model?.provider,
+          allowCrossProvider: routingConfig.cross_provider !== false,
+          requiredTools,
+        },
+      );
+      routingEligibleModels = policy.eligible;
+      policyAllowedModelKeys = new Set(
+        policy.eligible.map((m) => `${m.provider.toLowerCase()}/${m.id.toLowerCase()}`),
+      );
+      policyDenyReasons = policy.decisions
+        .filter((d) => !d.allowed)
+        .map((d) => ({ provider: d.provider, modelId: d.modelId, reason: d.reason }));
+      if (routingEligibleModels.length === 0) {
+        throw new ModelPolicyDispatchBlockedError(unitType, unitId, policyDenyReasons);
+      }
+    }
 
     // Disable routing for flat-rate providers like GitHub Copilot (#3453).
     // All models cost the same per request, so downgrading to a cheaper
     // model provides no cost benefit — it only degrades quality.
     // Fail-closed: if primary model can't be resolved, fall back to
     // provider-level signals rather than allowing unwanted downgrades.
-    if (routingConfig.enabled) {
-      const primaryModel = resolveModelId(modelConfig.primary, availableModels, ctx.model?.provider);
+    // Opt-in: dynamic_routing.allow_flat_rate_providers skips the bypass so
+    // claude-code subscribers can still get intelligent per-task selection
+    // across their subscription (#4386).
+    if (routingConfig.enabled && !routingConfig.allow_flat_rate_providers) {
+      const primaryModel = resolveModelId(modelConfig.primary, routingEligibleModels, ctx.model?.provider);
       if (primaryModel) {
         const primaryFlatRateCtx = buildFlatRateContext(primaryModel.provider, ctx, prefs);
         if (isFlatRateProvider(primaryModel.provider, primaryFlatRateCtx)) {
@@ -149,8 +330,14 @@ export async function selectAndApplyModel(
       const shouldClassify = !isHook || routingConfig.hooks !== false;
 
       if (shouldClassify) {
-        let classification = classifyUnitComplexity(unitType, unitId, basePath, budgetPct);
-        const availableModelIds = availableModels.map(m => m.id);
+        let classification = classifyUnitComplexity(
+          unitType,
+          unitId,
+          basePath,
+          budgetPct,
+          taskMetadataForPolicy,
+        );
+        const availableModelIds = routingEligibleModels.map(m => `${m.provider}/${m.id}`);
 
         // Escalate tier on retry when escalate_on_failure is enabled (default: true)
         if (
@@ -231,6 +418,7 @@ export async function selectAndApplyModel(
           effectiveModelConfig = {
             primary: routingResult.modelId,
             fallbacks: routingResult.fallbacks,
+            source: modelConfig.source,
           };
           // Always notify on model downgrade — users should see when their
           // model selection is overridden, not just in verbose mode (#3962).
@@ -257,12 +445,37 @@ export async function selectAndApplyModel(
     }
 
     const modelsToTry = [effectiveModelConfig.primary, ...effectiveModelConfig.fallbacks];
+    let attemptedPolicyEligible = false;
 
     for (const modelId of modelsToTry) {
-      const model = resolveModelId(modelId, availableModels, ctx.model?.provider);
+      const resolutionPool = uokFlags.modelPolicy ? routingEligibleModels : availableModels;
+      const model = resolveModelId(modelId, resolutionPool, ctx.model?.provider);
 
       if (!model) {
         if (verbose) ctx.ui.notify(`Model ${modelId} not found, trying fallback.`, "info");
+        continue;
+      }
+
+      if (policyAllowedModelKeys) {
+        const key = `${model.provider.toLowerCase()}/${model.id.toLowerCase()}`;
+        if (!policyAllowedModelKeys.has(key)) {
+          if (verbose) {
+            ctx.ui.notify(`Model policy denied ${model.provider}/${model.id}; trying fallback.`, "warning");
+          }
+          continue;
+        }
+        attemptedPolicyEligible = true;
+      }
+
+      // Skip models the provider has previously rejected for this account
+      // (issue #4513).  The block is persisted in .gsd/runtime/blocked-models.json
+      // so it survives /gsd auto restarts — without this, the same dead model
+      // gets reselected after every restart.
+      if (isModelBlocked(basePath, model.provider, model.id)) {
+        ctx.ui.notify(
+          `Skipping blocked model ${model.provider}/${model.id} (provider rejected it for this account).`,
+          "warning",
+        );
         continue;
       }
 
@@ -281,11 +494,12 @@ export async function selectAndApplyModel(
       const ok = await pi.setModel(model, { persist: false });
       if (ok) {
         appliedModel = model;
+        reapplyThinkingLevel(pi, autoModeStartThinkingLevel);
 
         // ADR-005: Adjust active tool set for the selected model's provider capabilities.
         // Hard-filter incompatible tools, then let extensions override via adjust_tool_set hook.
         const activeToolNames = pi.getActiveTools();
-        const { toolNames: compatibleTools, removedTools } = adjustToolSet(activeToolNames, model.api);
+        const { toolNames: compatibleTools, removedTools } = adjustToolSet(activeToolNames, model.api, model.provider);
         let finalToolNames = compatibleTools;
 
         // Fire adjust_tool_set hook — extensions can override the filtered tool set
@@ -331,23 +545,41 @@ export async function selectAndApplyModel(
         }
       }
     }
+
+    if (uokFlags.modelPolicy && policyAllowedModelKeys && !attemptedPolicyEligible) {
+      throw new ModelPolicyDispatchBlockedError(unitType, unitId, policyDenyReasons);
+    }
   } else if (autoModeStartModel) {
     // No model preference for this unit type — re-apply the model captured
     // at auto-mode start to prevent bleed from shared global settings.json (#650).
     const availableModels = ctx.modelRegistry.getAvailable();
-    const startModel = availableModels.find(
-      m => m.provider === autoModeStartModel.provider && m.id === autoModeStartModel.id,
-    );
-    if (startModel) {
-      const ok = await pi.setModel(startModel, { persist: false });
-      if (!ok) {
-        const byId = availableModels.find(m => m.id === autoModeStartModel.id);
-        if (byId) {
-          const fallbackOk = await pi.setModel(byId, { persist: false });
-          if (fallbackOk) appliedModel = byId;
+    const startBlocked = isModelBlocked(basePath, autoModeStartModel.provider, autoModeStartModel.id);
+    if (startBlocked) {
+      ctx.ui.notify(
+        `Auto-mode start model ${autoModeStartModel.provider}/${autoModeStartModel.id} is blocked for this account. Using current session model instead.`,
+        "warning",
+      );
+    } else {
+      const startModel = availableModels.find(
+        m => m.provider === autoModeStartModel.provider && m.id === autoModeStartModel.id,
+      );
+      if (startModel) {
+        const ok = await pi.setModel(startModel, { persist: false });
+        if (!ok) {
+          const byId = availableModels.find(
+            m => m.id === autoModeStartModel.id && !isModelBlocked(basePath, m.provider, m.id),
+          );
+          if (byId) {
+            const fallbackOk = await pi.setModel(byId, { persist: false });
+            if (fallbackOk) {
+              appliedModel = byId;
+              reapplyThinkingLevel(pi, autoModeStartThinkingLevel);
+            }
+          }
+        } else {
+          appliedModel = startModel;
+          reapplyThinkingLevel(pi, autoModeStartThinkingLevel);
         }
-      } else {
-        appliedModel = startModel;
       }
     }
   }
@@ -416,7 +648,9 @@ export function resolveModelId<T extends { id: string; provider: string }>(
     if (providerMatch) return providerMatch;
   }
 
-  // Prefer "anthropic" as the canonical provider for Anthropic models
+  // Prefer "anthropic" as the canonical provider for Anthropic models.
+  // Transport-specific tiebreaker (ADR-012): intentionally keys on provider,
+  // not api — we want the plain Anthropic transport when multiple are available.
   const anthropicMatch = candidates.find(m => m.provider === "anthropic");
   if (anthropicMatch) return anthropicMatch;
 
@@ -474,10 +708,10 @@ export function buildFlatRateContext(
   prefs?: { flat_rate_providers?: readonly string[] },
 ): FlatRateContext {
   let authMode: FlatRateContext["authMode"];
-  const getAuthMode = ctx?.modelRegistry?.getProviderAuthMode;
-  if (typeof getAuthMode === "function") {
+  const registry = ctx?.modelRegistry;
+  if (registry && typeof registry.getProviderAuthMode === "function") {
     try {
-      const mode = getAuthMode(provider);
+      const mode = registry.getProviderAuthMode(provider);
       if (mode === "apiKey" || mode === "oauth" || mode === "externalCli" || mode === "none") {
         authMode = mode;
       }

@@ -45,6 +45,7 @@ import {
   nativeBranchListMerged,
   nativeBranchDelete,
   nativeWorktreeRemove,
+  nativeCommitCountBetween,
 } from "./native-git-bridge.js";
 import { GitServiceImpl } from "./git-service.js";
 import {
@@ -55,13 +56,16 @@ import {
 import { getAutoWorktreePath, isInAutoWorktree } from "./auto-worktree.js";
 import { readResourceVersion, cleanStaleRuntimeUnits } from "./auto-worktree.js";
 import { worktreePath as getWorktreeDir, isInsideWorktreesDir } from "./worktree-manager.js";
+import { emitWorktreeOrphaned } from "./worktree-telemetry.js";
 import { initMetrics } from "./metrics.js";
 import { initRoutingHistory } from "./routing-history.js";
 import { restoreHookState, resetHookState } from "./post-unit-hooks.js";
 import { resetProactiveHealing, setLevelChangeCallback } from "./doctor-proactive.js";
 import { snapshotSkills } from "./skill-discovery.js";
-import { isDbAvailable, getMilestone, openDatabase } from "./gsd-db.js";
-import { hideFooter } from "./auto-dashboard.js";
+import { isDbAvailable, getMilestone, openDatabase, getDbStatus } from "./gsd-db.js";
+import { isClosedStatus } from "./status-guards.js";
+import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
+
 import {
   debugLog,
   enableDebug,
@@ -74,6 +78,7 @@ import type { AutoSession } from "./auto/session.js";
 import {
   existsSync,
   mkdirSync,
+  readFileSync,
   readdirSync,
   rmSync,
   statSync,
@@ -92,7 +97,7 @@ import type { WorktreeResolver } from "./worktree-resolver.js";
 import { getSessionModelOverride } from "./session-model-override.js";
 
 export interface BootstrapDeps {
-  shouldUseWorktreeIsolation: () => boolean;
+  shouldUseWorktreeIsolation: (basePath?: string) => boolean;
   registerSigtermHandler: (basePath: string) => void;
   lockBase: () => string;
   buildResolver: () => WorktreeResolver;
@@ -141,6 +146,35 @@ export async function openProjectDbIfPresent(basePath: string): Promise<void> {
  *
  * Returns a summary of actions taken for the caller to surface via notify.
  */
+/**
+ * Decide which survivor-branch recovery action bootstrapAutoSession must
+ * run for the current (hasSurvivorBranch, phase) combination. Extracted
+ * from the inline chain at `bootstrapAutoSession` (around line 604) so
+ * the decision table is testable without constructing a full session.
+ *
+ * - `none`     — no survivor, or phase doesn't call for recovery. Fall
+ *                through to normal bootstrap flow.
+ * - `discuss`  — survivor + phase=needs-discussion (#1726). Route to
+ *                showSmartEntry.
+ * - `finalize` — survivor + phase=complete (#2358). Run mergeAndExit to
+ *                merge the milestone branch and clear the worktree.
+ *
+ * Any other phase with a survivor (pre-planning, planning, executing…)
+ * returns `none` — the caller continues its normal flow and the
+ * survivor branch participates in whatever auto-mode happens next.
+ */
+export type SurvivorAction = "none" | "discuss" | "finalize";
+
+export function decideSurvivorAction(
+  hasSurvivorBranch: boolean,
+  phase: string | null | undefined,
+): SurvivorAction {
+  if (!hasSurvivorBranch) return "none";
+  if (phase === "needs-discussion") return "discuss";
+  if (phase === "complete") return "finalize";
+  return "none";
+}
+
 export function auditOrphanedMilestoneBranches(
   basePath: string,
   isolationMode: "worktree" | "branch" | "none",
@@ -184,10 +218,60 @@ export function auditOrphanedMilestoneBranches(
     const milestoneId = branch.replace(/^milestone\//, "");
     const milestone = getMilestone(milestoneId);
 
-    // Only audit completed milestones
-    if (!milestone || milestone.status !== "complete") continue;
+    if (!milestone) continue;
 
     const isMerged = mergedBranches.has(branch);
+
+    // #4762 — in-progress milestone branch with unmerged commits ahead of
+    // main. This is the pre-completion orphan case: auto-mode exited without
+    // completing the milestone (pause, stop, crash, merge error, blocker) and
+    // work is stranded on the branch or in the worktree. Data safety first:
+    // we never delete or touch; we just surface a warning so the user knows
+    // where to look.
+    //
+    // Gate on isClosedStatus so we only warn about genuinely open milestones.
+    // Parked/other closed statuses go through the legacy complete/unmerged
+    // path below where appropriate.
+    if (!isClosedStatus(milestone.status)) {
+      if (isMerged) continue; // nothing to recover
+      let commitsAhead = 0;
+      try {
+        commitsAhead = nativeCommitCountBetween(basePath, mainBranch, branch);
+      } catch {
+        // Rev-walk failure — skip rather than noise
+        continue;
+      }
+      if (commitsAhead === 0) continue;
+
+      const wtDir = getWorktreeDir(basePath, milestoneId);
+      const wtDirExists = existsSync(wtDir);
+      const wtSuffix = wtDirExists
+        ? ` Worktree directory at .gsd/worktrees/${milestoneId}/ holds the live work.`
+        : "";
+      warnings.push(
+        `Branch ${branch} has ${commitsAhead} commit(s) ahead of ${mainBranch} for in-progress milestone ${milestoneId}.` +
+        wtSuffix +
+        ` Run \`/gsd auto\` to resume, or merge manually if abandoning.`,
+      );
+
+      // #4764 telemetry
+      try {
+        emitWorktreeOrphaned(basePath, milestoneId, {
+          reason: "in-progress-unmerged",
+          commitsAhead,
+          worktreeDirExists: wtDirExists,
+        });
+      } catch (err) {
+        logWarning("engine", `worktree-orphaned telemetry failed for ${milestoneId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+
+      continue;
+    }
+
+    // Only the "complete" status participates in the merged/unmerged cleanup
+    // paths below — other closed statuses (parked, etc.) are intentionally
+    // left alone.
+    if (milestone.status !== "complete") continue;
 
     if (isMerged) {
       // Branch is merged — safe to delete branch and clean up worktree dir
@@ -233,6 +317,16 @@ export function auditOrphanedMilestoneBranches(
         `Branch ${branch} exists for completed milestone ${milestoneId} but is NOT merged into ${mainBranch}. ` +
         `This may contain unmerged work. Merge manually or run \`/gsd health --fix\` to resolve.`,
       );
+
+      // #4764 telemetry
+      try {
+        emitWorktreeOrphaned(basePath, milestoneId, {
+          reason: "complete-unmerged",
+          worktreeDirExists: existsSync(getWorktreeDir(basePath, milestoneId)),
+        });
+      } catch (err) {
+        logWarning("engine", `worktree-orphaned telemetry failed for ${milestoneId}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
@@ -273,8 +367,8 @@ export async function bootstrapAutoSession(
   //
   // Precedence:
   // 1) Explicit session override via /gsd model (this session)
-  // 2) GSD model preferences from PREFERENCES.md (validated against live auth)
-  // 3) Current session model from settings/session restore (if provider ready)
+  // 2) Current session model from settings/session restore (if provider ready)
+  // 3) GSD model preferences from PREFERENCES.md (validated against live auth)
   //
   // This preserves #3517 defaults while honoring explicit runtime model
   // selection for subsequent /gsd runs in the same session.
@@ -314,11 +408,14 @@ export async function bootstrapAutoSession(
   }
   const sessionModelReady =
     ctx.model && ctx.modelRegistry.isProviderRequestReady(ctx.model.provider);
+  const currentSessionModel = (sessionModelReady && ctx.model)
+    ? { provider: ctx.model.provider, id: ctx.model.id }
+    : null;
+  const startThinkingSnapshot = pi.getThinkingLevel();
   const startModelSnapshot = manualSessionOverride
+    ?? currentSessionModel
     ?? validatedPreferredModel
-    ?? (sessionModelReady && ctx.model
-      ? { provider: ctx.model.provider, id: ctx.model.id }
-      : null);
+    ?? null;
 
   try {
     // Validate GSD_PROJECT_ID early so the user gets immediate feedback
@@ -340,7 +437,7 @@ export async function bootstrapAutoSession(
     const hasLocalGit = existsSync(join(base, ".git"));
     if (!hasLocalGit || isInheritedRepo(base)) {
       const mainBranch =
-        loadEffectiveGSDPreferences()?.preferences?.git?.main_branch || "main";
+        loadEffectiveGSDPreferences(base)?.preferences?.git?.main_branch || "main";
       nativeInit(base, mainBranch);
     }
 
@@ -358,7 +455,7 @@ export async function bootstrapAutoSession(
     // Ensure .gitignore has baseline patterns.
     // ensureGitignore checks for git-tracked .gsd/ files and skips the
     // ".gsd" pattern if the project intentionally tracks .gsd/ in git.
-    const gitPrefs = loadEffectiveGSDPreferences()?.preferences?.git;
+    const gitPrefs = loadEffectiveGSDPreferences(base)?.preferences?.git;
     const manageGitignore = gitPrefs?.manage_gitignore;
     ensureGitignore(base, { manageGitignore });
     if (manageGitignore !== false) untrackRuntimeFiles(base);
@@ -387,7 +484,7 @@ export async function bootstrapAutoSession(
     // Initialize GitServiceImpl
     s.gitService = new GitServiceImpl(
       s.basePath,
-      loadEffectiveGSDPreferences()?.preferences?.git ?? {},
+      loadEffectiveGSDPreferences(base)?.preferences?.git ?? {},
     );
 
     // ── Debug mode ──
@@ -416,22 +513,41 @@ export async function bootstrapAutoSession(
     // Invalidate caches before initial state derivation
     invalidateAllCaches();
 
-    // Clean stale runtime unit files for completed milestones (#887)
-    cleanStaleRuntimeUnits(
-      gsdRoot(base),
-      (mid) => !!resolveMilestoneFile(base, mid, "SUMMARY"),
-    );
-
     // Open the project-root DB before deriveState so DB-backed state
     // derivation (queue-order, task status) works on a cold start (#2841).
+    // Must happen before cleanStaleRuntimeUnits so the cleanup predicate can
+    // consult DB status and avoid clearing runtime units for milestones that
+    // only have a failure-path SUMMARY on disk (#4663).
     await openProjectDbIfPresent(base);
+
+    // Clean stale runtime unit files for completed milestones (#887).
+    // DB-authoritative: when DB is available, require DB status to be closed
+    // before clearing runtime units. A SUMMARY file alone is no longer
+    // trusted as proof of completion (#4663). Fall back to SUMMARY-file
+    // presence only when DB is unavailable (legacy/pre-migration).
+    cleanStaleRuntimeUnits(
+      gsdRoot(base),
+      (mid) => {
+        if (isDbAvailable()) {
+          const row = getMilestone(mid);
+          return !!row && isClosedStatus(row.status);
+        }
+        const summaryFile = resolveMilestoneFile(base, mid, "SUMMARY");
+        if (!summaryFile) return false;
+        try {
+          return classifyMilestoneSummaryContent(readFileSync(summaryFile, "utf-8")) !== "failure";
+        } catch {
+          return false;
+        }
+      },
+    );
 
     // ── Orphaned milestone branch audit ──
     // Catches completed milestones whose teardown (merge + branch delete)
     // was lost due to session ending between completion and teardown.
     // Must run after DB open and before worktree entry.
     try {
-      const auditResult = auditOrphanedMilestoneBranches(base, getIsolationMode());
+      const auditResult = auditOrphanedMilestoneBranches(base, getIsolationMode(base));
       for (const msg of auditResult.recovered) {
         ctx.ui.notify(`Orphan audit: ${msg}`, "info");
       }
@@ -451,7 +567,7 @@ export async function bootstrapAutoSession(
     // Stale worktree state recovery (#654)
     if (
       state.activeMilestone &&
-      shouldUseWorktreeIsolation() &&
+      shouldUseWorktreeIsolation(base) &&
       !detectWorktreeName(base)
     ) {
       const wtPath = getAutoWorktreePath(base, state.activeMilestone.id);
@@ -464,11 +580,12 @@ export async function bootstrapAutoSession(
     // Detect survivor milestone branches in both pre-planning and complete phases.
     // In phase=complete, the milestone artifacts exist but finalization (merge,
     // worktree cleanup) was never run — the survivor branch must be merged.
+    // Applies to both worktree and branch isolation modes.
     let hasSurvivorBranch = false;
     if (
       state.activeMilestone &&
       (state.phase === "pre-planning" || state.phase === "complete") &&
-      shouldUseWorktreeIsolation() &&
+      getIsolationMode(base) !== "none" &&
       !detectWorktreeName(base) &&
       !base.includes(`${pathSep}.gsd${pathSep}worktrees${pathSep}`)
     ) {
@@ -487,7 +604,7 @@ export async function bootstrapAutoSession(
     // The worktree/branch was created but the milestone only has CONTEXT-DRAFT.md.
     // Route to the interactive discussion handler instead of falling through to
     // auto-mode, which would immediately stop with "needs discussion".
-    if (hasSurvivorBranch && state.phase === "needs-discussion") {
+    if (decideSurvivorAction(hasSurvivorBranch, state.phase) === "discuss") {
       const { showSmartEntry } = await import("./guided-flow.js");
       await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
 
@@ -513,7 +630,9 @@ export async function bootstrapAutoSession(
     // The milestone artifacts were written but finalization (merge, worktree
     // cleanup) never ran. Run mergeAndExit to finalize, then re-derive state
     // so the normal "all milestones complete" or "next milestone" path runs.
-    if (hasSurvivorBranch && state.phase === "complete") {
+    // Re-evaluate via the helper — the discuss branch above may have cleared
+    // hasSurvivorBranch after a successful promotion.
+    if (decideSurvivorAction(hasSurvivorBranch, state.phase) === "finalize") {
       const mid = state.activeMilestone!.id;
       ctx.ui.notify(
         `Milestone ${mid} is complete but branch/worktree was not finalized. Running merge now.`,
@@ -549,37 +668,15 @@ export async function bootstrapAutoSession(
         const { showSmartEntry } = await import("./guided-flow.js");
         await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
 
-        invalidateAllCaches();
-        const postState = await deriveState(base);
-        if (
-          postState.activeMilestone &&
-          postState.phase !== "complete" &&
-          postState.phase !== "pre-planning"
-        ) {
-          s.consecutiveCompleteBootstraps = 0; // Successfully advanced past "complete"
-          state = postState;
-        } else if (
-          postState.activeMilestone &&
-          postState.phase === "pre-planning"
-        ) {
-          const contextFile = resolveMilestoneFile(
-            base,
-            postState.activeMilestone.id,
-            "CONTEXT",
-          );
-          const hasContext = !!(contextFile && (await loadFile(contextFile)));
-          if (hasContext) {
-            state = postState;
-          } else {
-            ctx.ui.notify(
-              "Discussion completed but no milestone context was written. Run /gsd to try the discussion again, or /gsd auto after creating the milestone manually.",
-              "warning",
-            );
-            return releaseLockAndReturn();
-          }
-        } else {
-          return releaseLockAndReturn();
-        }
+        // showSmartEntry dispatches via pi.sendMessage() which is fire-and-forget:
+        // it queues the message and returns immediately, before the LLM turn runs.
+        // Checking postState here would always see the pre-dispatch state, causing
+        // the premature "Discussion completed but..." warning (#3420).
+        //
+        // checkAutoStartAfterDiscuss (in guided-flow.ts) already handles re-entering
+        // auto-mode by calling startAutoDetached after the discussion completes.
+        // Release the lock and let the async dispatch proceed.
+        return releaseLockAndReturn();
       }
 
       // Active milestone exists but has no roadmap
@@ -591,17 +688,16 @@ export async function bootstrapAutoSession(
           const { showSmartEntry } = await import("./guided-flow.js");
           await showSmartEntry(ctx, pi, base, { step: requestedStepMode });
 
-          invalidateAllCaches();
-          const postState = await deriveState(base);
-          if (postState.activeMilestone && postState.phase !== "pre-planning") {
-            state = postState;
-          } else {
-            ctx.ui.notify(
-              "Discussion completed but milestone context is still missing. Run /gsd to try again.",
-              "warning",
-            );
-            return releaseLockAndReturn();
-          }
+          // showSmartEntry dispatches via pi.sendMessage() which is fire-and-forget:
+          // it queues the message and returns immediately, before the LLM turn runs.
+          // Checking postState here fires before the LLM has had a turn, so the
+          // pre-planning phase would still appear unchanged and a premature warning
+          // would be emitted (#3420).
+          //
+          // checkAutoStartAfterDiscuss (in guided-flow.ts) already handles re-entering
+          // auto-mode by calling startAutoDetached after the discussion completes.
+          // Release the lock and let the async dispatch proceed.
+          return releaseLockAndReturn();
         }
       }
 
@@ -663,15 +759,16 @@ export async function bootstrapAutoSession(
     s.pendingQuickTasks = [];
     s.currentUnit = null;
     s.currentMilestoneId = state.activeMilestone?.id ?? null;
-    s.originalModelId = ctx.model?.id ?? null;
-    s.originalModelProvider = ctx.model?.provider ?? null;
+    s.originalModelId = startModelSnapshot?.id ?? ctx.model?.id ?? null;
+    s.originalModelProvider = startModelSnapshot?.provider ?? ctx.model?.provider ?? null;
+    s.originalThinkingLevel = startThinkingSnapshot ?? null;
 
     // Register SIGTERM handler
     registerSigtermHandler(base);
 
     // Capture integration branch
     if (s.currentMilestoneId) {
-      if (getIsolationMode() !== "none") {
+      if (getIsolationMode(base) !== "none") {
         captureIntegrationBranch(base, s.currentMilestoneId);
       }
       setActiveMilestoneId(base, s.currentMilestoneId);
@@ -680,7 +777,7 @@ export async function bootstrapAutoSession(
     // Guard against stale milestone branch when isolation:none (#3613).
     // A prior session with isolation:branch/worktree may have left HEAD on
     // milestone/<MID>. Auto-checkout back to the integration branch.
-    if (getIsolationMode() === "none" && nativeIsRepo(base)) {
+    if (getIsolationMode(base) === "none" && nativeIsRepo(base)) {
       try {
         const currentBranch = nativeGetCurrentBranch(base);
         if (currentBranch.startsWith("milestone/")) {
@@ -711,7 +808,7 @@ export async function bootstrapAutoSession(
 
     if (
       s.currentMilestoneId &&
-      shouldUseWorktreeIsolation() &&
+      getIsolationMode(base) !== "none" &&
       !detectWorktreeName(base) &&
       !isUnderGsdWorktrees(base)
     ) {
@@ -757,9 +854,22 @@ export async function bootstrapAutoSession(
     // call returns "db_unavailable", triggering artifact-retry which
     // re-dispatches the same task — producing an infinite loop (#2419).
     if (existsSync(gsdDbPath) && !isDbAvailable()) {
+      const dbStatus = getDbStatus();
+      const phaseHint = dbStatus.lastPhase === "open"
+        ? "The database file could not be opened"
+        : dbStatus.lastPhase === "initSchema"
+          ? "The database schema could not be initialized"
+          : dbStatus.lastPhase === "vacuum-recovery"
+            ? "Corruption recovery (VACUUM) failed"
+            : dbStatus.attempted
+              ? "The database could not be opened (phase unknown)"
+              : "The database provider could not be loaded";
+      const errorDetail = dbStatus.lastError ? ` (${dbStatus.lastError.message})` : "";
+      const providerHint = dbStatus.provider
+        ? ` Provider: ${dbStatus.provider}.`
+        : " No SQLite provider available — check Node >= 22 or install better-sqlite3.";
       ctx.ui.notify(
-        "SQLite database exists but failed to open. Auto-mode cannot proceed without a working database provider. " +
-          "Check for corrupt gsd.db or missing native SQLite bindings.",
+        `SQLite database exists but failed to open: ${gsdDbPath}. ${phaseHint}${errorDetail}.${providerHint}`,
         "error",
       );
       return releaseLockAndReturn();
@@ -778,6 +888,7 @@ export async function bootstrapAutoSession(
         id: startModelSnapshot.id,
       };
     }
+    s.autoModeStartThinkingLevel = startThinkingSnapshot ?? null;
     s.manualSessionModelOverride = manualSessionOverride ?? null;
 
     // Apply worker model override from parallel orchestrator (#worker-model).
@@ -800,14 +911,11 @@ export async function bootstrapAutoSession(
     }
 
     // Snapshot installed skills
-    if (resolveSkillDiscoveryMode() !== "off") {
+    if (resolveSkillDiscoveryMode(base) !== "off") {
       snapshotSkills();
     }
 
     ctx.ui.setStatus("gsd-auto", s.stepMode ? "next" : "auto");
-    ctx.ui.setFooter(hideFooter);
-    // Hide gsd-health during AUTO — gsd-progress is the single source of truth
-    // for last-commit / cost / health signal while auto is running.
     ctx.ui.setWidget("gsd-health", undefined);
     const modeLabel = s.stepMode ? "Step-mode" : "Auto-mode";
     const pendingCount = (state.registry ?? []).filter(
@@ -834,13 +942,14 @@ export async function bootstrapAutoSession(
     // FlatRateContext used by selectAndApplyModel so user-declared
     // flat-rate providers and externalCli auto-detection are respected.
     const { isFlatRateProvider, buildFlatRateContext } = await import("./auto-model-selection.js");
-    const bannerPrefs = loadEffectiveGSDPreferences()?.preferences;
+    const bannerPrefs = loadEffectiveGSDPreferences(base)?.preferences;
     const effectiveProvider = s.autoModeStartModel?.provider ?? ctx.model?.provider;
     const effectivelyEnabled = routingConfig.enabled
-      && !(effectiveProvider && isFlatRateProvider(
-        effectiveProvider,
-        buildFlatRateContext(effectiveProvider, ctx, bannerPrefs),
-      ));
+      && (routingConfig.allow_flat_rate_providers
+        || !(effectiveProvider && isFlatRateProvider(
+          effectiveProvider,
+          buildFlatRateContext(effectiveProvider, ctx, bannerPrefs),
+        )));
 
     // The actual ceiling may come from tier_models.heavy, not the start model.
     const effectiveCeiling = (routingConfig.enabled && routingConfig.tier_models?.heavy)

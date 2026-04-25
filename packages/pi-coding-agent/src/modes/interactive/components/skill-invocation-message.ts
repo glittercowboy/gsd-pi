@@ -1,55 +1,69 @@
-import { Box, Markdown, type MarkdownTheme, Text } from "@gsd/pi-tui";
+// GSD / pi-coding-agent — Skill invocation message component
+import { Container, Markdown, type MarkdownTheme, Text } from "@gsd/pi-tui";
 import type { ParsedSkillBlock } from "../../../core/agent-session.js";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
+import { renderChatFrame } from "./chat-frame.js";
 import { editorKey } from "./keybinding-hints.js";
 
 /**
- * Component that renders a skill invocation message with collapsed/expanded state.
- * Uses same background color as custom messages for visual consistency.
- * Only renders the skill block itself - user message is rendered separately.
+ * Renders a skill invocation in the shared chat-frame style (top rule,
+ * `• skill - <name>` header, `│ ` body margin) with purple border/label
+ * matching compaction so it visually aligns with user/assistant messages.
  */
-export class SkillInvocationMessageComponent extends Box {
+export class SkillInvocationMessageComponent extends Container {
 	private expanded = false;
 	private skillBlock: ParsedSkillBlock;
 	private markdownTheme: MarkdownTheme;
 
 	constructor(skillBlock: ParsedSkillBlock, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
-		super(1, 1, (t) => theme.bg("customMessageBg", t));
+		super();
 		this.skillBlock = skillBlock;
 		this.markdownTheme = markdownTheme;
-		this.updateDisplay();
+		this.rebuild();
 	}
 
 	setExpanded(expanded: boolean): void {
-		this.expanded = expanded;
-		this.updateDisplay();
+		if (this.expanded !== expanded) {
+			this.expanded = expanded;
+			this.rebuild();
+		}
 	}
 
 	override invalidate(): void {
 		super.invalidate();
-		this.updateDisplay();
+		this.rebuild();
 	}
 
-	private updateDisplay(): void {
+	private rebuild(): void {
 		this.clear();
 
 		if (this.expanded) {
-			// Expanded: label + skill name header + full content
-			const label = theme.fg("customMessageLabel", theme.bold("[skill]"));
-			this.addChild(new Text(label, 0, 0));
-			const header = `**${this.skillBlock.name}**\n\n`;
 			this.addChild(
-				new Markdown(header + this.skillBlock.content, 0, 0, this.markdownTheme, {
+				new Markdown(this.skillBlock.content, 0, 0, this.markdownTheme, {
 					color: (text: string) => theme.fg("customMessageText", text),
 				}),
 			);
 		} else {
-			// Collapsed: single line - [skill] name (hint to expand)
-			const line =
-				theme.fg("customMessageLabel", theme.bold("[skill]") + " ") +
-				theme.fg("customMessageText", this.skillBlock.name) +
-				theme.fg("dim", ` (${editorKey("expandTools")} to expand)`);
-			this.addChild(new Text(line, 0, 0));
+			this.addChild(
+				new Text(
+					theme.fg("dim", `(${editorKey("expandTools")} to expand)`),
+					0,
+					0,
+				),
+			);
 		}
+	}
+
+	override render(width: number): string[] {
+		const frameWidth = Math.max(20, width);
+		const contentWidth = Math.max(1, frameWidth - 4);
+		const lines = super.render(contentWidth);
+		const framed = renderChatFrame(lines, frameWidth, {
+			label: `skill - ${this.skillBlock.name}`,
+			tone: "skill",
+			timestampFormat: "date-time-iso",
+			showTimestamp: false,
+		});
+		return framed.length > 0 ? ["", ...framed] : framed;
 	}
 }

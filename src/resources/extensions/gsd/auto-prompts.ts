@@ -23,7 +23,7 @@ import type { GSDPreferences } from "./preferences.js";
 import { getLoadedSkills, type Skill } from "@gsd/pi-coding-agent";
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
-import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary } from "./context-budget.js";
+import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary, type MinimalModelRegistry } from "./context-budget.js";
 import { getPendingGates, getPendingGatesForTurn } from "./gsd-db.js";
 import {
   GATE_REGISTRY,
@@ -33,15 +33,60 @@ import {
 } from "./gate-registry.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
 import { readPhaseAnchor, formatAnchorForPrompt } from "./phase-anchor.js";
+import { composeInlinedContext, type ArtifactResolver } from "./unit-context-composer.js";
 import { logWarning } from "./workflow-logger.js";
+import { inlineGraphSubgraph } from "./graph-context.js";
+import { buildExtractionStepsBlock } from "./commands-extract-learnings.js";
+import { warnIfManifestHasMissingSkills } from "./skill-manifest.js";
 
 // ─── Preamble Cap ─────────────────────────────────────────────────────────────
 
+/**
+ * Historical static ceiling for the preamble cap. Kept as an upper bound even
+ * after context-window-aware sizing so large-window users don't suddenly see
+ * 10× looser caps than before. Small-window users get a tighter cap derived
+ * from their configured executor window.
+ */
 const MAX_PREAMBLE_CHARS = 30_000;
 
+/**
+ * Resolve prompt budgets from the configured executor context window.
+ *
+ * The prompt builders here don't have access to the runtime model registry
+ * (they're called from many non-ctx sites), so `resolveExecutorContextWindow`
+ * is fed the user-configurable `context_window_override` preference as the
+ * `sessionContextWindow` fallback. That preference exists specifically to
+ * cover small-window local models (e.g. 32K lemonade/llama.cpp servers) whose
+ * n_ctx is not discoverable through the model registry. Issue #4435.
+ */
+function resolvePromptBudgets(): ReturnType<typeof computeBudgets> {
+  try {
+    const prefs = loadEffectiveGSDPreferences();
+    const sessionWindow = prefs?.preferences.context_window_override;
+    const windowTokens = resolveExecutorContextWindow(undefined, prefs?.preferences, sessionWindow);
+    return computeBudgets(windowTokens);
+  } catch (e) {
+    logWarning("prompt", `resolvePromptBudgets failed: ${(e as Error).message}`);
+    return computeBudgets(200_000);
+  }
+}
+
+/**
+ * Character budget for dependency/prior slice summaries injected into dispatch
+ * prompts. Scales with the executor's configured context window (issue #4435).
+ */
+function resolveSummaryBudgetChars(): number {
+  return resolvePromptBudgets().summaryBudgetChars;
+}
+
 function capPreamble(preamble: string): string {
-  if (preamble.length <= MAX_PREAMBLE_CHARS) return preamble;
-  return truncateAtSectionBoundary(preamble, MAX_PREAMBLE_CHARS).content;
+  // Cap inlined context at min(historical 30K ceiling, scaled inline budget).
+  // The ceiling preserves pre-fix behavior for large-window users; the scaled
+  // budget tightens the cap for small-window users whose true safe limit is
+  // below 30K. `computeBudgets` allocates 40% of total chars to inline context.
+  const budget = Math.min(MAX_PREAMBLE_CHARS, resolvePromptBudgets().inlineContextBudgetChars);
+  if (preamble.length <= budget) return preamble;
+  return truncateAtSectionBoundary(preamble, budget).content;
 }
 
 // ─── Executor Constraints ─────────────────────────────────────────────────────
@@ -51,14 +96,19 @@ function capPreamble(preamble: string): string {
  * Uses the budget engine to compute task count ranges and inline context budgets
  * based on the configured executor model's context window.
  */
-function formatExecutorConstraints(): string {
+function formatExecutorConstraints(
+  sessionContextWindow?: number,
+  modelRegistry?: MinimalModelRegistry,
+): string {
   let windowTokens: number;
   try {
     const prefs = loadEffectiveGSDPreferences();
-    windowTokens = resolveExecutorContextWindow(undefined, prefs?.preferences);
+    windowTokens = resolveExecutorContextWindow(modelRegistry, prefs?.preferences, sessionContextWindow);
   } catch (e) {
     logWarning("prompt", `resolveExecutorContextWindow failed: ${(e as Error).message}`);
-    windowTokens = 200_000; // safe default
+    // Delegate to the budget engine without prefs (the path that just threw)
+    // so DEFAULT_CONTEXT_WINDOW stays the single source of truth.
+    windowTokens = resolveExecutorContextWindow(undefined, undefined, sessionContextWindow);
   }
   const budgets = computeBudgets(windowTokens);
   const { min, max } = budgets.taskCountRange;
@@ -74,7 +124,18 @@ function formatExecutorConstraints(): string {
   ].join("\n");
 }
 
-function buildSourceFilePaths(
+/**
+ * Returns a markdown bullet list of known context file paths for the given
+ * milestone (and optionally slice). Falls back to a generic tool-agnostic
+ * instruction when no GSD artifacts are found.
+ *
+ * @param base - Absolute path to the project root.
+ * @param mid  - Milestone ID (e.g. `"M001"`).
+ * @param sid  - Optional slice ID (e.g. `"S01"`). When provided, the slice
+ *   RESEARCH file is preferred over the milestone-level one.
+ * @returns Markdown string of file path bullets, or a fallback instruction.
+ */
+export function buildSourceFilePaths(
   base: string,
   mid: string,
   sid?: string,
@@ -125,7 +186,7 @@ function buildSourceFilePaths(
 
   return paths.length > 0
     ? paths.join("\n")
-    : "- Use `rg --files` and targeted reads to identify the relevant source files before planning.";
+    : "- Use the Grep/Glob/Read tools to identify the relevant source files before planning.";
 }
 
 // ─── Inline Helpers ───────────────────────────────────────────────────────
@@ -186,6 +247,87 @@ export async function inlineFileSmart(
   // For large files, truncate at section boundary
   const truncated = truncateAtSectionBoundary(content, threshold).content;
   return `### ${label}\nSource: \`${relPath}\`\n\n${truncated}`;
+}
+
+/**
+ * Compact slice-summary excerpt for milestone-level closers (#4780).
+ *
+ * Emits the frontmatter fields + short body section heads rather than the
+ * full SUMMARY.md body, and keeps the source path in the header so the
+ * closer agent can Read the full file on demand when drafting LEARNINGS.
+ *
+ * Scope: designed for `buildCompleteMilestonePrompt`, which previously
+ * inlined the full SUMMARY per slice and routinely paid ~300–500K tokens
+ * per close when the narrative was never synthesized. Not used by
+ * `buildValidateMilestonePrompt` yet — validate needs fuller verification
+ * evidence; follow-up PR can extend or parameterize.
+ *
+ * If parsing fails (unrecognizable frontmatter, missing id, etc.) the
+ * function falls back to `inlineFile` so the closer loses no information.
+ */
+export async function buildSliceSummaryExcerpt(
+  absPath: string | null, relPath: string, sid: string,
+): Promise<string> {
+  const header = `### ${sid} Summary (excerpt)\nSource: \`${relPath}\``;
+  const content = absPath ? await loadFile(absPath) : null;
+  if (!content) {
+    return `${header}\n\n_(not found — file does not exist yet)_`;
+  }
+  try {
+    const s = parseSummary(content);
+    if (!s.frontmatter.id) {
+      // Unrecognizable — fall back to full file so no context is lost.
+      return `### ${sid} Summary\nSource: \`${relPath}\`\n\n${content.trim()}`;
+    }
+    const lines: string[] = [header, ""];
+    if (s.title) lines.push(`**Title:** ${s.title}`);
+    if (s.oneLiner) lines.push(`**One-liner:** ${s.oneLiner}`);
+    if (s.frontmatter.verification_result) {
+      lines.push(`**Verification:** \`${s.frontmatter.verification_result}\``);
+    }
+    lines.push(`**Blockers:** ${s.frontmatter.blocker_discovered ? "⚠️ blocker recorded — Read full summary" : "none"}`);
+    if (s.frontmatter.duration) lines.push(`**Duration:** ${s.frontmatter.duration}`);
+    if (s.frontmatter.provides.length > 0) lines.push(`**Provides:** ${s.frontmatter.provides.join("; ")}`);
+    if (s.frontmatter.affects.length > 0) lines.push(`**Affects:** ${s.frontmatter.affects.join("; ")}`);
+    if (s.frontmatter.key_decisions.length > 0) lines.push(`**Key decisions:** ${s.frontmatter.key_decisions.join("; ")}`);
+    if (s.frontmatter.patterns_established.length > 0) lines.push(`**Patterns established:** ${s.frontmatter.patterns_established.join("; ")}`);
+    if (s.frontmatter.key_files.length > 0) {
+      const files = s.frontmatter.key_files.slice(0, 8);
+      const more = s.frontmatter.key_files.length > files.length ? ` (+${s.frontmatter.key_files.length - files.length} more)` : "";
+      lines.push(`**Key files:** ${files.join(", ")}${more}`);
+    }
+
+    // Cap section bodies (coderabbit review on #4908): if any of these
+    // narrative sections balloon, excerpt mode still inflates and
+    // undermines the token-reduction goal. 800 chars (~200 tokens) is
+    // enough to carry intent; the closer agent Reads the full file when
+    // it needs richer context for LEARNINGS synthesis.
+    const SECTION_CAP_CHARS = 800;
+    const capSection = (body: string): string => {
+      const trimmed = body.trim();
+      if (trimmed.length <= SECTION_CAP_CHARS) return trimmed;
+      return `${trimmed.slice(0, SECTION_CAP_CHARS)}\n… (truncated — see full \`${relPath}\`)`;
+    };
+
+    if (s.deviations && s.deviations.trim()) {
+      lines.push("", "#### Deviations", capSection(s.deviations));
+    }
+    if (s.knownLimitations && s.knownLimitations.trim()) {
+      lines.push("", "#### Known limitations", capSection(s.knownLimitations));
+    }
+    if (s.followUps && s.followUps.trim()) {
+      lines.push("", "#### Follow-ups", capSection(s.followUps));
+    }
+
+    lines.push(
+      "",
+      `> **On-demand:** read \`${relPath}\` for the full "What Happened" narrative, integration notes, and detailed file-change list when drafting LEARNINGS, the Decision Re-evaluation table, or cross-slice synthesis.`,
+    );
+    return lines.join("\n");
+  } catch {
+    // Defensive — any parse failure falls back to full inline.
+    return `### ${sid} Summary\nSource: \`${relPath}\`\n\n${content.trim()}`;
+  }
 }
 
 /**
@@ -456,6 +598,48 @@ export async function inlineKnowledgeScoped(
 }
 
 /**
+ * Budget-capped knowledge inline for milestone-level prompt assembly.
+ *
+ * Addresses issue #4719: the six milestone-phase prompts (research-milestone,
+ * plan-milestone, complete-slice, complete-milestone, validate-milestone,
+ * reassess-roadmap) previously injected the full KNOWLEDGE.md (~226KB for a
+ * real project) on every invocation. This helper scopes by caller-supplied
+ * keywords and caps the payload at `maxChars` (default 30,000 chars).
+ *
+ * Returns null when no KNOWLEDGE.md exists or no entries match any keyword.
+ */
+export async function inlineKnowledgeBudgeted(
+  base: string,
+  keywords: string[],
+  options?: { maxChars?: number },
+): Promise<string | null> {
+  const DEFAULT_MAX_CHARS = 30_000;
+  const HARD_MAX_CHARS = 100_000;
+  const raw = Number(options?.maxChars ?? DEFAULT_MAX_CHARS);
+  const maxChars = Number.isFinite(raw)
+    ? Math.max(0, Math.min(Math.floor(raw), HARD_MAX_CHARS))
+    : DEFAULT_MAX_CHARS;
+
+  const knowledgePath = resolveGsdRootFile(base, "KNOWLEDGE");
+  if (!existsSync(knowledgePath)) return null;
+
+  const content = await loadFile(knowledgePath);
+  if (!content) return null;
+
+  const { queryKnowledge } = await import("./context-store.js");
+  const scoped = await queryKnowledge(content, keywords);
+  if (!scoped) return null;
+
+  const trimmed = scoped.trim();
+  const truncated =
+    trimmed.length > maxChars
+      ? `${trimmed.slice(0, maxChars)}\n\n[...truncated ${trimmed.length - maxChars} chars; rerun with narrower scope if needed]`
+      : trimmed;
+
+  return `### Project Knowledge (scoped)\nSource: \`${relGsdRootFile("KNOWLEDGE")}\`\n\n${truncated}`;
+}
+
+/**
  * Inline a roadmap excerpt for a specific slice.
  * Reads full roadmap, extracts minimal excerpt with header + predecessor + target row.
  * Returns null if roadmap doesn't exist or slice not found.
@@ -603,8 +787,14 @@ export function buildSkillActivationBlock(params: {
   extraContext?: string[];
   taskPlanContent?: string | null;
   preferences?: GSDPreferences;
+  /**
+   * Unit type dispatching this prompt. When provided, skills are filtered
+   * through the per-unit-type manifest (see `skill-manifest.ts`). Unknown
+   * or omitted values retain the pre-manifest behavior (all skills eligible).
+   */
+  unitType?: string;
 }): string {
-  const prefs = params.preferences ?? loadEffectiveGSDPreferences()?.preferences;
+  const prefs = params.preferences ?? loadEffectiveGSDPreferences(params.base)?.preferences;
   const contextTokens = tokenizeSkillContext(
     params.milestoneId,
     params.milestoneTitle,
@@ -614,8 +804,22 @@ export function buildSkillActivationBlock(params: {
     params.taskTitle,
   );
 
-  const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
+  const loaded = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
+
+  // Skill activation here is driven entirely by explicit sources
+  // (always_use_skills, prefer_skills, skill_rules, task-plan skills_used).
+  // Every match is an explicit user/project intent and must not be dropped
+  // by the unit-type manifest — user intent is stronger signal than
+  // defaults. The manifest's real home is the skill catalog rendering
+  // layer (pi-coding-agent `formatSkillsForPrompt`); that wiring is tracked
+  // as the "load-time short-circuit" follow-up to RFC #4779.
+  //
+  // `unitType` stays plumbed so the strict-mode warning can surface
+  // manifest entries that reference uninstalled skills, and so the
+  // activation-block site is ready to opt in once PR B lands.
+  const visibleSkills = loaded;
   const installedNames = new Set(visibleSkills.map(skill => normalizeSkillReference(skill.name)));
+  warnIfManifestHasMissingSkills(params.unitType, installedNames);
   const avoided = new Set(resolvePreferenceSkillNames(prefs?.avoid_skills ?? [], params.base));
   const matched = new Set<string>();
 
@@ -996,14 +1200,19 @@ export async function checkNeedsRunUat(
  * as a seed when present. The discussion agent interviews the user, writes
  * a full CONTEXT.md, and the phase transitions to pre-planning automatically.
  */
-export async function buildDiscussMilestonePrompt(mid: string, midTitle: string, base: string): Promise<string> {
+export async function buildDiscussMilestonePrompt(
+  mid: string,
+  midTitle: string,
+  base: string,
+  structuredQuestionsAvailable = "false",
+): Promise<string> {
   const discussTemplates = inlineTemplate("context", "Context");
 
   const basePrompt = loadPrompt("guided-discuss-milestone", {
     milestoneId: mid,
     milestoneTitle: midTitle,
     inlinedTemplates: discussTemplates,
-    structuredQuestionsAvailable: "false",
+    structuredQuestionsAvailable,
     commitInstruction: "Do not commit planning artifacts — .gsd/ is managed externally.",
     fastPathInstruction: "",
   });
@@ -1020,29 +1229,64 @@ export async function buildDiscussMilestonePrompt(mid: string, midTitle: string,
 }
 
 export async function buildResearchMilestonePrompt(mid: string, midTitle: string, base: string): Promise<string> {
-  const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
-  const contextRel = relMilestoneFile(base, mid, "CONTEXT");
+  // #4782 phase 3: research-milestone migrated through the composer.
+  // Declared inline order: milestone-context, project, requirements,
+  // decisions, templates. Knowledge stays outside the composer
+  // (budget-driven, scoped by keyword extraction — future phase folds
+  // policy-driven blocks in).
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    switch (key) {
+      case "milestone-context": {
+        const p = resolveMilestoneFile(base, mid, "CONTEXT");
+        const r = relMilestoneFile(base, mid, "CONTEXT");
+        return await inlineFile(p, r, "Milestone Context");
+      }
+      case "project":
+        return await inlineProjectFromDb(base);
+      case "requirements":
+        return await inlineRequirementsFromDb(base, mid);
+      case "decisions":
+        return await inlineDecisionsFromDb(base, mid);
+      case "templates":
+        return inlineTemplate("research", "Research");
+      default:
+        return null;
+    }
+  };
 
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(contextPath, contextRel, "Milestone Context"));
-  const projectInline = await inlineProjectFromDb(base);
-  if (projectInline) inlined.push(projectInline);
-  const requirementsInline = await inlineRequirementsFromDb(base, mid);
-  if (requirementsInline) inlined.push(requirementsInline);
-  const decisionsInline = await inlineDecisionsFromDb(base, mid);
-  if (decisionsInline) inlined.push(decisionsInline);
-  const knowledgeInlineRM = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
-  if (knowledgeInlineRM) inlined.push(knowledgeInlineRM);
-  inlined.push(inlineTemplate("research", "Research"));
+  const composed = await composeInlinedContext("research-milestone", resolveArtifact);
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  // Knowledge block stays outside the composer — budgeted, scoped via
+  // keyword extraction (#4719). Inserted between decisions and the
+  // templates block to match the pre-migration output order. We split
+  // the composer output around the templates section to preserve that
+  // ordering.
+  const knowledgeInlineRM = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
+  const parts: string[] = [];
+  if (knowledgeInlineRM && composed) {
+    // Insert knowledge before the template block so the overall order is:
+    //   milestone-context → project → requirements → decisions → KNOWLEDGE → research template
+    const idx = composed.lastIndexOf("### Output Template:");
+    if (idx > 0) {
+      const before = composed.slice(0, idx).replace(/\n\n---\n\n$/, "");
+      const after = composed.slice(idx);
+      parts.push(before, knowledgeInlineRM, after);
+    } else {
+      parts.push(composed, knowledgeInlineRM);
+    }
+  } else if (composed) {
+    parts.push(composed);
+    if (knowledgeInlineRM) parts.push(knowledgeInlineRM);
+  }
+
+  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${parts.join("\n\n---\n\n")}`);
 
   const outputRelPath = relMilestoneFile(base, mid, "RESEARCH");
   return loadPrompt("research-milestone", {
     workingDirectory: base,
     milestoneId: mid, milestoneTitle: midTitle,
     milestonePath: relMilestonePath(base, mid),
-    contextPath: contextRel,
+    contextPath: relMilestoneFile(base, mid, "CONTEXT"),
     outputPath: join(base, outputRelPath),
     inlinedContext,
     skillActivation: buildSkillActivationBlock({
@@ -1050,6 +1294,7 @@ export async function buildResearchMilestonePrompt(mid: string, midTitle: string
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "research-milestone",
     }),
     ...buildSkillDiscoveryVars(),
   });
@@ -1092,7 +1337,8 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
     );
     inlined.push(queueInline);
   }
-  const knowledgeInlinePM = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
+  // Scoped + budgeted — see issue #4719
+  const knowledgeInlinePM = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
   if (knowledgeInlinePM) inlined.push(knowledgeInlinePM);
   inlined.push(inlineTemplate("roadmap", "Roadmap"));
   if (inlineLevel === "full") {
@@ -1127,6 +1373,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "plan-milestone",
     }),
     ...buildSkillDiscoveryVars(),
   });
@@ -1175,9 +1422,13 @@ export async function buildResearchSlicePrompt(
   const knowledgeInlineRS = await inlineKnowledgeScoped(base, keywords);
   if (knowledgeInlineRS) inlined.push(knowledgeInlineRS);
 
+  // Knowledge graph: subgraph for this slice (graceful — skipped if no graph.json)
+  const graphBlockRS = await inlineGraphSubgraph(base, `${sid} ${sTitle}`, { budget: 3000 });
+  if (graphBlockRS) inlined.push(graphBlockRS);
+
   inlined.push(inlineTemplate("research", "Research"));
 
-  const depContent = await inlineDependencySummaries(mid, sid, base);
+  const depContent = await inlineDependencySummaries(mid, sid, base, resolveSummaryBudgetChars());
   const activeOverrides = await loadActiveOverrides(base);
   const overridesInline = formatOverridesSection(activeOverrides);
   if (overridesInline) inlined.unshift(overridesInline);
@@ -1201,15 +1452,39 @@ export async function buildResearchSlicePrompt(
       sliceId: sid,
       sliceTitle: sTitle,
       extraContext: [inlinedContext, depContent],
+      unitType: "research-slice",
     }),
     ...buildSkillDiscoveryVars(),
   });
 }
 
-export async function buildPlanSlicePrompt(
-  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
-): Promise<string> {
-  const inlineLevel = level ?? resolveInlineLevel();
+/**
+ * Shared assembly for plan-slice and refine-slice prompts. Both builders need
+ * the same inlined context (roadmap excerpt, slice context, research, decisions,
+ * requirements, knowledge, graph subgraph, templates, dependency summaries,
+ * overrides). Extracted to prevent drift between the two sites.
+ *
+ * `prependBlocks` are pushed onto the start of the inlined array BEFORE any
+ * shared content, so callers can add unit-specific headers (e.g., the refine
+ * sketch-scope constraint).
+ */
+async function renderSlicePrompt(options: {
+  mid: string;
+  sid: string;
+  sTitle: string;
+  base: string;
+  level: InlineLevel;
+  promptTemplate: "plan-slice" | "refine-slice";
+  prependBlocks?: string[];
+  extraVars?: Record<string, string>;
+  sessionContextWindow?: number;
+  modelRegistry?: MinimalModelRegistry;
+}): Promise<string> {
+  const {
+    mid, sid, sTitle, base, level, promptTemplate, prependBlocks = [], extraVars = {},
+    sessionContextWindow, modelRegistry,
+  } = options;
+
   const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
   const researchPath = resolveSliceFile(base, mid, sid, "RESEARCH");
@@ -1217,18 +1492,17 @@ export async function buildPlanSlicePrompt(
   const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
   const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
 
-  const inlined: string[] = [];
+  const inlined: string[] = [...prependBlocks];
 
-  // Inject phase handoff anchor from research phase (if available)
+  // Phase handoff anchor from research phase (if available)
   const researchSliceAnchor = readPhaseAnchor(base, mid, "research-slice");
   if (researchSliceAnchor) inlined.push(formatAnchorForPrompt(researchSliceAnchor));
 
-  // Use roadmap excerpt instead of full roadmap for context reduction
-  const roadmapExcerptPS = await inlineRoadmapExcerpt(base, mid, sid);
-  if (roadmapExcerptPS) {
-    inlined.push(roadmapExcerptPS);
+  // Roadmap excerpt with full-roadmap fallback
+  const roadmapExcerpt = await inlineRoadmapExcerpt(base, mid, sid);
+  if (roadmapExcerpt) {
+    inlined.push(roadmapExcerpt);
   } else {
-    // Fall back to full roadmap if excerpt fails
     inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
   }
 
@@ -1236,38 +1510,36 @@ export async function buildPlanSlicePrompt(
   if (sliceCtxInline) inlined.push(sliceCtxInline);
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Slice Research");
   if (researchInline) inlined.push(researchInline);
-  if (inlineLevel !== "minimal") {
-    // Derive scope from slice title for decision filtering (R005)
-    const derivedScopePS = deriveSliceScope(sTitle);
-    const decisionsInline = await inlineDecisionsFromDb(base, mid, derivedScopePS, inlineLevel);
+
+  if (level !== "minimal") {
+    const derivedScope = deriveSliceScope(sTitle);
+    const decisionsInline = await inlineDecisionsFromDb(base, mid, derivedScope, level);
     if (decisionsInline) inlined.push(decisionsInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, mid, sid, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, sid, level);
     if (requirementsInline) inlined.push(requirementsInline);
   }
 
-  // Use scoped knowledge based on slice title keywords
-  const keywordsPS = extractKeywords(sTitle);
-  const knowledgeInlinePS = await inlineKnowledgeScoped(base, keywordsPS);
-  if (knowledgeInlinePS) inlined.push(knowledgeInlinePS);
+  const knowledgeInline = await inlineKnowledgeScoped(base, extractKeywords(sTitle));
+  if (knowledgeInline) inlined.push(knowledgeInline);
+
+  const graphBlock = await inlineGraphSubgraph(base, `${sid} ${sTitle}`, { budget: 3000 });
+  if (graphBlock) inlined.push(graphBlock);
 
   inlined.push(inlineTemplate("plan", "Slice Plan"));
-  if (inlineLevel === "full") {
+  if (level === "full") {
     inlined.push(inlineTemplate("task-plan", "Task Plan"));
   }
 
-  const depContent = await inlineDependencySummaries(mid, sid, base);
-  const planActiveOverrides = await loadActiveOverrides(base);
-  const planOverridesInline = formatOverridesSection(planActiveOverrides);
-  if (planOverridesInline) inlined.unshift(planOverridesInline);
+  const depContent = await inlineDependencySummaries(mid, sid, base, resolveSummaryBudgetChars());
+  const overridesInline = formatOverridesSection(await loadActiveOverrides(base));
+  if (overridesInline) inlined.unshift(overridesInline);
 
   const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
-
-  // Build executor context constraints from the budget engine
-  const executorContextConstraints = formatExecutorConstraints();
-
+  const executorContextConstraints = formatExecutorConstraints(sessionContextWindow, modelRegistry);
   const outputRelPath = relSliceFile(base, mid, sid, "PLAN");
   const commitInstruction = "Do not commit — .gsd/ planning docs are managed externally and not tracked in git.";
-  return loadPrompt("plan-slice", {
+
+  return loadPrompt(promptTemplate, {
     workingDirectory: base,
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
     slicePath: relSlicePath(base, mid, sid),
@@ -1285,7 +1557,102 @@ export async function buildPlanSlicePrompt(
       sliceId: sid,
       sliceTitle: sTitle,
       extraContext: [inlinedContext, depContent],
+      unitType: promptTemplate,
     }),
+    ...extraVars,
+  });
+}
+
+export async function buildPlanSlicePrompt(
+  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
+  options?: {
+    softScopeHint?: string;
+    sessionContextWindow?: number;
+    modelRegistry?: MinimalModelRegistry;
+    /** Failure context from a prior pre-exec gate run (#4551). When present, a
+     *  "Fix these specific issues" section is appended so the LLM addresses the
+     *  exact problems instead of producing an identical plan that fails again. */
+    priorPreExecFailure?: {
+      blockingFindings: string[];
+      verdictExcerpt: string;
+    };
+  },
+): Promise<string> {
+  const prependBlocks: string[] = [];
+  // ADR-011: when the refining-phase dispatch rule gracefully downgrades to
+  // plan-slice (progressive_planning was toggled off mid-milestone), it
+  // forwards the stored sketch_scope as a SOFT hint — context, not a hard
+  // constraint. The planner is free to expand beyond it.
+  if (options?.softScopeHint && options.softScopeHint.trim().length > 0) {
+    prependBlocks.push(
+      `## Prior Sketch Scope (soft hint — non-binding)\n\n${options.softScopeHint.trim()}\n\n` +
+      `This scope was captured during an earlier progressive-planning pass that was later disabled. Treat it as context only — you may plan beyond it if the work genuinely requires more scope. Do NOT treat this as a hard boundary.`,
+    );
+  }
+  // #4551: inject pre-exec failure context so the re-dispatched plan-slice
+  // addresses the exact blocked references rather than reproducing the same plan.
+  if (options?.priorPreExecFailure) {
+    const { blockingFindings, verdictExcerpt } = options.priorPreExecFailure;
+    const findingsList = blockingFindings.length > 0
+      ? blockingFindings.map(f => `- ${f}`).join("\n")
+      : "- (no specific findings recorded)";
+    prependBlocks.push(
+      `## Fix these specific issues from the prior pre-exec check\n\n` +
+      `The previous plan-slice attempt was blocked by pre-execution validation.\n` +
+      `Gate verdict: ${verdictExcerpt}\n\n` +
+      `Blocked references that must be resolved in this plan:\n${findingsList}\n\n` +
+      `Revise the plan so that every reference listed above is satisfied before execution begins. ` +
+      `Do not reproduce the same file paths, package names, or task ordering that caused these failures.`,
+    );
+  }
+  return renderSlicePrompt({
+    mid, sid, sTitle, base,
+    level: level ?? resolveInlineLevel(),
+    promptTemplate: "plan-slice",
+    prependBlocks,
+    sessionContextWindow: options?.sessionContextWindow,
+    modelRegistry: options?.modelRegistry,
+  });
+}
+
+/**
+ * ADR-011 refine-slice: expand a sketch into a full plan using the current
+ * codebase state and prior slice summary. Mechanically similar to plan-slice
+ * but framed as a *transformation* (sketch → full plan) rather than a
+ * blank-sheet planning pass. Reuses inlineDependencySummaries for prior
+ * slice SUMMARY and inlines the stored sketch_scope as a hard constraint.
+ */
+export async function buildRefineSlicePrompt(
+  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
+  options?: { sessionContextWindow?: number; modelRegistry?: MinimalModelRegistry },
+): Promise<string> {
+  // Pull the stored sketch scope from the DB — the hard constraint we plan within.
+  let sketchScope = "";
+  try {
+    const { isDbAvailable, getSlice } = await import("./gsd-db.js");
+    if (isDbAvailable()) {
+      sketchScope = getSlice(mid, sid)?.sketch_scope ?? "";
+    }
+  } catch {
+    sketchScope = "";
+  }
+
+  const prependBlocks: string[] = [];
+  if (sketchScope.trim().length > 0) {
+    prependBlocks.push(
+      `## Sketch Scope (hard constraint)\n\n${sketchScope.trim()}\n\n` +
+      `Treat this as the authoritative boundary for the slice. Do not plan work outside this scope; if the scope is too narrow, surface it as a deviation rather than expanding silently.`,
+    );
+  }
+
+  return renderSlicePrompt({
+    mid, sid, sTitle, base,
+    level: level ?? resolveInlineLevel(),
+    promptTemplate: "refine-slice",
+    prependBlocks,
+    extraVars: { sketchScope },
+    sessionContextWindow: options?.sessionContextWindow,
+    modelRegistry: options?.modelRegistry,
   });
 }
 
@@ -1294,6 +1661,10 @@ export interface ExecuteTaskPromptOptions {
   level?: InlineLevel;
   /** Override carry-forward paths (dependency-based instead of order-based). */
   carryForwardPaths?: string[];
+  /** Session model context window in tokens, forwarded to the budget engine. */
+  sessionContextWindow?: number;
+  /** Model registry forwarded to the budget engine for executor-model lookup. */
+  modelRegistry?: MinimalModelRegistry;
 }
 
 export async function buildExecuteTaskPrompt(
@@ -1366,12 +1737,16 @@ export async function buildExecuteTaskPrompt(
   // Only include if it has content (not a "not found" result)
   const knowledgeContent = knowledgeInlineET && !knowledgeInlineET.includes("not found") ? knowledgeInlineET : null;
 
+  // Knowledge graph: tight subgraph for this task (graceful — skipped if no graph.json)
+  const graphBlockET = await inlineGraphSubgraph(base, `${tid} ${tTitle}`, { budget: 2000 });
+
   const inlinedTemplates = inlineLevel === "minimal"
     ? inlineTemplate("task-summary", "Task Summary")
     : [
         inlineTemplate("task-summary", "Task Summary"),
         inlineTemplate("decisions", "Decisions"),
         ...(knowledgeContent ? [knowledgeContent] : []),
+        ...(graphBlockET ? [graphBlockET] : []),
       ].join("\n\n---\n\n");
 
   const taskSummaryPath = join(base, `${relSlicePath(base, mid, sid)}/tasks/${tid}-SUMMARY.md`);
@@ -1381,7 +1756,7 @@ export async function buildExecuteTaskPrompt(
 
   // Compute verification budget for the executor's context window (issue #707)
   const prefs = loadEffectiveGSDPreferences();
-  const contextWindow = resolveExecutorContextWindow(undefined, prefs?.preferences);
+  const contextWindow = resolveExecutorContextWindow(opts.modelRegistry, prefs?.preferences, opts.sessionContextWindow);
   const budgets = computeBudgets(contextWindow);
   const verificationBudget = `~${Math.round(budgets.verificationBudgetChars / 1000)}K chars`;
 
@@ -1399,7 +1774,28 @@ export async function buildExecuteTaskPrompt(
     ? `### Runtime Context\nSource: \`.gsd/RUNTIME.md\`\n\n${runtimeContent.trim()}`
     : "";
 
-  const phaseAnchorSection = planAnchor ? formatAnchorForPrompt(planAnchor) : "";
+  let phaseAnchorSection = planAnchor ? formatAnchorForPrompt(planAnchor) : "";
+
+  // ADR-011 Phase 2: inject any resolved-but-unapplied escalation override
+  // into this task's prompt. Claim is atomic via DB UPDATE WHERE IS NULL, so
+  // if a parallel build already injected it, we skip. Feature-gated by
+  // phases.mid_execution_escalation. Prepended to phaseAnchorSection so it
+  // appears near the top of the prompt above planning anchors.
+  if (prefs?.preferences?.phases?.mid_execution_escalation === true) {
+    try {
+      const { claimOverrideForInjection } = await import("./escalation.js");
+      const claimed = claimOverrideForInjection(base, mid, sid);
+      if (claimed) {
+        const block = claimed.injectionBlock + "\n\n---\n\n";
+        phaseAnchorSection = phaseAnchorSection
+          ? `${block}${phaseAnchorSection}`
+          : block;
+      }
+    } catch (escalationErr) {
+      // Escalation module unavailable or threw — log and proceed.
+      logWarning("prompt", `escalation override injection failed: ${(escalationErr as Error).message}`);
+    }
+  }
 
   // Task-scoped gates owned by execute-task (Q5/Q6/Q7). Pull only the
   // gates that plan-slice actually seeded for this task — tasks with no
@@ -1444,52 +1840,101 @@ export async function buildExecuteTaskPrompt(
 }
 
 export async function buildCompleteSlicePrompt(
-  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
+  mid: string, midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
 ): Promise<string> {
   const inlineLevel = level ?? resolveInlineLevel();
 
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
-  const slicePlanRel = relSliceFile(base, mid, sid, "PLAN");
-  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
-  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
-  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
-  if (sliceCtxInline) inlined.push(sliceCtxInline);
-  inlined.push(await inlineFile(slicePlanPath, slicePlanRel, "Slice Plan"));
-  if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base, mid, sid, inlineLevel);
-    if (requirementsInline) inlined.push(requirementsInline);
-  }
-  const knowledgeInlineCS = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
-  if (knowledgeInlineCS) inlined.push(knowledgeInlineCS);
-
-  // Inline all task summaries for this slice
-  const tDir = resolveTasksDir(base, mid, sid);
-  if (tDir) {
-    const summaryFiles = resolveTaskFiles(tDir, "SUMMARY").sort();
-    for (const file of summaryFiles) {
-      const absPath = join(tDir, file);
-      const content = await loadFile(absPath);
-      const sRel = relSlicePath(base, mid, sid);
-      const relPath = `${sRel}/tasks/${file}`;
-      if (content) {
-        inlined.push(`### Task Summary: ${file.replace(/-SUMMARY\.md$/i, "")}\nSource: \`${relPath}\`\n\n${content.trim()}`);
+  // #4782 phase 3: complete-slice migrated through composer. Manifest
+  // declares [roadmap, slice-context, slice-plan, requirements,
+  // prior-task-summaries, templates]. Overrides prepend and knowledge
+  // splice stay imperative — they need the composer v2 contract
+  // (computed + prepend blocks; see RFC #4924).
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    switch (key) {
+      case "roadmap": {
+        const p = resolveMilestoneFile(base, mid, "ROADMAP");
+        const r = relMilestoneFile(base, mid, "ROADMAP");
+        return await inlineFile(p, r, "Milestone Roadmap");
       }
+      case "slice-context": {
+        const p = resolveSliceFile(base, mid, sid, "CONTEXT");
+        const r = relSliceFile(base, mid, sid, "CONTEXT");
+        return await inlineFileOptional(p, r, "Slice Context (from discussion)");
+      }
+      case "slice-plan": {
+        const p = resolveSliceFile(base, mid, sid, "PLAN");
+        const r = relSliceFile(base, mid, sid, "PLAN");
+        return await inlineFile(p, r, "Slice Plan");
+      }
+      case "requirements":
+        if (inlineLevel === "minimal") return null;
+        return await inlineRequirementsFromDb(base, mid, sid, inlineLevel);
+      case "prior-task-summaries": {
+        const tDir = resolveTasksDir(base, mid, sid);
+        if (!tDir) return null;
+        const summaryFiles = resolveTaskFiles(tDir, "SUMMARY").sort();
+        const sRel = relSlicePath(base, mid, sid);
+        const blocks: string[] = [];
+        for (const file of summaryFiles) {
+          const absPath = join(tDir, file);
+          const content = await loadFile(absPath);
+          if (!content) continue;
+          const relPath = `${sRel}/tasks/${file}`;
+          blocks.push(`### Task Summary: ${file.replace(/-SUMMARY\.md$/i, "")}\nSource: \`${relPath}\`\n\n${content.trim()}`);
+        }
+        return blocks.length > 0 ? blocks.join("\n\n---\n\n") : null;
+      }
+      case "templates": {
+        const parts = [inlineTemplate("slice-summary", "Slice Summary")];
+        if (inlineLevel !== "minimal") {
+          parts.push(inlineTemplate("uat", "UAT"));
+        }
+        return parts.join("\n\n---\n\n");
+      }
+      default:
+        return null;
+    }
+  };
+
+  const composed = await composeInlinedContext("complete-slice", resolveArtifact);
+
+  // Knowledge splices in between requirements and prior-task-summaries
+  // so overall order matches pre-migration: roadmap → slice-context →
+  // slice-plan → requirements → KNOWLEDGE → task summaries → templates.
+  const knowledgeInlineCS = await inlineKnowledgeBudgeted(
+    base,
+    [...extractKeywords(midTitle), ...extractKeywords(sTitle)],
+  );
+
+  let body = composed;
+  if (knowledgeInlineCS && body) {
+    // Splice knowledge right before the first "### Task Summary:" block
+    // to preserve pre-migration ordering. If no task summaries exist,
+    // splice before the templates block (which inlineTemplate emits as
+    // "### Output Template: Slice Summary").
+    const taskIdx = body.indexOf("### Task Summary:");
+    const templatesIdx = body.lastIndexOf("### Output Template: Slice Summary");
+    const spliceIdx = taskIdx > -1 ? taskIdx : templatesIdx;
+    if (spliceIdx > 0) {
+      const before = body.slice(0, spliceIdx).replace(/\n\n---\n\n$/, "");
+      const after = body.slice(spliceIdx);
+      body = [before, knowledgeInlineCS, after].join("\n\n---\n\n");
+    } else {
+      body = `${body}\n\n---\n\n${knowledgeInlineCS}`;
     }
   }
-  inlined.push(inlineTemplate("slice-summary", "Slice Summary"));
-  if (inlineLevel !== "minimal") {
-    inlined.push(inlineTemplate("uat", "UAT"));
-  }
+
+  // Overrides section prepends to the top of the inlined context —
+  // standard pattern for slice-level builders (until composer v2 lands
+  // the prepend contract).
   const completeActiveOverrides = await loadActiveOverrides(base);
   const completeOverridesInline = formatOverridesSection(completeActiveOverrides);
-  if (completeOverridesInline) inlined.unshift(completeOverridesInline);
+  const finalBody = completeOverridesInline
+    ? `${completeOverridesInline}\n\n---\n\n${body}`
+    : body;
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${finalBody}`);
+  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
 
   const sliceRel = relSlicePath(base, mid, sid);
   const sliceSummaryPath = join(base, `${sliceRel}/${sid}-SUMMARY.md`);
@@ -1550,12 +1995,22 @@ export async function buildCompleteMilestonePrompt(
     }
   }
   const seenSlices = new Set<string>();
+  const summaryRelPaths: string[] = [];
   for (const sid of sliceIds) {
     if (seenSlices.has(sid)) continue;
     seenSlices.add(sid);
     const summaryPath = resolveSliceFile(base, mid, sid, "SUMMARY");
     const summaryRel = relSliceFile(base, mid, sid, "SUMMARY");
-    inlined.push(await inlineFile(summaryPath, summaryRel, `${sid} Summary`));
+    summaryRelPaths.push(summaryRel);
+    // Compact excerpt instead of full inline (#4780). Closer Reads the
+    // full file on-demand when synthesizing LEARNINGS narrative.
+    inlined.push(await buildSliceSummaryExcerpt(summaryPath, summaryRel, sid));
+  }
+  if (summaryRelPaths.length > 0) {
+    const pathList = summaryRelPaths.map(p => `- \`${p}\``).join("\n");
+    inlined.push(
+      `### On-demand Slice Summaries\n\nExcerpted above. Read the full file for any slice when the excerpt's section heads don't carry enough narrative for the milestone summary you're drafting:\n\n${pathList}`,
+    );
   }
 
   // Inline root GSD files (skip for minimal — completion can read these if needed)
@@ -1567,7 +2022,8 @@ export async function buildCompleteMilestonePrompt(
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
   }
-  const knowledgeInlineCM = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
+  // Scoped + budgeted — see issue #4719
+  const knowledgeInlineCM = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
   if (knowledgeInlineCM) inlined.push(knowledgeInlineCM);
   // Inline milestone context file (milestone-level, not GSD root)
   const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
@@ -1580,6 +2036,14 @@ export async function buildCompleteMilestonePrompt(
 
   const milestoneSummaryPath = join(base, `${relMilestonePath(base, mid)}/${mid}-SUMMARY.md`);
 
+  const learningsRelPath = join(relMilestonePath(base, mid), `${mid}-LEARNINGS.md`);
+  const learningsAbsPath = join(base, learningsRelPath);
+  const extractLearningsSteps = buildExtractionStepsBlock({
+    milestoneId: mid,
+    outputPath: learningsAbsPath,
+    relativeOutputPath: learningsRelPath,
+  });
+
   return loadPrompt("complete-milestone", {
     workingDirectory: base,
     milestoneId: mid,
@@ -1587,11 +2051,13 @@ export async function buildCompleteMilestonePrompt(
     roadmapPath: roadmapRel,
     inlinedContext,
     milestoneSummaryPath,
+    extractLearningsSteps,
     skillActivation: buildSkillActivationBlock({
       base,
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "complete-milestone",
     }),
   });
 }
@@ -1694,7 +2160,8 @@ export async function buildValidateMilestonePrompt(
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
   }
-  const knowledgeInline = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
+  // Scoped + budgeted — see issue #4719
+  const knowledgeInline = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
   if (knowledgeInline) inlined.push(knowledgeInline);
   // Inline milestone context file
   const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
@@ -1731,6 +2198,7 @@ export async function buildValidateMilestonePrompt(
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "validate-milestone",
     }),
   });
 }
@@ -1813,6 +2281,7 @@ export async function buildReplanSlicePrompt(
       sliceId: sid,
       sliceTitle: sTitle,
       extraContext: [inlinedContext, captureContext],
+      unitType: "replan-slice",
     }),
   });
 }
@@ -1820,20 +2289,37 @@ export async function buildReplanSlicePrompt(
 export async function buildRunUatPrompt(
   mid: string, sliceId: string, uatPath: string, uatContent: string, base: string,
 ): Promise<string> {
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(resolveSliceFile(base, mid, sliceId, "UAT"), uatPath, `${sliceId} UAT`));
+  // #4782 phase 3: run-uat migrated to compose its inlined context via
+  // the manifest. Behavior-equivalent — resolver dispatches to the same
+  // inline* helpers as the pre-migration builder.
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    switch (key) {
+      case "slice-uat": {
+        // Use the in-memory snapshot the caller already loaded (#4925 review).
+        // Re-reading from disk via inlineFile(p, uatPath, ...) would risk
+        // drift between the inlined body and uatType (computed from
+        // uatContent below) if the file changes mid-dispatch.
+        const trimmed = uatContent.trim();
+        if (!trimmed) {
+          return `### ${sliceId} UAT\nSource: \`${uatPath}\`\n\n_(not found — file does not exist yet)_`;
+        }
+        return `### ${sliceId} UAT\nSource: \`${uatPath}\`\n\n${trimmed}`;
+      }
+      case "slice-summary": {
+        const p = resolveSliceFile(base, mid, sliceId, "SUMMARY");
+        if (!p) return null;
+        const r = relSliceFile(base, mid, sliceId, "SUMMARY");
+        return await inlineFileOptional(p, r, `${sliceId} Summary`);
+      }
+      case "project":
+        return await inlineProjectFromDb(base);
+      default:
+        return null;
+    }
+  };
 
-  const summaryPath = resolveSliceFile(base, mid, sliceId, "SUMMARY");
-  const summaryRel = relSliceFile(base, mid, sliceId, "SUMMARY");
-  if (summaryPath) {
-    const summaryInline = await inlineFileOptional(summaryPath, summaryRel, `${sliceId} Summary`);
-    if (summaryInline) inlined.push(summaryInline);
-  }
-
-  const projectInline = await inlineProjectFromDb(base);
-  if (projectInline) inlined.push(projectInline);
-
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const composed = await composeInlinedContext("run-uat", resolveArtifact);
+  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${composed}`);
 
   const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "ASSESSMENT"));
   const uatType = getUatType(uatContent);
@@ -1851,6 +2337,7 @@ export async function buildRunUatPrompt(
       milestoneId: mid,
       sliceId,
       extraContext: [inlinedContext],
+      unitType: "run-uat",
     }),
   });
 }
@@ -1859,30 +2346,54 @@ export async function buildReassessRoadmapPrompt(
   mid: string, midTitle: string, completedSliceId: string, base: string, level?: InlineLevel,
 ): Promise<string> {
   const inlineLevel = level ?? resolveInlineLevel();
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const summaryPath = resolveSliceFile(base, mid, completedSliceId, "SUMMARY");
-  const summaryRel = relSliceFile(base, mid, completedSliceId, "SUMMARY");
-  const sliceContextPath = resolveSliceFile(base, mid, completedSliceId, "CONTEXT");
-  const sliceContextRel = relSliceFile(base, mid, completedSliceId, "CONTEXT");
 
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Current Roadmap"));
-  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
-  if (sliceCtxInline) inlined.push(sliceCtxInline);
-  inlined.push(await inlineFile(summaryPath, summaryRel, `${completedSliceId} Summary`));
-  if (inlineLevel !== "minimal") {
-    const projectInline = await inlineProjectFromDb(base);
-    if (projectInline) inlined.push(projectInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
-    if (requirementsInline) inlined.push(requirementsInline);
-    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
-    if (decisionsInline) inlined.push(decisionsInline);
-  }
-  const knowledgeInlineRA = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
-  if (knowledgeInlineRA) inlined.push(knowledgeInlineRA);
+  // #4782 phase 2 pilot: reassess-roadmap is the first unit type to
+  // compose its inlined context through the manifest-driven composer.
+  // The resolver below dispatches artifact keys to the existing inline*
+  // helpers, preserving identical output so the migration is
+  // observable-equivalent. Knowledge stays outside the composer (it's
+  // budget-driven, not manifest-driven) until a later phase formalizes
+  // knowledge/memory policies as composer inputs.
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    switch (key) {
+      case "roadmap": {
+        const p = resolveMilestoneFile(base, mid, "ROADMAP");
+        const r = relMilestoneFile(base, mid, "ROADMAP");
+        return await inlineFile(p, r, "Current Roadmap");
+      }
+      case "slice-context": {
+        const p = resolveSliceFile(base, mid, completedSliceId, "CONTEXT");
+        const r = relSliceFile(base, mid, completedSliceId, "CONTEXT");
+        return await inlineFileOptional(p, r, "Slice Context (from discussion)");
+      }
+      case "slice-summary": {
+        const p = resolveSliceFile(base, mid, completedSliceId, "SUMMARY");
+        const r = relSliceFile(base, mid, completedSliceId, "SUMMARY");
+        return await inlineFile(p, r, `${completedSliceId} Summary`);
+      }
+      case "project":
+        if (inlineLevel === "minimal") return null;
+        return await inlineProjectFromDb(base);
+      case "requirements":
+        if (inlineLevel === "minimal") return null;
+        return await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
+      case "decisions":
+        if (inlineLevel === "minimal") return null;
+        return await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
+      default:
+        return null;
+    }
+  };
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const composed = await composeInlinedContext("reassess-roadmap", resolveArtifact);
+  const parts: string[] = [];
+  if (composed) parts.push(composed);
+  // Knowledge block stays outside the composer — budgeted, scoped via
+  // keyword extraction (#4719). Future phase folds it in.
+  const knowledgeInlineRA = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
+  if (knowledgeInlineRA) parts.push(knowledgeInlineRA);
+
+  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${parts.join("\n\n---\n\n")}`);
 
   const assessmentPath = join(base, relSliceFile(base, mid, completedSliceId, "ASSESSMENT"));
 
@@ -1907,7 +2418,7 @@ export async function buildReassessRoadmapPrompt(
     milestoneId: mid,
     milestoneTitle: midTitle,
     completedSliceId,
-    roadmapPath: roadmapRel,
+    roadmapPath: relMilestoneFile(base, mid, "ROADMAP"),
     assessmentPath,
     inlinedContext,
     deferredCaptures,
@@ -1917,6 +2428,7 @@ export async function buildReassessRoadmapPrompt(
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext, deferredCaptures],
+      unitType: "reassess-roadmap",
     }),
   });
 }
@@ -1927,6 +2439,7 @@ export async function buildReactiveExecutePrompt(
   mid: string, midTitle: string, sid: string, sTitle: string,
   readyTaskIds: string[], base: string,
   subagentModel?: string,
+  opts?: { sessionContextWindow?: number; modelRegistry?: MinimalModelRegistry },
 ): Promise<string> {
   const { loadSliceTaskIO, deriveTaskGraph, graphMetrics } = await import("./reactive-graph.js");
 
@@ -1968,7 +2481,11 @@ export async function buildReactiveExecutePrompt(
     // Build a full execute-task prompt with dependency-based carry-forward
     const taskPrompt = await buildExecuteTaskPrompt(
       mid, sid, sTitle, tid, tTitle, base,
-      { carryForwardPaths: depPaths },
+      {
+        carryForwardPaths: depPaths,
+        sessionContextWindow: opts?.sessionContextWindow,
+        modelRegistry: opts?.modelRegistry,
+      },
     );
 
     const modelSuffix = subagentModel ? ` with model: "${subagentModel}"` : "";

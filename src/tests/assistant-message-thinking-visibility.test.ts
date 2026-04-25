@@ -34,7 +34,13 @@ test("assistant-message caps thinking block height when text content is present"
 
   assert.match(
     src,
-    /if \(hasTextContent \|\| hasToolContent\)\s*\{\s*thinkingMarkdown\.maxLines = 8;\s*\}/s,
-    "assistant-message should cap visible thinking lines when assistant text exists or tool blocks are present",
+    /const shouldCapThinking = hasTextContent \|\| hasToolContent \|\| message\.provider === "claude-code";/,
+    "assistant-message should derive a cap policy that also covers claude-code long reasoning traces",
+  );
+
+  assert.match(
+    src,
+    /if \(shouldCapThinking\)\s*\{\s*thinkingMarkdown\.maxLines = 8;\s*\}/s,
+    "assistant-message should cap visible thinking lines when the cap policy is active",
   );
 });

@@ -25,10 +25,18 @@ export interface PlanMilestoneSliceInput {
   depends: string[];
   demo: string;
   goal: string;
+  /** Required when isSketch is false/absent; may be empty for sketch slices (ADR-011). */
   successCriteria: string;
+  /** Required when isSketch is false/absent; may be empty for sketch slices (ADR-011). */
   proofLevel: string;
+  /** Required when isSketch is false/absent; may be empty for sketch slices (ADR-011). */
   integrationClosure: string;
+  /** Required when isSketch is false/absent; may be empty for sketch slices (ADR-011). */
   observabilityImpact: string;
+  /** ADR-011: when true, this slice is a sketch awaiting refine-slice expansion. */
+  isSketch?: boolean;
+  /** ADR-011: 2–3 sentence scope boundary, required when isSketch is true. */
+  sketchScope?: string;
 }
 
 export interface PlanMilestoneParams {
@@ -125,6 +133,16 @@ function validateSlices(value: unknown): PlanMilestoneSliceInput[] {
     const proofLevel = obj.proofLevel;
     const integrationClosure = obj.integrationClosure;
     const observabilityImpact = obj.observabilityImpact;
+    const isSketchRaw = obj.isSketch;
+    const sketchScopeRaw = obj.sketchScope;
+    // ADR-011: preserve the 3-valued semantics of isSketch (true / false / absent).
+    // Callers that omit isSketch must receive `undefined` here so `insertSlice`'s
+    // ON CONFLICT clause preserves any existing is_sketch on the row rather than
+    // silently overwriting a legitimate sketch to non-sketch.
+    const isSketch: boolean | undefined =
+      isSketchRaw === true ? true
+      : isSketchRaw === false ? false
+      : undefined;
 
     if (!isNonEmptyString(sliceId)) throw new Error(`slices[${index}].sliceId must be a non-empty string`);
     if (seen.has(sliceId)) throw new Error(`slices[${index}].sliceId must be unique`);
@@ -136,10 +154,18 @@ function validateSlices(value: unknown): PlanMilestoneSliceInput[] {
     }
     if (!isNonEmptyString(demo)) throw new Error(`slices[${index}].demo must be a non-empty string`);
     if (!isNonEmptyString(goal)) throw new Error(`slices[${index}].goal must be a non-empty string`);
-    if (!isNonEmptyString(successCriteria)) throw new Error(`slices[${index}].successCriteria must be a non-empty string`);
-    if (!isNonEmptyString(proofLevel)) throw new Error(`slices[${index}].proofLevel must be a non-empty string`);
-    if (!isNonEmptyString(integrationClosure)) throw new Error(`slices[${index}].integrationClosure must be a non-empty string`);
-    if (!isNonEmptyString(observabilityImpact)) throw new Error(`slices[${index}].observabilityImpact must be a non-empty string`);
+
+    // ADR-011: sketch slices may defer the heavyweight planning fields to refine-slice.
+    if (isSketch === true) {
+      if (!isNonEmptyString(sketchScopeRaw)) {
+        throw new Error(`slices[${index}].sketchScope must be a non-empty string when isSketch is true`);
+      }
+    } else {
+      if (!isNonEmptyString(successCriteria)) throw new Error(`slices[${index}].successCriteria must be a non-empty string`);
+      if (!isNonEmptyString(proofLevel)) throw new Error(`slices[${index}].proofLevel must be a non-empty string`);
+      if (!isNonEmptyString(integrationClosure)) throw new Error(`slices[${index}].integrationClosure must be a non-empty string`);
+      if (!isNonEmptyString(observabilityImpact)) throw new Error(`slices[${index}].observabilityImpact must be a non-empty string`);
+    }
 
     return {
       sliceId,
@@ -148,10 +174,14 @@ function validateSlices(value: unknown): PlanMilestoneSliceInput[] {
       depends,
       demo,
       goal,
-      successCriteria,
-      proofLevel,
-      integrationClosure,
-      observabilityImpact,
+      successCriteria: isNonEmptyString(successCriteria) ? successCriteria : "",
+      proofLevel: isNonEmptyString(proofLevel) ? proofLevel : "",
+      integrationClosure: isNonEmptyString(integrationClosure) ? integrationClosure : "",
+      observabilityImpact: isNonEmptyString(observabilityImpact) ? observabilityImpact : "",
+      isSketch,
+      // Only carry the sketch scope through if the caller explicitly provided it
+      // — preserves ON CONFLICT semantics for re-plans that omit the field.
+      sketchScope: sketchScopeRaw === undefined ? undefined : (isNonEmptyString(sketchScopeRaw) ? sketchScopeRaw : ""),
     };
   });
 }
@@ -274,6 +304,10 @@ export async function handlePlanMilestone(
           depends: slice.depends,
           demo: slice.demo,
           sequence: i + 1, // Preserve agent-ordered sequence (#3356)
+          // ADR-011: pass undefined through so ON CONFLICT preserves existing values
+          // when the caller omitted the fields on a re-plan.
+          isSketch: slice.isSketch,
+          sketchScope: slice.sketchScope,
         });
         upsertSlicePlanning(params.milestoneId, slice.sliceId, {
           goal: slice.goal,

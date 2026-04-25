@@ -75,7 +75,7 @@ test("getMilestoneStatus returns 'pending' for authoritative 'pending' even when
   assert.equal(getMilestoneStatus(milestone, {}), "pending");
 });
 
-test("getMilestoneStatus maps 'parked' to 'pending' item status", () => {
+test("getMilestoneStatus preserves authoritative 'parked' item status", () => {
   const milestone = makeMilestone({
     id: "M004",
     status: "parked",
@@ -83,8 +83,8 @@ test("getMilestoneStatus maps 'parked' to 'pending' item status", () => {
       { id: "S01", title: "Slice 1", done: true, tasks: [] },
     ],
   });
-  // Parked milestones should render as pending in the UI
-  assert.equal(getMilestoneStatus(milestone, {}), "pending");
+  // Parked milestones should retain a distinct parked status in the UI
+  assert.equal(getMilestoneStatus(milestone, {}), "parked");
 });
 
 test("getMilestoneStatus falls back to heuristic when no authoritative status", () => {

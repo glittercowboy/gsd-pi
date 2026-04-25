@@ -113,15 +113,15 @@ These tools use the same GSD workflow handlers as the native in-process tool pat
 
 ### Interactive tools
 
-The packaged server now exposes `ask_user_questions` through MCP form elicitation. This keeps the existing GSD answer payload shape while allowing Claude Code CLI and other elicitation-capable clients to surface structured user choices.
+The packaged server exposes `ask_user_questions` through MCP form elicitation. This keeps the existing GSD answer payload shape while allowing Claude Code CLI and other elicitation-capable clients to surface structured user choices.
 
-`secure_env_collect` is still not exposed by this package. That path needs MCP URL elicitation or an equivalent secure bridge because secrets should not flow through form elicitation.
+The packaged server also exposes `secure_env_collect` through MCP form elicitation. Secret values are written directly to the selected destination and are not included in tool output. For dotenv writes, `envFilePath` must resolve inside the validated project directory; parent traversal and symlink escapes are rejected.
 
 Current support boundary:
 
 - when running inside the GSD monorepo checkout, the MCP server auto-discovers the shared workflow executor module
 - outside the monorepo, set `GSD_WORKFLOW_EXECUTORS_MODULE` to an importable `workflow-tool-executors` module path if you want the mutation tools enabled
-- `ask_user_questions` requires an MCP client that supports form elicitation
+- `ask_user_questions` and `secure_env_collect` require an MCP client that supports form elicitation
 - session/read tools do not depend on this bridge
 
 If the executor bridge cannot be loaded, workflow mutation calls will fail with a precise configuration error instead of silently degrading.

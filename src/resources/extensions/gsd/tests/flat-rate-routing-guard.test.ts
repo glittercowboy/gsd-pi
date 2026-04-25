@@ -6,7 +6,13 @@
 
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildFlatRateContext, isFlatRateProvider, resolvePreferredModelConfig } from "../auto-model-selection.ts";
+
+const __dirname_4386 = dirname(fileURLToPath(import.meta.url));
 
 describe("flat-rate provider routing guard (#3453)", () => {
 
@@ -33,19 +39,50 @@ describe("flat-rate provider routing guard (#3453)", () => {
   });
 
   test("resolvePreferredModelConfig returns undefined for copilot start model", () => {
+    const originalCwd = process.cwd();
+    const originalGsdHome = process.env.GSD_HOME;
+    const tempProject = mkdtempSync(join(tmpdir(), "gsd-flat-rate-project-"));
+    const tempGsdHome = mkdtempSync(join(tmpdir(), "gsd-flat-rate-home-"));
+
     // When the user's start model is on a flat-rate provider,
     // resolvePreferredModelConfig should not synthesize a routing
     // config from tier_models — it should return undefined so the
     // user's selected model is preserved.
-    const result = resolvePreferredModelConfig("execute-task", {
-      provider: "github-copilot",
-      id: "claude-sonnet-4",
-    });
+    try {
+      mkdirSync(join(tempProject, ".gsd"), { recursive: true });
+      writeFileSync(
+        join(tempProject, ".gsd", "PREFERENCES.md"),
+        [
+          "---",
+          "dynamic_routing:",
+          "  enabled: true",
+          "  tier_models:",
+          "    light: gpt-4o-mini",
+          "    standard: claude-sonnet-4-6",
+          "    heavy: claude-opus-4-6",
+          "---",
+        ].join("\n"),
+        "utf-8",
+      );
+      process.env.GSD_HOME = tempGsdHome;
+      process.chdir(tempProject);
 
-    // Should be undefined (no routing config created for flat-rate)
-    // Note: this only tests the guard — if explicit per-unit config exists
-    // in preferences, that takes precedence regardless.
-    assert.equal(result, undefined, "Should not create routing config for copilot");
+      const result = resolvePreferredModelConfig("execute-task", {
+        provider: "github-copilot",
+        id: "claude-sonnet-4",
+      });
+
+      // Should be undefined (no routing config created for flat-rate)
+      // Note: this only tests the synthesis guard — explicit per-unit config
+      // still takes precedence when the user configured one.
+      assert.equal(result, undefined, "Should not create routing config for copilot");
+    } finally {
+      process.chdir(originalCwd);
+      if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+      else process.env.GSD_HOME = originalGsdHome;
+      rmSync(tempProject, { recursive: true, force: true });
+      rmSync(tempGsdHome, { recursive: true, force: true });
+    }
   });
 });
 
@@ -182,5 +219,105 @@ describe("buildFlatRateContext()", () => {
     };
     const result = buildFlatRateContext("anything", ctx);
     assert.equal(result.authMode, undefined);
+  });
+});
+
+// ─── #4386: allow_flat_rate_providers opt-in ────────────────────────────────
+
+describe("flat-rate routing opt-in (#4386)", () => {
+  function withPrefs(prefsYaml: string, fn: () => void): void {
+    const originalCwd = process.cwd();
+    const originalGsdHome = process.env.GSD_HOME;
+    const tempProject = mkdtempSync(join(tmpdir(), "gsd-4386-project-"));
+    const tempGsdHome = mkdtempSync(join(tmpdir(), "gsd-4386-home-"));
+    try {
+      mkdirSync(join(tempProject, ".gsd"), { recursive: true });
+      writeFileSync(
+        join(tempProject, ".gsd", "PREFERENCES.md"),
+        ["---", "version: 1", prefsYaml, "---"].join("\n"),
+        "utf-8",
+      );
+      process.env.GSD_HOME = tempGsdHome;
+      process.chdir(tempProject);
+      fn();
+    } finally {
+      process.chdir(originalCwd);
+      if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+      else process.env.GSD_HOME = originalGsdHome;
+      rmSync(tempProject, { recursive: true, force: true });
+      rmSync(tempGsdHome, { recursive: true, force: true });
+    }
+  }
+
+  test("default (opt-in absent): flat-rate start model still returns undefined", () => {
+    withPrefs(
+      [
+        "dynamic_routing:",
+        "  enabled: true",
+        "  tier_models:",
+        "    heavy: claude-opus-4-6",
+      ].join("\n"),
+      () => {
+        const result = resolvePreferredModelConfig("execute-task", {
+          provider: "claude-code",
+          id: "claude-opus-4-6",
+        });
+        assert.equal(result, undefined, "default must preserve #3453 bypass");
+      },
+    );
+  });
+
+  test("opt-in: synthesizes a routing config for flat-rate start model", () => {
+    withPrefs(
+      [
+        "dynamic_routing:",
+        "  enabled: true",
+        "  allow_flat_rate_providers: true",
+        "  tier_models:",
+        "    heavy: claude-opus-4-6",
+      ].join("\n"),
+      () => {
+        const result = resolvePreferredModelConfig("execute-task", {
+          provider: "claude-code",
+          id: "claude-opus-4-6",
+        });
+        assert.ok(result, "routing config should be synthesized");
+        assert.equal(result!.primary, "claude-opus-4-6");
+      },
+    );
+  });
+
+  test("explicit opt-out: flat-rate bypass still fires", () => {
+    withPrefs(
+      [
+        "dynamic_routing:",
+        "  enabled: true",
+        "  allow_flat_rate_providers: false",
+        "  tier_models:",
+        "    heavy: claude-opus-4-6",
+      ].join("\n"),
+      () => {
+        const result = resolvePreferredModelConfig("execute-task", {
+          provider: "claude-code",
+          id: "claude-opus-4-6",
+        });
+        assert.equal(result, undefined, "explicit opt-out behaves like default");
+      },
+    );
+  });
+});
+
+// ─── Banner transparency: auto-start respects the opt-in (#4386) ────────────
+
+describe("auto-start banner respects allow_flat_rate_providers (#4386)", () => {
+  test("banner expression gates flat-rate disable on allow_flat_rate_providers", () => {
+    const src = readFileSync(
+      join(__dirname_4386, "..", "auto-start.ts"),
+      "utf-8",
+    );
+    assert.ok(
+      src.includes("routingConfig.allow_flat_rate_providers"),
+      "auto-start banner must read allow_flat_rate_providers so the banner reflects the opt-in",
+    );
   });
 });

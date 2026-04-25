@@ -22,7 +22,11 @@ async function getEncoder(): Promise<TokenEncoder | null> {
 	try {
 		// @ts-ignore — tiktoken may not have type declarations in extensions tsconfig
 		const tiktoken = await import("tiktoken");
-		encoder = tiktoken.encoding_for_model("gpt-4o") as TokenEncoder;
+		// Use cl100k_base — the most conservative and broadly compatible BPE encoding.
+		// It is shared by GPT-3.5/GPT-4 and gives a safer (larger) estimate than
+		// gpt-4o's o200k_base encoding, which produces fewer tokens for the same text
+		// and would cause context windows for non-OpenAI providers to be under-counted.
+		encoder = tiktoken.get_encoding("cl100k_base") as TokenEncoder;
 		return encoder;
 	} catch {
 		encoderFailed = true;
@@ -30,20 +34,33 @@ async function getEncoder(): Promise<TokenEncoder | null> {
 	}
 }
 
-export async function countTokens(text: string): Promise<number> {
+/**
+ * Count tokens in `text` using tiktoken (cl100k_base) when available.
+ *
+ * When tiktoken is not loaded, falls back to a provider-aware character-ratio
+ * estimate via `estimateTokensForProvider`. Passing `provider` is recommended
+ * so the heuristic fallback is as accurate as possible.
+ */
+export async function countTokens(text: string, provider?: TokenProvider): Promise<number> {
 	const enc = await getEncoder();
 	if (enc) {
 		const tokens = enc.encode(text);
 		return tokens.length;
 	}
-	return Math.ceil(text.length / 4);
+	return estimateTokensForProvider(text, provider ?? "unknown");
 }
 
-export function countTokensSync(text: string): number {
+/**
+ * Synchronous token count — only accurate after `initTokenCounter()` resolves.
+ *
+ * Before init, or when tiktoken is unavailable, falls back to a provider-aware
+ * character-ratio estimate. Passing `provider` is recommended.
+ */
+export function countTokensSync(text: string, provider?: TokenProvider): number {
 	if (encoder) {
 		return encoder.encode(text).length;
 	}
-	return Math.ceil(text.length / 4);
+	return estimateTokensForProvider(text, provider ?? "unknown");
 }
 
 export async function initTokenCounter(): Promise<boolean> {

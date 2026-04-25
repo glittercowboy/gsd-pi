@@ -446,8 +446,8 @@ describe('derive-state-helpers', () => {
     }
   });
 
-  // ─── handleAllSlicesDone: needs-remediation re-triggers validation ──
-  test('handleAllSlicesDone: needs-remediation verdict triggers validating-milestone', async () => {
+  // ─── handleAllSlicesDone: needs-remediation + all slices done → blocked (#4506) ──
+  test('handleAllSlicesDone: needs-remediation with all slices done returns blocked', async () => {
     const base = createFixtureBase();
     try {
       const doneRoadmap = `# M001: Remediation Test\n\n**Vision:** Test.\n\n## Slices\n\n- [x] **S01: Done** \`risk:low\` \`depends:[]\`\n  > Done.\n`;
@@ -462,8 +462,12 @@ describe('derive-state-helpers', () => {
       invalidateStateCache();
       const state = await deriveStateFromDb(base);
 
-      assert.equal(state.phase, 'validating-milestone', 'remediation: phase is validating-milestone');
-      assert.equal(state.activeMilestone?.id, 'M001', 'remediation: activeMilestone is M001');
+      assert.equal(state.phase, 'blocked', 'remediation-stuck: phase is blocked (no infinite re-dispatch)');
+      assert.equal(state.activeMilestone?.id, 'M001', 'remediation-stuck: activeMilestone is M001');
+      assert.ok(
+        state.blockers.some(b => b.includes('needs-remediation') && b.includes('M001')),
+        'remediation-stuck: blocker message mentions milestone and verdict',
+      );
     } finally {
       closeDatabase();
       cleanup(base);

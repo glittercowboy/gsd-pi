@@ -25,10 +25,17 @@ function resolveGsdExtensionDir(): string {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export type WorkflowMode =
+  | "oneshot"
+  | "yaml-step"
+  | "markdown-phase"
+  | "auto-milestone";
+
 export interface TemplateEntry {
   name: string;
   description: string;
   file: string;
+  mode?: WorkflowMode;
   phases: string[];
   triggers: string[];
   artifact_dir: string | null;

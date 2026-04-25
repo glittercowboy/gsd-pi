@@ -62,7 +62,10 @@ function createHost() {
 		defaultEditor: { onEscape: undefined },
 		editor: {},
 		session: { retryAttempt: 0, abortCompaction: () => {}, abortRetry: () => {} },
-		ui: { requestRender: () => {}, terminal: { rows: 50 } },
+		// rows:1 keeps the pinned-zone off-screen-threshold at its floor (1) so
+		// any rendered segment after a pinnable text block triggers the pin.
+		// Real terminals are larger; see chat-controller rowsRenderedAfterContentIndex.
+		ui: { requestRender: () => {}, terminal: { rows: 1, columns: 80 } },
 		footer: { invalidate: () => {} },
 		keybindings: {},
 		statusContainer: { clear: () => {}, addChild: () => {} },
@@ -232,6 +235,538 @@ test("chat-controller renders serverToolUse before trailing text matching conten
 	assert.equal(host.chatContainer.children.length, 2, "text run should render after server tool in content[] order");
 	assert.equal(host.chatContainer.children[0]?.constructor?.name, "ToolExecutionComponent");
 	assert.equal(host.chatContainer.children[1]?.constructor?.name, "AssistantMessageComponent");
+});
+
+test("chat-controller replays final message_end content when result adds unstreamed trailing text", async () => {
+	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
+		fg: (_key: string, text: string) => text,
+		bg: (_key: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		truncate: (text: string) => text,
+	};
+
+	const host = createHost();
+	host.getMarkdownThemeWithSettings = () => ({});
+
+	const tool = {
+		type: "toolCall",
+		id: "mcp-end-replay-1",
+		name: "read",
+		mcpServer: "filesystem",
+		arguments: { filePath: "/tmp/demo.txt" },
+	};
+
+	await handleAgentEvent(host, { type: "message_start", message: makeAssistant([]) } as any);
+
+	const streamedContent = [
+		tool,
+		{ type: "thinking", thinking: "I am analyzing tool output..." },
+	];
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant(streamedContent),
+			assistantMessageEvent: {
+				type: "thinking_delta",
+				contentIndex: 1,
+				delta: "I am analyzing tool output...",
+				partial: makeAssistant(streamedContent),
+			},
+		} as any,
+	);
+
+	assert.equal(host.chatContainer.children.length, 2, "streaming shows tool + thinking only");
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "ToolExecutionComponent");
+	assert.equal(host.chatContainer.children[1]?.constructor?.name, "AssistantMessageComponent");
+
+	// Final payload includes trailing text that never arrived as message_update.
+	const finalContent = [
+		tool,
+		{ type: "thinking", thinking: "I am analyzing tool output..." },
+		{ type: "text", text: "Correct anything important I missed?" },
+	];
+	await handleAgentEvent(host, { type: "message_end", message: makeAssistant(finalContent) } as any);
+
+	assert.equal(host.chatContainer.children.length, 3, "message_end should replay and include trailing text segment");
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "ToolExecutionComponent");
+	assert.equal(host.chatContainer.children[1]?.constructor?.name, "AssistantMessageComponent");
+	assert.equal(host.chatContainer.children[2]?.constructor?.name, "AssistantMessageComponent");
+});
+
+test("chat-controller keeps pre-tool prose visible until post-tool prose arrives, then prunes it", async () => {
+	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
+		fg: (_key: string, text: string) => text,
+		bg: (_key: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		truncate: (text: string) => text,
+	};
+
+	const host = createHost();
+	host.getMarkdownThemeWithSettings = () => ({});
+
+	const mcpTool = {
+		type: "toolCall",
+		id: "mcp-tool-1",
+		name: "read",
+		mcpServer: "filesystem",
+		arguments: { filePath: "/tmp/demo.txt" },
+	};
+
+	await handleAgentEvent(host, { type: "message_start", message: makeAssistant([]) } as any);
+
+	// Provisional assistant text arrives first.
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant([{ type: "text", text: "Let me inspect the workspace first." }]),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: "Let me inspect the workspace first.",
+				partial: makeAssistant([{ type: "text", text: "Let me inspect the workspace first." }]),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 1);
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "AssistantMessageComponent");
+
+	// MCP tool appears; provisional text should remain visible until post-tool prose exists.
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant([{ type: "text", text: "Let me inspect the workspace first." }, mcpTool]),
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 1,
+				toolCall: {
+					...mcpTool,
+					externalResult: {
+						content: [{ type: "text", text: "file preview" }],
+						details: {},
+						isError: false,
+					},
+				},
+				partial: makeAssistant([{ type: "text", text: "Let me inspect the workspace first." }, mcpTool]),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 2, "pre-tool prose should remain during tool-only window");
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "AssistantMessageComponent");
+	assert.equal(host.chatContainer.children[1]?.constructor?.name, "ToolExecutionComponent");
+
+	// Post-tool prose arrives: pre-tool prose should now be pruned.
+	const finalContent = [
+		{ type: "text", text: "Let me inspect the workspace first." },
+		mcpTool,
+		{ type: "text", text: "Which missing feature matters most to you?" },
+	];
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant(finalContent),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 2,
+				delta: "Which missing feature matters most to you?",
+				partial: makeAssistant(finalContent),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 2);
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "ToolExecutionComponent");
+	assert.equal(host.chatContainer.children[1]?.constructor?.name, "AssistantMessageComponent");
+
+	// Finalize to tear down any pinned spinner state.
+	await handleAgentEvent(host, { type: "message_end", message: makeAssistant(finalContent) } as any);
+});
+
+test("chat-controller keeps pre-tool thinking visible for claude-code MCP turns without post-tool prose", async () => {
+	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
+		fg: (_key: string, text: string) => text,
+		bg: (_key: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		truncate: (text: string) => text,
+	};
+
+	const host = createHost();
+	host.getMarkdownThemeWithSettings = () => ({});
+
+	const mcpTool = {
+		type: "toolCall",
+		id: "mcp-tool-thinking-1",
+		name: "read",
+		mcpServer: "filesystem",
+		arguments: { filePath: "/tmp/demo.txt" },
+	};
+
+	await handleAgentEvent(host, { type: "message_start", message: makeAssistant([]) } as any);
+
+	const thinkingOnly = [{ type: "thinking", thinking: "I should inspect the workspace." }];
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant(thinkingOnly),
+			assistantMessageEvent: {
+				type: "thinking_delta",
+				contentIndex: 0,
+				delta: "I should inspect the workspace.",
+				partial: makeAssistant(thinkingOnly),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 1);
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "AssistantMessageComponent");
+
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant([thinkingOnly[0], mcpTool]),
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 1,
+				toolCall: {
+					...mcpTool,
+					externalResult: {
+						content: [{ type: "text", text: "file preview" }],
+						details: {},
+						isError: false,
+					},
+				},
+				partial: makeAssistant([thinkingOnly[0], mcpTool]),
+			},
+		} as any,
+	);
+
+	assert.equal(host.chatContainer.children.length, 2, "thinking should remain visible while only tool output is present");
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "AssistantMessageComponent");
+	assert.equal(host.chatContainer.children[1]?.constructor?.name, "ToolExecutionComponent");
+
+	await handleAgentEvent(host, { type: "message_end", message: makeAssistant([thinkingOnly[0], mcpTool]) } as any);
+});
+
+test("chat-controller keeps pre-tool question text for claude-code MCP when post-tool prose exists", async () => {
+	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
+		fg: (_key: string, text: string) => text,
+		bg: (_key: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		truncate: (text: string) => text,
+	};
+
+	const host = createHost();
+	host.getMarkdownThemeWithSettings = () => ({});
+
+	const mcpTool = {
+		type: "toolCall",
+		id: "mcp-tool-question-1",
+		name: "glob",
+		mcpServer: "filesystem",
+		arguments: { pattern: "**/*" },
+	};
+
+	await handleAgentEvent(host, { type: "message_start", message: makeAssistant([]) } as any);
+
+	const questionText = { type: "text", text: "Which file should I inspect?" };
+
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant([questionText]),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: questionText.text,
+				partial: makeAssistant([questionText]),
+			},
+		} as any,
+	);
+
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant([questionText, mcpTool]),
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 1,
+				toolCall: {
+					...mcpTool,
+					externalResult: {
+						content: [{ type: "text", text: "glob output" }],
+						details: {},
+						isError: false,
+					},
+				},
+				partial: makeAssistant([questionText, mcpTool]),
+			},
+		} as any,
+	);
+
+	const postTool = { type: "text", text: "I'll review that next." };
+	const finalContent = [questionText, mcpTool, postTool];
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant(finalContent),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 2,
+				delta: postTool.text,
+				partial: makeAssistant(finalContent),
+			},
+		} as any,
+	);
+
+	assert.equal(host.chatContainer.children.length, 3, "question text should remain alongside MCP tool and post-tool prose");
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "AssistantMessageComponent", "pre-tool question stays visible");
+	assert.equal(host.chatContainer.children[1]?.constructor?.name, "ToolExecutionComponent", "tool renders in the middle");
+	assert.equal(host.chatContainer.children[2]?.constructor?.name, "AssistantMessageComponent", "post-tool prose renders last");
+
+	await handleAgentEvent(host, { type: "message_end", message: makeAssistant(finalContent) } as any);
+});
+
+test("chat-controller prunes orphaned provisional text after claude-code sub-turn shrink when MCP tools appear", async () => {
+	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
+		fg: (_key: string, text: string) => text,
+		bg: (_key: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		truncate: (text: string) => text,
+	};
+
+	const host = createHost();
+	host.getMarkdownThemeWithSettings = () => ({});
+
+	const mcpTool = {
+		type: "toolCall",
+		id: "mcp-tool-shrink-1",
+		name: "glob",
+		mcpServer: "filesystem",
+		arguments: { pattern: "**/*" },
+	};
+
+	await handleAgentEvent(host, { type: "message_start", message: makeAssistant([]) } as any);
+
+	// Sub-turn 1: generate longer provisional text content.
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant([{ type: "text", text: "Old provisional preface." }, { type: "text", text: "More old text." }]),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 1,
+				delta: "More old text.",
+				partial: makeAssistant([{ type: "text", text: "Old provisional preface." }, { type: "text", text: "More old text." }]),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 1, "first sub-turn text run should render");
+
+	// Sub-turn 2 starts (content shrink): old component is orphaned by design.
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant([{ type: "text", text: "New provisional text before tool." }]),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: "New provisional text before tool.",
+				partial: makeAssistant([{ type: "text", text: "New provisional text before tool." }]),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 2, "shrink keeps prior text until MCP tool context appears");
+
+	// MCP tool appears in sub-turn 2: tool-only windows keep provisional prose visible.
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant([{ type: "text", text: "New provisional text before tool." }, mcpTool]),
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 1,
+				toolCall: {
+					...mcpTool,
+					externalResult: {
+						content: [{ type: "text", text: "glob output" }],
+						details: {},
+						isError: false,
+					},
+				},
+				partial: makeAssistant([{ type: "text", text: "New provisional text before tool." }, mcpTool]),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 3, "stale text runs are deferred until post-tool prose arrives");
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "AssistantMessageComponent");
+	assert.equal(host.chatContainer.children[1]?.constructor?.name, "AssistantMessageComponent");
+	assert.equal(host.chatContainer.children[2]?.constructor?.name, "ToolExecutionComponent");
+
+	const finalContent = [mcpTool, { type: "text", text: "Final visible question?" }];
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant(finalContent),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 1,
+				delta: "Final visible question?",
+				partial: makeAssistant(finalContent),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 2);
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "ToolExecutionComponent");
+	assert.equal(host.chatContainer.children[1]?.constructor?.name, "AssistantMessageComponent");
+
+	await handleAgentEvent(host, { type: "message_end", message: makeAssistant(finalContent) } as any);
+});
+
+test("chat-controller prunes orphans from multiple sub-turn shrinks before MCP post-tool prose", async () => {
+	(globalThis as any)[Symbol.for("@gsd/pi-coding-agent:theme")] = {
+		fg: (_key: string, text: string) => text,
+		bg: (_key: string, text: string) => text,
+		bold: (text: string) => text,
+		italic: (text: string) => text,
+		truncate: (text: string) => text,
+	};
+
+	const host = createHost();
+	host.getMarkdownThemeWithSettings = () => ({});
+
+	const mcpTool = {
+		type: "toolCall",
+		id: "mcp-tool-multi-shrink-1",
+		name: "glob",
+		mcpServer: "filesystem",
+		arguments: { pattern: "**/*" },
+	};
+
+	await handleAgentEvent(host, { type: "message_start", message: makeAssistant([]) } as any);
+
+	// Sub-turn 1: 3 text blocks (merged into one text-run).
+	const subTurn1 = [
+		{ type: "text", text: "First provisional A." },
+		{ type: "text", text: "First provisional B." },
+		{ type: "text", text: "First provisional C." },
+	];
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant(subTurn1),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 2,
+				delta: "First provisional C.",
+				partial: makeAssistant(subTurn1),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 1, "first sub-turn renders 1 text-run");
+
+	// Sub-turn 2 (first shrink 3 → 2 blocks).
+	const subTurn2 = [
+		{ type: "text", text: "Second provisional A." },
+		{ type: "text", text: "Second provisional B." },
+	];
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant(subTurn2),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 1,
+				delta: "Second provisional B.",
+				partial: makeAssistant(subTurn2),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 2, "first shrink appends, keeps prior text as frozen history");
+
+	// Sub-turn 3 (second shrink 2 → 1 block). This is the critical step —
+	// without orphan accumulation, sub-turn 1's orphaned segment would be
+	// dropped from tracking here and later strand in the container.
+	const subTurn3 = [{ type: "text", text: "Third provisional." }];
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant(subTurn3),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 0,
+				delta: "Third provisional.",
+				partial: makeAssistant(subTurn3),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 3, "second shrink appends again, still no prune (no post-tool text)");
+
+	// MCP tool appears — tool-only window still keeps provisional prose visible.
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant([{ type: "text", text: "Third provisional." }, mcpTool]),
+			assistantMessageEvent: {
+				type: "toolcall_end",
+				contentIndex: 1,
+				toolCall: {
+					...mcpTool,
+					externalResult: {
+						content: [{ type: "text", text: "glob output" }],
+						details: {},
+						isError: false,
+					},
+				},
+				partial: makeAssistant([{ type: "text", text: "Third provisional." }, mcpTool]),
+			},
+		} as any,
+	);
+	assert.equal(host.chatContainer.children.length, 4, "tool-only window keeps all three provisional text-runs");
+
+	// Final post-tool text arrives — prune must drop ALL three pre-tool
+	// provisional text-runs across both shrinks, leaving only tool + final text.
+	const finalContent = [mcpTool, { type: "text", text: "Final answer." }];
+	await handleAgentEvent(
+		host,
+		{
+			type: "message_update",
+			message: makeAssistant(finalContent),
+			assistantMessageEvent: {
+				type: "text_delta",
+				contentIndex: 1,
+				delta: "Final answer.",
+				partial: makeAssistant(finalContent),
+			},
+		} as any,
+	);
+	assert.equal(
+		host.chatContainer.children.length,
+		2,
+		"all pre-tool provisional segments from every shrink must be pruned once post-tool prose arrives",
+	);
+	assert.equal(host.chatContainer.children[0]?.constructor?.name, "ToolExecutionComponent");
+	assert.equal(host.chatContainer.children[1]?.constructor?.name, "AssistantMessageComponent");
+
+	await handleAgentEvent(host, { type: "message_end", message: makeAssistant(finalContent) } as any);
 });
 
 test("chat-controller pins latest assistant text above editor when tool calls are present", async () => {
@@ -812,4 +1347,84 @@ test("chat-controller updates pinned zone after sub-turn shrink", async () => {
 
 	// Finalize so the module-level pinned spinner (setInterval) is torn down and the test process can exit.
 	await handleAgentEvent(host, { type: "message_end", message: makeAssistant([{ type: "text", text: "second" }, t2]) } as any);
+});
+
+test("chat-controller: agent_end without message_end must not remove streaming component from DOM (regression #4197)", async () => {
+	const host = createHost();
+
+	await handleAgentEvent(host, {
+		type: "message_start",
+		message: makeAssistant([]),
+	} as any);
+
+	// Simulate partial streaming that creates an AssistantMessageComponent
+	await handleAgentEvent(host, {
+		type: "message_update",
+		message: makeAssistant([{ type: "text", text: "partial answer" }]),
+		assistantMessageEvent: {
+			type: "text_delta",
+			contentIndex: 0,
+			delta: "partial answer",
+			partial: makeAssistant([{ type: "text", text: "partial answer" }]),
+		},
+	} as any);
+
+	// Precondition: component is in DOM
+	assert.equal(
+		host.chatContainer.children.length,
+		1,
+		"streaming component must be in DOM after message_update",
+	);
+	const comp = host.chatContainer.children[0];
+
+	// Simulate abort: agent_end fires WITHOUT message_end
+	await handleAgentEvent(host, { type: "agent_end" } as any);
+
+	assert.equal(
+		host.chatContainer.children.length,
+		1,
+		"agent_end must NOT remove the streaming component from the DOM (issue #4197)",
+	);
+	assert.equal(
+		host.chatContainer.children[0],
+		comp,
+		"the same component instance must remain in the DOM after agent_end",
+	);
+});
+
+test("chat-controller: agent_end after message_end must not alter DOM", async () => {
+	const host = createHost();
+	const content = [{ type: "text", text: "complete answer" }];
+
+	await handleAgentEvent(host, {
+		type: "message_start",
+		message: makeAssistant([]),
+	} as any);
+
+	await handleAgentEvent(host, {
+		type: "message_update",
+		message: makeAssistant(content),
+		assistantMessageEvent: {
+			type: "text_delta",
+			contentIndex: 0,
+			delta: "complete answer",
+			partial: makeAssistant(content),
+		},
+	} as any);
+
+	await handleAgentEvent(host, {
+		type: "message_end",
+		message: makeAssistant(content),
+	} as any);
+
+	const countAfterMessageEnd = host.chatContainer.children.length;
+	assert.ok(countAfterMessageEnd > 0, "component must be present after message_end");
+
+	await handleAgentEvent(host, { type: "agent_end" } as any);
+
+	assert.equal(
+		host.chatContainer.children.length,
+		countAfterMessageEnd,
+		"agent_end after message_end must not add or remove DOM nodes",
+	);
 });
