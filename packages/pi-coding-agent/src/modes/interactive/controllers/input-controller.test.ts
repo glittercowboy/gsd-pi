@@ -17,6 +17,7 @@ function createHost(options: HostOptions = {}) {
 	const prompted: string[] = [];
 	const errors: string[] = [];
 	const warnings: string[] = [];
+	const tips: string[] = [];
 	const history: string[] = [];
 	const knownSlashCommands = new Set(options.knownSlashCommands ?? []);
 	let editorText = "";
@@ -60,6 +61,9 @@ function createHost(options: HostOptions = {}) {
 		showError(message: string) {
 			errors.push(message);
 		},
+		showTip(message: string) {
+			tips.push(message);
+		},
 		updateEditorBorderColor() {},
 		isExtensionCommand() {
 			return false;
@@ -70,6 +74,15 @@ function createHost(options: HostOptions = {}) {
 		queueCompactionMessage() {},
 		updatePendingMessagesDisplay() {},
 		flushPendingBashComponents() {},
+		contextualTips: {
+			recordBashIncluded() {},
+			evaluate() {
+				return undefined;
+			},
+		},
+		getContextPercent() {
+			return undefined;
+		},
 	};
 
 	setupEditorSubmitHandler(host as any);
@@ -79,6 +92,7 @@ function createHost(options: HostOptions = {}) {
 		prompted,
 		errors,
 		warnings,
+		tips,
 		history,
 		getEditorText: () => editorText,
 		getSettingsOpened: () => settingsOpened,

@@ -1,12 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
+import { symlinkSync, realpathSync } from "node:fs";
+
 import { _getAdapter, closeDatabase } from "../../../src/resources/extensions/gsd/gsd-db.ts";
-import { registerWorkflowTools, WORKFLOW_TOOL_NAMES } from "./workflow-tools.ts";
+import { registerWorkflowTools, WORKFLOW_TOOL_NAMES, validateProjectDir } from "./workflow-tools.ts";
 
 function makeTmpBase(): string {
   const base = join(tmpdir(), `gsd-mcp-workflow-${randomUUID()}`);
@@ -286,6 +288,136 @@ describe("workflow MCP tools", () => {
     }
   });
 
+  it("#4477 gsd_task_complete forwards every schema field to the executor (regression for destructure-rebuild bug class)", async () => {
+    // Locks in the class-fix from PR #4477 review: handleTaskComplete previously
+    // destructured args into a hand-listed set of fields and rebuilt the call
+    // payload, which silently dropped ADR-011's `escalation` field (and any
+    // future schema field added without updating the rebuild). The fix passes
+    // `args` through directly, matching the spread pattern of sibling
+    // handlers. This test verifies the contract by injecting a mock executor
+    // module that captures the args, calling gsd_task_complete with an
+    // `escalation` payload, and asserting the field reached the executor.
+    const base = makeTmpBase();
+    const capturePath = join(base, "captured-args.json");
+    const mockModulePath = join(base, "mock-executors.mjs");
+    const prevModule = process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+    const prevCapture = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
+    try {
+      // Mock module: implements the WorkflowToolExecutors shape.
+      // executeTaskComplete writes its received args to disk for assertion.
+      // Other executors are no-op stubs to satisfy isWorkflowToolExecutors.
+      const mockSource = `
+import { writeFileSync } from "node:fs";
+
+const noop = async () => ({ content: [{ type: "text", text: "noop" }] });
+
+export const SUPPORTED_SUMMARY_ARTIFACT_TYPES = ["SUMMARY", "UAT", "CONTEXT", "PLAN"];
+export const executeMilestoneStatus = noop;
+export const executePlanMilestone = noop;
+export const executePlanSlice = noop;
+export const executeReplanSlice = noop;
+export const executeSliceComplete = noop;
+export const executeCompleteMilestone = noop;
+export const executeValidateMilestone = noop;
+export const executeReassessRoadmap = noop;
+export const executeSaveGateResult = noop;
+export const executeSummarySave = noop;
+
+export const executeTaskComplete = async (params, projectDir) => {
+  const capturePath = process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
+  if (capturePath) {
+    writeFileSync(capturePath, JSON.stringify({ params, projectDir }, null, 2));
+  }
+  return {
+    content: [{ type: "text", text: "mock task complete" }],
+    details: { taskId: params.taskId },
+  };
+};
+`;
+      writeFileSync(mockModulePath, mockSource, "utf-8");
+      process.env.GSD_WORKFLOW_EXECUTORS_MODULE = mockModulePath;
+      process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH = capturePath;
+
+      // Fresh import bypasses the cached workflowToolExecutorsPromise so the
+      // mock module is actually loaded for this test.
+      const { registerWorkflowTools: freshRegisterWorkflowTools } = await import(
+        `./workflow-tools.ts?escalation-test=${randomUUID()}`
+      );
+      const server = makeMockServer();
+      freshRegisterWorkflowTools(server as any);
+      const taskTool = server.tools.find((t) => t.name === "gsd_task_complete");
+      assert.ok(taskTool, "task tool should be registered");
+
+      // Mirrors the ADR-011 escalation schema: question + 2-4 options
+      // (each with id/label/tradeoffs) + recommendation + rationale +
+      // continueWithDefault flag.
+      const escalationPayload = {
+        question: "Should the auth flow use OAuth or PAT?",
+        options: [
+          { id: "A", label: "OAuth", tradeoffs: "Best UX; requires more setup." },
+          { id: "B", label: "PAT", tradeoffs: "Simpler; weaker rotation story." },
+        ],
+        recommendation: "A",
+        recommendationRationale: "Initial requirement implied multi-user; OAuth fits better.",
+        continueWithDefault: true,
+      };
+
+      await taskTool!.handler({
+        projectDir: base,
+        taskId: "T01",
+        sliceId: "S01",
+        milestoneId: "M001",
+        oneLiner: "Completed task with escalation",
+        narrative: "Did the work but flagged an ambiguity",
+        verification: "npm test",
+        escalation: escalationPayload,
+        verificationEvidence: [
+          { command: "npm test", exitCode: 0, verdict: "pass", durationMs: 1234 },
+        ],
+      });
+
+      assert.ok(existsSync(capturePath), "mock executor should have written captured args to disk");
+      const captured = JSON.parse(readFileSync(capturePath, "utf-8"));
+
+      // The handler resolves projectDir via realpathSync (security/symlink check),
+      // so on macOS where /var symlinks to /private/var, the captured path will
+      // be the realpath form. Normalize both sides.
+      assert.equal(captured.projectDir, realpathSync(base), "projectDir should be passed as second arg");
+      assert.deepEqual(
+        captured.params.escalation,
+        escalationPayload,
+        "escalation payload must reach the executor verbatim — regression guard for the destructure-rebuild bug class (#4477 review)",
+      );
+      // Spot-check a couple of other fields to ensure the spread pattern
+      // doesn't accidentally exclude the rest while including escalation.
+      assert.equal(captured.params.taskId, "T01", "taskId must be forwarded");
+      assert.equal(captured.params.milestoneId, "M001", "milestoneId must be forwarded");
+      assert.deepEqual(
+        captured.params.verificationEvidence,
+        [{ command: "npm test", exitCode: 0, verdict: "pass", durationMs: 1234 }],
+        "verificationEvidence must be forwarded (existing field)",
+      );
+      // Ensure no projectDir leak into params (it should be the second arg only).
+      assert.equal(
+        captured.params.projectDir,
+        undefined,
+        "projectDir must NOT appear in params — it's stripped via the spread destructure",
+      );
+    } finally {
+      if (prevModule === undefined) {
+        delete process.env.GSD_WORKFLOW_EXECUTORS_MODULE;
+      } else {
+        process.env.GSD_WORKFLOW_EXECUTORS_MODULE = prevModule;
+      }
+      if (prevCapture === undefined) {
+        delete process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH;
+      } else {
+        process.env.GSD_TEST_TASK_COMPLETE_CAPTURE_PATH = prevCapture;
+      }
+      cleanup(base);
+    }
+  });
+
   it("gsd_complete_task alias delegates to gsd_task_complete behavior", async () => {
     const base = makeTmpBase();
     try {
@@ -379,6 +511,346 @@ describe("workflow MCP tools", () => {
         existsSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-PLAN.md")),
         "task plan should exist on disk",
       );
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("other workflow tools reject empty required strings at the schema layer", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+
+      const expectRejection = async (toolName: string, args: Record<string, unknown>, expectedField: string) => {
+        const tool = server.tools.find((t) => t.name === toolName);
+        assert.ok(tool, `${toolName} should be registered`);
+        let caught: unknown;
+        try {
+          await tool!.handler(args);
+        } catch (err) {
+          caught = err;
+        }
+        assert.ok(caught, `${toolName} should reject empty ${expectedField}`);
+        const message = caught instanceof Error ? caught.message : String(caught);
+        assert.ok(
+          message.includes(expectedField),
+          `${toolName} error should mention ${expectedField}, got: ${message}`,
+        );
+      };
+
+      // Empty sliceId top-level
+      await expectRejection("gsd_plan_slice", {
+        projectDir: base,
+        milestoneId: "M001",
+        sliceId: "",
+        goal: "Persist slice plan.",
+        tasks: [],
+      }, "sliceId");
+
+      // Empty task verify inside tasks array
+      await expectRejection("gsd_plan_slice", {
+        projectDir: base,
+        milestoneId: "M001",
+        sliceId: "S01",
+        goal: "Persist slice plan.",
+        tasks: [
+          {
+            taskId: "T01",
+            title: "Add bridge",
+            description: "Implement bridge.",
+            estimate: "15m",
+            files: ["src/x.ts"],
+            verify: "",
+            inputs: ["ROADMAP.md"],
+            expectedOutput: ["S01-PLAN.md"],
+          },
+        ],
+      }, "verify");
+
+      // Empty element inside files[] array
+      await expectRejection("gsd_plan_slice", {
+        projectDir: base,
+        milestoneId: "M001",
+        sliceId: "S01",
+        goal: "Persist slice plan.",
+        tasks: [
+          {
+            taskId: "T01",
+            title: "Add bridge",
+            description: "Implement bridge.",
+            estimate: "15m",
+            files: ["src/x.ts", "   "],
+            verify: "node --test",
+            inputs: ["ROADMAP.md"],
+            expectedOutput: ["S01-PLAN.md"],
+          },
+        ],
+      }, "files");
+
+      // Empty milestoneId on gsd_plan_task
+      await expectRejection("gsd_plan_task", {
+        projectDir: base,
+        milestoneId: "",
+        sliceId: "S01",
+        taskId: "T01",
+        title: "t",
+        description: "d",
+        estimate: "1m",
+        files: [],
+        verify: "v",
+        inputs: [],
+        expectedOutput: [],
+      }, "milestoneId");
+
+      // Empty observabilityImpact explicitly rejected (optional-but-non-empty)
+      await expectRejection("gsd_plan_task", {
+        projectDir: base,
+        milestoneId: "M001",
+        sliceId: "S01",
+        taskId: "T01",
+        title: "t",
+        description: "d",
+        estimate: "1m",
+        files: [],
+        verify: "v",
+        inputs: [],
+        expectedOutput: [],
+        observabilityImpact: "   ",
+      }, "observabilityImpact");
+
+      // Empty assessment on gsd_reassess_roadmap
+      await expectRejection("gsd_reassess_roadmap", {
+        projectDir: base,
+        milestoneId: "M001",
+        completedSliceId: "S01",
+        verdict: "roadmap-confirmed",
+        assessment: "",
+        sliceChanges: { modified: [], added: [], removed: [] },
+      }, "assessment");
+
+      // Empty keyRisks[i].risk on gsd_plan_milestone top-level arrays
+      await expectRejection("gsd_plan_milestone", {
+        projectDir: base,
+        milestoneId: "M001",
+        title: "T",
+        vision: "V",
+        slices: [],
+        keyRisks: [{ risk: "", whyItMatters: "because." }],
+      }, "risk");
+
+      // Empty blockerDescription on gsd_replan_slice
+      await expectRejection("gsd_replan_slice", {
+        projectDir: base,
+        milestoneId: "M001",
+        sliceId: "S01",
+        blockerTaskId: "T01",
+        blockerDescription: "",
+        whatChanged: "x",
+        updatedTasks: [],
+        removedTaskIds: [],
+      }, "blockerDescription");
+
+      // Empty milestoneId on gsd_task_complete
+      await expectRejection("gsd_task_complete", {
+        projectDir: base,
+        taskId: "T01",
+        sliceId: "S01",
+        milestoneId: "",
+        oneLiner: "ol",
+        narrative: "n",
+        verification: "v",
+      }, "milestoneId");
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_plan_milestone rejects empty slice fields up front with all violations", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const milestoneTool = server.tools.find((t) => t.name === "gsd_plan_milestone");
+      assert.ok(milestoneTool, "milestone planning tool should be registered");
+
+      let caught: unknown;
+      try {
+        await milestoneTool!.handler({
+          projectDir: base,
+          milestoneId: "M001",
+          title: "Workflow MCP planning",
+          vision: "Plan milestone over MCP.",
+          slices: [
+            {
+              sliceId: "S01",
+              title: "Bridge planning",
+              risk: "medium",
+              depends: [],
+              demo: "Milestone plan persists through MCP.",
+              goal: "Persist roadmap state.",
+              successCriteria: "",
+              proofLevel: "",
+              integrationClosure: "   ",
+              observabilityImpact: "",
+            },
+          ],
+        });
+      } catch (err) {
+        caught = err;
+      }
+      assert.ok(caught, "empty slice fields should be rejected");
+      const message = caught instanceof Error ? caught.message : String(caught);
+      for (const field of ["successCriteria", "proofLevel", "integrationClosure", "observabilityImpact"]) {
+        assert.ok(
+          message.includes(field),
+          `parse error should mention ${field}, got: ${message}`,
+        );
+      }
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_plan_milestone rejects a full slice with missing heavy fields via a behavioral round-trip", async () => {
+    // Behavioral guard for the full-vs-sketch conditional. The original
+    // regression (invisible "required unless isSketch" requirement) is
+    // surfaced to users through two distinct runtime channels:
+    //   1. A parse-time rejection when the tool is called with empty heavy
+    //      fields on a non-sketch slice (no isSketch=true).
+    //   2. An acceptance when isSketch=true + sketchScope is supplied and
+    //      heavy fields are omitted.
+    // Both arms are exercised below against the live handler — any schema
+    // refactor that preserves the user-observable contract (rejection +
+    // acceptance) passes, and any refactor that breaks the contract
+    // fails, regardless of whether internal `.describe()` prose changes.
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const milestoneTool = server.tools.find((t) => t.name === "gsd_plan_milestone");
+      assert.ok(milestoneTool, "milestone planning tool should be registered");
+
+      // Arm 1: full slice (isSketch omitted) with the heavy fields missing
+      // must reject and name ALL four fields so the agent can self-correct.
+      let fullError: unknown;
+      try {
+        await milestoneTool!.handler({
+          projectDir: base,
+          milestoneId: "M001",
+          title: "Full slice path",
+          vision: "Behavioral test for isSketch conditional.",
+          slices: [
+            {
+              sliceId: "S01",
+              title: "Heavy slice",
+              risk: "medium",
+              depends: [],
+              demo: "Demo.",
+              goal: "Goal.",
+              // heavy fields intentionally omitted
+            },
+          ],
+        });
+      } catch (err) {
+        fullError = err;
+      }
+      assert.ok(fullError, "a non-sketch slice without heavy fields must reject");
+      const fullMsg = fullError instanceof Error ? fullError.message : String(fullError);
+      for (const field of ["successCriteria", "proofLevel", "integrationClosure", "observabilityImpact"]) {
+        assert.ok(
+          fullMsg.includes(field),
+          `rejection must name ${field} so agents can recover without a second round-trip; got: ${fullMsg}`,
+        );
+      }
+
+      // Arm 2: sketch slice (isSketch=true + sketchScope) with heavy fields
+      // omitted must be accepted — proving the conditional is live. Assert
+      // success directly rather than just checking a thrown message omits
+      // the heavy-field names: a generic failure would otherwise silently
+      // pass this arm.
+      const sketchResult = await milestoneTool!.handler({
+        projectDir: base,
+        milestoneId: "M002",
+        title: "Sketch slice path",
+        vision: "Behavioral test for isSketch conditional.",
+        slices: [
+          {
+            sliceId: "S01",
+            title: "Sketch slice",
+            risk: "medium",
+            depends: [],
+            demo: "Demo.",
+            goal: "Goal.",
+            isSketch: true,
+            sketchScope: "Two-sentence scope. Boundary defined.",
+          },
+        ],
+      });
+      assert.match(
+        (sketchResult as any).content[0].text as string,
+        /Planned milestone M002/,
+        "sketch slice with isSketch=true must be accepted by the handler",
+      );
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_plan_milestone requires sketchScope when isSketch=true and skips heavy fields", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const milestoneTool = server.tools.find((t) => t.name === "gsd_plan_milestone");
+      assert.ok(milestoneTool, "milestone planning tool should be registered");
+
+      let caught: unknown;
+      try {
+        await milestoneTool!.handler({
+          projectDir: base,
+          milestoneId: "M001",
+          title: "Sketch milestone",
+          vision: "Sketch first, refine later.",
+          slices: [
+            {
+              sliceId: "S01",
+              title: "Sketch slice",
+              risk: "low",
+              depends: [],
+              demo: "Stub demo.",
+              goal: "Stub goal.",
+              isSketch: true,
+              sketchScope: "",
+            },
+          ],
+        });
+      } catch (err) {
+        caught = err;
+      }
+      assert.ok(caught, "empty sketchScope should be rejected when isSketch=true");
+      const message = caught instanceof Error ? caught.message : String(caught);
+      assert.ok(message.includes("sketchScope"), `expected sketchScope error, got: ${message}`);
+
+      const sketchResult = await milestoneTool!.handler({
+        projectDir: base,
+        milestoneId: "M001",
+        title: "Sketch milestone",
+        vision: "Sketch first, refine later.",
+        slices: [
+          {
+            sliceId: "S01",
+            title: "Sketch slice",
+            risk: "low",
+            depends: [],
+            demo: "Stub demo.",
+            goal: "Stub goal.",
+            isSketch: true,
+            sketchScope: "Defer heavy planning fields until refine-slice.",
+          },
+        ],
+      });
+      assert.match((sketchResult as any).content[0].text as string, /Planned milestone M001/);
     } finally {
       cleanup(base);
     }
@@ -980,6 +1452,21 @@ describe("workflow MCP tools", () => {
         findings: "No new attack surface was introduced.",
       });
       assert.match((gateResult as any).content[0].text as string, /Gate Q3 result saved/);
+      // #4472: executor `details` must be adapted to MCP `structuredContent`
+      // so it survives the protocol transport intact. Asserting property
+      // *absence* rather than `=== undefined` so a future regression that
+      // explicitly sets `details: undefined` (rather than removing it) still
+      // fails this contract test.
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(gateResult, "details"),
+        false,
+        "executor `details` field must be stripped from MCP tool result",
+      );
+      assert.deepEqual(
+        (gateResult as any).structuredContent,
+        { operation: "save_gate_result", gateId: "Q3", verdict: "pass" },
+        "executor details must be forwarded on the MCP `structuredContent` channel",
+      );
       const gateRows = _getAdapter()!.prepare(
         "SELECT status, verdict, rationale FROM quality_gates WHERE milestone_id = ? AND slice_id = ? AND gate_id = ?",
       ).all("M006", "S06", "Q3") as Array<Record<string, unknown>>;
@@ -1089,5 +1576,93 @@ describe("URL scheme regex — Windows drive letter safety", () => {
     assert.ok(!urlSchemeRegex.test("/usr/local/lib/module.js"), "unix absolute path should not match");
     assert.ok(!urlSchemeRegex.test("./relative/path.js"), "relative path should not match");
     assert.ok(!urlSchemeRegex.test("../parent/path.js"), "parent relative path should not match");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateProjectDir — symlink containment hardening (#4476)
+// ---------------------------------------------------------------------------
+//
+// The regression: a symlink inside the allowed root could point outside it,
+// and a lexical-only containment check would happily admit the path. The fix
+// realpath()s the candidate (and the allowed root) before checking
+// containment, falling back to the lexical path only when the candidate
+// itself does not exist (a legitimate brand-new-worktree case).
+
+describe("validateProjectDir", () => {
+  it("rejects a symlink inside the allowed root that points outside it", () => {
+    const allowedRoot = makeTmpBase();
+    const outside = makeTmpBase();
+    const linkInside = join(allowedRoot, "escape-link");
+    symlinkSync(outside, linkInside, "dir");
+
+    const prevRoot = process.env.GSD_WORKFLOW_PROJECT_ROOT;
+    try {
+      process.env.GSD_WORKFLOW_PROJECT_ROOT = allowedRoot;
+      assert.throws(
+        () => validateProjectDir(linkInside),
+        /configured workflow project root/,
+        "symlink-to-outside must not bypass the containment check",
+      );
+    } finally {
+      if (prevRoot === undefined) {
+        delete process.env.GSD_WORKFLOW_PROJECT_ROOT;
+      } else {
+        process.env.GSD_WORKFLOW_PROJECT_ROOT = prevRoot;
+      }
+      cleanup(allowedRoot);
+      cleanup(outside);
+    }
+  });
+
+  it("accepts a non-existent path inside the allowed root (new worktree case)", () => {
+    const allowedRoot = makeTmpBase();
+    // Use the realpath form so that on platforms where /tmp resolves through a
+    // symlink (macOS /var → /private/var) the lexical fallback for ENOENT
+    // candidates still lines up with the allowed root.
+    const canonicalRoot = realpathSync(allowedRoot);
+    const futureWorktree = join(canonicalRoot, "worktrees", "M999-not-yet-created");
+
+    const prevRoot = process.env.GSD_WORKFLOW_PROJECT_ROOT;
+    try {
+      process.env.GSD_WORKFLOW_PROJECT_ROOT = canonicalRoot;
+      const result = validateProjectDir(futureWorktree);
+      assert.equal(result, futureWorktree, "ENOENT should fall back to the lexical path, not throw");
+    } finally {
+      if (prevRoot === undefined) {
+        delete process.env.GSD_WORKFLOW_PROJECT_ROOT;
+      } else {
+        process.env.GSD_WORKFLOW_PROJECT_ROOT = prevRoot;
+      }
+      cleanup(allowedRoot);
+    }
+  });
+
+  it("accepts a real directory inside the allowed root", () => {
+    const allowedRoot = makeTmpBase();
+    const child = join(allowedRoot, "child");
+    mkdirSync(child, { recursive: true });
+
+    const prevRoot = process.env.GSD_WORKFLOW_PROJECT_ROOT;
+    try {
+      process.env.GSD_WORKFLOW_PROJECT_ROOT = allowedRoot;
+      const result = validateProjectDir(child);
+      // realpath may canonicalize macOS /var → /private/var; assert it ends with our child segment.
+      assert.ok(result.endsWith("child"), `expected resolved path to end with 'child', got ${result}`);
+    } finally {
+      if (prevRoot === undefined) {
+        delete process.env.GSD_WORKFLOW_PROJECT_ROOT;
+      } else {
+        process.env.GSD_WORKFLOW_PROJECT_ROOT = prevRoot;
+      }
+      cleanup(allowedRoot);
+    }
+  });
+
+  it("rejects relative paths", () => {
+    assert.throws(
+      () => validateProjectDir("relative/path"),
+      /must be an absolute path/,
+    );
   });
 });

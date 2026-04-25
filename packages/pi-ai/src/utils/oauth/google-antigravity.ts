@@ -21,11 +21,21 @@ type AntigravityCredentials = OAuthCredentials & {
 };
 
 // Antigravity OAuth credentials (different from Gemini CLI)
-const decode = (s: string) => atob(s);
-const CLIENT_ID = decode(
-	"MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
-);
-const CLIENT_SECRET = decode("R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=");
+//
+// NOTE: These credentials are public in the source code. They should NOT be
+// obfuscated because security scanners flag obfuscated data as potentially
+// malicious (see: https://socket.dev/npm/package/gsd-pi/alerts/2.70.1?alert_name=obfuscatedFile)
+//
+// Google's OAuth implementation requires client_secret for Desktop App OAuth
+// clients even though it cannot be kept secret in distributed applications.
+// The actual security relies on:
+// - PKCE (Proof Key for Code Exchange) via code_verifier
+// - Redirect URI validation (localhost only)
+// - User consent and token scope limits
+//
+// See: https://developers.google.com/identity/protocols/oauth2/native-app
+const CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+const CLIENT_SECRET = "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";
 const REDIRECT_URI = "http://localhost:51121/oauth-callback";
 
 // Antigravity requires additional scopes

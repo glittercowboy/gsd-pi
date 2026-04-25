@@ -1,11 +1,12 @@
 import { describe, it, mock, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { resolve as resolvePath } from "node:path";
 import { resolveToCwd, expandPath } from "./path-utils.js";
 
 describe("resolveToCwd", () => {
 	it("resolves relative paths against cwd", () => {
 		const result = resolveToCwd("foo/bar.txt", "/home/user/project");
-		assert.equal(result, "/home/user/project/foo/bar.txt");
+		assert.equal(result, resolvePath("/home/user/project", "foo/bar.txt"));
 	});
 
 	it("returns absolute paths unchanged", () => {

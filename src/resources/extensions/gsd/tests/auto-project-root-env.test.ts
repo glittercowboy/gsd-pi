@@ -13,11 +13,15 @@ test("auto-mode captures GSD_PROJECT_ROOT before entering the dispatch loop", ()
   const resumeCallIdx = source.indexOf("captureProjectRootEnv(s.originalBasePath || s.basePath);");
   assert.ok(resumeCallIdx > -1, "auto.ts should capture GSD_PROJECT_ROOT before resume autoLoop");
 
-  const firstAutoLoopIdx = source.indexOf("await autoLoop(ctx, pi, s, buildLoopDeps());");
-  assert.ok(firstAutoLoopIdx > -1, "auto.ts should invoke autoLoop()");
+  const firstLoopIdxCandidates = [
+    source.indexOf("await runAutoLoopWithUok({"),
+    source.indexOf("await autoLoop(ctx, pi, s, buildLoopDeps());"),
+  ].filter((idx) => idx > -1);
+  const firstAutoLoopIdx = firstLoopIdxCandidates.length > 0 ? Math.min(...firstLoopIdxCandidates) : -1;
+  assert.ok(firstAutoLoopIdx > -1, "auto.ts should invoke the auto dispatch loop");
   assert.ok(
     resumeCallIdx < firstAutoLoopIdx,
-    "auto.ts must set GSD_PROJECT_ROOT before the first autoLoop() call",
+    "auto.ts must set GSD_PROJECT_ROOT before the first loop call",
   );
 });
 

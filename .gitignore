@@ -11,6 +11,8 @@ src/**/*.d.ts.map
 
 # ── Repowise index (local machine-generated cache) ──
 .repowise/
+repowise.db
+repowise.db-*
 
 # ── GSD project state (development-only, lives in worktree branches) ──
 package-lock.json

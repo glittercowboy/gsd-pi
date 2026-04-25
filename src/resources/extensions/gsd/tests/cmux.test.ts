@@ -14,7 +14,7 @@ import {
   shouldPromptToEnableCmux,
 } from "../../cmux/index.ts";
 import { autoEnableCmuxPreferences } from "../commands-cmux.ts";
-import type { GSDState } from "../types.ts";
+import type { CmuxStateInput } from "../../shared/cmux-events.ts";
 
 test("detectCmuxEnvironment requires workspace, surface, and socket", () => {
   const detected = detectCmuxEnvironment(
@@ -146,15 +146,11 @@ describe("autoEnableCmuxPreferences", () => {
 });
 
 test("buildCmuxStatusLabel and progress prefer deepest active unit", () => {
-  const state: GSDState = {
-    activeMilestone: { id: "M001", title: "Milestone" },
-    activeSlice: { id: "S02", title: "Slice" },
-    activeTask: { id: "T03", title: "Task" },
+  const state: CmuxStateInput = {
+    activeMilestone: { id: "M001" },
+    activeSlice: { id: "S02" },
+    activeTask: { id: "T03" },
     phase: "executing",
-    recentDecisions: [],
-    blockers: [],
-    nextAction: "Keep going",
-    registry: [],
     progress: {
       milestones: { done: 0, total: 1 },
       slices: { done: 1, total: 3 },

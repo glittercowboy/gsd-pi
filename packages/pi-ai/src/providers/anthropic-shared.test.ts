@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { convertTools, mapStopReason } from "./anthropic-shared.js";
+import { convertTools, mapStopReason, mapThinkingLevelToEffort } from "./anthropic-shared.js";
 
 const makeTool = (name: string) =>
 	({
@@ -53,6 +53,20 @@ describe("convertTools cache_control", () => {
 
 		assert.equal(result.length, 1);
 		assert.deepEqual((result[0] as any).cache_control, { type: "ephemeral" });
+	});
+});
+
+describe("mapThinkingLevelToEffort", () => {
+	it("maps xhigh to max for opus-4-6 (no native xhigh support)", () => {
+		assert.equal(mapThinkingLevelToEffort("xhigh", "claude-opus-4-6"), "max");
+	});
+
+	it("maps xhigh to xhigh natively for opus-4-7", () => {
+		assert.equal(mapThinkingLevelToEffort("xhigh", "claude-opus-4-7"), "xhigh");
+	});
+
+	it("maps high to high for opus-4-7", () => {
+		assert.equal(mapThinkingLevelToEffort("high", "claude-opus-4-7"), "high");
 	});
 });
 

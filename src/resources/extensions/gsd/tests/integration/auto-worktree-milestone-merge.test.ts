@@ -854,4 +854,34 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
       "#1906: codeFilesChanged must be true when real code files were merged");
     assert.ok(existsSync(join(repo, "real-code.ts")), "real-code.ts merged to main");
   });
+
+  // #2505 regression: when a per-entry restore of the milestone shelter fails,
+  // the shelter must be retained so the queued milestone files (whose sources
+  // were deleted during the shelter step) remain recoverable. Deleting the
+  // shelter unconditionally would permanently lose that data.
+  test("#2505: shelter retained when restore fails; cleaned up on success", () => {
+    const repo = freshRepo();
+    const wtPath = createAutoWorktree(repo, "M200");
+
+    addSliceToMilestone(repo, wtPath, "M200", "S01", "Feature", [
+      { file: "feature.ts", content: "export const f = 1;\n", message: "add feature" },
+    ]);
+
+    // Seed a queued (non-target) milestone in .gsd/milestones/ that will be
+    // sheltered during the merge and restored afterwards.
+    const queuedDir = join(repo, ".gsd", "milestones", "M201");
+    mkdirSync(queuedDir, { recursive: true });
+    writeFileSync(join(queuedDir, "CONTEXT.md"), "# queued\n");
+
+    const roadmap = makeRoadmap("M200", "Milestone w/ queued sibling", [
+      { id: "S01", title: "Feature" },
+    ]);
+
+    const result = mergeMilestoneToMain(repo, "M200", roadmap);
+
+    // Normal success path: queued milestone restored, shelter cleaned up.
+    assert.ok(existsSync(join(queuedDir, "CONTEXT.md")), "queued milestone restored from shelter");
+    assert.ok(!existsSync(join(repo, ".gsd", ".milestone-shelter")), "shelter removed on successful restore");
+    assert.ok(result.commitMessage.length > 0, "merge completed");
+  });
 });

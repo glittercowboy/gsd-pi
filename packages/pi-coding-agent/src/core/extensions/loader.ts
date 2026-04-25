@@ -39,6 +39,8 @@ import { execCommand } from "../exec.js";
 import { getUntrustedExtensionPaths } from "./project-trust.js";
 export { isProjectTrusted, trustProject, getUntrustedExtensionPaths } from "./project-trust.js";
 import { registerToolCompatibility } from "../tools/tool-compatibility-registry.js";
+import { mergeExtensionEntryPaths } from "./extension-discovery.js";
+import { sortExtensionPaths } from "./extension-sort.js";
 import type {
 	Extension,
 	ExtensionAPI,
@@ -432,6 +434,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		// Stubs replaced by ExtensionRunner at construction time via bindEmitMethods().
 		emitBeforeModelSelect: async () => undefined,
 		emitAdjustToolSet: async () => undefined,
+		emitExtensionEvent: async () => undefined,
 	};
 
 	return runtime;
@@ -595,6 +598,10 @@ function createExtensionAPI(
 			return runtime.emitAdjustToolSet(event);
 		},
 
+		async emitExtensionEvent(event: import("./types.js").ExtensionEvent): Promise<unknown> {
+			return runtime.emitExtensionEvent(event);
+		},
+
 		events: eventBus,
 	} as ExtensionAPI;
 
@@ -646,15 +653,72 @@ export function containsTypeScriptSyntax(source: string): boolean {
  * are compiled once and reused across all extensions.
  */
 let _extensionLoaderJiti: ReturnType<typeof createJiti> | null = null;
+// Tracks every extension-module path that jiti has compiled through the shared
+// singleton so resetExtensionLoaderCache() can also evict Node's global
+// require.cache entries for those modules. jiti stores compiled modules under
+// `nativeRequire.cache[filename]` when `moduleCache: true`, so a new singleton
+// still returns the stale cached module on re-import without this eviction.
+const _loadedExtensionPaths = new Set<string>();
+const _extensionRequire = createRequire(import.meta.url);
 
 /**
  * Reset the shared jiti singleton so the next call to getExtensionLoaderJiti()
  * creates a fresh instance.  This prevents memory leaks in long-running daemon
  * processes (every loaded module stays cached forever) and ensures stale modules
  * are not returned when extension source changes on disk.
+ *
+ * #3616: resetting the singleton alone is insufficient — jiti stores compiled
+ * modules in Node's global require.cache when `moduleCache: true`, which is
+ * shared across singletons. We also evict cached entries for every extension
+ * path we've previously loaded so the next import recompiles from disk.
  */
 export function resetExtensionLoaderCache(): void {
 	_extensionLoaderJiti = null;
+	// Build a set of exact cache keys we expect (raw path, resolved path,
+	// realpath) AND a set of (basename, containing-directory) pairs so we
+	// can also catch entries that jiti/Node wrote under a canonicalized
+	// form (Windows drive-letter case, separator swap, UNC prefix, symlink
+	// resolution). require.cache is shared across all createRequire
+	// instances for CJS, so iterating any instance's cache covers jiti's
+	// internal `nativeRequire.cache` writes.
+	const exact = new Set<string>();
+	const signatures = new Set<string>();
+	const makeSignature = (p: string): string => {
+		const normalized = p.replace(/\\/g, "/").toLowerCase();
+		const slash = normalized.lastIndexOf("/");
+		const base = slash >= 0 ? normalized.slice(slash + 1) : normalized;
+		// Use the trailing two path segments as the signature — unique
+		// enough to avoid collisions in typical filesystems while tolerating
+		// drive-letter / separator variations that differ in the prefix.
+		const parent = slash >= 0 ? normalized.slice(0, slash) : "";
+		const parentSlash = parent.lastIndexOf("/");
+		const parentSeg = parentSlash >= 0 ? parent.slice(parentSlash + 1) : parent;
+		return `${parentSeg}/${base}`;
+	};
+	for (const raw of _loadedExtensionPaths) {
+		exact.add(raw);
+		try {
+			exact.add(_extensionRequire.resolve(raw));
+		} catch {
+			// unresolvable — fall through; signature scan may still hit it
+		}
+		try {
+			exact.add(fs.realpathSync(raw));
+		} catch {
+			// file may have been deleted already; ignore
+		}
+		signatures.add(makeSignature(raw));
+	}
+	for (const key of Object.keys(_extensionRequire.cache)) {
+		if (exact.has(key) || signatures.has(makeSignature(key))) {
+			try {
+				delete _extensionRequire.cache[key];
+			} catch {
+				// require.cache is best-effort; ignore failures (e.g. frozen cache).
+			}
+		}
+	}
+	_loadedExtensionPaths.clear();
 }
 
 function getExtensionLoaderJiti() {
@@ -689,6 +753,7 @@ async function loadExtensionModule(extensionPath: string) {
 	const jiti = getExtensionLoaderJiti();
 
 	const module = await jiti.import(extensionPath, { default: true });
+	_loadedExtensionPaths.add(extensionPath);
 	const factory = module as ExtensionFactory;
 	return typeof factory !== "function" ? undefined : factory;
 }
@@ -842,24 +907,21 @@ export async function loadExtensionFromFactory(
 /**
  * Load extensions from paths.
  *
- * Extensions are loaded in parallel to reduce wall-clock time (~30-50% faster
- * than sequential loading for I/O-bound jiti compilation).
+ * Paths are expected to be topologically sorted by caller (see sortExtensionPaths).
+ * Factories are awaited sequentially so a dependency's factory fully initializes
+ * (registers tools, commands, hooks on `pi`) before any dependent's factory runs.
  */
 export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const runtime = createExtensionRuntime();
 
-	const results = await Promise.all(
-		paths.map((extPath) => loadExtension(extPath, cwd, resolvedEventBus, runtime)),
-	);
-
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
 
-	for (let i = 0; i < results.length; i++) {
-		const { extension, error } = results[i];
+	for (const extPath of paths) {
+		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
 		if (error) {
-			errors.push({ path: paths[i], error });
+			errors.push({ path: extPath, error });
 		} else if (extension) {
 			extensions.push(extension);
 		}
@@ -868,6 +930,7 @@ export async function loadExtensions(paths: string[], cwd: string, eventBus?: Ev
 	return {
 		extensions,
 		errors,
+		warnings: [],
 		runtime,
 	};
 }
@@ -1029,7 +1092,12 @@ export async function discoverAndLoadExtensions(
 
 	// 2. Global extensions: agentDir/extensions/
 	const globalExtDir = path.join(agentDir, "extensions");
-	addPaths(discoverExtensionsInDir(globalExtDir));
+	// 2b. Installed extensions: ~/.gsd/extensions/ merged with bundled (D-14, D-15)
+	// Discovery handles ID-based merge — loader stays dumb.
+	const installedExtDir = path.join(path.dirname(agentDir), "extensions");
+	const globalPaths = discoverExtensionsInDir(globalExtDir);
+	const mergedPaths = mergeExtensionEntryPaths(globalPaths, installedExtDir);
+	addPaths(mergedPaths);
 
 	// 3. Explicitly configured paths
 	for (const p of configuredPaths) {
@@ -1049,5 +1117,13 @@ export async function discoverAndLoadExtensions(
 		addPaths([resolved]);
 	}
 
-	return loadExtensions(allPaths, cwd, eventBus);
+	// Topological sort: ensure declared dependencies load first (D-06, D-07)
+	const { sortedPaths, warnings: sortWarnings } = sortExtensionPaths(allPaths)
+	// Emit warnings to stderr immediately — loader runs before ctx.ui is ready (D-08)
+	for (const w of sortWarnings) {
+		process.stderr.write(`[gsd] ${w.message}\n`)
+	}
+	const result = await loadExtensions(sortedPaths, cwd, eventBus)
+	result.warnings.push(...sortWarnings)
+	return result
 }

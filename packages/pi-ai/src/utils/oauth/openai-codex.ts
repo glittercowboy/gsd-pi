@@ -26,6 +26,14 @@ const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
 const SCOPE = "openid profile email offline_access";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
+const CHATGPT_UNSUPPORTED_MODEL_IDS = new Set([
+	"gpt-5.2-codex",
+	"gpt-5.1-codex-mini",
+	"gpt-5.1-codex-max",
+	"gpt-5.1-codex",
+	"gpt-5.1",
+	"gpt-5",
+]);
 
 const SUCCESS_HTML = `<!doctype html>
 <html lang="en">
@@ -453,5 +461,12 @@ export const openaiCodexOAuthProvider: OAuthProviderInterface = {
 
 	getApiKey(credentials: OAuthCredentials): string {
 		return credentials.access;
+	},
+
+	modifyModels(models) {
+		return models.filter((model) => (
+			model.provider !== "openai-codex"
+			|| !CHATGPT_UNSUPPORTED_MODEL_IDS.has(model.id)
+		));
 	},
 };

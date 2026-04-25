@@ -1,11 +1,14 @@
 import { describe, test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { invalidateAllCaches } from '../cache.ts';
 import { parseUnitId } from "../unit-id.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask } from "../gsd-db.ts";
+import { clearPathCache } from "../paths.ts";
+import { clearParseCache } from "../files.ts";
 
 // loadPrompt reads from ~/.gsd/agent/extensions/gsd/prompts/ (main checkout).
 // In a worktree the file may not exist there yet, so we resolve prompts
@@ -400,6 +403,63 @@ describe("complete-milestone", () => {
         );
       }
     } finally {
+      cleanup(base);
+    }
+  });
+
+  test("handleCompleteMilestone does not overwrite existing SUMMARY.md on re-dispatch (#4598)", async () => {
+    // This test verifies that when SUMMARY.md already exists (from a prior completion),
+    // re-calling handleCompleteMilestone does not overwrite it.
+    // Before the fix this test FAILS because the handler unconditionally writes SUMMARY.md.
+    const { handleCompleteMilestone } = await import("../tools/complete-milestone.ts");
+    const base = createFixtureBase();
+    const mid = "M001";
+    const dbPath = join(base, ".gsd", "gsd.db");
+    try {
+      // Set up DB with milestone and a complete slice + task
+      openDatabase(dbPath);
+      insertMilestone({ id: mid, title: "Test Milestone", status: "active" });
+      insertSlice({ id: "S01", milestoneId: mid, title: "Slice One", status: "complete" });
+      insertTask({ id: "T01", sliceId: "S01", milestoneId: mid, title: "Task One", status: "complete" });
+
+      // Pre-write an existing SUMMARY.md to simulate a prior completion
+      const milestoneDir = join(base, ".gsd", "milestones", mid);
+      mkdirSync(milestoneDir, { recursive: true });
+      const summaryPath = join(milestoneDir, `${mid}-SUMMARY.md`);
+      const originalContent = "original content — must not be overwritten";
+      writeFileSync(summaryPath, originalContent, "utf-8");
+
+      // Call handleCompleteMilestone — this is the re-dispatch scenario
+      const params = {
+        milestoneId: mid,
+        title: "Test Milestone",
+        oneLiner: "Re-dispatched",
+        narrative: "This is a re-dispatch",
+        successCriteriaResults: "Met",
+        definitionOfDoneResults: "Done",
+        requirementOutcomes: "Covered",
+        keyDecisions: [],
+        keyFiles: [],
+        lessonsLearned: [],
+        followUps: "",
+        deviations: "",
+        verificationPassed: true,
+      };
+
+      const result = await handleCompleteMilestone(params, base);
+
+      // The call may return an error (milestone already complete) or success
+      // but in either case the SUMMARY.md must NOT be overwritten.
+      const actualContent = readFileSync(summaryPath, "utf-8");
+      assert.strictEqual(
+        actualContent,
+        originalContent,
+        "existing SUMMARY.md must not be overwritten on re-dispatch (#4598)",
+      );
+    } finally {
+      try { closeDatabase(); } catch { /* */ }
+      clearPathCache();
+      clearParseCache();
       cleanup(base);
     }
   });

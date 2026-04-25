@@ -88,8 +88,8 @@ Then proceed directly to the workflow.
 ## Skill Structure Quick Reference
 
 **Skill directories:**
-- Global: `~/.gsd/agent/skills/{skill-name}/`
-- Project-local: `.pi/agent/skills/{skill-name}/`
+- Global: `~/.agents/skills/{skill-name}/`
+- Project-local: `.agents/skills/{skill-name}/`
 
 **Simple skill (single file):**
 ```yaml

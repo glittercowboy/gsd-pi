@@ -3,8 +3,14 @@
  */
 
 import type { AgentMessage } from "@gsd/pi-agent-core";
-import type { Message } from "@gsd/pi-ai";
+import type { AssistantMessage, Message } from "@gsd/pi-ai";
 import { TOOL_RESULT_MAX_CHARS } from "../constants.js";
+
+// Head/tail split for head+tail truncation. Keeps first half + last half up to
+// TOOL_RESULT_MAX_CHARS total. Tool results and other large blocks put their
+// information-dense content (exit codes, verdicts, commit hashes, pass/fail
+// counts) at the tail — pure head-slicing discards that signal. See issue #4665.
+const HEAD_TAIL_HALF = Math.floor(TOOL_RESULT_MAX_CHARS / 2);
 import {
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
@@ -189,13 +195,20 @@ export function createSummarizationMessage(promptText: string): [{ role: "user";
 // TOOL_RESULT_MAX_CHARS imported from ../constants.js
 
 /**
- * Truncate text to a maximum character length for summarization.
- * Keeps the beginning and appends a truncation marker.
+ * Truncate text to a maximum character length for summarization, keeping both
+ * the head AND the tail. The tail is where information density lives for tool
+ * output (exit codes, verdicts, pass/fail counts, commit hashes), so pure
+ * head-slicing produced degenerate summaries (see issue #4665).
+ *
+ * Exported for test access only.
  */
-function truncateForSummary(text: string, maxChars: number): string {
+export function truncateForSummary(text: string, maxChars: number): string {
 	if (text.length <= maxChars) return text;
-	const truncatedChars = text.length - maxChars;
-	return `${text.slice(0, maxChars)}\n\n[... ${truncatedChars} more characters truncated]`;
+	const half = Math.floor(maxChars / 2);
+	const head = text.slice(0, half);
+	const tail = text.slice(text.length - half);
+	const truncatedChars = text.length - (head.length + tail.length);
+	return `${head}\n\n[... ${truncatedChars} more characters truncated ...]\n\n${tail}`;
 }
 
 /**
@@ -203,11 +216,15 @@ function truncateForSummary(text: string, maxChars: number): string {
  * This prevents the model from treating it as a conversation to continue.
  * Call convertToLlm() first to handle custom message types.
  *
- * Tool results are truncated to keep the summarization request within
- * reasonable token budgets. Full content is not needed for summarization.
+ * Every content block with a character count above TOOL_RESULT_MAX_CHARS is
+ * head+tail truncated. The issue #4665 fix broadened this from tool-results-
+ * only to every block type — large user pastes, assistant thinking, tool-call
+ * args, and bashExecution-derived blocks also bloat summarization input if
+ * uncapped.
  */
 export function serializeConversation(messages: Message[]): string {
 	const parts: string[] = [];
+	const cap = TOOL_RESULT_MAX_CHARS;
 
 	for (const msg of messages) {
 		if (msg.role === "user") {
@@ -218,7 +235,7 @@ export function serializeConversation(messages: Message[]): string {
 							.filter((c): c is { type: "text"; text: string } => c.type === "text")
 							.map((c) => c.text)
 							.join("");
-			if (content) parts.push(`[User]: ${content}`);
+			if (content) parts.push(`**User said:** ${truncateForSummary(content, cap)}`);
 		} else if (msg.role === "assistant") {
 			const textParts: string[] = [];
 			const thinkingParts: string[] = [];
@@ -239,13 +256,13 @@ export function serializeConversation(messages: Message[]): string {
 			}
 
 			if (thinkingParts.length > 0) {
-				parts.push(`[Assistant thinking]: ${thinkingParts.join("\n")}`);
+				parts.push(`**Assistant thinking:** ${truncateForSummary(thinkingParts.join("\n"), cap)}`);
 			}
 			if (textParts.length > 0) {
-				parts.push(`[Assistant]: ${textParts.join("\n")}`);
+				parts.push(`**Assistant responded:** ${truncateForSummary(textParts.join("\n"), cap)}`);
 			}
 			if (toolCalls.length > 0) {
-				parts.push(`[Assistant tool calls]: ${toolCalls.join("; ")}`);
+				parts.push(`**Assistant tool calls:** ${truncateForSummary(toolCalls.join("; "), cap)}`);
 			}
 		} else if (msg.role === "toolResult") {
 			const content = msg.content
@@ -253,12 +270,93 @@ export function serializeConversation(messages: Message[]): string {
 				.map((c) => c.text)
 				.join("");
 			if (content) {
-				parts.push(`[Tool result]: ${truncateForSummary(content, TOOL_RESULT_MAX_CHARS)}`);
+				parts.push(`**Tool result:** ${truncateForSummary(content, cap)}`);
 			}
 		}
 	}
 
 	return parts.join("\n\n");
+}
+
+// ============================================================================
+// Token estimation for post-serialization size
+// ============================================================================
+
+/**
+ * Estimate tokens for a message AFTER the summarization serializer will have
+ * capped its large content blocks. Use this when deciding chunk sizes for
+ * summarization — NOT when deciding whether to compact in the first place
+ * (that needs the real in-memory content size via `estimateTokens`).
+ *
+ * See issue #4665: the old chunker used real content size but the serializer
+ * truncated tool results to 2000 chars, so a single 400K-char tool result
+ * looked like 100K tokens (triggering tens of unnecessary chunks) but actually
+ * serialized to ~600 tokens.
+ *
+ * Colocated with `truncateForSummary` / `serializeConversation` so the two
+ * stay in sync — if the serialization cap changes, both functions pick it up
+ * from `TOOL_RESULT_MAX_CHARS`.
+ */
+export function estimateSerializedTokens(message: AgentMessage): number {
+	const cap = TOOL_RESULT_MAX_CHARS;
+	const capLen = (len: number) => Math.min(len, cap);
+	let chars = 0;
+
+	switch (message.role) {
+		case "user": {
+			const content = (message as { content: string | Array<{ type: string; text?: string }> }).content;
+			if (typeof content === "string") {
+				chars = capLen(content.length);
+			} else if (Array.isArray(content)) {
+				let total = 0;
+				for (const block of content) {
+					if (block.type === "text" && block.text) total += block.text.length;
+				}
+				chars = capLen(total);
+			}
+			return Math.ceil(chars / 4);
+		}
+		case "assistant": {
+			const assistant = message as AssistantMessage;
+			let textLen = 0;
+			let thinkingLen = 0;
+			let toolCallsLen = 0;
+			for (const block of assistant.content) {
+				if (block.type === "text") textLen += block.text.length;
+				else if (block.type === "thinking") thinkingLen += block.thinking.length;
+				else if (block.type === "toolCall") toolCallsLen += block.name.length + JSON.stringify(block.arguments).length;
+			}
+			chars = capLen(textLen) + capLen(thinkingLen) + capLen(toolCallsLen);
+			return Math.ceil(chars / 4);
+		}
+		case "custom":
+		case "toolResult": {
+			if (typeof message.content === "string") {
+				chars = capLen(message.content.length);
+			} else {
+				let textLen = 0;
+				let imageChars = 0;
+				for (const block of message.content) {
+					if (block.type === "text" && block.text) textLen += block.text.length;
+					if (block.type === "image") imageChars += 4800;
+				}
+				chars = capLen(textLen) + imageChars;
+			}
+			return Math.ceil(chars / 4);
+		}
+		case "bashExecution": {
+			chars = capLen(message.command.length + message.output.length);
+			return Math.ceil(chars / 4);
+		}
+		case "branchSummary":
+		case "compactionSummary": {
+			// Summary messages are already concise; don't truncate them.
+			chars = message.summary.length;
+			return Math.ceil(chars / 4);
+		}
+	}
+
+	return 0;
 }
 
 // ============================================================================

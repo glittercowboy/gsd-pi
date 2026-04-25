@@ -18,22 +18,11 @@
  */
 const { existsSync, mkdirSync, symlinkSync, cpSync, lstatSync, readlinkSync, unlinkSync } = require('fs')
 const { resolve, join } = require('path')
+const { getLinkablePackages, REPO_ROOT } = require('./lib/workspace-manifest.cjs')
 
-const root = resolve(__dirname, '..')
-const packagesDir = join(root, 'packages')
 const scopeDirs = {
-  '@gsd': join(root, 'node_modules', '@gsd'),
-  '@gsd-build': join(root, 'node_modules', '@gsd-build'),
-}
-
-// Map directory names to scoped package names
-const packageMap = {
-  'native': { scope: '@gsd', name: 'native' },
-  'pi-agent-core': { scope: '@gsd', name: 'pi-agent-core' },
-  'pi-ai': { scope: '@gsd', name: 'pi-ai' },
-  'pi-coding-agent': { scope: '@gsd', name: 'pi-coding-agent' },
-  'pi-tui': { scope: '@gsd', name: 'pi-tui' },
-  'rpc-client': { scope: '@gsd-build', name: 'rpc-client' },
+  '@gsd': join(REPO_ROOT, 'node_modules', '@gsd'),
+  '@gsd-build': join(REPO_ROOT, 'node_modules', '@gsd-build'),
 }
 
 for (const scopeDir of Object.values(scopeDirs)) {
@@ -44,8 +33,8 @@ for (const scopeDir of Object.values(scopeDirs)) {
 
 let linked = 0
 let copied = 0
-for (const [dir, pkg] of Object.entries(packageMap)) {
-  const source = join(packagesDir, dir)
+for (const pkg of getLinkablePackages()) {
+  const source = pkg.path
   const scopeDir = scopeDirs[pkg.scope]
   const target = join(scopeDir, pkg.name)
 

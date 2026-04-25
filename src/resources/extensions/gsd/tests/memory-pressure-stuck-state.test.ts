@@ -51,4 +51,16 @@ describe("stuck detection persistence (#3704)", () => {
   test("stuck state file path uses runtime directory", () => {
     assert.match(loopSource, /stuck-state\.json/);
   });
+
+  test("saveStuckState called in standard dev path as well as custom engine path (#4382)", () => {
+    // Count all call-sites of saveStuckState (excluding the function definition itself).
+    // After the fix, both the custom-engine path and the standard dev path must each
+    // call saveStuckState so stuckRecoveryAttempts survives session restarts.
+    const callMatches = loopSource.match(/saveStuckState\(s\.basePath,\s*loopState\)/g) ?? [];
+    assert.ok(
+      callMatches.length >= 2,
+      `saveStuckState must be called in both the custom-engine path and the standard dev path ` +
+      `(found ${callMatches.length} call(s) — standard path is missing its call, #4382)`,
+    );
+  });
 });

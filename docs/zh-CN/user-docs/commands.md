@@ -17,6 +17,11 @@
 | `/gsd queue` | 给未来 milestones 排队和重排（自动模式中也安全） |
 | `/gsd capture` | 随手记录一个想法，不打断当前流程（自动模式中可用） |
 | `/gsd triage` | 手动触发待处理 captures 的 triage |
+| `/gsd debug` | 创建并检查持久化的 /gsd debug 会话 |
+| `/gsd debug list` | 列出已持久化的 debug 会话 |
+| `/gsd debug status <slug>` | 查看指定 debug 会话 slug 的状态 |
+| `/gsd debug continue <slug>` | 恢复一个已有的 debug 会话 slug |
+| `/gsd debug --diagnose` | 检查 malformed artifacts 与会话健康（`--diagnose [<slug> | <issue text>]`） |
 | `/gsd dispatch` | 直接派发一个指定阶段（research、plan、execute、complete、reassess、uat、replan） |
 | `/gsd history` | 查看执行历史（支持 `--cost`、`--phase`、`--model` 过滤） |
 | `/gsd forensics` | 全访问 GSD 调试器：用于分析自动模式失败，支持结构化异常检测、单元追踪和 LLM 引导的根因分析 |

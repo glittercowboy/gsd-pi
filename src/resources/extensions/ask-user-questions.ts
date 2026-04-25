@@ -37,7 +37,7 @@ interface RemoteResultDetails {
 	threadUrl?: string;
 	status?: string;
 	questions?: Question[];
-	response?: import("./remote-questions/types.js").RemoteAnswer;
+	response?: RoundResult;
 	error?: boolean;
 }
 
@@ -48,6 +48,12 @@ type AskUserQuestionsDetails = LocalResultDetails | RemoteResultDetails;
 const OptionSchema = Type.Object({
 	label: Type.String({ description: "User-facing label (1-5 words)" }),
 	description: Type.String({ description: "One short sentence explaining impact/tradeoff if selected" }),
+	preview: Type.Optional(
+		Type.String({
+			description:
+				"Optional markdown content shown in a side-by-side preview panel when this option is highlighted. Use for showing code samples, config snippets, or detailed explanations. Keep under ~20 lines — longer content is truncated.",
+		}),
+	),
 });
 
 const QuestionSchema = Type.Object({
@@ -56,7 +62,7 @@ const QuestionSchema = Type.Object({
 	question: Type.String({ description: "Single-sentence prompt shown to the user" }),
 	options: Type.Array(OptionSchema, {
 		description:
-			'Provide 2-3 mutually exclusive choices for single-select, or any number for multi-select. Put the recommended option first and suffix its label with "(Recommended)". Do not include an "Other" option for single-select; the client adds a free-form "None of the above" option automatically.',
+			'Provide 2-3 mutually exclusive choices for single-select, or any number for multi-select. Put the recommended option first and suffix its label with "(Recommended)". Each option can include an optional "preview" field with markdown content shown in a side panel. Do not include an "Other" option for single-select; the client adds a free-form "None of the above" option automatically.',
 	}),
 	allowMultiple: Type.Optional(
 		Type.Boolean({
@@ -205,12 +211,14 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 		name: "ask_user_questions",
 		label: "Request User Input",
 		description:
-			"Request user input for one to three short questions and wait for the response. Single-select questions have 2-3 mutually exclusive options with a free-form 'None of the above' added automatically. Multi-select questions (allowMultiple: true) let the user toggle multiple options with SPACE and confirm with ENTER.",
+			"Request user input for one to three short questions and wait for the response. Single-select questions have 2-3 mutually exclusive options with a free-form 'None of the above' added automatically. Multi-select questions (allowMultiple: true) let the user toggle multiple options with SPACE and confirm with ENTER. Options can include an optional 'preview' field with markdown content shown in a side-by-side panel when highlighted.",
 		promptGuidelines: [
 			"Use ask_user_questions when you need the user to choose between concrete alternatives before proceeding.",
 			"Keep questions to 1 when possible; never exceed 3.",
 			"For single-select: each question must have 2-3 options. Put the recommended option first with '(Recommended)' suffix. Do not include an 'Other' or 'None of the above' option - the client adds one automatically.",
 			"For multi-select: set allowMultiple: true. The user can pick any number of options. No 'None of the above' is added.",
+			"When options involve code patterns, config choices, or architecture decisions, add a 'preview' field with markdown content (code blocks, lists, headers, etc.). The preview renders in a side-by-side panel when the option is highlighted.",
+			"Preview content is rendered in a fixed-height panel (max ~20 lines visible). Keep previews concise — show the most relevant snippet, not exhaustive examples. Longer content is truncated with a '+N lines hidden' indicator.",
 		],
 		parameters: AskUserQuestionsParams,
 
@@ -380,6 +388,13 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 				const headers = qs.map((q) => q.header).join(", ");
 				text += theme.fg("dim", ` (${headers})`);
 			}
+			const previewCount = qs.reduce(
+				(acc, q) => acc + (q.options || []).filter((o: QuestionOption) => o.preview).length,
+				0,
+			);
+			if (previewCount > 0) {
+				text += theme.fg("accent", ` [${previewCount} preview${previewCount !== 1 ? "s" : ""}]`);
+			}
 			for (const q of qs) {
 				const multiSel = !!q.allowMultiple;
 				text += `\n  ${theme.fg("text", q.question)}`;
@@ -420,10 +435,13 @@ export default function AskUserQuestions(pi: ExtensionAPI) {
 							lines.push(`${theme.fg("accent", q.header)}: ${theme.fg("dim", "(no answer)")}`);
 							continue;
 						}
-						const answerText = answer.answers.length > 0 ? answer.answers.join(", ") : "(custom)";
+						const selected = answer.selected;
+						const answerText = Array.isArray(selected)
+							? (selected.length > 0 ? selected.join(", ") : "(custom)")
+							: (selected || "(custom)");
 						let line = `${theme.fg("success", "✓ ")}${theme.fg("accent", q.header)}: ${answerText}`;
-						if (answer.user_note) {
-							line += ` ${theme.fg("muted", `[note: ${answer.user_note}]`)}`;
+						if (answer.notes) {
+							line += ` ${theme.fg("muted", `[note: ${answer.notes}]`)}`;
 						}
 						lines.push(line);
 					}

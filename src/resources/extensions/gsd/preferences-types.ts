@@ -28,6 +28,37 @@ export interface ContextManagementConfig {
   compaction_threshold_percent?: number;  // default: 0.70, range: 0.5-0.95
   tool_result_max_chars?: number;         // default: 800, range: 200-10000
 }
+
+/**
+ * Opt-in tool-output sandboxing for sub-sessions. When enabled, the gsd_exec
+ * MCP tool runs scripts in an isolated subprocess and returns only a short
+ * digest to the calling agent's context window; full stdout/stderr persist
+ * in the project memory store and can be retrieved by id later.
+ *
+ * Inspired by mksglu/context-mode (Elastic License 2.0). This is an
+ * independent implementation — no upstream code is incorporated.
+ */
+export interface ContextModeConfig {
+  /** Master switch. Default: true (opt-out via `enabled: false`). */
+  enabled?: boolean;
+  /** Per-invocation timeout in milliseconds. Default: 30_000. Range: 1_000–600_000. */
+  exec_timeout_ms?: number;
+  /** Cap on persisted stdout bytes per invocation. Default: 1_048_576 (1 MiB). Range: 4_096–16_777_216. */
+  exec_stdout_cap_bytes?: number;
+  /** Number of trailing stdout characters returned in the digest. Default: 300. Range: 0–4_000. */
+  exec_digest_chars?: number;
+  /** Environment variables forwarded to sandboxed processes (case-sensitive names). PATH and HOME are always forwarded. */
+  exec_env_allowlist?: string[];
+}
+
+/**
+ * Resolve whether context-mode features (gsd_exec sandbox + compaction
+ * snapshot) should be active. Default is ON: missing config or missing
+ * `enabled` is treated as true. Only `enabled: false` disables.
+ */
+export function isContextModeEnabled(prefs: { context_mode?: ContextModeConfig } | null | undefined): boolean {
+  return prefs?.context_mode?.enabled !== false;
+}
 import type { GitHubSyncConfig } from "../github-sync/types.js";
 
 // ─── Workflow Modes ──────────────────────────────────────────────────────────
@@ -83,6 +114,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "post_unit_hooks",
   "pre_dispatch_hooks",
   "dynamic_routing",
+  "uok",
   "token_profile",
   "phases",
   "auto_visualize",
@@ -113,11 +145,15 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "discuss_preparation",
   "discuss_web_research",
   "discuss_depth",
+  "flat_rate_providers",
+  "language",
+  "context_window_override",
+  "context_mode",
 ]);
 
 /** Canonical list of all dispatch unit types. */
 export const KNOWN_UNIT_TYPES = [
-  "research-milestone", "plan-milestone", "research-slice", "plan-slice",
+  "research-milestone", "plan-milestone", "research-slice", "plan-slice", "refine-slice",
   "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
   "run-uat", "complete-milestone", "validate-milestone", "rewrite-docs",
   "discuss-milestone", "discuss-slice", "worktree-merge",
@@ -207,6 +243,35 @@ export interface CmuxPreferences {
   browser?: boolean;
 }
 
+export type UokTurnActionMode = "commit" | "snapshot" | "status-only";
+
+export interface UokPreferences {
+  enabled?: boolean;
+  legacy_fallback?: {
+    enabled?: boolean;
+  };
+  gates?: {
+    enabled?: boolean;
+  };
+  model_policy?: {
+    enabled?: boolean;
+  };
+  execution_graph?: {
+    enabled?: boolean;
+  };
+  gitops?: {
+    enabled?: boolean;
+    turn_action?: UokTurnActionMode;
+    turn_push?: boolean;
+  };
+  audit_unified?: {
+    enabled?: boolean;
+  };
+  plan_v2?: {
+    enabled?: boolean;
+  };
+}
+
 /**
  * Opt-in experimental features. All features in this block are disabled by
  * default and must be explicitly enabled. They may change or be removed without
@@ -255,9 +320,24 @@ export interface GSDPreferences {
   post_unit_hooks?: PostUnitHookConfig[];
   pre_dispatch_hooks?: PreDispatchHookConfig[];
   dynamic_routing?: DynamicRoutingConfig;
+  /** Unified Orchestration Kernel controls (default-on, with opt-out and emergency legacy fallback). */
+  uok?: UokPreferences;
   /** Per-model capability overrides. Deep-merged with built-in profiles for capability-aware routing (ADR-004). */
   modelOverrides?: Record<string, { capabilities?: Partial<ModelCapabilities> }>;
+  /**
+   * Override executor context window (in tokens) for prompt budget sizing.
+   * Useful when the configured model registry can't resolve the runtime limit
+   * — e.g. local llama.cpp/lemonade servers where the server-side n_ctx is
+   * smaller than the model's advertised window. Issue #4435.
+   */
+  context_window_override?: number;
   context_management?: ContextManagementConfig;
+  /**
+   * Tool-output sandboxing via gsd_exec. Keeps sub-session context windows
+   * clean by running scripts in a subprocess and only surfacing a short
+   * digest. See `ContextModeConfig`. Default: disabled.
+   */
+  context_mode?: ContextModeConfig;
   token_profile?: TokenProfile;
   phases?: PhaseSkipPreferences;
   auto_visualize?: boolean;
@@ -312,6 +392,14 @@ export interface GSDPreferences {
     checkpoints?: boolean;
     auto_rollback?: boolean;
     timeout_scale_cap?: number;
+    /**
+     * Glob patterns for files that are always expected side-effects of any task.
+     * Files matching any pattern here are excluded from unexpected-change warnings.
+     * Supports standard glob syntax (e.g. `tracking/history/**`, `*.log`).
+     * Fixes #4385/#4436 — audit-trail snapshots, build artifacts, and other
+     * project-level secondary writes shouldn't require per-task declaration.
+     */
+    file_change_allowlist?: string[];
   };
 
 
@@ -359,6 +447,22 @@ export interface GSDPreferences {
    * Default: "standard".
    */
   discuss_depth?: "quick" | "standard" | "thorough";
+  /**
+   * Extra provider IDs to treat as flat-rate (no cost benefit from dynamic
+   * routing).  Dynamic routing is suppressed for any provider listed here,
+   * in addition to the built-in list (github-copilot, copilot, claude-code)
+   * and any provider auto-detected via `authMode: "externalCli"`.
+   *
+   * Intended for private subscription-backed proxies, enterprise-gated
+   * deployments, and custom CLI wrappers where every request costs the
+   * same regardless of model.  Case-insensitive.
+   */
+  flat_rate_providers?: string[];
+  /**
+   * Language preference for GSD responses. Accepts any language name or code
+   * (e.g. "Chinese", "zh", "German", "de", "日本語"). Persists across /clear.
+   */
+  language?: string;
 }
 
 export interface LoadedGSDPreferences {

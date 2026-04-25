@@ -104,6 +104,19 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
 		}
 	}
 
+	// Some providers surface overflow as assistant text while putting a generic
+	// classifier value in errorMessage (e.g. claude-code: errorMessage="success",
+	// text="Prompt is too long"). Check rendered text as a fallback.
+	if (message.stopReason === "error") {
+		const assistantText = message.content
+			.filter((block) => block.type === "text")
+			.map((block) => block.text)
+			.join("\n");
+		if (assistantText && OVERFLOW_PATTERNS.some((p) => p.test(assistantText))) {
+			return true;
+		}
+	}
+
 	// Case 2: Silent overflow (z.ai style) - successful but usage exceeds context
 	if (contextWindow && message.stopReason === "stop") {
 		const inputTokens = message.usage.input + message.usage.cacheRead;

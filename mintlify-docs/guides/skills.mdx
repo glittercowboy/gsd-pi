@@ -7,7 +7,7 @@ Skills are specialized instruction sets that GSD loads when the task matches. Th
 
 ## Bundled skills
 
-GSD ships with these skills, installed to `~/.gsd/agent/skills/`:
+GSD ships with these skills, installed to `~/.agents/skills/`:
 
 | Skill | Trigger | Description |
 |-------|---------|-------------|
@@ -51,8 +51,8 @@ skill_rules:
 
 ### Resolution order
 
-1. **Bare name** — e.g., `frontend-design` → scans `~/.gsd/agent/skills/` and project skills
-2. **Absolute path** — e.g., `/Users/you/.gsd/agent/skills/my-skill/SKILL.md`
+1. **Bare name** — e.g., `frontend-design` → scans `~/.agents/skills/` and project skills
+2. **Absolute path** — e.g., `/Users/you/.agents/skills/my-skill/SKILL.md`
 3. **Directory path** — looks for `SKILL.md` inside
 
 User skills take precedence over project skills.
@@ -62,7 +62,7 @@ User skills take precedence over project skills.
 Create a directory with a `SKILL.md` file:
 
 ```
-~/.gsd/agent/skills/my-skill/
+~/.agents/skills/my-skill/
   SKILL.md           — instructions for the LLM
   references/        — optional reference files
 ```
@@ -70,7 +70,7 @@ Create a directory with a `SKILL.md` file:
 ### Project-local skills
 
 ```
-.gsd/agent/skills/my-project-skill/
+.agents/skills/my-project-skill/
   SKILL.md
 ```
 

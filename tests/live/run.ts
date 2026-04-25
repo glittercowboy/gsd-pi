@@ -1,3 +1,11 @@
+/**
+ * Live-test runner.
+ *
+ * Children exit 0 (pass), 77 (POSIX skip — e.g., no API key), or other
+ * non-zero (fail).  We key off exit status instead of substring-matching
+ * stderr so a test that crashes after printing "SKIPPED" is correctly
+ * reported as a failure, not silently ignored.
+ */
 import { readdirSync } from "fs";
 import { execFileSync } from "child_process";
 import { join, dirname } from "path";
@@ -35,18 +43,20 @@ for (const file of testFiles) {
     console.log(`  PASS  ${label}`);
     passed++;
   } catch (err: any) {
-    const output = (err.stdout || "") + (err.stderr || "");
-    if (output.includes("SKIPPED")) {
+    if (err.status === 77) {
       console.log(`  SKIP  ${label}`);
+      if (err.stdout) console.log(err.stdout.toString().trimEnd());
       skipped++;
-    } else {
-      console.error(`  FAIL  ${label}`);
-      if (err.stdout) console.error(err.stdout);
-      if (err.stderr) console.error(err.stderr);
-      failed++;
+      continue;
     }
+    console.error(`  FAIL  ${label}`);
+    if (err.stdout) console.error(err.stdout);
+    if (err.stderr) console.error(err.stderr);
+    failed++;
   }
 }
 
-console.log(`\nLive tests: ${passed} passed, ${failed} failed, ${skipped} skipped`);
+console.log(
+  `\nLive tests: ${passed} passed, ${failed} failed, ${skipped} skipped`,
+);
 if (failed > 0) process.exit(1);

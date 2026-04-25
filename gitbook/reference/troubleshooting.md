@@ -82,6 +82,18 @@ Worktree merge fails on `.gsd/` files.
 
 **Fix:** `.gsd/` conflicts are auto-resolved. Code conflicts get an AI fix attempt; if that fails, resolve manually.
 
+### Work stranded in a worktree after an interrupted session
+
+Auto mode was paused, stopped, or crashed mid-milestone, and the work is still on the `milestone/<MID>` branch in `.gsd/worktrees/<MID>/` — never merged back to main. Next session reports the milestone as incomplete or behaving inconsistently.
+
+**Fix:** As of GSD 2.78, `/gsd auto` bootstrap automatically detects this condition and surfaces a warning naming the branch, commit count, and worktree location. Run `/gsd auto` to re-enter the worktree and resume; or merge `milestone/<MID>` into main manually if abandoning.
+
+**Diagnose:** Run `/gsd forensics` and look at the **Worktree Telemetry** section:
+- `Orphans detected > 0` with reason `in-progress-unmerged` confirms the condition
+- `Unmerged exits > 0` on the producer side confirms which exit type caused it
+
+**Prevent recurrence:** If your milestones are large or sessions are frequently interrupted, consider setting `git.collapse_cadence: "slice"` in preferences — validated slices merge to main immediately, shrinking the orphan window from milestone-size to slice-size. See [Git & Worktrees](../configuration/git-settings.md#collapse-cadence).
+
 ### Notifications not appearing on macOS
 
 **Fix:** Install `terminal-notifier`:

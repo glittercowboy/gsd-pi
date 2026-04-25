@@ -5,7 +5,7 @@
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { _getAdapter, transaction } from "./gsd-db.js";
+import { _getAdapter, bulkInsertLegacyHierarchy } from "./gsd-db.js";
 import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
 import { logWarning } from "./workflow-logger.js";
 
@@ -219,34 +219,26 @@ export function migrateFromMarkdown(basePath: string): void {
     return;
   }
 
-  const placeholders = migratedMilestoneIds.map(() => "?").join(",");
-  transaction(() => {
-    // Clear existing data to handle stale DB shape (DELETE ... IN (...))
-    db.prepare(`DELETE FROM tasks WHERE milestone_id IN (${placeholders})`).run(...migratedMilestoneIds);
-    db.prepare(`DELETE FROM slices WHERE milestone_id IN (${placeholders})`).run(...migratedMilestoneIds);
-    db.prepare(`DELETE FROM milestones WHERE id IN (${placeholders})`).run(...migratedMilestoneIds);
-
-    // Insert milestones
-    const insertMilestone = db.prepare("INSERT INTO milestones (id, title, status, created_at) VALUES (?, ?, ?, ?)");
-    for (const m of milestoneInserts) {
-      insertMilestone.run(m.id, m.title, m.status, now);
-    }
-
-    // Insert slices (using v10 column names: depends, sequence)
-    const insertSlice = db.prepare(
-      "INSERT INTO slices (id, milestone_id, title, status, risk, depends, sequence, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-    for (const s of sliceInserts) {
-      insertSlice.run(s.id, s.milestoneId, s.title, s.status, s.risk, "[]", s.sequence, now);
-    }
-
-    // Insert tasks (using v10 column names: sequence, blocker_discovered, full_summary_md)
-    const insertTask = db.prepare(
-      "INSERT INTO tasks (id, slice_id, milestone_id, title, description, status, estimate, files, sequence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    );
-    for (const t of taskInserts) {
-      insertTask.run(t.id, t.sliceId, t.milestoneId, t.title, "", t.status, "", "[]", t.sequence);
-    }
+  bulkInsertLegacyHierarchy({
+    milestones: milestoneInserts,
+    slices: sliceInserts.map(s => ({
+      id: s.id,
+      milestoneId: s.milestoneId,
+      title: s.title,
+      status: s.status,
+      risk: s.risk,
+      sequence: s.sequence,
+    })),
+    tasks: taskInserts.map(t => ({
+      id: t.id,
+      sliceId: t.sliceId,
+      milestoneId: t.milestoneId,
+      title: t.title,
+      status: t.status,
+      sequence: t.sequence,
+    })),
+    clearMilestoneIds: migratedMilestoneIds,
+    createdAt: now,
   });
 }
 

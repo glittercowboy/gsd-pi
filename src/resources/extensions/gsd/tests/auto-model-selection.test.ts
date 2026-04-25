@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-import { resolvePreferredModelConfig, resolveModelId } from "../auto-model-selection.js";
+import { resolvePreferredModelConfig, resolveModelId, selectAndApplyModel } from "../auto-model-selection.js";
 
 function makeTempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
@@ -46,6 +46,7 @@ test("resolvePreferredModelConfig synthesizes heavy routing ceiling when models 
     assert.deepEqual(config, {
       primary: "claude-opus-4-6",
       fallbacks: [],
+      source: "synthesized",
     });
   } finally {
     process.chdir(originalCwd);
@@ -88,6 +89,7 @@ test("resolvePreferredModelConfig falls back to auto start model when heavy tier
     assert.deepEqual(config, {
       primary: "openai/gpt-5.4",
       fallbacks: [],
+      source: "synthesized",
     });
   } finally {
     process.chdir(originalCwd);
@@ -131,7 +133,87 @@ test("resolvePreferredModelConfig keeps explicit phase models as the ceiling", (
     assert.deepEqual(config, {
       primary: "claude-sonnet-4-6",
       fallbacks: [],
+      source: "explicit",
     });
+  } finally {
+    process.chdir(originalCwd);
+    if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = originalGsdHome;
+    rmSync(tempProject, { recursive: true, force: true });
+    rmSync(tempGsdHome, { recursive: true, force: true });
+  }
+});
+
+test("selectAndApplyModel honors explicit phase models without downgrading (#3617)", async () => {
+  const originalCwd = process.cwd();
+  const originalGsdHome = process.env.GSD_HOME;
+  const tempProject = makeTempDir("gsd-routing-project-");
+  const tempGsdHome = makeTempDir("gsd-routing-home-");
+  const setModelCalls: string[] = [];
+  let beforeModelSelectCalled = false;
+
+  try {
+    mkdirSync(join(tempProject, ".gsd"), { recursive: true });
+    writeFileSync(
+      join(tempProject, ".gsd", "PREFERENCES.md"),
+      [
+        "---",
+        "models:",
+        "  planning: claude-opus-4-6",
+        "dynamic_routing:",
+        "  enabled: true",
+        "  tier_models:",
+        "    light: gpt-4o-mini",
+        "    standard: claude-sonnet-4-6",
+        "    heavy: claude-opus-4-6",
+        "---",
+      ].join("\n"),
+      "utf-8",
+    );
+    process.env.GSD_HOME = tempGsdHome;
+    process.chdir(tempProject);
+
+    const availableModels = [
+      { id: "claude-opus-4-6", provider: "anthropic", api: "anthropic-messages" },
+      { id: "claude-sonnet-4-6", provider: "anthropic", api: "anthropic-messages" },
+      { id: "gpt-4o-mini", provider: "openai", api: "responses" },
+    ];
+
+    const result = await selectAndApplyModel(
+      {
+        modelRegistry: { getAvailable: () => availableModels },
+        sessionManager: { getSessionId: () => "test-session" },
+        ui: { notify: () => {} },
+        model: { provider: "anthropic", id: "claude-opus-4-6", api: "anthropic-messages" },
+      } as any,
+      {
+        setModel: async (model: { provider: string; id: string }) => {
+          setModelCalls.push(`${model.provider}/${model.id}`);
+          return true;
+        },
+        emitBeforeModelSelect: async () => {
+          beforeModelSelectCalled = true;
+          return undefined;
+        },
+        getActiveTools: () => [],
+        emitAdjustToolSet: async () => undefined,
+        setActiveTools: () => {},
+      } as any,
+      "plan-slice",
+      "slice-1",
+      tempProject,
+      undefined,
+      false,
+      { provider: "anthropic", id: "claude-opus-4-6" },
+      undefined,
+      true,
+    );
+
+    assert.equal(beforeModelSelectCalled, false, "explicit phase models should skip dynamic routing hooks");
+    assert.deepEqual(setModelCalls, ["anthropic/claude-opus-4-6"]);
+    assert.equal(result.routing, null, "explicit phase models should not record a routing downgrade");
+    assert.equal(result.appliedModel?.provider, "anthropic");
+    assert.equal(result.appliedModel?.id, "claude-opus-4-6");
   } finally {
     process.chdir(originalCwd);
     if (originalGsdHome === undefined) delete process.env.GSD_HOME;
@@ -224,6 +306,50 @@ test("model change notify in selectAndApplyModel is gated behind verbose flag", 
   assert.ok(
     blockBody.includes("ctx.ui.notify"),
     "notify call should still exist (just verbose-gated)",
+  );
+});
+
+test("model policy resolves candidates from the policy-eligible pool", () => {
+  const src = readFileSync(join(__dirname, "..", "auto-model-selection.ts"), "utf-8");
+  assert.ok(
+    src.includes("const resolutionPool = uokFlags.modelPolicy ? routingEligibleModels : availableModels"),
+    "selectAndApplyModel should resolve model IDs against policy-eligible models when model policy is enabled",
+  );
+});
+
+test("model policy receives task metadata for requirement-vector decisions", () => {
+  const src = readFileSync(join(__dirname, "..", "auto-model-selection.ts"), "utf-8");
+  assert.ok(
+    src.includes("taskMetadata: taskMetadataForPolicy"),
+    "applyModelPolicyFilter should receive task metadata so requirement vectors are unit-aware",
+  );
+  assert.ok(
+    src.includes("extractTaskMetadata(unitId, basePath)"),
+    "execute-task dispatch should derive metadata before policy filtering",
+  );
+});
+
+test("dynamic routing passes provider-qualified model keys to the router", () => {
+  const src = readFileSync(join(__dirname, "..", "auto-model-selection.ts"), "utf-8");
+  assert.ok(
+    src.includes("routingEligibleModels.map(m => `${m.provider}/${m.id}`)"),
+    "selectAndApplyModel should preserve provider prefixes for dynamic routing candidates",
+  );
+  assert.ok(
+    !src.includes("routingEligibleModels.map(m => m.id)"),
+    "selectAndApplyModel must not strip providers before resolving tier_models",
+  );
+});
+
+test("selectAndApplyModel re-applies captured thinking level after setModel success", () => {
+  const src = readFileSync(join(__dirname, "..", "auto-model-selection.ts"), "utf-8");
+  assert.ok(
+    src.includes("autoModeStartThinkingLevel?: ReturnType<ExtensionAPI[\"getThinkingLevel\"]> | null"),
+    "selectAndApplyModel should accept an autoModeStartThinkingLevel parameter",
+  );
+  assert.ok(
+    src.includes("reapplyThinkingLevel(pi, autoModeStartThinkingLevel)"),
+    "selectAndApplyModel should re-apply captured thinking level after model changes",
   );
 });
 

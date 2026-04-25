@@ -6,96 +6,98 @@
  * (mode 160000) without a .gitmodules entry, so the worktree cleanup destroys
  * the only copy of those object databases — causing permanent data loss.
  *
- * This test verifies that removeWorktree detects nested .git directories
- * (orphaned gitlinks) and absorbs or removes them before cleanup so files
- * are tracked as regular content instead of unreachable gitlink pointers.
+ * These tests exercise findNestedGitDirs directly against a synthetic
+ * filesystem layout to verify that nested .git *directories* are detected
+ * (while .git *files* — legitimate worktree pointers — are not), and that
+ * non-project directories (node_modules, .gsd, target, etc.) are skipped.
  */
 
-import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { createTestContext } from "./test-helpers.ts";
+import { tmpdir } from "node:os";
 
-const { assertTrue, report } = createTestContext();
+import { findNestedGitDirs } from "../worktree-manager.ts";
 
-const srcPath = join(import.meta.dirname, "..", "worktree-manager.ts");
-const src = readFileSync(srcPath, "utf-8");
+function makeRoot(t: { after: (fn: () => void) => void }): string {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-nested-git-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
-console.log("\n=== #2616: Worktree cleanup detects nested .git directories ===");
+test("#2616: findNestedGitDirs detects a nested repo at the top level", (t) => {
+  const root = makeRoot(t);
 
-// ── Test 1: removeWorktree scans for nested .git directories ─────────
+  // Simulate a scaffolded project at root/scaffolded with its own .git *directory*.
+  const scaffolded = join(root, "scaffolded");
+  mkdirSync(join(scaffolded, ".git", "objects"), { recursive: true });
+  writeFileSync(join(scaffolded, "package.json"), "{}");
 
-const removeWorktreeIdx = src.indexOf("export function removeWorktree");
-assertTrue(removeWorktreeIdx > 0, "worktree-manager.ts exports removeWorktree");
+  const found = findNestedGitDirs(root);
+  assert.ok(
+    found.includes(scaffolded),
+    `expected ${scaffolded} in findNestedGitDirs output, got ${JSON.stringify(found)}`,
+  );
+});
 
-const fnBody = src.slice(removeWorktreeIdx, removeWorktreeIdx + 5000);
+test("#2616: findNestedGitDirs ignores .git files (worktree pointers)", (t) => {
+  const root = makeRoot(t);
 
-const detectsNestedGit =
-  fnBody.includes("nested") && fnBody.includes(".git") ||
-  fnBody.includes("gitlink") ||
-  fnBody.includes("160000") ||
-  fnBody.includes("findNestedGitDirs") ||
-  fnBody.includes("nestedGitDirs");
+  // A worktree or submodule has a .git *file*, not a directory. This is legitimate.
+  const sub = join(root, "legit-worktree");
+  mkdirSync(sub, { recursive: true });
+  writeFileSync(join(sub, ".git"), "gitdir: /elsewhere/.git/worktrees/x\n");
 
-assertTrue(
-  detectsNestedGit,
-  "removeWorktree detects nested .git directories or gitlinks (#2616)",
-);
+  const found = findNestedGitDirs(root);
+  assert.ok(
+    !found.includes(sub),
+    `.git file (worktree pointer) must not be flagged as a nested repo; got ${JSON.stringify(found)}`,
+  );
+});
 
-// ── Test 2: A helper function exists to find nested .git directories ──
+test("#2616: findNestedGitDirs skips excluded directories (node_modules, .gsd, target)", (t) => {
+  const root = makeRoot(t);
 
-const hasNestedGitHelper =
-  src.includes("findNestedGitDirs") ||
-  src.includes("detectNestedGitDirs") ||
-  src.includes("scanNestedGit") ||
-  src.includes("absorbNestedGit") ||
-  src.includes("nestedGitDirs");
+  // All three of these contain a .git *directory*, but the scan must skip them.
+  for (const excluded of ["node_modules", ".gsd", "target"]) {
+    const inside = join(root, excluded, "vendored-pkg");
+    mkdirSync(join(inside, ".git"), { recursive: true });
+  }
 
-assertTrue(
-  hasNestedGitHelper,
-  "worktree-manager has a helper to find nested .git directories (#2616)",
-);
+  const found = findNestedGitDirs(root);
+  assert.equal(
+    found.length,
+    0,
+    `excluded directories must be skipped, got ${JSON.stringify(found)}`,
+  );
+});
 
-// ── Test 3: Nested .git dirs are absorbed or removed before cleanup ───
+test("#2616: findNestedGitDirs finds deeply nested repos", (t) => {
+  const root = makeRoot(t);
+  const deep = join(root, "a", "b", "c", "scaffolded");
+  mkdirSync(join(deep, ".git"), { recursive: true });
 
-const absorbsOrRemoves =
-  fnBody.includes("absorb") ||
-  fnBody.includes("rmSync") && fnBody.includes("nested") ||
-  (fnBody.includes("nestedGitDirs") || fnBody.includes("findNestedGitDirs")) &&
-    (fnBody.includes("rm") || fnBody.includes("absorb") || fnBody.includes("remove"));
+  const found = findNestedGitDirs(root);
+  assert.ok(
+    found.includes(deep),
+    `expected deep path ${deep} in output, got ${JSON.stringify(found)}`,
+  );
+});
 
-assertTrue(
-  absorbsOrRemoves,
-  "removeWorktree absorbs or removes nested .git dirs before cleanup (#2616)",
-);
+test("#2616: findNestedGitDirs does not recurse into a found nested repo", (t) => {
+  const root = makeRoot(t);
 
-// ── Test 4: A warning is logged when nested .git dirs are found ───────
+  // Outer scaffolded dir has .git; inside, a further sub-repo also has .git.
+  const outer = join(root, "outer");
+  mkdirSync(join(outer, ".git"), { recursive: true });
+  const inner = join(outer, "inner");
+  mkdirSync(join(inner, ".git"), { recursive: true });
 
-const warnsAboutNestedGit =
-  fnBody.includes("nested") && fnBody.includes("logWarning") ||
-  fnBody.includes("gitlink") && fnBody.includes("logWarning") ||
-  fnBody.includes("scaffold") && fnBody.includes("logWarning");
-
-assertTrue(
-  warnsAboutNestedGit,
-  "removeWorktree warns when nested .git directories are detected (#2616)",
-);
-
-// ── Test 5: The findNestedGitDirs helper correctly identifies nested repos ──
-// Verify the helper scans subdirectories but skips .gsd/, node_modules/, .git/
-
-const helperBody = src.includes("findNestedGitDirs")
-  ? src.slice(src.indexOf("findNestedGitDirs"))
-  : "";
-
-const skipsExcludedDirs =
-  helperBody.includes("node_modules") ||
-  helperBody.includes(".gsd") ||
-  helperBody.includes("skip") ||
-  helperBody.includes("exclude");
-
-assertTrue(
-  skipsExcludedDirs,
-  "findNestedGitDirs skips node_modules and other excluded directories (#2616)",
-);
-
-report();
+  const found = findNestedGitDirs(root);
+  assert.ok(found.includes(outer), "outer repo is detected");
+  assert.ok(
+    !found.includes(inner),
+    "must not recurse into the outer nested repo (stops at first hit)",
+  );
+});

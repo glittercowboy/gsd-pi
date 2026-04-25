@@ -26,6 +26,12 @@ export interface Args {
 	sessionDir?: string;
 	models?: string[];
 	tools?: ToolName[];
+	/**
+	 * Tool names from --tools that did not match a built-in. These are
+	 * deferred to extension/MCP tool resolution after extensions register
+	 * their tools in the agent runtime.
+	 */
+	extraToolNames?: string[];
 	noTools?: boolean;
 	extensions?: string[];
 	noExtensions?: boolean;
@@ -103,18 +109,27 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 		} else if (arg === "--no-tools") {
 			result.noTools = true;
 		} else if (arg === "--tools" && i + 1 < args.length) {
-			const toolNames = args[++i].split(",").map((s) => s.trim());
+			const toolNames = args[++i].split(",").map((s) => s.trim()).filter(Boolean);
+			// Built-in registry keys are lowercase. Match case-insensitively so that
+			// frontmatter like `tools: Read, Bash` resolves correctly.
+			const builtinByLower = new Map<string, ToolName>(
+				Object.keys(allTools).map((n) => [n.toLowerCase(), n as ToolName]),
+			);
 			const validTools: ToolName[] = [];
+			const extras: string[] = [];
 			for (const name of toolNames) {
-				if (name in allTools) {
-					validTools.push(name as ToolName);
+				const builtin = builtinByLower.get(name.toLowerCase());
+				if (builtin) {
+					validTools.push(builtin);
 				} else {
-					console.error(
-						chalk.yellow(`Warning: Unknown tool "${name}". Valid tools: ${Object.keys(allTools).join(", ")}`),
-					);
+					// Defer: this may be an extension/MCP-provided tool that has not
+					// been registered yet at parse time. Resolution happens after
+					// extensions load in AgentSession._buildRuntime.
+					extras.push(name);
 				}
 			}
 			result.tools = validTools;
+			if (extras.length > 0) result.extraToolNames = extras;
 		} else if (arg === "--thinking" && i + 1 < args.length) {
 			const level = args[++i];
 			if (isValidThinkingLevel(level)) {

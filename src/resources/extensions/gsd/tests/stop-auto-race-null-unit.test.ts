@@ -13,7 +13,7 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createTestContext } from "./test-helpers.ts";
+import { createTestContext, extractSourceRegion } from "./test-helpers.ts";
 
 const { assertTrue, report } = createTestContext();
 
@@ -35,7 +35,7 @@ assertTrue(
 );
 
 // Extract the region from the closeout comment to the next section comment
-const closeoutRegion = phasesSrc.slice(closeoutIdx, closeoutIdx + 500);
+const closeoutRegion = extractSourceRegion(phasesSrc, closeoutComment);
 assertTrue(
   closeoutRegion.includes("if (s.currentUnit)"),
   "closeoutUnit call is guarded by `if (s.currentUnit)` check (#2939)",
@@ -52,7 +52,7 @@ assertTrue(
   "phases.ts contains the 'Zero tool-call guard' comment block",
 );
 
-const zeroToolRegion = phasesSrc.slice(zeroToolIdx, zeroToolIdx + 600);
+const zeroToolRegion = extractSourceRegion(phasesSrc, zeroToolComment);
 
 // The non-null assertion `s.currentUnit!.startedAt` must be replaced with
 // optional chaining `s.currentUnit?.startedAt`

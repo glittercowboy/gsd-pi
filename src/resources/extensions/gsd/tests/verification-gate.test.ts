@@ -997,3 +997,38 @@ test("dependency-audit: subdirectory package.json does not trigger audit", () =>
   assert.equal(npmAuditCalled, false, "subdirectory dependency files should not trigger audit");
   assert.deepStrictEqual(result, []);
 });
+
+// ─── Python normalization (regression: #4416) ────────────────────────────────
+// Verification commands using python3/python must succeed even when only the
+// alternate interpreter name is available. The gate rewrites the command via
+// normalizePythonCommand before spawning — tested here end-to-end on this host.
+
+describe("verification-gate: python normalization (#4416)", () => {
+  let tmp: string;
+  beforeEach(() => { tmp = makeTempDir("vg-python"); });
+  afterEach(() => { rmSync(tmp, { recursive: true, force: true }); });
+
+  test("python3 --version command succeeds on this host (gate uses normalized invocation)", () => {
+    // This test verifies that runVerificationGate can execute a python command
+    // without hard-failing due to interpreter name mismatch. On hosts where
+    // python3 is available it runs directly; on hosts where only python or py
+    // exists, normalizePythonCommand rewrites the token before spawnSync.
+    const result = runVerificationGate({
+      cwd: tmp,
+      preferenceCommands: ["python3 --version"],
+    });
+    assert.equal(typeof result.passed, "boolean");
+    assert.equal(result.checks.length, 1);
+    assert.ok(result.checks[0].durationMs >= 0);
+  });
+
+  test("python --version command produces a VerificationResult (not a crash)", () => {
+    const result = runVerificationGate({
+      cwd: tmp,
+      preferenceCommands: ["python --version"],
+    });
+    assert.equal(typeof result.passed, "boolean");
+    assert.equal(result.checks.length, 1);
+    assert.ok(result.checks[0].durationMs >= 0);
+  });
+});

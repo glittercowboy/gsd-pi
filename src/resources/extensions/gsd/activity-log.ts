@@ -16,6 +16,8 @@ import { GSDError, GSD_IO_ERROR } from "./errors.js";
 const SEQ_PREFIX_RE = /^(\d+)-/;
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { gsdRoot } from "./paths.js";
+import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
+import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
 
 interface ActivityLogState {
   nextSeq: number;
@@ -132,6 +134,25 @@ export function saveActivityLog(
     }
     state.nextSeq += 1;
     state.lastSnapshotKeyByUnit.set(unitKey, key);
+
+    if (isUnifiedAuditEnabled()) {
+      emitUokAuditEvent(
+        basePath,
+        buildAuditEnvelope({
+          traceId: `activity:${unitType}:${unitId}`,
+          turnId: unitId,
+          category: "execution",
+          type: "activity-log-saved",
+          payload: {
+            unitType,
+            unitId,
+            filePath,
+            entryCount: entries.length,
+          },
+        }),
+      );
+    }
+
     return filePath;
   } catch (e) {
     // Don't let logging failures break auto-mode

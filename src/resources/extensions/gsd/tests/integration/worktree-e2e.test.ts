@@ -201,6 +201,17 @@ Test
 ## Boundary Map
 _None_
 `);
+      writeFileSync(join(msDir, "M001-SUMMARY.md"), `---
+id: M001
+title: "Test Milestone"
+status: complete
+completed_at: 2026-04-18T00:00:00Z
+---
+
+# M001: Test Milestone
+
+Completed.
+`);
       run("git add -A", repo);
       run("git commit -m \"add milestone\"", repo);
 

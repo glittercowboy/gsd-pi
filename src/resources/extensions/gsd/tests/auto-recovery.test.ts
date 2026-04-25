@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 
-import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.ts";
+import { verifyExpectedArtifact, hasImplementationArtifacts, resolveExpectedArtifactPath, diagnoseExpectedArtifact, buildLoopRemediationSteps, writeBlockerPlaceholder } from "../auto-recovery.ts";
+import { resolveMilestoneFile } from "../paths.ts";
 import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertGateRow } from "../gsd-db.ts";
 import { clearParseCache } from "../files.ts";
 import { parseRoadmap } from "../parsers-legacy.ts";
@@ -705,10 +706,253 @@ test("verifyExpectedArtifact complete-milestone passes with impl files (#1703)",
   }
 });
 
+test("verifyExpectedArtifact complete-milestone fails when DB milestone is not complete (#4658)", () => {
+  const base = makeGitBase();
+  try {
+    execFileSync("git", ["checkout", "-b", "feat/ms-db-active"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"), "# Milestone Summary\nverification FAILED — not complete.");
+    mkdirSync(join(base, "src"), { recursive: true });
+    writeFileSync(join(base, "src", "app.ts"), "console.log('hello');");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: implementation with failed summary"], { cwd: base, stdio: "ignore" });
+
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone One", status: "active" });
+
+    const result = verifyExpectedArtifact("complete-milestone", "M001", base);
+    assert.equal(result, false, "complete-milestone must fail when DB status is not complete");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact complete-milestone passes when DB milestone is complete (#4658)", () => {
+  const base = makeGitBase();
+  try {
+    execFileSync("git", ["checkout", "-b", "feat/ms-db-complete"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"), "# Milestone Summary\nDone.");
+    mkdirSync(join(base, "src"), { recursive: true });
+    writeFileSync(join(base, "src", "app.ts"), "console.log('hello');");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: implementation complete"], { cwd: base, stdio: "ignore" });
+
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone One", status: "complete" });
+
+    const result = verifyExpectedArtifact("complete-milestone", "M001", base);
+    assert.equal(result, true, "complete-milestone should pass when DB status is complete");
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("verifyExpectedArtifact complete-milestone tolerates transient DB lag when SUMMARY is canonical success (#4658)", () => {
+  const base = makeGitBase();
+  try {
+    execFileSync("git", ["checkout", "-b", "feat/ms-db-lag-success"], { cwd: base, stdio: "ignore" });
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "M001-SUMMARY.md"),
+      [
+        "---",
+        "id: M001",
+        "status: complete",
+        "---",
+        "",
+        "# M001: Success",
+      ].join("\n"),
+    );
+    mkdirSync(join(base, "src"), { recursive: true });
+    writeFileSync(join(base, "src", "app.ts"), "console.log('hello');");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: implementation with stale db"], { cwd: base, stdio: "ignore" });
+
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "Milestone One", status: "active" });
+
+    const result = verifyExpectedArtifact("complete-milestone", "M001", base);
+    assert.equal(result, true, "canonical success SUMMARY should pass verification during transient DB lag");
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("verifyExpectedArtifact checks pending gate-evaluate artifacts without ESM require failures", () => {
   const base = makeTmpProject();
 
   const verified = verifyExpectedArtifact("gate-evaluate", "M001/S01/gates+Q3", base);
 
   assert.equal(verified, false, "pending gates should keep gate-evaluate unverified");
+});
+
+// ─── #4414 regressions ────────────────────────────────────────────────────────
+
+test("#4414: writeBlockerPlaceholder invalidates path cache so dispatch guard sees file", () => {
+  const base = makeTmpBase();
+  try {
+    // Prime the readdir cache by resolving a DIFFERENT file first — this
+    // mirrors the stuck-loop condition where the dispatch guard cached an
+    // empty directory listing before the placeholder was written.
+    invalidateAllCaches();
+    assert.equal(
+      resolveMilestoneFile(base, "M001", "RESEARCH"),
+      null,
+      "no RESEARCH file yet",
+    );
+
+    const result = writeBlockerPlaceholder(
+      "research-milestone",
+      "M001",
+      base,
+      "verification retries exhausted",
+    );
+    assert.ok(result, "placeholder path returned");
+
+    // After writeBlockerPlaceholder, the dispatch guard must see the new file
+    // immediately — otherwise the rule re-fires (#4414, 7× re-dispatch).
+    const postResolve = resolveMilestoneFile(base, "M001", "RESEARCH");
+    assert.ok(
+      postResolve,
+      "resolveMilestoneFile finds the placeholder post-write (cache invalidated)",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("#4414: parallel-research sentinel path does not collide with RESEARCH suffix", () => {
+  const base = makeTmpBase();
+  try {
+    // Write only the parallel-research blocker (sentinel).
+    const sentinel = resolveExpectedArtifactPath(
+      "research-slice",
+      "M001/parallel-research",
+      base,
+    );
+    assert.ok(sentinel, "sentinel path resolves for parallel-research");
+    writeFileSync(sentinel!, "# blocker\n", "utf-8");
+
+    // Critical: the sentinel filename must NOT be matched by the legacy regex
+    // used when callers look up milestone-level RESEARCH. Otherwise the
+    // dispatch guard for research-milestone would short-circuit falsely.
+    const milestoneResearch = resolveMilestoneFile(base, "M001", "RESEARCH");
+    assert.equal(
+      milestoneResearch,
+      null,
+      "sentinel must not be mistaken for M001-RESEARCH.md via legacy pattern match",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("#4068: verifyExpectedArtifact parallel-research treats PARALLEL-BLOCKER as terminal completion", () => {
+  // Regression: when a parallel-research unit times out and the timeout-recovery
+  // machinery writes a PARALLEL-BLOCKER placeholder, verifyExpectedArtifact must
+  // return true so the dispatch loop can advance.  Previously it only returned
+  // true when every slice had a RESEARCH file — meaning a timeout always left
+  // verifyExpectedArtifact returning false, the unit was never cleared from
+  // unitDispatchCount, and the dispatch rule re-fired on the next iteration
+  // (infinite loop, issue #4068 / #4355).
+  const base = makeTmpBase();
+  try {
+    // Write a minimal roadmap
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+      [
+        "# M001: Timeout Test",
+        "",
+        "## Slices",
+        "",
+        "- [ ] **S01: Alpha** `risk:low` `depends:[]`",
+        "- [ ] **S02: Beta** `risk:low` `depends:[]`",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    // No RESEARCH files written — subagents timed out
+    clearParseCache();
+    invalidateAllCaches();
+
+    // Simulate timeout-recovery writing the PARALLEL-BLOCKER placeholder
+    const blockerPath = resolveExpectedArtifactPath("research-slice", "M001/parallel-research", base);
+    assert.ok(blockerPath, "PARALLEL-BLOCKER path must resolve for parallel-research unit");
+    writeFileSync(blockerPath!, "# BLOCKER — timeout recovery\n\n**Reason**: hard timeout.\n", "utf-8");
+
+    clearParseCache();
+    invalidateAllCaches();
+
+    // After blocker is written, verifyExpectedArtifact must return true
+    // so the dispatch loop treats this unit as complete and moves on.
+    assert.equal(
+      verifyExpectedArtifact("research-slice", "M001/parallel-research", base),
+      true,
+      "#4068: PARALLEL-BLOCKER on disk must satisfy verifyExpectedArtifact so the loop does not re-dispatch",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("#4414: verifyExpectedArtifact parallel-research succeeds when all research-ready slices have RESEARCH", () => {
+  const base = makeTmpBase();
+  try {
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S02", "tasks"), { recursive: true });
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S03", "tasks"), { recursive: true });
+
+    // Minimal roadmap with three slices
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"),
+      [
+        "# M001: Regression",
+        "",
+        "## Slices",
+        "",
+        "- [ ] **S01: Alpha** `risk:low` `depends:[]`",
+        "- [ ] **S02: Beta** `risk:low` `depends:[]`",
+        "- [ ] **S03: Gamma** `risk:low` `depends:[]`",
+        "",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    // Only 2 of 3 have RESEARCH — should fail verification
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "slices", "S01", "S01-RESEARCH.md"),
+      "# research",
+      "utf-8",
+    );
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "slices", "S02", "S02-RESEARCH.md"),
+      "# research",
+      "utf-8",
+    );
+
+    clearParseCache();
+    invalidateAllCaches();
+    assert.equal(
+      verifyExpectedArtifact("research-slice", "M001/parallel-research", base),
+      false,
+      "missing S03 RESEARCH → verification fails",
+    );
+
+    // All three RESEARCH present → verification passes
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "slices", "S03", "S03-RESEARCH.md"),
+      "# research",
+      "utf-8",
+    );
+    clearParseCache();
+    invalidateAllCaches();
+    assert.equal(
+      verifyExpectedArtifact("research-slice", "M001/parallel-research", base),
+      true,
+      "all slices have RESEARCH → verification passes",
+    );
+  } finally {
+    cleanup(base);
+  }
 });

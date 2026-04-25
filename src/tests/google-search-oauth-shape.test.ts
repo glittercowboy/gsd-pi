@@ -12,7 +12,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import googleSearchExtension from "../resources/extensions/google-search/index.js";
+import googleSearchExtension from "../../extensions/google-search/index.ts";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 

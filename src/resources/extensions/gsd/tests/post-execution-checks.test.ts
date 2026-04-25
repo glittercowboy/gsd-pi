@@ -10,7 +10,7 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
-import { mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -56,6 +56,11 @@ function createTask(overrides: Partial<TaskRow> = {}): TaskRow {
     observability_impact: "",
     full_plan_md: "",
     sequence: overrides.sequence ?? 0,
+    blocker_source: "",
+    escalation_pending: 0,
+    escalation_awaiting_review: 0,
+    escalation_artifact_path: null,
+    escalation_override_applied_at: null,
     ...overrides,
   };
 }
@@ -224,6 +229,81 @@ describe("resolveImportPath", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  // Regression: issue #4411 — side-effect asset imports (CSS/SCSS/images/fonts)
+  // were misclassified as unresolved because only code extensions were tried.
+  test("resolves side-effect CSS import with explicit extension", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-css-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    // frontend/src/routes/root.tsx imports '../../styles/globals.css' →
+    // resolves to frontend/styles/globals.css.
+    mkdirSync(join(dir, "frontend", "src", "routes"), { recursive: true });
+    mkdirSync(join(dir, "frontend", "styles"), { recursive: true });
+    writeFileSync(join(dir, "frontend", "styles", "globals.css"), "");
+    writeFileSync(
+      join(dir, "frontend", "src", "routes", "root.tsx"),
+      "import '../../styles/globals.css';"
+    );
+
+    const result = resolveImportPath(
+      "../../styles/globals.css",
+      "frontend/src/routes/root.tsx",
+      dir
+    );
+    assert.ok(result.exists, "CSS side-effect import should resolve");
+    assert.ok(result.resolvedPath?.endsWith("globals.css"));
+  });
+
+  test("resolves SCSS asset import", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-scss-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "theme.scss"), "");
+    writeFileSync(join(dir, "src", "main.ts"), "");
+
+    const result = resolveImportPath("./theme.scss", "src/main.ts", dir);
+    assert.ok(result.exists);
+  });
+
+  test("still fails for missing asset import", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-missing-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "main.ts"), "");
+
+    const result = resolveImportPath("./missing.css", "src/main.ts", dir);
+    assert.ok(!result.exists);
+    assert.equal(result.resolvedPath, null);
+  });
+
+  // Pin TS ESM convention: explicit .js import must still resolve to the
+  // sibling .ts file when only the .ts exists.
+  test("resolves .js import to sibling .ts (TS ESM convention)", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-tsesm-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "types.ts"), "export {};");
+    writeFileSync(join(dir, "src", "main.ts"), "");
+
+    const result = resolveImportPath("./types.js", "src/main.ts", dir);
+    assert.ok(result.exists);
+    assert.ok(result.resolvedPath?.endsWith("types.ts"));
+  });
+
+  // Non-code explicit extensions must not fall through to code-extension
+  // shadows: a missing ./missing.css must stay unresolved even if a stray
+  // ./missing.css.ts happens to exist.
+  test("missing asset import does not match code-extension shadow", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-shadow-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "missing.css.ts"), "export {};");
+    writeFileSync(join(dir, "src", "main.ts"), "");
+
+    const result = resolveImportPath("./missing.css", "src/main.ts", dir);
+    assert.ok(!result.exists);
+    assert.equal(result.resolvedPath, null);
+  });
 });
 
 // ─── Import Resolution Check Tests ───────────────────────────────────────────
@@ -343,6 +423,30 @@ describe("checkImportResolution", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  // Regression: issue #4411 — CSS side-effect import inside a .tsx key_file
+  // must not produce a blocking post-execution failure.
+  test("does not block on valid CSS side-effect import in .tsx key_file", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-asset-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    // frontend/src/routes/root.tsx imports '../../styles/globals.css' →
+    // resolves to frontend/styles/globals.css.
+    mkdirSync(join(dir, "frontend", "src", "routes"), { recursive: true });
+    mkdirSync(join(dir, "frontend", "styles"), { recursive: true });
+    writeFileSync(join(dir, "frontend", "styles", "globals.css"), "");
+    writeFileSync(
+      join(dir, "frontend", "src", "routes", "root.tsx"),
+      "import '../../styles/globals.css';\nexport default function Root() { return null; }"
+    );
+
+    const task = createTask({
+      id: "T03",
+      key_files: ["frontend/src/routes/root.tsx"],
+    });
+
+    const results = checkImportResolution(task, [], dir);
+    assert.deepEqual(results, [], "valid CSS import must not be flagged");
   });
 });
 

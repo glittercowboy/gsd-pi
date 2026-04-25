@@ -49,6 +49,7 @@ function makeDeps(
     loadEffectiveGSDPreferences: () => ({ preferences: { git: {} } }),
     invalidateAllCaches: () => {},
     captureIntegrationBranch: () => {},
+    enterBranchModeForMilestone: () => {},
     ...overrides,
   };
   return deps;
@@ -127,7 +128,7 @@ describe("worktree journal events", () => {
 
   test("enterMilestone emits worktree-skip when isolation disabled", () => {
     const s = makeSession({ basePath: tmp, originalBasePath: tmp });
-    const deps = makeDeps({ shouldUseWorktreeIsolation: () => false });
+    const deps = makeDeps({ shouldUseWorktreeIsolation: () => false, getIsolationMode: () => "none" });
     const resolver = new WorktreeResolver(s, deps);
 
     resolver.enterMilestone("M001", makeNotifyCtx());
@@ -189,7 +190,12 @@ describe("worktree journal events", () => {
     });
     const resolver = new WorktreeResolver(s, deps);
 
-    resolver.mergeAndExit("M001", makeNotifyCtx());
+    // Since #4380, mergeAndExit re-throws all errors after emitting the journal
+    // event and restoring state — callers must handle the throw.
+    assert.throws(
+      () => resolver.mergeAndExit("M001", makeNotifyCtx()),
+      /conflict in main/,
+    );
 
     const entries = readJournalEntries(tmp);
     const failed = entries.find(e => e.eventType === "worktree-merge-failed");

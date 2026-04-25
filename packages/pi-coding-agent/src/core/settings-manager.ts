@@ -92,6 +92,62 @@ export interface ModelDiscoverySettings {
 	autoRefreshOnModelSelect?: boolean; // default: false - refresh discovery when opening model selector
 }
 
+/**
+ * A shell command bound to a Layer 0 hook event.
+ *
+ * Payload is passed to the command on stdin as JSON. The command may write a
+ * JSON object to stdout to mutate the pending action — shape varies per hook
+ * (e.g. `{"block":true,"reason":"..."}` for PreToolUse). Non-zero exit with
+ * `blocking: true` vetoes the action.
+ */
+export interface HookEntry {
+	/** Optional filter on the event payload (currently supports tool name / bash command prefix). */
+	match?: {
+		tool?: string | string[];
+		command?: string;
+	};
+	/** The shell command to execute. */
+	command: string;
+	/** Timeout in milliseconds. Default: 30000. */
+	timeout?: number;
+	/** When true (default), a non-zero exit vetoes the pending action. */
+	blocking?: boolean;
+	/** Extra environment variables for the child process. */
+	env?: Record<string, string>;
+}
+
+/**
+ * Layer 0 shell hooks. Each key is the name of a hook event; each value is a
+ * list of `HookEntry` — all matching entries run in order.
+ *
+ * Hook names mirror Claude Code's for portability.
+ */
+export interface HooksSettings {
+	PreToolUse?: HookEntry[];
+	PostToolUse?: HookEntry[];
+	UserPromptSubmit?: HookEntry[];
+	SessionStart?: HookEntry[];
+	SessionEnd?: HookEntry[];
+	Stop?: HookEntry[];
+	Notification?: HookEntry[];
+	PreCompact?: HookEntry[];
+	PostCompact?: HookEntry[];
+	PreCommit?: HookEntry[];
+	PostCommit?: HookEntry[];
+	PrePush?: HookEntry[];
+	PostPush?: HookEntry[];
+	PrePr?: HookEntry[];
+	PostPr?: HookEntry[];
+	PreMilestone?: HookEntry[];
+	PostMilestone?: HookEntry[];
+	PreUnit?: HookEntry[];
+	PostUnit?: HookEntry[];
+	PreVerify?: HookEntry[];
+	PostVerify?: HookEntry[];
+	BudgetThreshold?: HookEntry[];
+	Blocked?: HookEntry[];
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -154,6 +210,7 @@ export interface Settings {
 	timestampFormat?: "date-time-iso" | "date-time-us"; // Timestamp display format for messages. Default: "date-time-iso"
 	allowedCommandPrefixes?: string[]; // Override built-in SAFE_COMMAND_PREFIXES for !command resolution (global-only — ignored in project settings)
 	fetchAllowedUrls?: string[]; // Hostnames exempted from SSRF blocklist in fetch_page (global-only — ignored in project settings)
+	hooks?: HooksSettings; // Layer 0 shell-command hooks. Project-scoped hooks require explicit trust (.pi/hooks.trusted).
 }
 
 /** Settings keys that are only respected from global config — project settings cannot override these. */

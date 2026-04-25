@@ -627,4 +627,83 @@ Integration tests mock external services.
 
     assert.strictEqual(result, '', 'empty content returns empty string');
   });
+
+  // ── Regression: issue #4719 — single-H2 with many H3 entries ──────────────
+  // A KNOWLEDGE.md structured as one top-level H2 with many H3 entries must
+  // filter at H3 granularity; otherwise one keyword match against the H2
+  // header or first paragraph returns the entire file.
+  test("single H2 with many H3 entries filters at H3 level (issue #4719)", async () => {
+    const singleH2Knowledge = `# Project Knowledge
+
+## Patterns
+
+### Database: prepared statements
+Always use prepared statements with SQLite.
+
+### API: versioned paths
+Use /v1/resource style versioning.
+
+### Testing: node:test
+Prefer node:test over external frameworks.
+
+### Deployment: blue-green
+Blue-green deployment for zero-downtime releases.
+`;
+
+    const result = await queryKnowledge(singleH2Knowledge, ['database']);
+
+    // Should include only the matching H3 entry, not the whole file
+    assert.match(result, /Database: prepared statements/, 'includes matching H3 entry');
+    assert.ok(
+      !result.includes('API: versioned paths'),
+      'does not include non-matching H3 entry',
+    );
+    assert.ok(
+      !result.includes('Testing: node:test'),
+      'does not include non-matching H3 entry',
+    );
+    assert.ok(
+      !result.includes('Deployment: blue-green'),
+      'does not include non-matching H3 entry',
+    );
+    // The returned payload must be dramatically smaller than the full content
+    assert.ok(
+      result.length < singleH2Knowledge.length / 2,
+      `scoped result (${result.length} chars) should be <50% of full content (${singleH2Knowledge.length} chars)`,
+    );
+  });
+
+  test("single H2 with H3 entries returns empty when no H3 matches (issue #4719)", async () => {
+    const singleH2Knowledge = `# Project Knowledge
+
+## Patterns
+
+### Database: prepared statements
+Always use prepared statements with SQLite.
+
+### API: versioned paths
+Use /v1/resource style versioning.
+`;
+
+    const result = await queryKnowledge(singleH2Knowledge, ['nonexistent']);
+
+    assert.strictEqual(result, '', 'no H3 match returns empty string');
+  });
+
+  test("falls back to H2 when no H3 headings exist at all", async () => {
+    // Backwards-compat: files with only H2 topic headers must still filter.
+    const h2OnlyKnowledge = `# Project Knowledge
+
+## Database Patterns
+Use prepared statements.
+
+## API Design
+REST with OpenAPI.
+`;
+
+    const result = await queryKnowledge(h2OnlyKnowledge, ['database']);
+
+    assert.match(result, /Database Patterns/, 'H2-only file falls back to H2 filtering');
+    assert.ok(!result.includes('API Design'), 'non-matching H2 section excluded');
+  });
 });

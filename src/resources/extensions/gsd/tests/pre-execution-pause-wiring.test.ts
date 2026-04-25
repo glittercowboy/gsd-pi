@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { postUnitPostVerification, type PostUnitContext } from "../auto-post-unit.ts";
 import { AutoSession } from "../auto/session.ts";
-import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask } from "../gsd-db.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, _getAdapter } from "../gsd-db.ts";
 import { invalidateAllCaches } from "../cache.ts";
 import { _clearGsdRootCache } from "../paths.ts";
 
@@ -453,5 +453,44 @@ describe("Pre-execution checks → pauseAuto wiring", () => {
       "continue",
       "postUnitPostVerification should return 'continue' when pre-execution checks are disabled"
     );
+  });
+
+  test("uok gate runner persists pre-execution gate outcomes when enabled", async () => {
+    writePreferences({
+      enhanced_verification: true,
+      enhanced_verification_pre: true,
+      enhanced_verification_strict: true,
+      uok: {
+        enabled: true,
+        gates: { enabled: true },
+      },
+    });
+
+    createFailingTasks();
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "plan-slice", id: "M001/S01" });
+    const pctx = makePostUnitContext(s, ctx, pi, pauseAutoMock);
+
+    const result = await postUnitPostVerification(pctx);
+    assert.equal(result, "stopped");
+
+    const adapter = _getAdapter();
+    const row = adapter
+      ?.prepare(
+        `SELECT gate_id, outcome, failure_class
+         FROM gate_runs
+         WHERE gate_id = 'pre-execution-checks'
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get() as { gate_id: string; outcome: string; failure_class: string } | undefined;
+
+    assert.ok(row, "pre-execution gate run should be persisted when uok.gates is enabled");
+    assert.equal(row?.gate_id, "pre-execution-checks");
+    assert.equal(row?.outcome, "fail");
+    assert.equal(row?.failure_class, "input");
   });
 });

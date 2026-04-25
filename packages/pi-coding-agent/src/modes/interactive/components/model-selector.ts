@@ -9,19 +9,32 @@ import {
 	Text,
 	type TUI,
 } from "@gsd/pi-tui";
-import type { ModelRegistry } from "../../../core/model-registry.js";
+import type { ModelRegistry, ProviderAuthMode } from "../../../core/model-registry.js";
 import type { SettingsManager } from "../../../core/settings-manager.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
 
-/** Display names for providers in the model selector UI. */
-const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
-	anthropic: "anthropic-api",
-};
-
 export function providerDisplayName(provider: string): string {
-	return PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+	return provider;
+}
+
+/**
+ * Short, user-facing label for a provider's auth mode. Returned strings are
+ * suitable for use as a suffix/badge alongside the provider name.
+ * Returns an empty string for modes that don't need a badge (e.g. "none").
+ */
+export function providerAuthBadge(authMode?: ProviderAuthMode): string {
+	switch (authMode) {
+		case "apiKey":
+			return "API key";
+		case "oauth":
+			return "OAuth";
+		case "externalCli":
+			return "CLI";
+		default:
+			return "";
+	}
 }
 
 function formatTokenCount(count: number): string {
@@ -140,7 +153,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.scopeHintText = new Text(this.getScopeHintText(), 0, 0);
 			this.addChild(this.scopeHintText);
 		} else {
-			const hintText = "Only showing models with configured API keys (see README for details)";
+			const hintText =
+				"Only showing models with configured credentials (API key, OAuth, or CLI). See README for details.";
 			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
 		}
 		this.addChild(new Spacer(1));
@@ -409,7 +423,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			const ctx = formatTokenCount(item.model.contextWindow);
 			const ctxBadge = theme.fg("muted", `${ctx}`);
-			const providerBadge = theme.fg("muted", `[${providerDisplayName(item.provider)}]`);
+			const authMode = this.modelRegistry.getProviderAuthMode(item.provider);
+			const authLabel = providerAuthBadge(authMode);
+			const providerBadgeText = authLabel
+				? `[${providerDisplayName(item.provider)} · ${authLabel}]`
+				: `[${providerDisplayName(item.provider)}]`;
+			const providerBadge = theme.fg("muted", providerBadgeText);
 			const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 
 			let line: string;
@@ -445,7 +464,19 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		const maxVisible = 12;
 
 		if (this.groupedRows.length === 0) {
-			this.listContainer.addChild(new Text(theme.fg("muted", "  No models available"), 0, 0));
+			this.listContainer.addChild(
+				new Text(theme.fg("muted", "  No providers configured."), 0, 0),
+			);
+			this.listContainer.addChild(
+				new Text(
+					theme.fg(
+						"muted",
+						"  Run /login (OAuth), set an API key, or install a CLI provider. See README.",
+					),
+					0,
+					0,
+				),
+			);
 			return;
 		}
 
@@ -467,11 +498,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				// Provider group header — always unselectable
 				const providerLabel = theme.fg("borderAccent", providerDisplayName(row.provider));
 				const count = theme.fg("muted", ` (${row.count})`);
+				const authMode = this.modelRegistry.getProviderAuthMode(row.provider);
+				const authLabel = providerAuthBadge(authMode);
+				const authText = authLabel ? theme.fg("muted", ` · via ${authLabel}`) : "";
 				// Add blank line before header if not the very first visible row
 				if (i > startIndex) {
 					this.listContainer.addChild(new Text("", 0, 0));
 				}
-				this.listContainer.addChild(new Text(`  ${providerLabel}${count}`, 0, 0));
+				this.listContainer.addChild(new Text(`  ${providerLabel}${count}${authText}`, 0, 0));
 			} else {
 				// Model row
 				const isSelected = i === this.selectedGroupIndex;

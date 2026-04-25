@@ -11,6 +11,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const template = readFileSync(
   resolve(process.cwd(), 'src', 'resources', 'extensions', 'gsd', 'prompts', 'guided-discuss-slice.md'),
@@ -37,7 +38,7 @@ describe('discuss-slice structuredQuestionsAvailable template variable', () => {
     const falseIdx = template.indexOf('`{{structuredQuestionsAvailable}}` is `false`')
     assert.ok(falseIdx !== -1)
 
-    const afterFalse = template.slice(falseIdx, falseIdx + 300)
+    const afterFalse = extractSourceRegion(template, '`{{structuredQuestionsAvailable}}` is `false`')
     assert.ok(
       afterFalse.includes('plain text'),
       'when structuredQuestionsAvailable is false, questions should be in plain text',

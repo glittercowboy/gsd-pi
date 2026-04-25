@@ -19,7 +19,7 @@ export const GSD_LOGO: readonly string[] = [
 /**
  * Render the logo block with a color function applied to each line.
  *
- * @param color — e.g. `(s) => `\x1b[36m${s}\x1b[0m`` or picocolors.cyan
+ * @param color — e.g. `(s) => `\x1b[36m${s}\x1b[0m`` or chalk.cyan
  * @returns Ready-to-write string with leading/trailing newlines.
  */
 export function renderLogo(color: (s: string) => string): string {

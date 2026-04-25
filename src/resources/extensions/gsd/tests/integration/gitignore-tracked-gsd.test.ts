@@ -107,6 +107,7 @@ test("ensureGitignore does NOT add .gsd when .gsd/ has tracked files (#1364)", (
     // Other baseline patterns should still be present
     assert.ok(lines.includes(".DS_Store"), "Expected .DS_Store in .gitignore");
     assert.ok(lines.includes("node_modules/"), "Expected node_modules/ in .gitignore");
+    assert.ok(lines.includes(".mcp.json"), "Expected .mcp.json in .gitignore");
   } finally {
     cleanup(dir);
   }

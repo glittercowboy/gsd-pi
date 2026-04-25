@@ -30,6 +30,8 @@ function makeSliceRow(overrides?: Partial<SliceRow>): SliceRow {
     observability_impact: '',
     sequence: 0,
     replan_triggered_at: null,
+    is_sketch: 0,
+    sketch_scope: '',
     ...overrides,
   };
 }
@@ -61,6 +63,11 @@ function makeTaskRow(overrides?: Partial<TaskRow>): TaskRow {
     expected_output: [],
     observability_impact: '',
     sequence: 0,
+    blocker_source: '',
+    escalation_pending: 0,
+    escalation_awaiting_review: 0,
+    escalation_artifact_path: null,
+    escalation_override_applied_at: null,
     ...overrides,
   };
 }

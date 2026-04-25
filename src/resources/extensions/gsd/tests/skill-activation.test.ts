@@ -4,7 +4,13 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadSkills } from "@gsd/pi-coding-agent";
-import { buildSkillActivationBlock } from "../auto-prompts.js";
+import {
+  buildPlanMilestonePrompt,
+  buildResearchMilestonePrompt,
+  buildSkillActivationBlock,
+} from "../auto-prompts.js";
+import { warnIfManifestHasMissingSkills } from "../skill-manifest.js";
+import { _resetLogs, drainLogs, setStderrLoggingEnabled } from "../workflow-logger.js";
 import type { GSDPreferences } from "../preferences.js";
 
 function makeTempBase(): string {
@@ -23,6 +29,11 @@ function writeSkill(base: string, name: string, description: string): void {
 
 function loadOnlyTestSkills(base: string): void {
   loadSkills({ cwd: base, includeDefaults: false, skillPaths: [join(base, "skills")] });
+}
+
+function writeProjectPreferences(base: string, preferences: string): void {
+  mkdirSync(join(base, ".gsd"), { recursive: true });
+  writeFileSync(join(base, ".gsd", "PREFERENCES.md"), `---\n${preferences}---\n`);
 }
 
 function buildBlock(
@@ -230,4 +241,112 @@ test("buildSkillActivationBlock allows valid skill names and rejects invalid one
   } finally {
     cleanup(base);
   }
+});
+
+// ─── Per-unit-type skill manifest (RFC #4779) ─────────────────────────────────
+
+test("buildSkillActivationBlock: explicit always_use_skills bypass the unit-type manifest", () => {
+  const base = makeTempBase();
+  try {
+    // write-docs is in the research-milestone manifest; swiftui is not.
+    // Both are in always_use_skills — a user-explicit source — so BOTH
+    // should activate regardless of the manifest. User intent wins over
+    // unit-type defaults. See RFC #4779 and skill-manifest.ts rationale.
+    writeSkill(base, "write-docs", "Use when writing docs or RFCs.");
+    writeSkill(base, "swiftui", "Use for SwiftUI views.");
+    loadOnlyTestSkills(base);
+
+    const result = buildBlock(base, { unitType: "research-milestone" }, {
+      always_use_skills: ["write-docs", "swiftui"],
+    });
+
+    assert.match(result, /Call Skill\(\{ skill: 'write-docs' \}\)/);
+    assert.match(result, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildSkillActivationBlock falls through to all skills for unknown unit type", () => {
+  const base = makeTempBase();
+  try {
+    writeSkill(base, "swiftui", "Use for SwiftUI views.");
+    loadOnlyTestSkills(base);
+
+    const result = buildBlock(base, { unitType: "unknown-unit-type" }, {
+      always_use_skills: ["swiftui"],
+    });
+
+    // Unknown unit type = wildcard fallback (pre-manifest behavior).
+    assert.match(result, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("buildSkillActivationBlock without unitType preserves pre-manifest behavior", () => {
+  const base = makeTempBase();
+  try {
+    writeSkill(base, "swiftui", "Use for SwiftUI views.");
+    loadOnlyTestSkills(base);
+
+    // No unitType param — filter should no-op.
+    const result = buildBlock(base, {}, {
+      always_use_skills: ["swiftui"],
+    });
+
+    assert.match(result, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("milestone prompt builders propagate always_use_skills through buildSkillActivationBlock", async () => {
+  const base = makeTempBase();
+  try {
+    // Both skills are in always_use_skills — explicit user intent bypasses
+    // the unit-type manifest, so both activate in both milestone flows.
+    writeSkill(base, "write-docs", "Use when writing docs or RFCs.");
+    writeSkill(base, "swiftui", "Use for SwiftUI views.");
+    writeProjectPreferences(base, "always_use_skills:\n  - write-docs\n  - swiftui\n");
+    loadOnlyTestSkills(base);
+
+    const researchPrompt = await buildResearchMilestonePrompt("M001", "Test", base);
+    assert.match(researchPrompt, /Call Skill\(\{ skill: 'write-docs' \}\)/);
+    assert.match(researchPrompt, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+
+    const planPrompt = await buildPlanMilestonePrompt("M001", "Test", base);
+    assert.match(planPrompt, /Call Skill\(\{ skill: 'write-docs' \}\)/);
+    assert.match(planPrompt, /Call Skill\(\{ skill: 'swiftui' \}\)/);
+  } finally {
+    cleanup(base);
+  }
+});
+
+test("skill manifest strict warnings require GSD_SKILL_MANIFEST_STRICT=1", (t) => {
+  const previousStrict = process.env.GSD_SKILL_MANIFEST_STRICT;
+  const previousStderr = setStderrLoggingEnabled(false);
+  t.after(() => {
+    if (previousStrict === undefined) {
+      delete process.env.GSD_SKILL_MANIFEST_STRICT;
+    } else {
+      process.env.GSD_SKILL_MANIFEST_STRICT = previousStrict;
+    }
+    setStderrLoggingEnabled(previousStderr);
+    _resetLogs();
+  });
+
+  process.env.GSD_SKILL_MANIFEST_STRICT = "0";
+  _resetLogs();
+  warnIfManifestHasMissingSkills("research-milestone", new Set());
+  assert.equal(drainLogs().length, 0, "strict=0 must preserve silent behavior");
+
+  process.env.GSD_SKILL_MANIFEST_STRICT = "1";
+  _resetLogs();
+  warnIfManifestHasMissingSkills("research-milestone", new Set());
+  const logs = drainLogs();
+  assert.ok(
+    logs.some(log => log.message.includes("skill-manifest: references uninstalled skill")),
+    "strict=1 should warn about missing manifest entries",
+  );
 });

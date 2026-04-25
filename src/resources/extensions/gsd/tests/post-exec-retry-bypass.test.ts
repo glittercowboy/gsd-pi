@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 import { runPostUnitVerification, type VerificationContext } from "../auto-verification.ts";
 import { AutoSession } from "../auto/session.ts";
-import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask } from "../gsd-db.ts";
+import { openDatabase, closeDatabase, insertMilestone, insertSlice, insertTask, _getAdapter } from "../gsd-db.ts";
 import { invalidateAllCaches } from "../cache.ts";
 import { _clearGsdRootCache } from "../paths.ts";
 
@@ -140,6 +140,43 @@ function createBasicTask(): void {
   });
 }
 
+function createPostExecFailureTask(): void {
+  insertMilestone({ id: "M001" });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Test Slice",
+    risk: "low",
+  });
+
+  const srcDir = join(tempDir, "src");
+  mkdirSync(srcDir, { recursive: true });
+  writeFileSync(
+    join(srcDir, "broken.ts"),
+    "import { missing } from './does-not-exist.js';\nexport const ok = 1;\n",
+    "utf-8",
+  );
+
+  insertTask({
+    id: "T01",
+    sliceId: "S01",
+    milestoneId: "M001",
+    title: "Task with broken import",
+    status: "pending",
+    keyFiles: ["src/broken.ts"],
+    planning: {
+      description: "Task that introduces an unresolved import in key files",
+      estimate: "1h",
+      files: ["src/broken.ts"],
+      verify: "echo pass",
+      inputs: [],
+      expectedOutput: [],
+      observabilityImpact: "",
+    },
+    sequence: 0,
+  });
+}
+
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
 describe("Post-execution blocking failure retry bypass", () => {
@@ -248,6 +285,47 @@ describe("Post-execution blocking failure retry bypass", () => {
     // The verification should pass with our simple "echo pass" task
     // This test mainly confirms the wiring is correct
     assert.equal(result, "continue");
+  });
+
+  test("uok gate runner persists post-execution gate failures when enabled", async () => {
+    createPostExecFailureTask();
+    writePreferences({
+      enhanced_verification: true,
+      enhanced_verification_post: true,
+      verification_auto_fix: true,
+      verification_max_retries: 2,
+      uok: {
+        enabled: true,
+        gates: { enabled: true },
+      },
+    });
+
+    const ctx = makeMockCtx();
+    const pi = makeMockPi();
+    const pauseAutoMock = mock.fn(async () => {});
+    const s = makeMockSession(tempDir, { type: "execute-task", id: "M001/S01/T01" });
+    const vctx: VerificationContext = { s, ctx, pi };
+
+    const result = await runPostUnitVerification(vctx, pauseAutoMock);
+
+    assert.equal(result, "pause");
+    assert.equal(pauseAutoMock.mock.callCount(), 1);
+
+    const adapter = _getAdapter();
+    const row = adapter
+      ?.prepare(
+        `SELECT gate_id, outcome, failure_class
+         FROM gate_runs
+         WHERE gate_id = 'post-execution-checks'
+         ORDER BY id DESC
+         LIMIT 1`,
+      )
+      .get() as { gate_id: string; outcome: string; failure_class: string } | undefined;
+
+    assert.ok(row, "post-execution gate run should be persisted when uok.gates is enabled");
+    assert.equal(row?.gate_id, "post-execution-checks");
+    assert.equal(row?.outcome, "fail");
+    assert.equal(row?.failure_class, "artifact");
   });
 });
 

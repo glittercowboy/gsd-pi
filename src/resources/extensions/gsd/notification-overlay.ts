@@ -3,7 +3,7 @@
 // Toggled with Ctrl+Alt+N (⌃⌥N on macOS), Ctrl+Shift+N fallback, or /gsd notifications.
 
 import type { Theme } from "@gsd/pi-coding-agent";
-import { truncateToWidth, visibleWidth, matchesKey, Key } from "@gsd/pi-tui";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi, matchesKey, Key } from "@gsd/pi-tui";
 
 import {
   readNotifications,
@@ -29,25 +29,15 @@ function severityIcon(severity: NotifySeverity): string {
   }
 }
 
-/** Word-wrap plain text to fit within maxWidth columns. */
+/** Column-aware word wrap using pi-tui's native wrapper (handles unicode/ANSI). */
 function wrapText(text: string, maxWidth: number): string[] {
-  if (text.length <= maxWidth) return [text];
-  const words = text.split(/\s+/);
-  const lines: string[] = [];
-  let current = "";
-  for (const word of words) {
-    if (current.length === 0) {
-      current = word;
-    } else if (current.length + 1 + word.length <= maxWidth) {
-      current += " " + word;
-    } else {
-      lines.push(current);
-      current = word;
-    }
-  }
-  if (current.length > 0) lines.push(current);
-  // If a single word exceeds maxWidth, truncate it
-  return lines.map((l) => l.length > maxWidth ? l.slice(0, maxWidth - 1) + "…" : l);
+  if (maxWidth <= 0) return [text];
+  const lines = wrapTextWithAnsi(text, maxWidth);
+  // Safety clamp: if any line still exceeds maxWidth (e.g. unbreakable long token),
+  // truncate it with an ellipsis so it cannot bleed past the box border.
+  return lines.map((l) =>
+    visibleWidth(l) > maxWidth ? truncateToWidth(l, maxWidth, "…") : l,
+  );
 }
 
 function formatTimestamp(ts: string): string {

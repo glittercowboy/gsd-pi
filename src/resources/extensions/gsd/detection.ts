@@ -7,7 +7,7 @@
  */
 
 import { existsSync, openSync, readSync, closeSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, parse as parsePath } from "node:path";
 import { homedir } from "node:os";
 import { gsdRoot } from "./paths.js";
 
@@ -1118,6 +1118,63 @@ function resolveVersionCatalogAccessors(
   }
 
   return accessors;
+}
+
+/**
+ * Walk ancestor directories of `startDir` looking for any file in
+ * `PROJECT_FILES`. Stops at the filesystem root or at a `.git` boundary
+ * (so ancestors above a git repo root — e.g. `$HOME` or `/usr/local` —
+ * can't trigger false positives). Returns true if an ancestor contains
+ * one of the project markers.
+ *
+ * Used by the worktree health check (#2347) to avoid warning about
+ * monorepos where package.json / Cargo.toml / etc. live in a parent
+ * directory rather than in the worktree's own checkout.
+ *
+ * `existsFn` is injectable so this remains deterministically testable
+ * without touching the real filesystem; defaults to `fs.existsSync`.
+ */
+export function hasProjectFileInAncestor(
+  startDir: string,
+  existsFn: (p: string) => boolean = existsSync,
+): boolean {
+  let checkDir = dirname(startDir);
+  const { root } = parsePath(checkDir);
+  while (checkDir !== root) {
+    if (PROJECT_FILES.some((f) => existsFn(join(checkDir, f)))) {
+      return true;
+    }
+    // Stop at git repository boundary — ancestors above the repo root
+    // may contain unrelated project files. Check AFTER project-file scan
+    // so a repo root containing both .git and a marker is still recognized.
+    if (existsFn(join(checkDir, ".git"))) return false;
+    checkDir = dirname(checkDir);
+  }
+  return false;
+}
+
+/**
+ * Check whether a project's `.gsd/` directory contains the bootstrap artifacts
+ * (`PREFERENCES.md` or `milestones/`) that indicate a completed init run.
+ *
+ * A zombie `.gsd/` state — symlink exists but neither artifact is present —
+ * must be treated as "needs init wizard". The previous guard checked only
+ * `existsSync(gsdRoot(basePath))`, which accepted zombie states and skipped
+ * the wizard (#2942).
+ *
+ * `existsFn` is injectable so tests can run deterministically; defaults to
+ * `fs.existsSync`.
+ */
+export function hasGsdBootstrapArtifacts(
+  gsdPath: string,
+  existsFn: (p: string) => boolean = existsSync,
+): boolean {
+  return (
+    existsFn(gsdPath) &&
+    (existsFn(join(gsdPath, "PREFERENCES.md")) ||
+      existsFn(join(gsdPath, "preferences.md")) ||
+      existsFn(join(gsdPath, "milestones")))
+  );
 }
 
 export function scanProjectFiles(basePath: string): string[] {

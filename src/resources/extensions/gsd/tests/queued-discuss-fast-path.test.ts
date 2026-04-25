@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -28,7 +29,7 @@ describe("queued-discuss-fast-path", () => {
     const fnStart = source.indexOf("async function dispatchDiscussForMilestone(");
     assert.ok(fnStart > 0, "dispatchDiscussForMilestone must exist");
     const fnEnd = source.indexOf("\nasync function ", fnStart + 1);
-    const fnBody = fnEnd > 0 ? source.slice(fnStart, fnEnd) : source.slice(fnStart, fnStart + 2000);
+    const fnBody = extractSourceRegion(source, "async function dispatchDiscussForMilestone(");
     assert.ok(
       fnBody.includes("fastPathInstruction"),
       "dispatchDiscussForMilestone must compute fastPathInstruction",
@@ -61,8 +62,7 @@ describe("queued-discuss-fast-path", () => {
     const source = guidedFlowSrc();
     const fnStart = source.indexOf("async function showDiscussQueuedMilestone(");
     assert.ok(fnStart > 0, "showDiscussQueuedMilestone must exist");
-    const fnEnd = source.indexOf("\nasync function ", fnStart + 1);
-    const fnBody = fnEnd > 0 ? source.slice(fnStart, fnEnd) : source.slice(fnStart, fnStart + 3000);
+    const fnBody = extractSourceRegion(source, "async function showDiscussQueuedMilestone(", "\nasync function ");
     assert.ok(
       fnBody.includes("hasDraft"),
       "showDiscussQueuedMilestone must check hasDraft",
@@ -81,8 +81,7 @@ describe("queued-discuss-fast-path", () => {
     const source = guidedFlowSrc();
     const fnStart = source.indexOf("async function showDiscussQueuedMilestone(");
     assert.ok(fnStart > 0, "showDiscussQueuedMilestone must exist");
-    const fnEnd = source.indexOf("\nasync function ", fnStart + 1);
-    const fnBody = fnEnd > 0 ? source.slice(fnStart, fnEnd) : source.slice(fnStart, fnStart + 3000);
+    const fnBody = extractSourceRegion(source, "async function showDiscussQueuedMilestone(", "\nasync function ");
     assert.ok(
       fnBody.includes("let fastPath = hasDraft"),
       "showDiscussQueuedMilestone must set fastPath = hasDraft so draft presence auto-enables fast path",

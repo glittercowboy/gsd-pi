@@ -13,10 +13,11 @@ import { appendEvent } from "./workflow-events.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { clearParseCache } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
-import { isDbAvailable, getTask, getSlice, getSliceTasks, getPendingGates, updateTaskStatus, updateSliceStatus } from "./gsd-db.js";
+import { isDbAvailable, getTask, getSlice, getSliceTasks, getPendingGates, updateTaskStatus, updateSliceStatus, insertSlice, getMilestone } from "./gsd-db.js";
 import { isValidationTerminal } from "./state.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning, logError } from "./workflow-logger.js";
+import { isClosedStatus } from "./status-guards.js";
 import {
   nativeConflictFiles,
   nativeCommit,
@@ -50,9 +51,14 @@ import {
   resolveExpectedArtifactPath,
   diagnoseExpectedArtifact,
 } from "./auto-artifact-paths.js";
+import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 
 // Re-export so existing consumers of auto-recovery.ts keep working.
 export { resolveExpectedArtifactPath, diagnoseExpectedArtifact };
+export {
+  classifyMilestoneSummaryContent,
+  type MilestoneSummaryOutcome,
+} from "./milestone-summary-classifier.js";
 
 // ─── Artifact Resolution & Verification ───────────────────────────────────────
 
@@ -261,21 +267,87 @@ export function verifyExpectedArtifact(
     return true;
   }
 
+  // #4414: research-slice parallel-research sentinel. The unitId
+  // `{mid}/parallel-research` is not a real slice — it triggers a single agent
+  // that fans out research across multiple slices. Verify success by checking
+  // that every slice which was "research-ready" in the roadmap now has a
+  // RESEARCH file. Without this, resolveExpectedArtifactPath returns null and
+  // the retry/escalation machinery silently re-dispatches forever.
+  //
+  // #4068: Also treat a PARALLEL-BLOCKER placeholder as a terminal completion
+  // so that timeout-recovery can write the blocker, have verifyExpectedArtifact
+  // return true, and let the dispatch loop advance past this unit.  Without
+  // this, the blocker is written but verification still returns false, the unit
+  // is never cleared from unitDispatchCount, and on the next iteration the
+  // dispatch rule (which correctly skips parallel-research when PARALLEL-BLOCKER
+  // exists) returns null — leaving the loop stuck re-deriving indefinitely.
+  //
+  // NOTE: this predicate mirrors the dispatch rule at
+  // auto-dispatch.ts parallel-research-slices — keep the two in sync.
+  if (unitType === "research-slice" && unitId.endsWith("/parallel-research")) {
+    const { milestone: mid } = parseUnitId(unitId);
+    if (!mid) return false;
+
+    // #4068: PARALLEL-BLOCKER written by timeout-recovery is a terminal state.
+    const blockerPath = resolveExpectedArtifactPath(unitType, unitId, base);
+    if (blockerPath && existsSync(blockerPath)) {
+      return true;
+    }
+
+    const roadmapFile = resolveMilestoneFile(base, mid, "ROADMAP");
+    if (!roadmapFile || !existsSync(roadmapFile)) {
+      logWarning("recovery", `verify-fail ${unitType} ${unitId}: roadmap missing`);
+      return false;
+    }
+    try {
+      const roadmap = parseLegacyRoadmap(readFileSync(roadmapFile, "utf-8"));
+      const milestoneResearchFile = resolveMilestoneFile(base, mid, "RESEARCH");
+      for (const slice of roadmap.slices) {
+        if (slice.done) continue;
+        if (milestoneResearchFile && slice.id === "S01") continue;
+        const depsComplete = (slice.depends ?? []).every((depId) =>
+          !!resolveSliceFile(base, mid, depId, "SUMMARY"),
+        );
+        if (!depsComplete) continue;
+        if (!resolveSliceFile(base, mid, slice.id, "RESEARCH")) {
+          logWarning("recovery", `verify-fail ${unitType} ${unitId}: slice ${slice.id} missing RESEARCH`);
+          return false;
+        }
+      }
+      return true;
+    } catch (err) {
+      logWarning("recovery", `parallel-research verification failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
+    }
+  }
+
   const absPath = resolveExpectedArtifactPath(unitType, unitId, base);
   // For unit types with no verifiable artifact (null path), the parent directory
   // is missing on disk — treat as stale completion state so the key gets evicted (#313).
-  if (!absPath) return false;
-  if (!existsSync(absPath)) return false;
+  if (!absPath) {
+    logWarning("recovery", `verify-fail ${unitType} ${unitId}: resolveExpectedArtifactPath returned null (parent dir missing)`);
+    return false;
+  }
+  if (!existsSync(absPath)) {
+    logWarning("recovery", `verify-fail ${unitType} ${unitId}: existsSync false for ${absPath}`);
+    return false;
+  }
 
   if (unitType === "validate-milestone") {
     const validationContent = readFileSync(absPath, "utf-8");
-    if (!isValidationTerminal(validationContent)) return false;
+    if (!isValidationTerminal(validationContent)) {
+      logWarning("recovery", `verify-fail ${unitType} ${unitId}: validation not terminal (len=${validationContent.length}) at ${absPath}`);
+      return false;
+    }
   }
 
   if (unitType === "plan-milestone") {
     try {
       const roadmap = parseLegacyRoadmap(readFileSync(absPath, "utf-8"));
-      if (roadmap.slices.length === 0) return false;
+      if (roadmap.slices.length === 0) {
+        logWarning("recovery", `verify-fail ${unitType} ${unitId}: roadmap has zero slices at ${absPath}`);
+        return false;
+      }
     } catch (err) {
       logWarning("recovery", `plan-milestone roadmap verification failed: ${err instanceof Error ? err.message : String(err)}`);
       return false;
@@ -292,7 +364,10 @@ export function verifyExpectedArtifact(
     // Accept checkbox-style (- [x] **T01: ...) or heading-style (### T01 -- / ### T01: / ### T01 —)
     const hasCheckboxTask = /^- \[[xX ]\] \*\*T\d+:/m.test(planContent);
     const hasHeadingTask = /^#{2,4}\s+T\d+\s*(?:--|—|:)/m.test(planContent);
-    if (!hasCheckboxTask && !hasHeadingTask) return false;
+    if (!hasCheckboxTask && !hasHeadingTask) {
+      logWarning("recovery", `verify-fail ${unitType} ${unitId}: plan has no task checkbox/heading (len=${planContent.length}) at ${absPath}`);
+      return false;
+    }
   }
 
   // execute-task: DB status is authoritative. Fall back to checked-checkbox
@@ -349,10 +424,15 @@ export function verifyExpectedArtifact(
 
         if (taskIds && taskIds.length > 0) {
           const tasksDir = resolveTasksDir(base, mid, sid);
-          if (tasksDir) {
-            for (const tid of taskIds) {
-              const taskPlanFile = join(tasksDir, `${tid}-PLAN.md`);
-              if (!existsSync(taskPlanFile)) return false;
+          if (!tasksDir) {
+            logWarning("recovery", `verify-fail ${unitType} ${unitId}: resolveTasksDir returned null for ${mid}/${sid}`);
+            return false;
+          }
+          for (const tid of taskIds) {
+            const taskPlanFile = join(tasksDir, `${tid}-PLAN.md`);
+            if (!existsSync(taskPlanFile)) {
+              logWarning("recovery", `verify-fail ${unitType} ${unitId}: task plan missing ${taskPlanFile}`);
+              return false;
             }
           }
         }
@@ -403,6 +483,14 @@ export function verifyExpectedArtifact(
   // A milestone with only .gsd/ plan files and zero implementation code is
   // not genuinely complete — the LLM wrote plan files but skipped actual work.
   if (unitType === "complete-milestone") {
+    const summaryOutcome = classifyMilestoneSummaryContent(readFileSync(absPath, "utf-8"));
+    if (summaryOutcome === "failure") return false;
+    const { milestone: mid } = parseUnitId(unitId);
+    if (mid && isDbAvailable()) {
+      const dbMilestone = getMilestone(mid);
+      if (!dbMilestone) return false;
+      if (!isClosedStatus(dbMilestone.status) && summaryOutcome !== "success") return false;
+    }
     if (hasImplementationArtifacts(base) === "absent") return false;
   }
 
@@ -435,6 +523,14 @@ export function writeBlockerPlaceholder(
   ].join("\n");
   writeFileSync(absPath, content, "utf-8");
 
+  // #4414: Clear caches so subsequent dispatch guards (e.g.
+  // resolveMilestoneFile) see the placeholder file. Without this, the
+  // cached directory listing is stale and the dispatch rule re-fires,
+  // producing an infinite loop despite the placeholder being on disk.
+  // Matches the pattern used in verifyExpectedArtifact above.
+  clearPathCache();
+  clearParseCache();
+
   // Mark the task/slice as complete in the DB so verifyExpectedArtifact passes.
   // Without this, the DB status stays "pending" and the dispatch loop
   // re-derives the same unit indefinitely (#2531, #2653).
@@ -442,13 +538,38 @@ export function writeBlockerPlaceholder(
     const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
     const ts = new Date().toISOString();
     if (unitType === "execute-task" && mid && sid && tid) {
-      try { updateTaskStatus(mid, sid, tid, "complete", ts); } catch (e) { logWarning("recovery", `updateTaskStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`); }
+      try {
+        updateTaskStatus(mid, sid, tid, "complete", ts);
+        const planPath = resolveSliceFile(base, mid, sid, "PLAN");
+        if (planPath && existsSync(planPath)) {
+          const planContent = readFileSync(planPath, "utf-8");
+          const updatedPlan = planContent.replace(
+            new RegExp(`^(\\s*-\\s+)\\[ \\]\\s+\\*\\*${tid}:`, "m"),
+            `$1[x] **${tid}:`,
+          );
+          if (updatedPlan !== planContent) {
+            atomicWriteSync(planPath, updatedPlan);
+          }
+        }
+      } catch (e) {
+        logWarning("recovery", `updateTaskStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`);
+      }
       // Append event so worktree reconciliation can replay this recovery completion
       try { appendEvent(base, { cmd: "complete-task", params: { milestoneId: mid, sliceId: sid, taskId: tid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for task recovery: ${e instanceof Error ? e.message : String(e)}`); }
     }
     if (unitType === "complete-slice" && mid && sid) {
       try { updateSliceStatus(mid, sid, "complete", ts); } catch (e) { logWarning("recovery", `updateSliceStatus failed during context exhaustion: ${e instanceof Error ? e.message : String(e)}`); }
       try { appendEvent(base, { cmd: "complete-slice", params: { milestoneId: mid, sliceId: sid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for slice recovery: ${e instanceof Error ? e.message : String(e)}`); }
+    }
+    // Insert a placeholder complete slice so deriveState sees activeMilestoneSlices.length > 0
+    // and exits the pre-planning phase. Without this, activeMilestoneSlices stays empty
+    // after the blocker ROADMAP.md is written, causing deriveState to return phase:'pre-planning'
+    // indefinitely and re-dispatching plan-milestone in an infinite loop (#4378).
+    if (unitType === "plan-milestone" && mid) {
+      try {
+        insertSlice({ id: "S00-blocker", milestoneId: mid, title: "Blocker placeholder — planning failed", status: "complete", sequence: 0 });
+      } catch (e) { logWarning("recovery", `insertSlice placeholder failed for plan-milestone recovery: ${e instanceof Error ? e.message : String(e)}`); }
+      try { appendEvent(base, { cmd: "plan-milestone", params: { milestoneId: mid }, ts, actor: "system", trigger_reason: "blocker-placeholder-recovery" }); } catch (e) { logWarning("recovery", `appendEvent failed for plan-milestone recovery: ${e instanceof Error ? e.message : String(e)}`); }
     }
   }
 

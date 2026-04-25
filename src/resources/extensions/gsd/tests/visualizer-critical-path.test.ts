@@ -3,9 +3,8 @@
 
 import { computeCriticalPath } from "../visualizer-data.js";
 import type { VisualizerMilestone } from "../visualizer-data.js";
-import { test } from 'node:test';
-import assert from 'node:assert/strict';
-
+import { test } from "node:test";
+import assert from "node:assert/strict";
 
 function makeMs(id: string, status: "complete" | "active" | "pending", dependsOn: string[], slices: any[] = []): VisualizerMilestone {
   return { id, title: id, status, dependsOn, slices };
@@ -15,12 +14,7 @@ function makeSlice(id: string, done: boolean, depends: string[] = []) {
   return { id, title: id, done, active: false, risk: "low", depends, tasks: [] };
 }
 
-// ─── Linear chain ───────────────────────────────────────────────────────────
-
-console.log("\n=== Critical Path: Linear Chain ===");
-
-{
-  // M001 -> M002 -> M003
+test("critical path: linear chain M001 → M002 → M003", () => {
   const milestones = [
     makeMs("M001", "complete", []),
     makeMs("M002", "active", ["M001"], [
@@ -34,15 +28,11 @@ console.log("\n=== Critical Path: Linear Chain ===");
   assert.ok(cp.milestonePath.length > 0, "linear chain has critical path");
   assert.ok(cp.milestonePath.includes("M002"), "M002 is on critical path");
   assert.ok(cp.milestonePath.includes("M003"), "M003 is on critical path");
-  assert.deepStrictEqual(cp.milestoneSlack.get("M002"), 0, "M002 has zero slack");
-  assert.deepStrictEqual(cp.milestoneSlack.get("M003"), 0, "M003 has zero slack");
-}
+  assert.equal(cp.milestoneSlack.get("M002"), 0, "M002 has zero slack");
+  assert.equal(cp.milestoneSlack.get("M003"), 0, "M003 has zero slack");
+});
 
-// ─── Diamond DAG ────────────────────────────────────────────────────────────
-
-console.log("\n=== Critical Path: Diamond DAG ===");
-
-{
+test("critical path: diamond DAG picks heavier branch", () => {
   // M001 -> M002 -> M004
   // M001 -> M003 -> M004
   // M002 has 3 incomplete slices, M003 has 1 incomplete slice
@@ -61,21 +51,13 @@ console.log("\n=== Critical Path: Diamond DAG ===");
 
   const cp = computeCriticalPath(milestones);
   assert.ok(cp.milestonePath.length >= 2, "diamond DAG has critical path");
-  // M002 has weight 3 (3 incomplete), M003 has weight 1
-  // Critical path should go through M002 (longer)
   assert.ok(cp.milestonePath.includes("M002"), "M002 (heavier) is on critical path");
 
-  // M003 should have non-zero slack since it's lighter
   const m003Slack = cp.milestoneSlack.get("M003") ?? -1;
   assert.ok(m003Slack > 0, "M003 has positive slack (lighter branch)");
-}
+});
 
-// ─── Independent branches ───────────────────────────────────────────────────
-
-console.log("\n=== Critical Path: Independent Branches ===");
-
-{
-  // M001 (no deps), M002 (no deps), M003 (no deps)
+test("critical path: independent branches selects longest", () => {
   const milestones = [
     makeMs("M001", "active", [], [makeSlice("S01", false)]),
     makeMs("M002", "pending", [], [makeSlice("S01", false), makeSlice("S02", false)]),
@@ -84,15 +66,10 @@ console.log("\n=== Critical Path: Independent Branches ===");
 
   const cp = computeCriticalPath(milestones);
   assert.ok(cp.milestonePath.length >= 1, "independent branches have at least one critical node");
-  // M002 has the most incomplete slices, should be critical
   assert.ok(cp.milestonePath.includes("M002"), "M002 (longest) is on critical path");
-}
+});
 
-// ─── Slice-level critical path ──────────────────────────────────────────────
-
-console.log("\n=== Critical Path: Slice-level ===");
-
-{
+test("critical path: slice-level path within an active milestone", () => {
   // Active milestone with slice dependencies: S01 -> S02 -> S04, S01 -> S03
   const milestones = [
     makeMs("M001", "active", [], [
@@ -108,26 +85,17 @@ console.log("\n=== Critical Path: Slice-level ===");
   assert.ok(cp.slicePath.includes("S02"), "S02 is on slice critical path");
   assert.ok(cp.slicePath.includes("S04"), "S04 is on slice critical path");
 
-  // S03 should have non-zero slack (it's a shorter branch)
   const s03Slack = cp.sliceSlack.get("S03") ?? -1;
   assert.ok(s03Slack > 0, "S03 has positive slack (shorter branch)");
-}
+});
 
-// ─── Empty milestones ───────────────────────────────────────────────────────
-
-console.log("\n=== Critical Path: Empty ===");
-
-{
+test("critical path: empty milestones produce empty paths", () => {
   const cp = computeCriticalPath([]);
-  assert.deepStrictEqual(cp.milestonePath.length, 0, "empty milestones produce empty path");
-  assert.deepStrictEqual(cp.slicePath.length, 0, "empty milestones produce empty slice path");
-}
+  assert.equal(cp.milestonePath.length, 0, "empty milestones produce empty path");
+  assert.equal(cp.slicePath.length, 0, "empty milestones produce empty slice path");
+});
 
-// ─── Single milestone ───────────────────────────────────────────────────────
-
-console.log("\n=== Critical Path: Single Milestone ===");
-
-{
+test("critical path: single milestone is its own critical path", () => {
   const milestones = [
     makeMs("M001", "active", [], [
       makeSlice("S01", false),
@@ -136,8 +104,6 @@ console.log("\n=== Critical Path: Single Milestone ===");
   ];
 
   const cp = computeCriticalPath(milestones);
-  assert.ok(cp.milestonePath.length === 1, "single milestone is its own critical path");
-  assert.deepStrictEqual(cp.milestonePath[0], "M001", "M001 is the critical node");
-}
-
-// ─── Report ─────────────────────────────────────────────────────────────────
+  assert.equal(cp.milestonePath.length, 1, "single milestone is its own critical path");
+  assert.equal(cp.milestonePath[0], "M001", "M001 is the critical node");
+});

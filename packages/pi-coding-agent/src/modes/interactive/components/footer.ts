@@ -2,7 +2,7 @@ import { type Component, truncateToWidth, visibleWidth } from "@gsd/pi-tui";
 import type { AgentSession } from "../../../core/agent-session.js";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.js";
 import { theme } from "../theme/theme.js";
-import { providerDisplayName } from "./model-selector.js";
+import { providerAuthBadge, providerDisplayName } from "./model-selector.js";
 
 /**
  * Sanitize text for display in a single-line status.
@@ -114,15 +114,20 @@ export class FooterComponent implements Component {
 		// Build stats line as separate groups joined by a dim middle-dot separator
 		const sep = ` ${theme.fg("dim", "\u00B7")} `;
 
-		// Group 1: token I/O
+		// Group 1: total tokens.
 		const tokenGroup: string[] = [];
-		if (totalInput) tokenGroup.push(`↑${formatTokens(totalInput)}`);
-		if (totalOutput) tokenGroup.push(`↓${formatTokens(totalOutput)}`);
+		const totalTokens = totalInput + totalOutput + totalCacheRead + totalCacheWrite;
+		if (totalTokens > 0) tokenGroup.push(formatTokens(totalTokens));
 
-		// Group 2: cache metrics
+		// Group 2: cache efficiency — cacheRead / all input-side tokens.
+		// Collapses the old cr/cw pair into a single "how much was served
+		// from cache" signal. cr/cw breakdown moved to `/stats`.
 		const cacheGroup: string[] = [];
-		if (totalCacheRead) cacheGroup.push(`cr:${formatTokens(totalCacheRead)}`);
-		if (totalCacheWrite) cacheGroup.push(`cw:${formatTokens(totalCacheWrite)}`);
+		const inputSide = totalInput + totalCacheRead + totalCacheWrite;
+		if (totalCacheRead > 0 && inputSide > 0) {
+			const cachedPct = Math.round((totalCacheRead / inputSide) * 100);
+			cacheGroup.push(`${cachedPct}% cached`);
+		}
 
 		// Group 3: cost
 		const costGroup: string[] = [];
@@ -140,20 +145,27 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		// Group 4: context percentage (colorized)
-		let contextPercentStr: string;
+		// Group 4: context bar + percentage (mirrors /gsd auto dashboard style).
+		// Bar colors track the same thresholds as the percent text.
 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const contextPercentDisplay =
-			contextPercent === "?"
-				? `?/${formatTokens(contextWindow)}${autoIndicator}`
-				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
-		} else {
-			contextPercentStr = contextPercentDisplay;
-		}
+		const barColor: "error" | "warning" | "success" =
+			contextPercentValue > 90 ? "error" : contextPercentValue > 70 ? "warning" : "success";
+		const BAR_WIDTH = 8;
+		const filled = contextUsage?.percent !== null
+			? Math.max(0, Math.min(BAR_WIDTH, Math.round((contextPercentValue / 100) * BAR_WIDTH)))
+			: 0;
+		const bar =
+			theme.fg(barColor, "━".repeat(filled)) +
+			theme.fg("dim", "─".repeat(Math.max(0, BAR_WIDTH - filled)));
+		const pctText = contextPercent === "?" ? "?" : `${contextPercent}%`;
+		const suffix = `/${formatTokens(contextWindow)}${autoIndicator}`;
+		const colorizedPct =
+			contextPercentValue > 90
+				? theme.fg("error", pctText)
+				: contextPercentValue > 70
+					? theme.fg("warning", pctText)
+					: pctText;
+		const contextPercentStr = `${bar} ${colorizedPct}${suffix}`;
 
 		// Assemble groups: items within a group are space-separated,
 		// groups are separated by a dim middle-dot
@@ -187,13 +199,22 @@ export class FooterComponent implements Component {
 				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
 		}
 
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
+		// Prepend the provider in parentheses if there are multiple providers and there's enough room.
+		// Include the auth mode so users can tell at a glance whether the active model is
+		// API-key-backed, OAuth-backed, or delegated to a third-party CLI.
 		let rightSide = rightSideWithoutProvider;
 		if (this.footerData.getAvailableProviderCount() > 1 && displayModel) {
-			rightSide = `(${providerDisplayName(displayModel.provider)}) ${rightSideWithoutProvider}`;
+			const authMode = this.session.modelRegistry.getProviderAuthMode(displayModel.provider);
+			const authLabel = providerAuthBadge(authMode);
+			const providerLabel = providerDisplayName(displayModel.provider);
+			const parenthetical = authLabel ? `${providerLabel} · ${authLabel}` : providerLabel;
+			rightSide = `(${parenthetical}) ${rightSideWithoutProvider}`;
 			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
-				rightSide = rightSideWithoutProvider;
+				// Too wide: drop the auth suffix first, then fall back to no parenthetical.
+				rightSide = `(${providerLabel}) ${rightSideWithoutProvider}`;
+				if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
+					rightSide = rightSideWithoutProvider;
+				}
 			}
 		}
 
@@ -226,20 +247,30 @@ export class FooterComponent implements Component {
 		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
 		const dimRemainder = theme.fg("dim", remainder);
 
-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
-
-		// Add extension statuses on a single line, sorted by key alphabetically
+		// Extension statuses right-aligned on the pwd line (sorted by key).
+		// Keeps the footer compact by avoiding a dedicated row when the content
+		// fits alongside pwd. Falls back to pwd-only if the combined line would
+		// exceed width.
 		const extensionStatuses = this.footerData.getExtensionStatuses();
-		if (extensionStatuses.size > 0) {
-			const sortedStatuses = Array.from(extensionStatuses.entries())
-				.sort(([a], [b]) => a.localeCompare(b))
-				.map(([, text]) => sanitizeStatusText(text));
-			const statusLine = sortedStatuses.join(" ");
-			// Match the rest of the footer styling: extension statuses should render
-			// in the same dim color as pwd/stats, with a dim ellipsis on truncation.
-			lines.push(truncateToWidth(theme.fg("dim", statusLine), width, theme.fg("dim", "...")));
+		const extStatusText =
+			extensionStatuses.size > 0
+				? Array.from(extensionStatuses.entries())
+						.sort(([a], [b]) => a.localeCompare(b))
+						.map(([, text]) => sanitizeStatusText(text))
+						.join(" ")
+				: "";
+
+		const pwdWidth = visibleWidth(pwd);
+		const extWidth = visibleWidth(extStatusText);
+		let pwdLine: string;
+		if (extStatusText && pwdWidth + 2 + extWidth <= width) {
+			const padding = " ".repeat(width - pwdWidth - extWidth);
+			pwdLine = theme.fg("dim", pwd + padding + extStatusText);
+		} else {
+			pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 		}
+
+		const lines = [pwdLine, dimStatsLeft + dimRemainder];
 
 		return lines;
 	}

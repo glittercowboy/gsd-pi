@@ -466,6 +466,41 @@ export class AuthStorage {
 	}
 
 	/**
+	 * Returns true if the stored credential for a provider is of type "oauth".
+	 * Used to detect stale OAuth credentials for providers where OAuth has been
+	 * removed (e.g. Anthropic, #3952) so callers can surface a targeted
+	 * migration message instead of a generic cooldown error.
+	 */
+	hasLegacyOAuthCredential(provider: string): boolean {
+		return this.getCredentialsForProvider(provider).some((c) => c.type === "oauth");
+	}
+
+	/**
+	 * Remove only oauth-type credentials for a provider, preserving any api_key
+	 * entries. Used to self-heal stale OAuth credentials for providers where
+	 * OAuth support has been removed (e.g. Anthropic, #3952) without destroying
+	 * a user's valid API keys. Returns true if any oauth entries were removed.
+	 */
+	removeLegacyOAuthCredential(provider: string): boolean {
+		const existing = this.getCredentialsForProvider(provider);
+		const remaining = existing.filter((c) => c.type !== "oauth");
+		if (remaining.length === existing.length) return false;
+
+		if (remaining.length === 0) {
+			delete this.data[provider];
+			this.persistProviderChange(provider, undefined);
+		} else {
+			const next = remaining.length === 1 ? remaining[0] : remaining;
+			this.data[provider] = next;
+			this.persistProviderChange(provider, next);
+		}
+		this.providerRoundRobinIndex.delete(provider);
+		this.credentialBackoff.delete(provider);
+		this.providerBackoff.delete(provider);
+		return true;
+	}
+
+	/**
 	 * Get all credentials (for passing to getOAuthApiKey).
 	 * Returns normalized format where each provider has a single credential
 	 * (the first one) for backward compatibility with OAuth refresh.

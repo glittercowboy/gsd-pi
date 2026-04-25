@@ -7,7 +7,7 @@
  */
 
 import { join } from "node:path";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 
 import {
   transaction,
@@ -202,14 +202,20 @@ export async function handleCompleteMilestone(
     summaryPath = join(manualDir, `${params.milestoneId}-SUMMARY.md`);
   }
 
-  try {
-    await saveFile(summaryPath, summaryMd);
-  } catch (renderErr) {
-    // Disk render failed — roll back DB status so state stays consistent
-    logWarning("tool", `complete_milestone — disk render failed, rolling back DB status: ${(renderErr as Error).message}`);
-    updateMilestoneStatus(params.milestoneId, 'active', null);
-    invalidateStateCache();
-    return { error: `disk render failed: ${(renderErr as Error).message}` };
+  // Guard (#4598): if SUMMARY.md already exists on disk, do not overwrite it.
+  // This handles re-dispatch scenarios (DB/disk state divergence) where a prior
+  // completion already wrote the file. Overwriting would silently destroy the
+  // richer content the agent produced during the original completion run.
+  if (!existsSync(summaryPath)) {
+    try {
+      await saveFile(summaryPath, summaryMd);
+    } catch (renderErr) {
+      // Disk render failed — roll back DB status so state stays consistent
+      logWarning("tool", `complete_milestone — disk render failed, rolling back DB status: ${(renderErr as Error).message}`);
+      updateMilestoneStatus(params.milestoneId, 'active', null);
+      invalidateStateCache();
+      return { error: `disk render failed: ${(renderErr as Error).message}` };
+    }
   }
 
   // Invalidate all caches

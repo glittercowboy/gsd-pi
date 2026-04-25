@@ -15,6 +15,13 @@ import type {
   RpcResponse,
   RpcSessionState,
 } from "../../packages/pi-coding-agent/src/modes/rpc/rpc-types.ts";
+import type {
+  WorkspaceIndex as GSDWorkspaceIndex,
+  WorkspaceMilestoneTarget as GSDWorkspaceMilestoneTarget,
+  WorkspaceScopeTarget as GSDWorkspaceScopeTarget,
+  WorkspaceSliceTarget as GSDWorkspaceSliceTarget,
+  WorkspaceTaskTarget as GSDWorkspaceTaskTarget,
+} from "../shared/workspace-types.ts";
 import {
   SESSION_BROWSER_SCOPE,
   normalizeSessionBrowserQuery,
@@ -38,6 +45,7 @@ import {
   collectAuthoritativeAutoDashboardData,
   collectTestOnlyFallbackAutoDashboardData,
 } from "./auto-dashboard-service.ts";
+import type { AutoDashboardData, RtkSessionSavings } from "./auto-dashboard-types.ts";
 import { resolveGsdCliEntry } from "./cli-entry.ts";
 
 // The standalone Next.js bundle bakes import.meta.url at build time with the
@@ -390,32 +398,7 @@ function filterAndSortSessions(
   return scored.map((entry) => entry.session);
 }
 
-export interface RtkSessionSavings {
-  commands: number;
-  inputTokens: number;
-  outputTokens: number;
-  savedTokens: number;
-  savingsPct: number;
-  totalTimeMs: number;
-  avgTimeMs: number;
-  updatedAt: string;
-}
-
-export interface AutoDashboardData {
-  active: boolean;
-  paused: boolean;
-  stepMode: boolean;
-  startTime: number;
-  elapsed: number;
-  currentUnit: { type: string; id: string; startedAt: number } | null;
-  completedUnits: { type: string; id: string; startedAt: number; finishedAt: number }[];
-  basePath: string;
-  totalCost: number;
-  totalTokens: number;
-  rtkSavings?: RtkSessionSavings | null;
-  /** Whether RTK is enabled via experimental.rtk preference. False when not opted in. */
-  rtkEnabled?: boolean;
-}
+export type { AutoDashboardData, RtkSessionSavings };
 
 export interface BridgeLastError {
   message: string;
@@ -457,50 +440,13 @@ export interface BootResumableSession {
   isActive: boolean;
 }
 
-export interface GSDWorkspaceTaskTarget {
-  id: string;
-  title: string;
-  done: boolean;
-  planPath?: string;
-  summaryPath?: string;
-}
-
-export interface GSDWorkspaceSliceTarget {
-  id: string;
-  title: string;
-  done: boolean;
-  planPath?: string;
-  summaryPath?: string;
-  uatPath?: string;
-  tasksDir?: string;
-  branch?: string;
-  tasks: GSDWorkspaceTaskTarget[];
-}
-
-export interface GSDWorkspaceMilestoneTarget {
-  id: string;
-  title: string;
-  roadmapPath?: string;
-  slices: GSDWorkspaceSliceTarget[];
-}
-
-export interface GSDWorkspaceScopeTarget {
-  scope: string;
-  label: string;
-  kind: "project" | "milestone" | "slice" | "task";
-}
-
-export interface GSDWorkspaceIndex {
-  milestones: GSDWorkspaceMilestoneTarget[];
-  active: {
-    milestoneId?: string;
-    sliceId?: string;
-    taskId?: string;
-    phase: string;
-  };
-  scopes: GSDWorkspaceScopeTarget[];
-  validationIssues: Array<Record<string, unknown>>;
-}
+export type {
+  GSDWorkspaceTaskTarget,
+  GSDWorkspaceSliceTarget,
+  GSDWorkspaceMilestoneTarget,
+  GSDWorkspaceScopeTarget,
+  GSDWorkspaceIndex,
+};
 
 // ─── Project Detection ──────────────────────────────────────────────────────
 

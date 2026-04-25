@@ -307,27 +307,87 @@ describe('derive-state-helpers', () => {
     }
   });
 
-  // ─── buildCompletenessSet: SUMMARY-on-disk marks complete ───────────
-  test('buildCompletenessSet: milestone with SUMMARY on disk treated as complete', async () => {
+  // ─── buildCompletenessSet: DB status is authoritative ──────────────
+  test('buildCompletenessSet: DB status=complete marks milestone complete', async () => {
     const base = createFixtureBase();
     try {
-      // M001 has summary on disk but DB status is still 'active'
       writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_CONTENT);
       writeFile(base, 'milestones/M001/M001-SUMMARY.md', '# M001 Summary\n\nDone.');
-      // M002 is the real active milestone
       writeFile(base, 'milestones/M002/M002-CONTEXT.md', '# M002\n\nActive.');
 
       openDatabase(':memory:');
-      insertMilestone({ id: 'M001', title: 'First', status: 'active' });
+      insertMilestone({ id: 'M001', title: 'First', status: 'complete' });
       insertMilestone({ id: 'M002', title: 'Second', status: 'active' });
 
       invalidateStateCache();
       const state = await deriveStateFromDb(base);
 
-      // M001 should be complete (summary on disk), M002 should be active
       const m1 = state.registry.find(e => e.id === 'M001');
-      assert.equal(m1?.status, 'complete', 'summary-disk: M001 marked complete via disk SUMMARY');
-      assert.equal(state.activeMilestone?.id, 'M002', 'summary-disk: M002 is active');
+      assert.equal(m1?.status, 'complete', 'DB status=complete → registry entry complete');
+      assert.equal(state.activeMilestone?.id, 'M002', 'M002 is the active milestone');
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  // ─── Regression #4179: orphan SUMMARY must NOT flip DB-active milestone ───
+  // A crashed complete-milestone turn (or stale/manual SUMMARY.md) can leave
+  // a milestone SUMMARY on disk while the DB row still reads 'active'. The
+  // read-side of state derivation must NOT treat the orphan SUMMARY as a
+  // completion signal, or the auto-loop advances and merges work that was
+  // never actually finished (same failure class as #4175, read-side twin).
+  test('buildCompletenessSet (#4179): orphan SUMMARY on disk does not mark DB-active milestone complete', async () => {
+    const base = createFixtureBase();
+    try {
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_CONTENT);
+      writeFile(base, 'milestones/M001/M001-SUMMARY.md', '# M001 Orphan Summary\n\nLeft over from crashed turn.');
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'First', status: 'active' });
+      // Slice still in-flight — auto should resume, not merge.
+      insertSlice({ id: 'S01', milestoneId: 'M001', title: 'First', status: 'active', risk: 'low', depends: [] });
+      insertSlice({ id: 'S02', milestoneId: 'M001', title: 'Second', status: 'pending', risk: 'low', depends: ['S01'] });
+      insertTask({ id: 'T01', sliceId: 'S01', milestoneId: 'M001', title: 'In-flight', status: 'pending' });
+
+      invalidateStateCache();
+      const state = await deriveStateFromDb(base);
+
+      const m1 = state.registry.find(e => e.id === 'M001');
+      assert.notEqual(m1?.status, 'complete', 'orphan SUMMARY must not mark milestone complete');
+      assert.equal(m1?.status, 'active', 'M001 remains active — DB is authoritative');
+      assert.equal(state.activeMilestone?.id, 'M001', 'M001 is still the active milestone');
+      assert.notEqual(state.phase, 'completing-milestone', 'must not short-circuit into completion');
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  // Regression #4179 (companion): DB-active milestone with all slices done +
+  // validation terminal + orphan SUMMARY must still flow through completing-milestone
+  // (re-runs complete-milestone), not be reported as already-complete.
+  test('buildRegistryAndFindActive (#4179): orphan SUMMARY with validation-terminal falls through to completing-milestone', async () => {
+    const base = createFixtureBase();
+    try {
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', ROADMAP_CONTENT);
+      writeFile(base, 'milestones/M001/slices/S01/S01-PLAN.md', PLAN_CONTENT);
+      writeFile(base, 'milestones/M001/slices/S02/S02-PLAN.md', PLAN_CONTENT);
+      writeFile(base, 'milestones/M001/M001-VALIDATION.md', '---\nverdict: passed\n---\n# Validation\nAll good.');
+      writeFile(base, 'milestones/M001/M001-SUMMARY.md', '# M001 Orphan Summary\n\nLeft over.');
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'First', status: 'active' });
+      insertSlice({ id: 'S01', milestoneId: 'M001', title: 'First', status: 'complete', risk: 'low', depends: [] });
+      insertSlice({ id: 'S02', milestoneId: 'M001', title: 'Second', status: 'complete', risk: 'low', depends: ['S01'] });
+
+      invalidateStateCache();
+      const state = await deriveStateFromDb(base);
+
+      const m1 = state.registry.find(e => e.id === 'M001');
+      assert.equal(m1?.status, 'active', 'M001 stays active despite orphan SUMMARY + validation-terminal');
+      assert.equal(state.activeMilestone?.id, 'M001', 'M001 is still the active milestone');
+      assert.equal(state.phase, 'completing-milestone', 'phase flows through completing-milestone (re-run)');
     } finally {
       closeDatabase();
       cleanup(base);
@@ -386,8 +446,8 @@ describe('derive-state-helpers', () => {
     }
   });
 
-  // ─── handleAllSlicesDone: needs-remediation re-triggers validation ──
-  test('handleAllSlicesDone: needs-remediation verdict triggers validating-milestone', async () => {
+  // ─── handleAllSlicesDone: needs-remediation + all slices done → blocked (#4506) ──
+  test('handleAllSlicesDone: needs-remediation with all slices done returns blocked', async () => {
     const base = createFixtureBase();
     try {
       const doneRoadmap = `# M001: Remediation Test\n\n**Vision:** Test.\n\n## Slices\n\n- [x] **S01: Done** \`risk:low\` \`depends:[]\`\n  > Done.\n`;
@@ -402,8 +462,12 @@ describe('derive-state-helpers', () => {
       invalidateStateCache();
       const state = await deriveStateFromDb(base);
 
-      assert.equal(state.phase, 'validating-milestone', 'remediation: phase is validating-milestone');
-      assert.equal(state.activeMilestone?.id, 'M001', 'remediation: activeMilestone is M001');
+      assert.equal(state.phase, 'blocked', 'remediation-stuck: phase is blocked (no infinite re-dispatch)');
+      assert.equal(state.activeMilestone?.id, 'M001', 'remediation-stuck: activeMilestone is M001');
+      assert.ok(
+        state.blockers.some(b => b.includes('needs-remediation') && b.includes('M001')),
+        'remediation-stuck: blocker message mentions milestone and verdict',
+      );
     } finally {
       closeDatabase();
       cleanup(base);

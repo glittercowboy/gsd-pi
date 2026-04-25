@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -126,11 +126,8 @@ test("guided-flow stale paused-session scenario is suppressed when no resumable 
   }
 });
 
-test("guided-flow source uses step-aware resume and clears stale paused metadata without changing discuss handoff semantics", () => {
-  const source = readFileSync(join(import.meta.dirname, "..", "guided-flow.ts"), "utf-8");
-  assert.ok(source.includes('const interrupted = await assessInterruptedSession(basePath);'));
-  assert.ok(source.includes('resumeLabel = interrupted.pausedSession?.stepMode'));
-  assert.ok(source.includes('step: interrupted.pausedSession?.stepMode ?? false'));
-  assert.ok(source.includes('unlinkSync(join(gsdRoot(basePath), "runtime", "paused-session.json"))'));
-  assert.ok(source.includes('pendingAutoStartMap.set(basePath,'));
-});
+// Note: the prior source-grep test that scanned guided-flow.ts for five
+// string literals was removed under #4827. The invariants it encoded
+// (step-aware resume + stale paused-session cleanup + pendingAutoStartMap
+// side effect) should be covered by a runtime drive of guided-flow —
+// tracked as a follow-up.

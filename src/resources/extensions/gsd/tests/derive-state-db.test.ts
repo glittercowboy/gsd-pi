@@ -616,9 +616,10 @@ describe('derive-state-db', async () => {
       invalidateStateCache();
       const dbState = await deriveStateFromDb(base);
 
-      assert.deepStrictEqual(dbState.phase, 'blocked', 'blocked-db: phase is blocked');
+      // With partial-dep fallback, circular deps no longer block — fallback picks first eligible slice
+      assert.deepStrictEqual(dbState.phase, 'planning', 'blocked-db: phase is planning (fallback picks a slice)');
       assert.deepStrictEqual(dbState.phase, fileState.phase, 'blocked-db: phase matches filesystem');
-      assert.ok(dbState.blockers.length > 0, 'blocked-db: has blockers');
+      assert.ok(dbState.activeSlice !== null, 'blocked-db: activeSlice is set via fallback');
 
       closeDatabase();
     } finally {
@@ -685,6 +686,48 @@ describe('derive-state-db', async () => {
       assert.deepStrictEqual(dbState.phase, 'validating-milestone', 'validate-db: phase is validating-milestone');
       assert.deepStrictEqual(dbState.phase, fileState.phase, 'validate-db: phase matches filesystem');
       assert.deepStrictEqual(dbState.activeMilestone?.id, 'M001', 'validate-db: activeMilestone is M001');
+
+      closeDatabase();
+    } finally {
+      closeDatabase();
+      cleanup(base);
+    }
+  });
+
+  // ─── Test 14b: needs-remediation + all slices done → blocked (#4506) ──
+  test('derive-state-db: needs-remediation with all slices done returns blocked (#4506)', async () => {
+    const base = createFixtureBase();
+    try {
+      const doneRoadmap = `# M001: Stuck Remediation
+
+**Vision:** Test needs-remediation loop guard.
+
+## Slices
+
+- [x] **S01: Done Slice** \`risk:low\` \`depends:[]\`
+  > After this: Done.
+`;
+      writeFile(base, 'milestones/M001/M001-ROADMAP.md', doneRoadmap);
+      writeFile(base, 'milestones/M001/M001-VALIDATION.md',
+        '---\nverdict: needs-remediation\nremediation_round: 1\n---\n\n# Validation\nNeeds fixes.');
+
+      invalidateStateCache();
+      const fileState = await _deriveStateImpl(base);
+
+      openDatabase(':memory:');
+      insertMilestone({ id: 'M001', title: 'Stuck Remediation', status: 'active' });
+      insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Done Slice', status: 'complete', risk: 'low', depends: [] });
+
+      invalidateStateCache();
+      const dbState = await deriveStateFromDb(base);
+
+      assert.deepStrictEqual(dbState.phase, 'blocked', 'remediation-stuck-db: phase is blocked');
+      assert.deepStrictEqual(dbState.phase, fileState.phase, 'remediation-stuck-db: phase matches filesystem');
+      assert.deepStrictEqual(dbState.activeMilestone?.id, 'M001', 'remediation-stuck-db: activeMilestone is M001');
+      assert.ok(
+        dbState.blockers.some(b => b.includes('needs-remediation') && b.includes('M001')),
+        'remediation-stuck-db: blocker message mentions milestone and verdict',
+      );
 
       closeDatabase();
     } finally {

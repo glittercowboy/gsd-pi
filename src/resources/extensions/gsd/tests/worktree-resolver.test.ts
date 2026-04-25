@@ -145,6 +145,9 @@ function makeDeps(
         args: [basePath, mid],
       });
     },
+    enterBranchModeForMilestone: (basePath: string, milestoneId: string) => {
+      calls.push({ fn: "enterBranchModeForMilestone", args: [basePath, milestoneId] });
+    },
     ...overrides,
   };
 
@@ -252,10 +255,10 @@ test("enterMilestone enters existing worktree instead of creating", () => {
   assert.equal(findCalls(deps.calls, "createAutoWorktree").length, 0);
 });
 
-test("enterMilestone is no-op when shouldUseWorktreeIsolation is false", () => {
+test("enterMilestone is no-op when isolation mode is none", () => {
   const s = makeSession();
   const deps = makeDeps({
-    shouldUseWorktreeIsolation: () => false,
+    getIsolationMode: () => "none",
   });
   const ctx = makeNotifyCtx();
   const resolver = new WorktreeResolver(s, deps);
@@ -265,6 +268,7 @@ test("enterMilestone is no-op when shouldUseWorktreeIsolation is false", () => {
   assert.equal(s.basePath, "/project"); // unchanged
   assert.equal(findCalls(deps.calls, "createAutoWorktree").length, 0);
   assert.equal(findCalls(deps.calls, "enterAutoWorktree").length, 0);
+  assert.equal(findCalls(deps.calls, "enterBranchModeForMilestone").length, 0);
 });
 
 test("enterMilestone does NOT update basePath on creation failure", () => {
@@ -307,6 +311,114 @@ test("enterMilestone uses originalBasePath as base for worktree ops", () => {
   resolver.enterMilestone("M002", ctx);
 
   assert.equal(createdFrom, "/project"); // uses originalBasePath, not current basePath
+});
+
+test("enterMilestone does not create double-nested worktree when originalBasePath is empty and basePath is a worktree path", () => {
+  // Regression test for #3729: when s.originalBasePath is "" (falsy) and
+  // s.basePath is already a worktree path, the expression
+  // `this.s.originalBasePath || this.s.basePath` evaluates to the worktree
+  // path. Passing that to createAutoWorktree produces a doubly-nested path
+  // like /project/.gsd/worktrees/M001/.gsd/worktrees/M002.
+  const wtPath = "/project/.gsd/worktrees/M001";
+  const s = makeSession({
+    basePath: wtPath,
+    originalBasePath: "/project", // will be overwritten below to simulate the bug
+  });
+  // Simulate the real bug: originalBasePath is "" (falsy) as it is when AutoSession
+  // is constructed fresh or reset() is called without auto-start re-setting it.
+  s.originalBasePath = "";
+
+  let createdFromPath = "";
+  const deps = makeDeps({
+    getAutoWorktreePath: () => null,
+    createAutoWorktree: (basePath: string, _mid: string) => {
+      createdFromPath = basePath;
+      return `/project/.gsd/worktrees/M002`;
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M002", ctx);
+
+  // The path passed to createAutoWorktree must be the project root, NOT the
+  // worktree path. If it equals wtPath the worktree would be created at
+  // /project/.gsd/worktrees/M001/.gsd/worktrees/M002 (double-nesting).
+  assert.ok(
+    !createdFromPath.includes("/.gsd/worktrees/"),
+    `createAutoWorktree must be called with project root, got: "${createdFromPath}"`,
+  );
+});
+
+// ─── enterMilestone Tests (branch mode) ──────────────────────────────────────
+
+test("enterMilestone in branch mode calls enterBranchModeForMilestone and rebuilds GitService", () => {
+  const s = makeSession();
+  const deps = makeDeps({
+    getIsolationMode: () => "branch",
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  // Branch mode: no worktree created, basePath unchanged
+  assert.equal(s.basePath, "/project");
+  assert.equal(findCalls(deps.calls, "enterBranchModeForMilestone").length, 1);
+  assert.equal(findCalls(deps.calls, "createAutoWorktree").length, 0);
+  assert.equal(findCalls(deps.calls, "enterAutoWorktree").length, 0);
+  assert.equal(findCalls(deps.calls, "GitServiceImpl").length, 1);
+  assert.ok(ctx.messages.some((m) => m.level === "info" && m.msg.includes("milestone/M001")));
+});
+
+test("enterMilestone in branch mode uses originalBasePath as base", () => {
+  const s = makeSession({ basePath: "/project", originalBasePath: "/project" });
+  let calledWith = "";
+  const deps = makeDeps({
+    getIsolationMode: () => "branch",
+    enterBranchModeForMilestone: (basePath: string, _mid: string) => {
+      calledWith = basePath;
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  assert.equal(calledWith, "/project");
+});
+
+test("enterMilestone in branch mode degrades isolation on failure", () => {
+  const s = makeSession();
+  const deps = makeDeps({
+    getIsolationMode: () => "branch",
+    enterBranchModeForMilestone: () => {
+      throw new Error("checkout failed");
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  assert.equal(s.basePath, "/project"); // unchanged
+  assert.ok(s.isolationDegraded);
+  assert.ok(ctx.messages.some((m) => m.level === "warning" && m.msg.includes("checkout failed")));
+});
+
+test("enterMilestone branch mode is skipped when isolationDegraded", () => {
+  const s = makeSession();
+  s.isolationDegraded = true;
+  const deps = makeDeps({
+    getIsolationMode: () => "branch",
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  resolver.enterMilestone("M001", ctx);
+
+  assert.equal(findCalls(deps.calls, "enterBranchModeForMilestone").length, 0);
+  assert.equal(findCalls(deps.calls, "createAutoWorktree").length, 0);
 });
 
 // ─── exitMilestone Tests ─────────────────────────────────────────────────────
@@ -502,9 +614,11 @@ test("mergeAndExit in worktree mode restores to project root on merge failure", 
   const ctx = makeNotifyCtx();
   const resolver = new WorktreeResolver(s, deps);
 
-  resolver.mergeAndExit("M001", ctx);
+  // Error propagates (#4380) — callers handle recovery. restoreToProjectRoot()
+  // still runs before re-throw so state is consistent for the caller.
+  assert.throws(() => resolver.mergeAndExit("M001", ctx), /conflict in main/);
 
-  assert.equal(s.basePath, "/project"); // error recovery — restored
+  assert.equal(s.basePath, "/project"); // error recovery — restored before re-throw
   assert.ok(
     ctx.messages.some(
       (m) => m.level === "warning" && m.msg.includes("conflict in main"),
@@ -532,7 +646,8 @@ test("mergeAndExit failure message tells user worktree and branch are preserved 
   const ctx = makeNotifyCtx();
   const resolver = new WorktreeResolver(s, deps);
 
-  resolver.mergeAndExit("M001", ctx);
+  // Error propagates (#4380) — notification is still emitted before re-throw
+  assert.throws(() => resolver.mergeAndExit("M001", ctx), /pathspec 'main' did not match/);
 
   const warning = ctx.messages.find((m) => m.level === "warning");
   assert.ok(warning, "a warning message is emitted");
@@ -568,7 +683,8 @@ test("mergeAndExit failure message references /gsd dispatch complete-milestone, 
   const ctx = makeNotifyCtx();
   const resolver = new WorktreeResolver(s, deps);
 
-  resolver.mergeAndExit("M001", ctx);
+  // Error propagates (#4380) — notification is still emitted before re-throw
+  assert.throws(() => resolver.mergeAndExit("M001", ctx), /dirty working tree/);
 
   const warning = ctx.messages.find((m) => m.level === "warning");
   assert.ok(warning, "a warning message is emitted");
@@ -634,7 +750,8 @@ test("mergeAndExit in branch mode handles merge failure gracefully", () => {
   const ctx = makeNotifyCtx();
   const resolver = new WorktreeResolver(s, deps);
 
-  resolver.mergeAndExit("M001", ctx);
+  // Error propagates (#4380) — notification is still emitted before re-throw
+  assert.throws(() => resolver.mergeAndExit("M001", ctx), /branch merge conflict/);
 
   assert.ok(
     ctx.messages.some(
@@ -993,4 +1110,35 @@ test("mergeAndExit in none mode remains a no-op when NOT in a worktree (#2625)",
 
   assert.equal(findCalls(deps.calls, "mergeMilestoneToMain").length, 0,
     "must NOT merge when not in a worktree and mode is none");
+});
+
+// ─── #4380 — Non-MergeConflictError must not be swallowed ────────────────────
+
+test("mergeAndExit propagates non-MergeConflictError to caller (#4380)", () => {
+  // Regression test: previously the catch block in _mergeWorktreeMode only
+  // re-threw MergeConflictError. Permission errors, filesystem errors, and other
+  // non-conflict failures were swallowed silently, making broken states impossible
+  // to diagnose and preventing callers (phases.ts) from applying their own
+  // error-recovery logic.
+  const permissionError = new Error("EACCES: permission denied, open '/project/.git/SQUASH_MSG'");
+  const s = makeSession({
+    basePath: "/project/.gsd/worktrees/M001",
+    originalBasePath: "/project",
+  });
+  const deps = makeDeps({
+    isInAutoWorktree: () => true,
+    getIsolationMode: () => "worktree",
+    mergeMilestoneToMain: () => {
+      throw permissionError;
+    },
+  });
+  const ctx = makeNotifyCtx();
+  const resolver = new WorktreeResolver(s, deps);
+
+  // The error must propagate — callers need it to apply their own recovery logic
+  assert.throws(
+    () => resolver.mergeAndExit("M001", ctx),
+    (err: unknown) => err === permissionError,
+    "non-MergeConflictError must propagate to the caller, not be swallowed",
+  );
 });

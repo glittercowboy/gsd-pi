@@ -73,7 +73,52 @@ git:
   manage_gitignore: true      # let GSD manage .gitignore
   auto_pr: false              # create PR on milestone completion
   pr_target_branch: develop   # PR target branch
+  collapse_cadence: milestone # "milestone" (default) or "slice"
+  milestone_resquash: true    # re-squash slice commits at milestone end (cadence=slice)
 ```
+
+## Collapse Cadence
+
+`git.collapse_cadence` controls **when** work is squash-merged from the milestone branch back to main.
+
+| Value | When main gets updated | Orphan window | Best for |
+|-------|------------------------|---------------|----------|
+| `milestone` (default) | Once, at milestone completion | Entire milestone | Small milestones, clean PR history |
+| `slice` | Each time a slice passes validation | One slice | Large milestones, long-running sessions, parallel work |
+
+### Slice Cadence
+
+When `collapse_cadence: "slice"`, each slice's commits are squash-merged to main as soon as the slice passes validation. The milestone branch is then fast-forwarded to main so the next slice starts from a clean base.
+
+Benefits:
+- **Shorter orphan window** — if a session is interrupted, only the active slice's work is at risk, not the whole milestone.
+- **Incremental conflicts** — merge conflicts surface per slice rather than all at once at milestone end.
+- **Parallel-friendly** — multiple milestones can safely merge their validated slices to main without waiting for the slowest one.
+
+Trade-off: without re-squash, main accumulates N commits per milestone (one per slice) instead of one.
+
+```yaml
+git:
+  collapse_cadence: slice
+```
+
+### Milestone Re-squash
+
+When `collapse_cadence: "slice"` AND `milestone_resquash: true` (the default when cadence is slice), GSD collapses the per-slice commits on main into a single milestone commit at milestone completion. Main history looks identical to `collapse_cadence: "milestone"` — one commit per milestone — but the orphan-window and incremental-conflict benefits of slice cadence are preserved.
+
+Set `milestone_resquash: false` if you want the slice commits preserved in main history (for bisect granularity, per-slice revert, etc.).
+
+```yaml
+git:
+  collapse_cadence: slice
+  milestone_resquash: false   # keep slice commits in main history
+```
+
+### Which to use?
+
+- **Default (`milestone`)** is fine for most projects. Each milestone produces one commit on main.
+- **`slice`** pays off when milestones have 5+ slices, long wall-clock time, or you've hit orphan issues after interrupted sessions.
+- Run `/gsd forensics` after sessions to see orphan detection and merge telemetry — the **Worktree Telemetry** section reports how often work was stranded, which informs whether slice cadence would help.
 
 ## Automatic Pull Requests
 

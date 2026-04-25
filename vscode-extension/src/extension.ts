@@ -28,6 +28,19 @@ let lineDecorations: GsdLineDecorationManager | undefined;
 let gitIntegration: GsdGitIntegration | undefined;
 let permissionManager: GsdPermissionManager | undefined;
 
+function getTrustedConfigurationValue<T>(section: string, key: string, fallback: T): T {
+	const config = vscode.workspace.getConfiguration(section);
+	const inspected = config.inspect<T>(key);
+	return inspected?.globalValue ?? inspected?.defaultValue ?? fallback;
+}
+
+export function resolveTrustedGsdStartupConfig(): { binaryPath: string; autoStart: boolean } {
+	return {
+		binaryPath: getTrustedConfigurationValue("gsd", "binaryPath", "gsd"),
+		autoStart: getTrustedConfigurationValue("gsd", "autoStart", false),
+	};
+}
+
 function requireConnected(): boolean {
 	if (!client?.isConnected) {
 		vscode.window.showWarningMessage("GSD agent is not running.");
@@ -42,8 +55,9 @@ function handleError(err: unknown, context: string): void {
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+	const startupConfig = resolveTrustedGsdStartupConfig();
 	const config = vscode.workspace.getConfiguration("gsd");
-	const binaryPath = config.get<string>("binaryPath", "gsd");
+	const binaryPath = startupConfig.binaryPath;
 	const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
 
 	client = new GsdClient(binaryPath, cwd);
@@ -960,7 +974,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 	// -- Auto-start ---------------------------------------------------------
 
-	if (config.get<boolean>("autoStart", false)) {
+	if (startupConfig.autoStart) {
 		vscode.commands.executeCommand("gsd.start");
 	}
 }

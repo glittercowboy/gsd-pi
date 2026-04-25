@@ -10,12 +10,13 @@ import {
   updateMilestoneStatus,
   getSliceTasks,
   insertMilestone,
-  _getAdapter,
   getMilestoneSlices,
   insertVerificationEvidence,
   upsertDecision,
   openDatabase,
   setTaskBlockerDiscovered,
+  insertOrIgnoreSlice,
+  insertOrIgnoreTask,
 } from "./gsd-db.js";
 import { isClosedStatus } from "./status-guards.js";
 import { invalidateStateCache } from "./state.js";
@@ -164,13 +165,12 @@ function replayEvents(events: WorkflowEvent[]): void {
         const milestoneId = p["milestoneId"] as string;
         const sliceId = p["sliceId"] as string;
         if (milestoneId && sliceId) {
-          const adapter = _getAdapter();
-          if (adapter) {
-            adapter.prepare(
-              `INSERT OR IGNORE INTO slices (milestone_id, id, title, status, created_at)
-               VALUES (:mid, :sid, :title, 'pending', :ts)`,
-            ).run({ ":mid": milestoneId, ":sid": sliceId, ":title": (p["title"] as string) ?? sliceId, ":ts": event.ts });
-          }
+          insertOrIgnoreSlice({
+            milestoneId,
+            sliceId,
+            title: (p["title"] as string) ?? sliceId,
+            createdAt: event.ts,
+          });
         }
         break;
       }
@@ -182,13 +182,13 @@ function replayEvents(events: WorkflowEvent[]): void {
         const sliceId = p["sliceId"] as string;
         const taskId = p["taskId"] as string;
         if (milestoneId && sliceId && taskId) {
-          const adapter = _getAdapter();
-          if (adapter) {
-            adapter.prepare(
-              `INSERT OR IGNORE INTO tasks (milestone_id, slice_id, id, title, status, created_at)
-               VALUES (:mid, :sid, :tid, :title, 'pending', :ts)`,
-            ).run({ ":mid": milestoneId, ":sid": sliceId, ":tid": taskId, ":title": (p["title"] as string) ?? taskId, ":ts": event.ts });
-          }
+          insertOrIgnoreTask({
+            milestoneId,
+            sliceId,
+            taskId,
+            title: (p["title"] as string) ?? taskId,
+            createdAt: event.ts,
+          });
         }
         break;
       }

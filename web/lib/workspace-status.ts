@@ -4,7 +4,7 @@ import type {
   WorkspaceTaskTarget,
 } from "./workspace-types.js"
 
-export type ItemStatus = "done" | "in-progress" | "pending"
+export type ItemStatus = "done" | "in-progress" | "pending" | "parked"
 
 export function getMilestoneStatus(
   milestone: WorkspaceMilestoneTarget,
@@ -18,8 +18,9 @@ export function getMilestoneStatus(
       case "active":
         return "in-progress"
       case "pending":
-      case "parked":
         return "pending"
+      case "parked":
+        return "parked"
     }
   }
 

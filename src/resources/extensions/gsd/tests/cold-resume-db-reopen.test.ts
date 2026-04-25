@@ -25,8 +25,12 @@ console.log("\n=== resume path refreshes resources and opens DB before rebuildSt
 const resumeSectionStart = autoSrc.indexOf("if (s.paused) {", autoSrc.indexOf("// If resuming from paused state"));
 assertTrue(resumeSectionStart > 0, "auto.ts has the paused-session resume block");
 
-const resumeSectionEnd = autoSrc.indexOf("await autoLoop(", resumeSectionStart);
-assertTrue(resumeSectionEnd > resumeSectionStart, "resume block reaches autoLoop");
+const resumeSectionEndCandidates = [
+  autoSrc.indexOf("await runAutoLoopWithUok(", resumeSectionStart),
+  autoSrc.indexOf("await autoLoop(", resumeSectionStart),
+].filter((idx) => idx > resumeSectionStart);
+const resumeSectionEnd = resumeSectionEndCandidates.length > 0 ? Math.min(...resumeSectionEndCandidates) : -1;
+assertTrue(resumeSectionEnd > resumeSectionStart, "resume block reaches the dispatch loop");
 
 const resumeSection = autoSrc.slice(resumeSectionStart, resumeSectionEnd);
 

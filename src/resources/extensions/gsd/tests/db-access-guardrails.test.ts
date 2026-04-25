@@ -50,6 +50,7 @@ test("doctor-heal.md contains DB access guardrail naming gsd_milestone_status", 
   const prompt = readPrompt("doctor-heal");
   assert.match(prompt, /gsd_milestone_status/, "doctor-heal.md must name gsd_milestone_status as the DB inspection tool");
   assert.match(prompt, /Do NOT query.*\.gsd\/gsd\.db/i, "doctor-heal.md must prohibit direct DB queries");
+  assert.doesNotMatch(prompt, /\{\{milestoneId\}\}/, "doctor-heal.md must not declare unprovided milestoneId template variables");
 });
 
 test("forensics.md contains DB inspection guardrail", () => {

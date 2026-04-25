@@ -13,6 +13,7 @@ import {
   isValidationTerminal,
   isGhostMilestone,
   invalidateStateCache,
+  getActiveMilestoneId,
 } from "../state.ts";
 import {
   openDatabase,
@@ -667,6 +668,29 @@ describe("state-machine-full-walkthrough", () => {
       assert.notEqual(state.phase, "completing-milestone", "should be complete, not completing");
       assert.equal(state.phase, "complete");
     });
+
+    test("failure-path milestone SUMMARY is not terminal completion", async () => {
+      const base = createFixtureBase();
+      writeRoadmap(base, "M001", doneSliceRoadmap());
+      writeMilestoneValidation(base, "M001", "pass");
+      const dir = join(base, ".gsd", "milestones", "M001");
+      writeFileSync(join(dir, "M001-SUMMARY.md"), [
+        "---",
+        "status: failed",
+        "---",
+        "",
+        "# BLOCKER",
+        "",
+        "auto-mode recovery failed; milestone is not complete.",
+      ].join("\n"));
+      invalidateStateCache();
+
+      const state = await deriveState(base);
+
+      assert.equal(state.phase, "completing-milestone");
+      assert.equal(state.registry[0]?.status, "active");
+      assert.equal(await getActiveMilestoneId(base), "M001");
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -811,9 +835,9 @@ describe("state-machine-full-walkthrough", () => {
       assert.ok(state.blockers.length > 0, "should have blockers");
     });
 
-    test("no eligible slice (all deps unmet) → blocked at slice level", async () => {
+    test("no eligible slice (all deps unmet) → fallback picks slice with most deps satisfied", async () => {
       const base = createFixtureBase();
-      // S01 depends on S00 which doesn't exist
+      // S01 depends on S00 which doesn't exist — fallback picks S01 anyway
       writeRoadmap(base, "M001", [
         "# M001: Test Milestone",
         "",
@@ -827,11 +851,9 @@ describe("state-machine-full-walkthrough", () => {
       invalidateStateCache();
       const state = await deriveState(base);
 
-      assert.equal(state.phase, "blocked");
-      assert.ok(
-        state.blockers.some(b => b.includes("dependency") || b.includes("eligible")),
-        "blockers should mention dependency or eligibility",
-      );
+      // With partial-dep fallback, S01 is picked despite unmet dep on S00
+      assert.equal(state.phase, "planning");
+      assert.equal(state.activeSlice?.id, "S01");
     });
   });
 

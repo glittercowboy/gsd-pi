@@ -22,6 +22,7 @@ import { gsdRoot } from "./paths.js";
 import { createGitService, runGit } from "./git-service.js";
 import { isAutoActive, isAutoPaused } from "./auto.js";
 import { getErrorMessage } from "./error-utils.js";
+import { resolvePlugin, type WorkflowPlugin } from "./workflow-plugins.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -348,8 +349,18 @@ export async function handleStart(
   const basePath = process.cwd();
   const date = new Date().toISOString().split("T")[0];
 
-  // Load the workflow template content
-  const workflowContent = loadWorkflowTemplate(templateId);
+  // Load the workflow template content — prefer a project/global plugin
+  // override if one exists (same name, .md format).
+  let workflowContent: string | null = null;
+  const pluginOverride = resolvePlugin(basePath, templateId);
+  if (pluginOverride && pluginOverride.source !== "bundled" && pluginOverride.format === "md") {
+    try {
+      workflowContent = readFileSync(pluginOverride.path, "utf-8");
+    } catch { /* fall through to bundled */ }
+  }
+  if (workflowContent == null) {
+    workflowContent = loadWorkflowTemplate(templateId);
+  }
   if (!workflowContent) {
     ctx.ui.notify(
       `Template "${templateId}" is registered but its workflow file (${template.file}) hasn't been created yet.`,
@@ -540,4 +551,120 @@ export function getTemplateCompletions(prefix: string): Array<{ value: string; l
   } catch {
     return [];
   }
+}
+
+// ─── Shared markdown-phase dispatcher (used by /gsd workflow <name>) ────────
+
+/**
+ * Dispatch a markdown-phase workflow plugin. Mirrors `handleStart`'s execution
+ * branch for resolved templates, but accepts a pre-resolved plugin (from the
+ * unified plugin resolver).
+ *
+ * Writes STATE.json into an artifact dir, creates a git branch, and dispatches
+ * the `workflow-start` prompt.
+ */
+export function dispatchMarkdownPhasePlugin(
+  plugin: WorkflowPlugin,
+  description: string,
+  ctx: ExtensionCommandContext,
+  pi: ExtensionAPI,
+): void {
+  if (plugin.meta.mode !== "markdown-phase") return;
+
+  if (isAutoActive()) {
+    ctx.ui.notify(
+      "Cannot start a markdown-phase workflow while auto-mode is running.\n" +
+      "Run /gsd pause first.",
+      "warning",
+    );
+    return;
+  }
+
+  const templateId = plugin.name;
+  const basePath = process.cwd();
+  const date = new Date().toISOString().split("T")[0];
+  let workflowContent: string;
+  try {
+    workflowContent = readFileSync(plugin.path, "utf-8");
+  } catch (err) {
+    ctx.ui.notify(
+      `Failed to read template: ${err instanceof Error ? err.message : String(err)}`,
+      "error",
+    );
+    return;
+  }
+
+  // Create artifact directory.
+  let artifactDir = "";
+  if (plugin.meta.artifactDir) {
+    const slug = slugify(description || templateId);
+    const prefix = datePrefix();
+    const num = getNextWorkflowNum(join(basePath, plugin.meta.artifactDir));
+    artifactDir = `${plugin.meta.artifactDir}${prefix}-${num}-${slug}`;
+    mkdirSync(join(basePath, artifactDir), { recursive: true });
+  }
+
+  // Create git branch unless isolation: none.
+  const git = createGitService(basePath);
+  const skipBranch = git.prefs.isolation === "none";
+  const slug = slugify(description || templateId);
+  const branchName = `gsd/${templateId}/${slug}`;
+  let branchCreated = false;
+
+  if (!skipBranch) {
+    try {
+      const current = git.getCurrentBranch();
+      if (current !== branchName) {
+        try { git.autoCommit("workflow-template", templateId, []); } catch { /* nothing to commit */ }
+        runGit(basePath, ["checkout", "-b", branchName]);
+        branchCreated = true;
+      }
+    } catch (err) {
+      ctx.ui.notify(
+        `Could not create branch ${branchName}: ${getErrorMessage(err)}. Working on current branch.`,
+        "warning",
+      );
+    }
+  }
+
+  const actualBranch = branchCreated ? branchName : git.getCurrentBranch();
+
+  // Write STATE.json.
+  if (artifactDir && plugin.meta.phases && plugin.meta.phases.length > 0) {
+    writeWorkflowState(
+      join(basePath, artifactDir),
+      templateId,
+      plugin.meta.displayName,
+      plugin.meta.phases,
+      description,
+      actualBranch,
+    );
+  }
+
+  const infoLines = [
+    `Starting workflow: ${plugin.meta.displayName}`,
+    `Phases: ${(plugin.meta.phases ?? []).join(" → ")}`,
+  ];
+  if (artifactDir) infoLines.push(`Artifacts: ${artifactDir}`);
+  infoLines.push(`Branch: ${actualBranch}`);
+  ctx.ui.notify(infoLines.join("\n"), "info");
+
+  const prompt = loadPrompt("workflow-start", {
+    templateId,
+    templateName: plugin.meta.displayName,
+    templateDescription: plugin.meta.description ?? "",
+    phases: (plugin.meta.phases ?? []).join(" → "),
+    complexity: plugin.meta.complexity ?? "medium",
+    artifactDir: artifactDir || "(none)",
+    branch: actualBranch,
+    description: description || "(none provided)",
+    issueRef: "(none)",
+    date,
+    workflowContent,
+  });
+
+  pi.sendMessage(
+    { customType: "gsd-workflow-template", content: prompt, display: false },
+    { triggerTurn: true },
+  );
 }

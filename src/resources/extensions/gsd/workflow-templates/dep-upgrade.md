@@ -3,6 +3,7 @@
 <template_meta>
 name: dep-upgrade
 version: 1
+mode: markdown-phase
 requires_project: false
 artifact_dir: .gsd/workflows/upgrades/
 </template_meta>

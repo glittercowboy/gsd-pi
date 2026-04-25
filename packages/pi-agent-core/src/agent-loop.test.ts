@@ -1,50 +1,80 @@
 // agent-loop tests
 // Covers: pauseTurn handling (#2869), schema overload retry cap (#2783)
 
-import { describe, it, mock } from "node:test";
+import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Type } from "@sinclair/typebox";
 import { agentLoop, MAX_CONSECUTIVE_VALIDATION_FAILURES } from "./agent-loop.js";
 import type { AgentContext, AgentLoopConfig, AgentTool, AgentEvent, AgentMessage } from "./types.js";
 import { AssistantMessageEventStream, EventStream } from "@gsd/pi-ai";
 import type { AssistantMessage, AssistantMessageEvent, Model } from "@gsd/pi-ai";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 describe("agent-loop — pauseTurn handling (#2869)", () => {
-	it("sets hasMoreToolCalls when stopReason is pauseTurn", () => {
-		const source = readFileSync(join(__dirname, "agent-loop.ts"), "utf-8");
+	it("continues to a second assistant turn when stopReason is pauseTurn", async () => {
+		const pauseTurn = makeAssistantMessage({
+			content: [{ type: "text", text: "Still working..." }],
+			stopReason: "pauseTurn",
+		});
+		const finalStop = makeAssistantMessage({
+			content: [{ type: "text", text: "Done." }],
+			stopReason: "stop",
+		});
 
-		// The agent loop must treat pauseTurn as a reason to continue the inner
-		// loop, just like toolUse. This prevents incomplete server_tool_use blocks
-		// from being saved to history, which would cause a 400 on the next request.
-		assert.match(
-			source,
-			/pauseTurn/,
-			"agent-loop.ts must handle the pauseTurn stop reason",
+		let streamCallCount = 0;
+		const seenLastRoles: string[] = [];
+		const streamFn = (_model: Model<any>, llmContext: any): AssistantMessageEventStream => {
+			streamCallCount++;
+			seenLastRoles.push(llmContext.messages.at(-1)?.role ?? "none");
+			const message = streamCallCount === 1 ? pauseTurn : finalStop;
+			const stream = new AssistantMessageEventStream();
+			queueMicrotask(() => {
+				stream.push({ type: "start", partial: message });
+				stream.push({ type: "done", message });
+				stream.end(message);
+			});
+			return stream;
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "You are a test agent.",
+			messages: [{ role: "user", content: [{ type: "text", text: "Keep going" }], timestamp: Date.now() }],
+			tools: [],
+		};
+
+		const config: AgentLoopConfig = {
+			model: TEST_MODEL,
+			convertToLlm: (msgs) => msgs.filter((m): m is any => m.role !== "custom"),
+			toolExecution: "sequential",
+		};
+
+		const stream = agentLoop(
+			[{ role: "user", content: [{ type: "text", text: "Keep going" }], timestamp: Date.now() }],
+			context,
+			config,
+			undefined,
+			streamFn as any,
 		);
 
-		// Verify it sets hasMoreToolCalls = true for pauseTurn
-		assert.match(
-			source,
-			/stopReason\s*===?\s*["']pauseTurn["']/,
-			'agent-loop.ts must check for stopReason === "pauseTurn"',
+		const events = await collectEvents(stream);
+		const assistantMessages = events.filter(
+			(event): event is Extract<AgentEvent, { type: "message_end" }> =>
+				event.type === "message_end" && event.message.role === "assistant",
 		);
+		const turnStarts = events.filter((event) => event.type === "turn_start");
+
+		assert.equal(streamCallCount, 2, "pauseTurn must cause a second provider call");
+		assert.equal(assistantMessages.length, 2, "expected two assistant turns");
+		assert.equal(assistantMessages[0].message.stopReason, "pauseTurn");
+		assert.equal(assistantMessages[1].message.stopReason, "stop");
+		assert.equal(turnStarts.length, 2, "expected a second turn_start after pauseTurn");
+		assert.deepEqual(seenLastRoles, ["user", "assistant"], "second turn must continue from the paused assistant state");
 	});
 
-	it("pauseTurn is in the StopReason union type", () => {
-		// Read the pi-ai types to ensure pauseTurn is a valid StopReason
-		const typesPath = join(__dirname, "..", "..", "pi-ai", "src", "types.ts");
-		const typesSource = readFileSync(typesPath, "utf-8");
-		assert.match(
-			typesSource,
-			/["']pauseTurn["']/,
-			'StopReason type must include "pauseTurn"',
-		);
-	});
+	// The behavioural test above ("continues to a second assistant turn …")
+	// already exercises `stopReason: "pauseTurn"` at the type level (TS won't
+	// compile without the union member) and at runtime (the stream emits it
+	// and the loop acts on it). A separate source-text grep added nothing.
+	// Deleted per #4797.
 
 	it("uses provider-supplied external tool results instead of the placeholder", async () => {
 		const externalMessage = makeAssistantMessage({
@@ -97,6 +127,171 @@ describe("agent-loop — pauseTurn handling (#2869)", () => {
 		assert.deepEqual(toolEnd.result.content, [{ type: "text", text: "hi\n" }]);
 		assert.deepEqual(toolEnd.result.details, { source: "claude-code" });
 		assert.equal(toolEnd.isError, false);
+	});
+
+	it("injects queued steering messages before the next assistant turn and skips remaining tools", async () => {
+		const tool = makeToolWithSchema();
+		const steeringMessage: AgentMessage = {
+			role: "user",
+			content: [{ type: "text", text: "Stop after the first tool." }],
+			timestamp: Date.now(),
+		};
+		const toolTurn = makeAssistantMessage({
+			content: [
+				{
+					type: "toolCall",
+					id: "write-1",
+					name: "write_file",
+					arguments: { path: "/tmp/one", content: "first" },
+				},
+				{
+					type: "toolCall",
+					id: "write-2",
+					name: "write_file",
+					arguments: { path: "/tmp/two", content: "second" },
+				},
+			],
+			stopReason: "toolUse",
+		});
+		const finalStop = makeAssistantMessage({
+			content: [{ type: "text", text: "Stopped after the first tool." }],
+			stopReason: "stop",
+		});
+
+		let steeringPollCount = 0;
+		const seenLastMessages: unknown[] = [];
+		const streamFn = (_model: Model<any>, llmContext: any): AssistantMessageEventStream => {
+			seenLastMessages.push(llmContext.messages.at(-1));
+			const message = seenLastMessages.length === 1 ? toolTurn : finalStop;
+			const stream = new AssistantMessageEventStream();
+			queueMicrotask(() => {
+				stream.push({ type: "start", partial: message });
+				stream.push({ type: "done", message });
+				stream.end(message);
+			});
+			return stream;
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "You are a test agent.",
+			messages: [{ role: "user", content: [{ type: "text", text: "Write both files" }], timestamp: Date.now() }],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: TEST_MODEL,
+			convertToLlm: (msgs) => msgs.filter((m): m is any => m.role !== "custom"),
+			toolExecution: "sequential",
+			getSteeringMessages: async () => {
+				steeringPollCount++;
+				return steeringPollCount === 2 ? [steeringMessage] : [];
+			},
+		};
+
+		const stream = agentLoop(
+			[{ role: "user", content: [{ type: "text", text: "Write both files" }], timestamp: Date.now() }],
+			context,
+			config,
+			undefined,
+			streamFn as any,
+		);
+
+		const events = await collectEvents(stream);
+		const toolEnds = events.filter(
+			(event): event is Extract<AgentEvent, { type: "tool_execution_end" }> => event.type === "tool_execution_end",
+		);
+		const steeringEnd = events.find(
+			(event): event is Extract<AgentEvent, { type: "message_end" }> =>
+				event.type === "message_end" &&
+				event.message.role === "user" &&
+				(event.message.content[0] as any)?.text === "Stop after the first tool.",
+		);
+
+		assert.equal(toolEnds.length, 2, "expected one executed tool and one skipped tool");
+		assert.ok(
+			toolEnds.some((event) => JSON.stringify(event.result.content) === JSON.stringify([{ type: "text", text: "done" }])),
+			"expected one completed tool result",
+		);
+		assert.ok(
+			toolEnds.some(
+				(event) =>
+					JSON.stringify(event.result.content) ===
+					JSON.stringify([{ type: "text", text: "Skipped due to queued user message." }]),
+			),
+			"expected one skipped tool result after steering interruption",
+		);
+		assert.ok(steeringEnd, "queued steering message should be emitted before the next assistant turn");
+		assert.equal((seenLastMessages[1] as any)?.content?.[0]?.text, "Stop after the first tool.");
+	});
+
+	it("restarts the outer loop when follow-up messages arrive after a stop", async () => {
+		const initialStop = makeAssistantMessage({
+			content: [{ type: "text", text: "First answer." }],
+			stopReason: "stop",
+		});
+		const followUpStop = makeAssistantMessage({
+			content: [{ type: "text", text: "Follow-up answer." }],
+			stopReason: "stop",
+		});
+		const followUpMessage: AgentMessage = {
+			role: "user",
+			content: [{ type: "text", text: "One more thing." }],
+			timestamp: Date.now(),
+		};
+
+		let followUpPollCount = 0;
+		const seenLastMessages: unknown[] = [];
+		const streamFn = (_model: Model<any>, llmContext: any): AssistantMessageEventStream => {
+			seenLastMessages.push(llmContext.messages.at(-1));
+			const message = seenLastMessages.length === 1 ? initialStop : followUpStop;
+			const stream = new AssistantMessageEventStream();
+			queueMicrotask(() => {
+				stream.push({ type: "start", partial: message });
+				stream.push({ type: "done", message });
+				stream.end(message);
+			});
+			return stream;
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "You are a test agent.",
+			messages: [{ role: "user", content: [{ type: "text", text: "Initial prompt" }], timestamp: Date.now() }],
+			tools: [],
+		};
+
+		const config: AgentLoopConfig = {
+			model: TEST_MODEL,
+			convertToLlm: (msgs) => msgs.filter((m): m is any => m.role !== "custom"),
+			toolExecution: "sequential",
+			getFollowUpMessages: async () => {
+				followUpPollCount++;
+				return followUpPollCount === 1 ? [followUpMessage] : [];
+			},
+		};
+
+		const stream = agentLoop(
+			[{ role: "user", content: [{ type: "text", text: "Initial prompt" }], timestamp: Date.now() }],
+			context,
+			config,
+			undefined,
+			streamFn as any,
+		);
+
+		const events = await collectEvents(stream);
+		const assistantEnds = events.filter(
+			(event): event is Extract<AgentEvent, { type: "message_end" }> =>
+				event.type === "message_end" && event.message.role === "assistant",
+		);
+		const followUpEnd = events.find(
+			(event): event is Extract<AgentEvent, { type: "message_end" }> =>
+				event.type === "message_end" &&
+				event.message.role === "user" &&
+				(event.message.content[0] as any)?.text === "One more thing.",
+		);
+
+		assert.equal(assistantEnds.length, 2, "expected the agent loop to restart for the follow-up turn");
+		assert.ok(followUpEnd, "follow-up message should be emitted before the restarted assistant turn");
+		assert.equal((seenLastMessages[1] as any)?.content?.[0]?.text, "One more thing.");
 	});
 });
 

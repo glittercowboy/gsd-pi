@@ -21,6 +21,8 @@ import {
   existsSync,
   readFileSync,
   realpathSync,
+  symlinkSync,
+  lstatSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -74,6 +76,20 @@ function createTempRepo(): string {
   run("git commit -m init", dir);
   run("git branch -M main", dir);
   return dir;
+}
+
+function createTempRepoWithSymlinkedGsd(): { repo: string; stateDir: string } {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "wt-symlink-stash-test-")));
+  const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "wt-symlink-state-")));
+  run("git init", repo);
+  run("git config user.email test@test.com", repo);
+  run("git config user.name Test", repo);
+  writeFileSync(join(repo, "README.md"), "# test\n");
+  symlinkSync(stateDir, join(repo, ".gsd"));
+  run("git add README.md", repo);
+  run("git commit -m init", repo);
+  run("git branch -M main", repo);
+  return { repo, stateDir };
 }
 
 function makeRoadmap(
@@ -259,6 +275,44 @@ test("#2505: mergeMilestoneToMain preserves queued CONTEXT files (not swept into
   }
 });
 
+test("#2505: pre-merge stash handles symlinked .gsd without traversing it", () => {
+  const { repo, stateDir } = createTempRepoWithSymlinkedGsd();
+  try {
+    const wtPath = createAutoWorktree(repo, "M016");
+    const normalizedPath = wtPath.replaceAll("\\", "/");
+    const worktreeName = normalizedPath.split("/").pop() || "M016";
+    const sliceBranch = `slice/${worktreeName}/S01`;
+    run(`git checkout -b "${sliceBranch}"`, wtPath);
+    writeFileSync(join(wtPath, "app.ts"), "export const app = true;\n");
+    run("git add app.ts", wtPath);
+    run('git commit -m "add app feature"', wtPath);
+    run("git checkout milestone/M016", wtPath);
+    run(`git merge --no-ff "${sliceBranch}" -m "merge S01"`, wtPath);
+
+    const queuedDir = join(stateDir, "milestones", "M017");
+    mkdirSync(queuedDir, { recursive: true });
+    writeFileSync(join(queuedDir, "M017-CONTEXT.md"), "# M017: Queued\n");
+
+    // Trigger the pre-merge stash with both tracked and untracked project files.
+    writeFileSync(join(repo, "README.md"), "# test\n\nDirty change.\n");
+    writeFileSync(join(repo, "local-note.txt"), "local scratch\n");
+
+    const result = mergeMilestoneToMain(repo, "M016", makeRoadmap("M016", "App Feature", [
+      { id: "S01", title: "Feature" },
+    ]));
+
+    assert.ok(result.commitMessage.includes("GSD-Milestone: M016"), "merge should succeed");
+    assert.ok(existsSync(join(repo, "app.ts")), "milestone code merged to main");
+    assert.equal(lstatSync(join(repo, ".gsd")).isSymbolicLink(), true, ".gsd symlink remains in place");
+    assert.ok(existsSync(join(queuedDir, "M017-CONTEXT.md")), "queued context remains in external state");
+    assert.equal(readFileSync(join(repo, "README.md"), "utf-8").replace(/\r\n/g, "\n"), "# test\n\nDirty change.\n");
+    assert.equal(readFileSync(join(repo, "local-note.txt"), "utf-8"), "local scratch\n");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});
+
 test("#2505: back-to-back merges preserve queued CONTEXT files", () => {
   const repo = createTempRepo();
   try {
@@ -322,5 +376,61 @@ test("#2505: back-to-back merges preserve queued CONTEXT files", () => {
     );
   } finally {
     rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// #4573: When `.gsd` is a gitignored symlink (ADR-002 layout) and the project
+// `.gitignore` contains `.gsd`, `git stash push --include-untracked -- <pathspec>`
+// fatals with "The following paths are ignored by one of your .gitignore files".
+// The prior tests used a symlinked `.gsd` but no `.gitignore`, so this failure
+// mode was invisible to CI. Fixture must include BOTH the symlink AND the
+// ignore rule to reproduce the bug on pre-fix code.
+test("#4573: gitignored .gsd symlink does not break pre-merge stash", () => {
+  const repo = realpathSync(mkdtempSync(join(tmpdir(), "wt-4573-ignored-symlink-")));
+  const stateDir = realpathSync(mkdtempSync(join(tmpdir(), "wt-4573-state-")));
+  try {
+    run("git init", repo);
+    run("git config user.email test@test.com", repo);
+    run("git config user.name Test", repo);
+    writeFileSync(join(repo, "README.md"), "# test\n");
+    // Matches what BASELINE_PATTERNS in gitignore.ts writes for real projects.
+    writeFileSync(join(repo, ".gitignore"), ".gsd\n.gsd-id\n");
+    symlinkSync(stateDir, join(repo, ".gsd"));
+    run("git add README.md .gitignore", repo);
+    run("git commit -m init", repo);
+    run("git branch -M main", repo);
+
+    const wtPath = createAutoWorktree(repo, "M001");
+    const worktreeName = wtPath.replaceAll("\\", "/").split("/").pop() || "M001";
+    const sliceBranch = `slice/${worktreeName}/S01`;
+    run(`git checkout -b "${sliceBranch}"`, wtPath);
+    writeFileSync(join(wtPath, "app.ts"), "export const app = true;\n");
+    run("git add app.ts", wtPath);
+    run('git commit -m "add feature"', wtPath);
+    run("git checkout milestone/M001", wtPath);
+    run(`git merge --no-ff "${sliceBranch}" -m "merge S01"`, wtPath);
+
+    // Dirty a tracked file so the pre-merge stash branch actually runs.
+    writeFileSync(join(repo, "README.md"), "# test\n\nDirty.\n");
+
+    const result = mergeMilestoneToMain(
+      repo,
+      "M001",
+      makeRoadmap("M001", "Feature", [{ id: "S01", title: "Feature" }]),
+    );
+
+    assert.ok(
+      result.commitMessage.includes("GSD-Milestone: M001"),
+      "merge must succeed despite gitignored .gsd symlink",
+    );
+    assert.ok(existsSync(join(repo, "app.ts")), "milestone code merged to main");
+    assert.equal(
+      lstatSync(join(repo, ".gsd")).isSymbolicLink(),
+      true,
+      ".gsd symlink remains in place",
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(stateDir, { recursive: true, force: true });
   }
 });

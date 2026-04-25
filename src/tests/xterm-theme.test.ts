@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const { getXtermTheme } = await import("../../web/lib/xterm-theme.ts");
+const { getXtermTheme, getXtermOptions } = await import("../../web/lib/xterm-theme.ts");
 
 function hexToRgb(hex: string): [number, number, number] {
   const normalized = hex.replace("#", "");
@@ -54,4 +54,17 @@ test("terminal components share the central xterm theme helper", () => {
   assert.match(mainSource, /from \"@\/lib\/xterm-theme\"/);
   assert.doesNotMatch(shellSource, /const XTERM_LIGHT_THEME =/);
   assert.doesNotMatch(mainSource, /const XTERM_LIGHT_THEME =/);
+});
+
+test("xterm palette mode defaults to classic and supports vivid override", () => {
+  const classicDark = getXtermTheme(true, "classic");
+  const vividDark = getXtermTheme(true, "vivid");
+  const defaultDark = getXtermTheme(true);
+
+  assert.equal(classicDark.red, "#cc6666");
+  assert.equal(vividDark.red, "#ff6b8a");
+  assert.deepEqual(defaultDark, classicDark, "default palette mode should remain classic");
+
+  const vividOptions = getXtermOptions(true, 13, "vivid");
+  assert.equal(vividOptions.theme.red, "#ff6b8a");
 });

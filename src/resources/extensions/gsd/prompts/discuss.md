@@ -339,7 +339,20 @@ These sections are in addition to whatever other context the discussion surfaced
 6. For each architectural or pattern decision made during discussion, call `gsd_decision_save` — the tool auto-assigns IDs and regenerates `.gsd/DECISIONS.md` automatically.
 7. {{commitInstruction}}
 
-After writing the files, say exactly: "Milestone {{milestoneId}} ready." — nothing else. Auto-mode will start automatically.
+### Ready-phrase pre-condition (NON-BYPASSABLE)
+
+Before emitting the ready phrase, verify in the CURRENT turn that you have:
+
+- [ ] Written `.gsd/PROJECT.md` (step 2)
+- [ ] Written `.gsd/REQUIREMENTS.md` (step 3)
+- [ ] Written `{{contextPath}}` (step 4)
+- [ ] Called `gsd_plan_milestone` (step 5)
+
+If ANY box is unchecked, **STOP**. Do NOT emit the ready phrase. Emit the missing tool calls in this same turn. The system detects missing artifacts and will reject premature ready signals — you will be asked again and retries are capped.
+
+Do not announce the ready phrase as something you are "about to" do. Do not narrate "now writing the files" as a substitute for actually writing them. The ready phrase is a post-write signal, not an intent signal.
+
+After completing steps 1–7 above, say exactly: "Milestone {{milestoneId}} ready." — nothing else. Auto-mode will start automatically.
 
 ### Multi-Milestone
 
@@ -418,6 +431,20 @@ For single-milestone projects, do NOT write this file — it is only for multi-m
 
 7. {{multiMilestoneCommitInstruction}}
 
-After writing the files, say exactly: "Milestone M001 ready." — nothing else. Auto-mode will start automatically.
+### Ready-phrase pre-condition (NON-BYPASSABLE)
+
+Before emitting the ready phrase, verify in the CURRENT turn that you have:
+
+- [ ] Written `.gsd/PROJECT.md` (Phase 1)
+- [ ] Written `.gsd/REQUIREMENTS.md` (Phase 1)
+- [ ] Written primary-milestone `CONTEXT.md` (Phase 2)
+- [ ] Called `gsd_plan_milestone` for the primary milestone (Phase 2)
+- [ ] Written `.gsd/DISCUSSION-MANIFEST.json` with `gates_completed === total` (Phase 3)
+
+If ANY box is unchecked, **STOP**. Do NOT emit the ready phrase. Emit the missing tool calls in this same turn. The system detects missing artifacts and will reject premature ready signals — you will be asked again and retries are capped.
+
+Do not announce the ready phrase as something you are "about to" do. Do not narrate "now writing the files" as a substitute for actually writing them. The ready phrase is a post-write signal, not an intent signal.
+
+After completing all phases above, say exactly: "Milestone M001 ready." — nothing else. Auto-mode will start automatically.
 
 {{inlinedTemplates}}

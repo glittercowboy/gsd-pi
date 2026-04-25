@@ -15,7 +15,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSy
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { GSD_ROOT_FILES, resolveGsdRootFile } from '../paths.ts';
-import { inlineGsdRootFile } from '../auto-prompts.ts';
+import { inlineGsdRootFile, inlineKnowledgeBudgeted } from '../auto-prompts.ts';
 import { appendKnowledge } from '../files.ts';
 import { loadKnowledgeBlock } from '../bootstrap/system-context.ts';
 
@@ -245,6 +245,98 @@ test('loadKnowledgeBlock: reports globalSizeKb above 4KB threshold', () => {
 
   const result = loadKnowledgeBlock(gsdHome, cwd);
   assert.ok(result.globalSizeKb > 4, `expected > 4KB, got ${result.globalSizeKb}`);
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+// ─── inlineKnowledgeBudgeted — issue #4719 ─────────────────────────────────
+// Milestone-phase prompts must not inject the full KNOWLEDGE.md. The budgeted
+// helper scopes by milestone-level keywords and caps the injected size.
+
+test('inlineKnowledgeBudgeted: returns scoped H3 entries for single-H2 file', async () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-knowledge-')));
+  const gsdDir = join(tmp, '.gsd');
+  mkdirSync(gsdDir, { recursive: true });
+
+  const content = `# Project Knowledge
+
+## Patterns
+
+### Database: prepared statements
+Always use prepared statements with SQLite.
+
+### API: versioned paths
+Use /v1/resource style versioning.
+
+### Testing: node:test
+Prefer node:test over external frameworks.
+`;
+  writeFileSync(join(gsdDir, 'KNOWLEDGE.md'), content);
+
+  const result = await inlineKnowledgeBudgeted(tmp, ['database']);
+  assert.ok(result !== null, 'should return content');
+  assert.ok(result!.includes('Database: prepared statements'), 'includes matching H3');
+  assert.ok(!result!.includes('API: versioned paths'), 'excludes non-matching H3');
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+test('inlineKnowledgeBudgeted: caps payload below budget for large files', async () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-knowledge-')));
+  const gsdDir = join(tmp, '.gsd');
+  mkdirSync(gsdDir, { recursive: true });
+
+  // Build a 200KB KNOWLEDGE with 500 H3 entries all matching 'shared'
+  const entries = Array.from({ length: 500 }, (_, i) =>
+    `### Entry ${i}: shared topic\n${'filler text '.repeat(30)}\n`,
+  ).join('\n');
+  const content = `# Project Knowledge\n\n## Patterns\n\n${entries}`;
+  writeFileSync(join(gsdDir, 'KNOWLEDGE.md'), content);
+
+  const BUDGET_CHARS = 30_000;
+  const result = await inlineKnowledgeBudgeted(tmp, ['shared'], { maxChars: BUDGET_CHARS });
+  assert.ok(result !== null, 'should return content');
+  // Allow some overhead for header formatting, but must stay close to budget
+  assert.ok(
+    result!.length <= BUDGET_CHARS + 500,
+    `payload ${result!.length} chars should be <= budget ${BUDGET_CHARS} (+overhead)`,
+  );
+  // Far smaller than the raw file
+  assert.ok(
+    result!.length < content.length / 4,
+    `payload should be much smaller than full content (${content.length} chars)`,
+  );
+  assert.match(
+    result!,
+    /\[\.\.\.truncated \d+ chars; rerun with narrower scope if needed\]/,
+    'should include truncation note when budget is exceeded',
+  );
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+test('inlineKnowledgeBudgeted: returns null when no KNOWLEDGE.md exists', async () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-knowledge-')));
+  const gsdDir = join(tmp, '.gsd');
+  mkdirSync(gsdDir, { recursive: true });
+
+  const result = await inlineKnowledgeBudgeted(tmp, ['database']);
+  assert.strictEqual(result, null);
+
+  rmSync(tmp, { recursive: true, force: true });
+});
+
+test('inlineKnowledgeBudgeted: returns null when no entries match', async () => {
+  const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'gsd-knowledge-')));
+  const gsdDir = join(tmp, '.gsd');
+  mkdirSync(gsdDir, { recursive: true });
+  writeFileSync(
+    join(gsdDir, 'KNOWLEDGE.md'),
+    '# Project Knowledge\n\n## Patterns\n\n### Database\nuse it\n',
+  );
+
+  const result = await inlineKnowledgeBudgeted(tmp, ['nonexistent']);
+  assert.strictEqual(result, null);
 
   rmSync(tmp, { recursive: true, force: true });
 });

@@ -67,9 +67,18 @@ describe('renderAllProjections must not overwrite PLAN.md (#3651)', () => {
     const fnEnd = src.indexOf('\n// ─── ', fnStart + 1)
     const fnBody = src.slice(fnStart, fnEnd)
 
+    // #4402: ROADMAP.md is now rendered by the authoritative renderer
+    // (renderRoadmapFromDb) to preserve ## Boundary Map and other sections
+    // that the reduced renderRoadmapProjection would strip.
     assert.ok(
-      fnBody.includes('renderRoadmapProjection('),
-      'renderRoadmapProjection must still be called',
+      fnBody.includes('renderRoadmapFromDb('),
+      'renderRoadmapFromDb must be called (authoritative roadmap renderer)',
+    )
+    assert.ok(
+      !/renderRoadmapProjection\s*\(/.test(
+        fnBody.split('\n').filter(l => !l.trim().startsWith('//')).join('\n'),
+      ),
+      'renderRoadmapProjection must NOT be called — it clobbers Boundary Map (#4402)',
     )
     assert.ok(
       fnBody.includes('renderSummaryProjection('),

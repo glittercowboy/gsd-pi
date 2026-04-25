@@ -1,7 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { MODELS } from "./models.generated.js";
-import { getModel, getModels, getProviders } from "./models.js";
+import { MODELS, getModel, getModels, getProviders } from "./models/index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Regression: qwen/qwen3.6-plus missing from OpenRouter (issue #3582)
@@ -257,9 +256,15 @@ describe("MODELS structural invariants", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("MODELS registry shape", () => {
-	it("has exactly 23 providers", () => {
+	// "exactly 23 providers" and "all 23 expected providers" tests
+	// removed (#4804): each hardcoded a snapshot count/list that breaks
+	// on every benign provider addition without indicating any real
+	// problem. The structural invariants below (non-empty, sanity
+	// threshold, getProviders consistency) are the useful guarantees.
+
+	it("registry is non-empty", () => {
 		const count = Object.keys(MODELS).length;
-		assert.equal(count, 23, `Expected 23 providers, got ${count}: ${Object.keys(MODELS).join(", ")}`);
+		assert.ok(count > 0, "MODELS must have at least one provider");
 	});
 
 	it("has at least 200 models in total (sanity check)", () => {
@@ -270,37 +275,11 @@ describe("MODELS registry shape", () => {
 		assert.ok(total >= 200, `Registry has only ${total} models — unexpectedly small`);
 	});
 
-	it("all 23 expected providers are present", () => {
-		const expected = [
-			"amazon-bedrock",
-			"anthropic",
-			"azure-openai-responses",
-			"cerebras",
-			"github-copilot",
-			"google",
-			"google-antigravity",
-			"google-gemini-cli",
-			"google-vertex",
-			"groq",
-			"huggingface",
-			"kimi-coding",
-			"minimax",
-			"minimax-cn",
-			"mistral",
-			"openai",
-			"openai-codex",
-			"opencode",
-			"opencode-go",
-			"openrouter",
-			"vercel-ai-gateway",
-			"xai",
-			"zai",
-		];
-		const actual = Object.keys(MODELS).sort();
-		assert.deepEqual(actual, expected.sort());
-	});
-
-	it("getProviders() returns all generated providers", () => {
+	it("getProviders() returns every generated provider", () => {
+		// `getProviders()` may also include providers defined in
+		// `models/custom.ts` (manually-patched entries). We assert only
+		// that every GENERATED provider is present — which is the
+		// invariant the generator controls.
 		const providers = getProviders();
 		for (const p of Object.keys(MODELS)) {
 			assert.ok(providers.includes(p as any), `getProviders() missing generated provider: ${p}`);
@@ -327,6 +306,16 @@ describe("removed models are absent from the registry", () => {
 		{ provider: "openrouter", id: "meituan/longcat-flash-thinking" },
 		{ provider: "vercel-ai-gateway", id: "xai/grok-2-vision" },
 		{ provider: "anthropic", id: "claude-3-7-sonnet-latest" },
+		// Groq decommissioned models — issue #4257
+		{ provider: "groq", id: "llama3-70b-8192" },
+		{ provider: "groq", id: "llama3-8b-8192" },
+		{ provider: "groq", id: "deepseek-r1-distill-llama-70b" },
+		{ provider: "groq", id: "gemma2-9b-it" },
+		{ provider: "groq", id: "meta-llama/llama-4-maverick-17b-128e-instruct" },
+		{ provider: "groq", id: "mistral-saba-24b" },
+		{ provider: "groq", id: "moonshotai/kimi-k2-instruct" },
+		{ provider: "groq", id: "moonshotai/kimi-k2-instruct-0905" },
+		{ provider: "groq", id: "qwen-qwq-32b" },
 	];
 
 	for (const { provider, id } of removedModels) {
@@ -337,37 +326,37 @@ describe("removed models are absent from the registry", () => {
 	}
 });
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Spot-checks for notable models added in this regeneration
-// ═══════════════════════════════════════════════════════════════════════════
+// "Spot-checks for models added in this regeneration" removed (#4804).
+//
+// The block asserted that a hardcoded list of 21 model IDs was present
+// in the registry. Each assertion read a value the generator had just
+// written, so the test could not detect a broken generator — it only
+// tripped when someone hand-edited the snapshot. Worse, the list went
+// stale on every regeneration (adding a fresh list is the reviewer's
+// tax) without providing any invariant the structural tests above
+// didn't already cover:
+//   - every id matches its key
+//   - every model has a positive contextWindow
+//   - no duplicate model IDs
+//
+// If a specific model capability is load-bearing for a feature, the
+// guard for that capability belongs in the feature's own test — not
+// in a "did the generator output what it output" snapshot. The
+// GPT-5.5 availability test below is an example: it asserts concrete
+// pricing/context-window values the feature depends on.
 
-describe("spot-checks for models added in this regeneration", () => {
-	const newModels: Array<{ provider: string; id: string; reasoning?: boolean }> = [
-		{ provider: "openrouter", id: "z-ai/glm-5.1" },
-		{ provider: "openrouter", id: "z-ai/glm-5v-turbo" },
-		{ provider: "openrouter", id: "google/gemma-4-31b-it" },
-		{ provider: "openrouter", id: "google/gemma-4-26b-a4b-it" },
-		{ provider: "openrouter", id: "arcee-ai/trinity-large-thinking", reasoning: true },
-		{ provider: "openrouter", id: "openai/gpt-audio" },
-		{ provider: "openrouter", id: "anthropic/claude-opus-4.6-fast" },
-		{ provider: "openrouter", id: "qwen/qwen3.6-plus" },
-		{ provider: "groq", id: "groq/compound" },
-		{ provider: "groq", id: "groq/compound-mini" },
-		{ provider: "huggingface", id: "zai-org/GLM-5.1" },
-		{ provider: "openai", id: "gpt-5.3-chat-latest" },
-		{ provider: "mistral", id: "mistral-small-2603" },
-		{ provider: "zai", id: "glm-5.1" },
-	];
+describe("GPT-5.5 availability", () => {
+	it("exposes GPT-5.5 through OpenAI API and OpenAI Codex providers", () => {
+		const apiModel = getModel("openai", "gpt-5.5" as any);
+		assert.ok(apiModel, "openai/gpt-5.5 should be present");
+		assert.equal(apiModel.contextWindow, 1000000);
+		assert.equal(apiModel.cost.input, 5);
+		assert.equal(apiModel.cost.output, 30);
 
-	for (const { provider, id, reasoning } of newModels) {
-		it(`${provider}/${id} is present in the registry`, () => {
-			const model = getModel(provider as any, id as any);
-			assert.ok(model, `Expected ${provider}/${id} to be present after regeneration`);
-			assert.equal(model.id, id);
-			assert.equal(model.provider, provider);
-			if (reasoning !== undefined) {
-				assert.equal(model.reasoning, reasoning, `${id} reasoning should be ${reasoning}`);
-			}
-		});
-	}
+		const codexModel = getModel("openai-codex", "gpt-5.5" as any);
+		assert.ok(codexModel, "openai-codex/gpt-5.5 should be present");
+		assert.equal(codexModel.contextWindow, 400000);
+		assert.equal(codexModel.cost.input, 5);
+		assert.equal(codexModel.cost.output, 30);
+	});
 });

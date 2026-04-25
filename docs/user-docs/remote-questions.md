@@ -1,6 +1,6 @@
 # Remote Questions
 
-Remote questions allow GSD to ask for user input via Slack, Discord, or Telegram when running in headless auto-mode. When GSD encounters a decision point that needs human input, it posts the question to your configured channel and polls for a response.
+Remote questions allow GSD to ask for user input and send informational notifications via Slack, Discord, or Telegram when running in headless auto-mode. When GSD encounters a decision point that needs human input, it posts the question to your configured channel and polls for a response. Milestone completions, blockers, budget alerts, and other status events are also routed to the same channel.
 
 ## Setup
 
@@ -101,6 +101,50 @@ remote_questions:
 
 If no response is received within `timeout_minutes`, the prompt times out and GSD continues with a timeout result. The LLM handles timeouts according to the task context — typically by making a conservative default choice or pausing auto-mode.
 
+## Informational Notifications
+
+In addition to interactive questions, GSD sends informational notifications to your remote channel for significant auto-mode events. These do not require a response — they are delivered alongside desktop notifications.
+
+Events that are sent remotely:
+
+| Event | Description |
+|-------|-------------|
+| Milestone complete | A milestone finished successfully |
+| All milestones done | The entire roadmap is complete |
+| Blocker encountered | Auto-mode stopped due to an unresolvable issue |
+| Budget alert | Spending is approaching or has reached the configured ceiling |
+| Budget ceiling reached | Auto-mode paused because the `budget_ceiling` was exceeded |
+
+Informational notifications are sent whenever `notifications.enabled: true` is set in preferences **and** a remote channel is configured. The same channel that receives interactive questions also receives these status events — no separate configuration is needed.
+
+## Telegram Commands
+
+When Telegram is configured as your remote channel, GSD runs a background polling loop (every ~5 seconds) while auto-mode is active. This allows you to send commands directly to your bot and receive live project status updates in return.
+
+> **Note:** Background command polling is only available for Telegram. Slack and Discord use a webhook-based model and do not support incoming commands from the chat.
+
+### Available Commands
+
+All command responses are prefixed with the project name (e.g., `📁 MyProject`) so you can distinguish responses when running multiple projects.
+
+| Command | Description | Example response |
+|---------|-------------|-----------------|
+| `/status` | Current milestone, active unit, and session cost | `📁 MyProject — M001: Auth System · Executing S02/T03 · $1.24` |
+| `/progress` | Roadmap overview showing completed and open milestones | `📁 MyProject — ✅ M001 Auth · 🔄 M002 Dashboard (active) · ⏳ M003 API` |
+| `/budget` | Token usage and cost for the current session | `📁 MyProject — Session: $2.18 · 142k tokens · ceiling: $50.00` |
+| `/pause` | Pause auto-mode after the current unit finishes | `📁 MyProject — Pause directive set. Auto-mode will stop after current unit.` |
+| `/resume` | Clear a pause directive and continue auto-mode | `📁 MyProject — Pause directive cleared. Auto-mode will continue.` |
+| `/log [n]` | Last `n` activity log entries (default: 5) | `📁 MyProject — [10:42] Completed T02 · [10:38] Started T02 · ...` |
+| `/help` | List all available commands | `📁 MyProject — Available commands: /status /progress ...` |
+
+### How Background Polling Works
+
+While auto-mode is running, GSD polls the Telegram Bot API every ~5 seconds for new messages sent to the bot. When a command is received, GSD processes it and replies in the same chat.
+
+Polling is active only while auto-mode is running. When auto-mode stops (normally, or via `/pause`), polling stops as well. The next `/gsd auto` resumes polling automatically.
+
+The `/pause` command sets a stop directive that GSD checks at each unit boundary — the current unit always completes before auto-mode halts. `/resume` clears that directive so auto-mode continues without requiring a terminal interaction.
+
 ## Commands
 
 | Command | Description |
@@ -108,6 +152,7 @@ If no response is received within `timeout_minutes`, the prompt times out and GS
 | `/gsd remote` | Show remote questions menu and current status |
 | `/gsd remote slack` | Set up Slack integration |
 | `/gsd remote discord` | Set up Discord integration |
+| `/gsd remote telegram` | Set up Telegram integration |
 | `/gsd remote status` | Show current configuration and last prompt status |
 | `/gsd remote disconnect` | Remove remote questions configuration |
 
@@ -125,6 +170,10 @@ If no response is received within `timeout_minutes`, the prompt times out and GS
 | Server/channel picker | ✅ (interactive) | ✅ (interactive + manual fallback) |
 | Token validation | ✅ | ✅ |
 | Test message on setup | ✅ | ✅ |
+| Informational notifications | ✅ | ✅ |
+| Background command polling | ❌ | ❌ |
+
+Telegram supports all the above plus background command polling (`/status`, `/pause`, `/resume`, etc.).
 
 ## Troubleshooting
 
@@ -147,3 +196,10 @@ If no response is received within `timeout_minutes`, the prompt times out and GS
 - **Slack:** 9-12 uppercase alphanumeric characters (e.g., `C0123456789`)
 - **Discord:** 17-20 digit numeric snowflake ID (e.g., `1234567890123456789`)
 - Enable Developer Mode in Discord (Settings → Advanced) to copy channel IDs
+
+### Telegram commands not responding
+- Confirm auto-mode is actively running — background polling only operates while auto-mode is active
+- Verify the bot token in `~/.gsd/PREFERENCES.md` matches the token from [@BotFather](https://t.me/BotFather)
+- Ensure the `chat_id` (or `channel_id`) in your configuration matches the chat where you're sending the commands — the bot only responds in its configured chat
+- Send `/help` first: if the bot responds, polling is working and the issue may be with a specific command
+- Run `/gsd remote status` from your terminal to confirm the Telegram configuration is saved correctly

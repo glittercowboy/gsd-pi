@@ -19,7 +19,7 @@ Different phases of work have different requirements. You can assign specific mo
 ```yaml
 models:
   research: claude-sonnet-4-6        # scouting and research
-  planning: claude-opus-4-6          # architectural decisions
+  planning: claude-opus-4-7          # architectural decisions
   execution: claude-sonnet-4-6       # writing code
   execution_simple: claude-haiku-4-5 # simple tasks (docs, config)
   completion: claude-sonnet-4-6      # summaries and wrap-up
@@ -35,7 +35,7 @@ If a model is unavailable (provider down, rate limited, credits exhausted), GSD 
 ```yaml
 models:
   planning:
-    model: claude-opus-4-6
+    model: claude-opus-4-7
     fallbacks:
       - openrouter/z-ai/glm-5
       - openrouter/moonshotai/kimi-k2.5

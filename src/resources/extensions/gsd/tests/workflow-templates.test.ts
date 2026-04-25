@@ -36,8 +36,14 @@ console.log('\n── Registry Loading ──');
   for (const [id, entry] of Object.entries(registry.templates)) {
     assert.ok(typeof entry.name === 'string' && entry.name.length > 0, `${id}: name should be non-empty string`);
     assert.ok(typeof entry.description === 'string' && entry.description.length > 0, `${id}: description should be non-empty`);
-    assert.ok(typeof entry.file === 'string' && entry.file.endsWith('.md'), `${id}: file should be a .md path`);
-    assert.ok(Array.isArray(entry.phases) && entry.phases.length > 0, `${id}: phases should be non-empty array`);
+    assert.ok(typeof entry.file === 'string' && (entry.file.endsWith('.md') || entry.file.endsWith('.yaml') || entry.file.endsWith('.yml')), `${id}: file should be a .md or .yaml path`);
+    // Phases are only required for phased modes (markdown-phase, auto-milestone).
+    const isPhased = !entry.mode || entry.mode === 'markdown-phase' || entry.mode === 'auto-milestone';
+    if (isPhased) {
+      assert.ok(Array.isArray(entry.phases) && entry.phases.length > 0, `${id}: phases should be non-empty array for phased mode`);
+    } else {
+      assert.ok(Array.isArray(entry.phases), `${id}: phases should be an array (may be empty for ${entry.mode})`);
+    }
     assert.ok(Array.isArray(entry.triggers) && entry.triggers.length > 0, `${id}: triggers should be non-empty array`);
   }
 }

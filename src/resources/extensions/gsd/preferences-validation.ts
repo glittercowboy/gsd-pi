@@ -22,7 +22,12 @@ import {
   type GSDSkillRule,
 } from "./preferences-types.js";
 
-const VALID_TOKEN_PROFILES = new Set<TokenProfile>(["budget", "balanced", "quality"]);
+const VALID_TOKEN_PROFILES = new Set<TokenProfile>(["budget", "balanced", "quality", "burn-max"]);
+const VALID_UOK_TURN_ACTIONS = new Set<"commit" | "snapshot" | "status-only">([
+  "commit",
+  "snapshot",
+  "status-only",
+]);
 
 export function validatePreferences(preferences: GSDPreferences): {
   preferences: GSDPreferences;
@@ -161,12 +166,112 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── UOK Flags ──────────────────────────────────────────────────────
+  if (preferences.uok !== undefined) {
+    if (typeof preferences.uok === "object" && preferences.uok !== null) {
+      const raw = preferences.uok as Record<string, unknown>;
+      const valid: NonNullable<GSDPreferences["uok"]> = {};
+
+      if (raw.enabled !== undefined) {
+        if (typeof raw.enabled === "boolean") valid.enabled = raw.enabled;
+        else errors.push("uok.enabled must be a boolean");
+      }
+
+      const parseEnabledBlock = (
+        key: "legacy_fallback" | "gates" | "model_policy" | "execution_graph" | "audit_unified" | "plan_v2",
+      ): void => {
+        const value = raw[key];
+        if (value === undefined) return;
+        if (typeof value !== "object" || value === null) {
+          errors.push(`uok.${key} must be an object`);
+          return;
+        }
+        const block = value as Record<string, unknown>;
+        const parsed: { enabled?: boolean } = {};
+        if (block.enabled !== undefined) {
+          if (typeof block.enabled === "boolean") parsed.enabled = block.enabled;
+          else errors.push(`uok.${key}.enabled must be a boolean`);
+        }
+        const unknown = Object.keys(block).filter((k) => k !== "enabled");
+        for (const unk of unknown) {
+          warnings.push(`unknown uok.${key} key "${unk}" — ignored`);
+        }
+        if (Object.keys(parsed).length > 0) {
+          valid[key] = parsed;
+        }
+      };
+
+      parseEnabledBlock("legacy_fallback");
+      parseEnabledBlock("gates");
+      parseEnabledBlock("model_policy");
+      parseEnabledBlock("execution_graph");
+      parseEnabledBlock("audit_unified");
+      parseEnabledBlock("plan_v2");
+
+      if (raw.gitops !== undefined) {
+        if (typeof raw.gitops !== "object" || raw.gitops === null) {
+          errors.push("uok.gitops must be an object");
+        } else {
+          const gitops = raw.gitops as Record<string, unknown>;
+          const parsed: NonNullable<NonNullable<GSDPreferences["uok"]>["gitops"]> = {};
+          if (gitops.enabled !== undefined) {
+            if (typeof gitops.enabled === "boolean") parsed.enabled = gitops.enabled;
+            else errors.push("uok.gitops.enabled must be a boolean");
+          }
+          if (gitops.turn_action !== undefined) {
+            if (
+              typeof gitops.turn_action === "string" &&
+              VALID_UOK_TURN_ACTIONS.has(gitops.turn_action as "commit" | "snapshot" | "status-only")
+            ) {
+              parsed.turn_action = gitops.turn_action as "commit" | "snapshot" | "status-only";
+            } else {
+              errors.push("uok.gitops.turn_action must be one of: commit, snapshot, status-only");
+            }
+          }
+          if (gitops.turn_push !== undefined) {
+            if (typeof gitops.turn_push === "boolean") parsed.turn_push = gitops.turn_push;
+            else errors.push("uok.gitops.turn_push must be a boolean");
+          }
+          const unknown = Object.keys(gitops).filter((k) => !["enabled", "turn_action", "turn_push"].includes(k));
+          for (const unk of unknown) {
+            warnings.push(`unknown uok.gitops key "${unk}" — ignored`);
+          }
+          if (Object.keys(parsed).length > 0) {
+            valid.gitops = parsed;
+          }
+        }
+      }
+
+      const knownUokKeys = new Set([
+        "enabled",
+        "legacy_fallback",
+        "gates",
+        "model_policy",
+        "execution_graph",
+        "gitops",
+        "audit_unified",
+        "plan_v2",
+      ]);
+      for (const key of Object.keys(raw)) {
+        if (!knownUokKeys.has(key)) {
+          warnings.push(`unknown uok key "${key}" — ignored`);
+        }
+      }
+
+      if (Object.keys(valid).length > 0) {
+        validated.uok = valid;
+      }
+    } else {
+      errors.push("uok must be an object");
+    }
+  }
+
   // ─── Token Profile ─────────────────────────────────────────────────
   if (preferences.token_profile !== undefined) {
     if (typeof preferences.token_profile === "string" && VALID_TOKEN_PROFILES.has(preferences.token_profile as TokenProfile)) {
       validated.token_profile = preferences.token_profile as TokenProfile;
     } else {
-      errors.push(`token_profile must be one of: budget, balanced, quality`);
+      errors.push(`token_profile must be one of: budget, balanced, quality, burn-max`);
     }
   }
 
@@ -180,19 +285,64 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Flat-rate Providers ────────────────────────────────────────────
+  // User-declared flat-rate providers for dynamic routing suppression.
+  // Built-in providers (github-copilot, copilot, claude-code) and any
+  // externalCli provider are already auto-detected; this list layers on
+  // top for private subscription proxies and custom CLI wrappers.
+  if (preferences.flat_rate_providers !== undefined) {
+    if (Array.isArray(preferences.flat_rate_providers)) {
+      const allStrings = preferences.flat_rate_providers.every(
+        (item: unknown) => typeof item === "string",
+      );
+      if (allStrings) {
+        // Strip empty/whitespace-only entries to avoid false matches.
+        validated.flat_rate_providers = preferences.flat_rate_providers
+          .map((s: string) => s.trim())
+          .filter((s: string) => s.length > 0);
+      } else {
+        errors.push("flat_rate_providers must be an array of strings");
+      }
+    } else {
+      errors.push("flat_rate_providers must be an array of strings");
+    }
+  }
+
   // ─── Phase Skip Preferences ─────────────────────────────────────────
   if (preferences.phases !== undefined) {
     if (typeof preferences.phases === "object" && preferences.phases !== null) {
       const validatedPhases: PhaseSkipPreferences = {};
       const p = preferences.phases as Record<string, unknown>;
-      if (p.skip_research !== undefined) validatedPhases.skip_research = !!p.skip_research;
-      if (p.skip_reassess !== undefined) validatedPhases.skip_reassess = !!p.skip_reassess;
-      if (p.skip_slice_research !== undefined) validatedPhases.skip_slice_research = !!p.skip_slice_research;
-      if (p.skip_milestone_validation !== undefined) validatedPhases.skip_milestone_validation = !!p.skip_milestone_validation;
-      if (p.reassess_after_slice !== undefined) validatedPhases.reassess_after_slice = !!p.reassess_after_slice;
-      if ((p as any).require_slice_discussion !== undefined) (validatedPhases as any).require_slice_discussion = !!(p as any).require_slice_discussion;
+      // Strict boolean parsing — YAML usually delivers real booleans, but
+      // hand-edits like `progressive_planning: "false"` otherwise coerce to
+      // truthy via `!!`. Accept only real booleans or the literal strings
+      // "true"/"false"; anything else becomes a warning + ignored.
+      const parseStrictBoolean = (key: string, raw: unknown): boolean | undefined => {
+        if (typeof raw === "boolean") return raw;
+        if (typeof raw === "string") {
+          if (raw === "true") return true;
+          if (raw === "false") return false;
+        }
+        warnings.push(`phases.${key} must be a boolean (got ${typeof raw}: ${JSON.stringify(raw)}) — ignored`);
+        return undefined;
+      };
+      const assignBool = (key: keyof PhaseSkipPreferences, raw: unknown): void => {
+        const v = parseStrictBoolean(String(key), raw);
+        if (v !== undefined) (validatedPhases as Record<string, boolean>)[key as string] = v;
+      };
+      if (p.skip_research !== undefined) assignBool("skip_research", p.skip_research);
+      if (p.skip_reassess !== undefined) assignBool("skip_reassess", p.skip_reassess);
+      if (p.skip_slice_research !== undefined) assignBool("skip_slice_research", p.skip_slice_research);
+      if (p.skip_milestone_validation !== undefined) assignBool("skip_milestone_validation", p.skip_milestone_validation);
+      if (p.reassess_after_slice !== undefined) assignBool("reassess_after_slice", p.reassess_after_slice);
+      if ((p as any).require_slice_discussion !== undefined) {
+        const v = parseStrictBoolean("require_slice_discussion", (p as any).require_slice_discussion);
+        if (v !== undefined) (validatedPhases as any).require_slice_discussion = v;
+      }
+      if (p.mid_execution_escalation !== undefined) assignBool("mid_execution_escalation", p.mid_execution_escalation);
+      if (p.progressive_planning !== undefined) assignBool("progressive_planning", p.progressive_planning);
       // Warn on unknown phase keys
-      const knownPhaseKeys = new Set(["skip_research", "skip_reassess", "skip_slice_research", "skip_milestone_validation", "reassess_after_slice", "require_slice_discussion"]);
+      const knownPhaseKeys = new Set(["skip_research", "skip_reassess", "skip_slice_research", "skip_milestone_validation", "reassess_after_slice", "require_slice_discussion", "mid_execution_escalation", "progressive_planning"]);
       for (const key of Object.keys(p)) {
         if (!knownPhaseKeys.has(key)) {
           warnings.push(`unknown phases key "${key}" — ignored`);
@@ -432,6 +582,10 @@ export function validatePreferences(preferences: GSDPreferences): {
         if (typeof dr.capability_routing === "boolean") validDr.capability_routing = dr.capability_routing;
         else errors.push("dynamic_routing.capability_routing must be a boolean");
       }
+      if (dr.allow_flat_rate_providers !== undefined) {
+        if (typeof dr.allow_flat_rate_providers === "boolean") validDr.allow_flat_rate_providers = dr.allow_flat_rate_providers;
+        else errors.push("dynamic_routing.allow_flat_rate_providers must be a boolean");
+      }
       if (dr.tier_models !== undefined) {
         if (typeof dr.tier_models === "object" && dr.tier_models !== null) {
           const tm = dr.tier_models as Record<string, unknown>;
@@ -490,6 +644,50 @@ export function validatePreferences(preferences: GSDPreferences): {
     }
   }
 
+  // ─── Context Mode (gsd_exec sandbox) ────────────────────────────────────
+  if (preferences.context_mode !== undefined) {
+    if (typeof preferences.context_mode === "object" && preferences.context_mode !== null) {
+      const cmode = preferences.context_mode as unknown as Record<string, unknown>;
+      const validCmode: Record<string, unknown> = {};
+
+      if (cmode.enabled !== undefined) {
+        if (typeof cmode.enabled === "boolean") validCmode.enabled = cmode.enabled;
+        else errors.push("context_mode.enabled must be a boolean");
+      }
+      if (cmode.exec_timeout_ms !== undefined) {
+        const t = cmode.exec_timeout_ms;
+        if (typeof t === "number" && t >= 1000 && t <= 600_000) validCmode.exec_timeout_ms = Math.floor(t);
+        else errors.push("context_mode.exec_timeout_ms must be a number between 1000 and 600000");
+      }
+      if (cmode.exec_stdout_cap_bytes !== undefined) {
+        const b = cmode.exec_stdout_cap_bytes;
+        if (typeof b === "number" && b >= 4096 && b <= 16_777_216) validCmode.exec_stdout_cap_bytes = Math.floor(b);
+        else errors.push("context_mode.exec_stdout_cap_bytes must be a number between 4096 and 16777216");
+      }
+      if (cmode.exec_digest_chars !== undefined) {
+        const c = cmode.exec_digest_chars;
+        if (typeof c === "number" && c >= 0 && c <= 4000) validCmode.exec_digest_chars = Math.floor(c);
+        else errors.push("context_mode.exec_digest_chars must be a number between 0 and 4000");
+      }
+      if (cmode.exec_env_allowlist !== undefined) {
+        if (
+          Array.isArray(cmode.exec_env_allowlist) &&
+          cmode.exec_env_allowlist.every((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/i.test(v))
+        ) {
+          validCmode.exec_env_allowlist = cmode.exec_env_allowlist;
+        } else {
+          errors.push("context_mode.exec_env_allowlist must be an array of valid env var names");
+        }
+      }
+
+      if (Object.keys(validCmode).length > 0) {
+        validated.context_mode = validCmode as any;
+      }
+    } else {
+      errors.push("context_mode must be an object");
+    }
+  }
+
   // ─── Parallel Config ────────────────────────────────────────────────────
   if (preferences.parallel && typeof preferences.parallel === "object") {
     const p = preferences.parallel as unknown as Record<string, unknown>;
@@ -540,6 +738,41 @@ export function validatePreferences(preferences: GSDPreferences): {
 
     if (Object.keys(parallel).length > 0) {
       validated.parallel = parallel as unknown as import("./types.js").ParallelConfig;
+    }
+  }
+
+  // ─── Slice Parallel Config ───────────────────────────────────────────────
+  if (preferences.slice_parallel !== undefined) {
+    if (typeof preferences.slice_parallel === "object" && preferences.slice_parallel !== null) {
+      const sp = preferences.slice_parallel as Record<string, unknown>;
+      const validSp: NonNullable<GSDPreferences["slice_parallel"]> = {};
+
+      if (sp.enabled !== undefined) {
+        if (typeof sp.enabled === "boolean") validSp.enabled = sp.enabled;
+        else errors.push("slice_parallel.enabled must be a boolean");
+      }
+
+      if (sp.max_workers !== undefined) {
+        const maxWorkers = typeof sp.max_workers === "number" ? sp.max_workers : Number(sp.max_workers);
+        if (Number.isFinite(maxWorkers) && maxWorkers >= 1 && maxWorkers <= 8) {
+          validSp.max_workers = Math.floor(maxWorkers);
+        } else {
+          errors.push("slice_parallel.max_workers must be a number between 1 and 8");
+        }
+      }
+
+      const knownSliceParallelKeys = new Set(["enabled", "max_workers"]);
+      for (const key of Object.keys(sp)) {
+        if (!knownSliceParallelKeys.has(key)) {
+          warnings.push(`unknown slice_parallel key "${key}" — ignored`);
+        }
+      }
+
+      if (Object.keys(validSp).length > 0) {
+        validated.slice_parallel = validSp;
+      }
+    } else {
+      errors.push("slice_parallel must be an object");
     }
   }
 
@@ -753,6 +986,27 @@ export function validatePreferences(preferences: GSDPreferences): {
     // Deprecated: merge_to_main is ignored (branchless architecture).
     if (g.merge_to_main !== undefined) {
       warnings.push("git.merge_to_main is deprecated — milestone-level merge is now always used. Remove this setting.");
+    }
+    // #4765 — collapse cadence + milestone resquash
+    if (g.collapse_cadence !== undefined) {
+      const validCadence = new Set(["milestone", "slice"]);
+      if (typeof g.collapse_cadence === "string" && validCadence.has(g.collapse_cadence)) {
+        git.collapse_cadence = g.collapse_cadence as "milestone" | "slice";
+      } else {
+        errors.push("git.collapse_cadence must be one of: milestone, slice");
+      }
+    }
+    if (g.milestone_resquash !== undefined) {
+      if (typeof g.milestone_resquash === "boolean") {
+        git.milestone_resquash = g.milestone_resquash;
+        const cadence = (git.collapse_cadence as string | undefined)
+          ?? (typeof g.collapse_cadence === "string" ? g.collapse_cadence : undefined);
+        if (cadence !== "slice") {
+          warnings.push('git.milestone_resquash is ignored unless git.collapse_cadence is "slice"');
+        }
+      } else {
+        errors.push("git.milestone_resquash must be a boolean");
+      }
     }
 
     if (Object.keys(git).length > 0) {
@@ -976,6 +1230,16 @@ export function validatePreferences(preferences: GSDPreferences): {
       validated.discuss_depth = preferences.discuss_depth as GSDPreferences["discuss_depth"];
     } else {
       errors.push(`discuss_depth must be one of: quick, standard, thorough`);
+    }
+  }
+
+  // ─── Language ────────────────────────────────────────────────────────
+  if (preferences.language !== undefined) {
+    const trimmed = typeof preferences.language === "string" ? preferences.language.trim() : undefined;
+    if (trimmed && trimmed.length <= 50 && !/[\r\n]/.test(trimmed)) {
+      validated.language = trimmed;
+    } else {
+      errors.push(`language must be a non-empty string up to 50 characters with no newlines (e.g. "Chinese", "de", "日本語")`);
     }
   }
 

@@ -103,13 +103,20 @@ export function MainSessionTerminal({ className, fontSize, projectCwd }: MainSes
     while (inputQueueRef.current.length > 0) {
       const data = inputQueueRef.current.shift()!
       try {
-        await authFetch(buildProjectPath("/api/bridge-terminal/input", projectCwd), {
+        const res = await authFetch(buildProjectPath("/api/bridge-terminal/input", projectCwd), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ data }),
         })
+        if (!res.ok) {
+          if (res.status >= 500) inputQueueRef.current.unshift(data)
+          setConnectionState("error")
+          termRef.current?.writeln(`\r\nInput failed (${res.status}). Reconnect the terminal and retry.`)
+          break
+        }
       } catch {
         inputQueueRef.current.unshift(data)
+        setConnectionState("error")
         break
       }
     }

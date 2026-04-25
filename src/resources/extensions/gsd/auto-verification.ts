@@ -5,17 +5,22 @@
  * dependency audits, handles auto-fix retry logic, and writes
  * verification evidence JSON.
  *
- * Extracted from handleAgentEnd() in auto.ts. Returns a sentinel
- * value instead of calling return/pauseAuto directly — the caller
- * checks the result and handles control flow.
+ * Extracted from the pre-loop agent_end handler in auto.ts. Returns a
+ * sentinel value instead of calling return/pauseAuto directly — the
+ * caller checks the result and handles control flow.
  */
 
 import type { ExtensionContext, ExtensionAPI } from "@gsd/pi-coding-agent";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { resolveSliceFile, resolveSlicePath } from "./paths.js";
+import { resolveSliceFile, resolveSlicePath, resolveMilestoneFile } from "./paths.js";
 import { parseUnitId } from "./unit-id.js";
-import { isDbAvailable, getTask, getSliceTasks, type TaskRow } from "./gsd-db.js";
+import { isDbAvailable, getTask, getSliceTasks, getMilestoneSlices, type TaskRow } from "./gsd-db.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
+import { extractVerdict } from "./verdict-parser.js";
+import { isClosedStatus } from "./status-guards.js";
+import { loadFile } from "./files.js";
+import { parseRoadmap } from "./parsers-legacy.js";
+import { isMilestoneComplete } from "./state.js";
 import {
   runVerificationGate,
   formatFailureContext,
@@ -28,6 +33,8 @@ import { runPostExecutionChecks, type PostExecutionResult } from "./post-executi
 import type { AutoSession } from "./auto/session.js";
 import type { VerificationResult as VerificationGateResult } from "./types.js";
 import { join } from "node:path";
+import { resolveUokFlags } from "./uok/flags.js";
+import { UokGateRunner } from "./uok/gate-runner.js";
 
 export interface VerificationContext {
   s: AutoSession;
@@ -44,6 +51,144 @@ function isInfraVerificationFailure(stderr: string): boolean {
 }
 
 /**
+ * Post-unit guard for `validate-milestone` units (#4094).
+ *
+ * When validate-milestone writes verdict=needs-remediation, the agent is
+ * expected to also call gsd_reassess_roadmap in the same turn to add
+ * remediation slices. If they don't, the state machine re-derives
+ * `phase: validating-milestone` indefinitely (all slices still complete +
+ * verdict still needs-remediation), wasting ~3 dispatches before the stuck
+ * detector fires.
+ *
+ * This guard fires immediately on the first occurrence: if VALIDATION.md
+ * verdict is needs-remediation and no incomplete slices exist for the
+ * milestone, pause the auto-loop with a clear blocker.
+ */
+async function runValidateMilestonePostCheck(
+  vctx: VerificationContext,
+  pauseAuto: (ctx?: ExtensionContext, pi?: ExtensionAPI) => Promise<void>,
+): Promise<VerificationResult> {
+  const { s, ctx, pi } = vctx;
+  const prefs = loadEffectiveGSDPreferences()?.preferences;
+  const uokFlags = resolveUokFlags(prefs);
+  const persistMilestoneValidationGate = async (
+    outcome: "pass" | "fail" | "retry" | "manual-attention",
+    failureClass: "none" | "verification" | "manual-attention",
+    rationale: string,
+    findings = "",
+    milestoneId?: string,
+  ): Promise<void> => {
+    if (!uokFlags.gates || !s.currentUnit) return;
+    const gateRunner = new UokGateRunner();
+    gateRunner.register({
+      id: "milestone-validation-post-check",
+      type: "verification",
+      execute: async () => ({
+        outcome,
+        failureClass,
+        rationale,
+        findings,
+      }),
+    });
+    await gateRunner.run("milestone-validation-post-check", {
+      basePath: s.basePath,
+      traceId: `validation-post-check:${s.currentUnit.id}`,
+      turnId: s.currentUnit.id,
+      milestoneId,
+      unitType: s.currentUnit.type,
+      unitId: s.currentUnit.id,
+    });
+  };
+
+  if (!s.currentUnit) return "continue";
+
+  const { milestone: mid } = parseUnitId(s.currentUnit.id);
+  if (!mid) return "continue";
+
+  const validationFile = resolveMilestoneFile(s.basePath, mid, "VALIDATION");
+  if (!validationFile) return "continue";
+
+  const validationContent = await loadFile(validationFile);
+  if (!validationContent) return "continue";
+
+  const verdict = extractVerdict(validationContent);
+  if (verdict !== "needs-remediation") {
+    await persistMilestoneValidationGate(
+      "pass",
+      "none",
+      `milestone validation verdict is ${verdict}; no remediation loop risk`,
+      "",
+      mid,
+    );
+    return "continue";
+  }
+
+  const incompleteSliceCount = await countIncompleteSlices(s.basePath, mid);
+
+  // If any non-closed slices exist, the agent successfully queued remediation
+  // work — proceed normally. The state machine will execute those slices and
+  // re-validate per the #3596/#3670 fix.
+  if (incompleteSliceCount > 0) {
+    await persistMilestoneValidationGate(
+      "pass",
+      "none",
+      `remediation slices present (${incompleteSliceCount}); validation can continue`,
+      "",
+      mid,
+    );
+    return "continue";
+  }
+
+  ctx.ui.notify(
+    `Milestone ${mid} validation returned verdict=needs-remediation but no remediation slices were added. Pausing for human review.`,
+    "error",
+  );
+  process.stderr.write(
+    `validate-milestone: pausing — verdict=needs-remediation with no incomplete slices for ${mid}. ` +
+      `The agent must call gsd_reassess_roadmap to add remediation slices before re-validation.\n`,
+  );
+  await persistMilestoneValidationGate(
+    "manual-attention",
+    "manual-attention",
+    "needs-remediation verdict without queued remediation slices",
+    `No incomplete slices found for ${mid} while verdict=needs-remediation`,
+    mid,
+  );
+  await pauseAuto(ctx, pi);
+  return "pause";
+}
+
+/**
+ * Count slices for a milestone that are not in a closed status.
+ * DB-backed projects are authoritative (#4094 peer review); falls back to
+ * roadmap parsing only when the DB is unavailable.
+ */
+async function countIncompleteSlices(basePath: string, milestoneId: string): Promise<number> {
+  if (isDbAvailable()) {
+    const slices = getMilestoneSlices(milestoneId);
+    if (slices.length === 0) {
+      // No DB rows — treat as "unknown", do not pause.
+      return 1;
+    }
+    return slices.filter((slice) => !isClosedStatus(slice.status)).length;
+  }
+
+  // Filesystem fallback: parse the roadmap markdown.
+  try {
+    const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
+    if (!roadmapFile) return 1;
+    const roadmapContent = await loadFile(roadmapFile);
+    if (!roadmapContent) return 1;
+    const roadmap = parseRoadmap(roadmapContent);
+    if (roadmap.slices.length === 0) return 1;
+    return isMilestoneComplete(roadmap) ? 0 : 1;
+  } catch {
+    // Parsing failures should not cause false-positive pauses.
+    return 1;
+  }
+}
+
+/**
  * Run the verification gate for the current execute-task unit.
  * Returns:
  * - "continue" — gate passed (or no checks configured), proceed normally
@@ -56,13 +201,22 @@ export async function runPostUnitVerification(
 ): Promise<VerificationResult> {
   const { s, ctx, pi } = vctx;
 
-  if (!s.currentUnit || s.currentUnit.type !== "execute-task") {
+  if (!s.currentUnit) {
+    return "continue";
+  }
+
+  if (s.currentUnit.type === "validate-milestone") {
+    return await runValidateMilestonePostCheck(vctx, pauseAuto);
+  }
+
+  if (s.currentUnit.type !== "execute-task") {
     return "continue";
   }
 
   try {
     const effectivePrefs = loadEffectiveGSDPreferences();
     const prefs = effectivePrefs?.preferences;
+    const uokFlags = resolveUokFlags(prefs);
 
     // Read task plan verify field
     const { milestone: mid, slice: sid, task: tid } = parseUnitId(s.currentUnit.id);
@@ -99,6 +253,37 @@ export async function runPostUnitVerification(
       for (const w of auditWarnings) {
         process.stderr.write(`  [${w.severity}] ${w.name}: ${w.title}\n`);
       }
+    }
+
+    if (uokFlags.gates) {
+      const gateRunner = new UokGateRunner();
+      gateRunner.register({
+        id: "verification-gate",
+        type: "verification",
+        execute: async () => ({
+          outcome: result.passed ? "pass" : "fail",
+          failureClass: result.runtimeErrors?.some((e) => e.blocking)
+            ? "execution"
+            : "verification",
+          rationale: result.passed
+            ? "verification checks passed"
+            : "verification checks failed",
+          findings: result.passed
+            ? ""
+            : formatFailureContext(result),
+        }),
+      });
+
+      await gateRunner.run("verification-gate", {
+        basePath: s.basePath,
+        traceId: `verification:${s.currentUnit.id}`,
+        turnId: s.currentUnit.id,
+        milestoneId: mid ?? undefined,
+        sliceId: sid ?? undefined,
+        taskId: tid ?? undefined,
+        unitType: s.currentUnit.type,
+        unitId: s.currentUnit.id,
+      });
     }
 
     // Auto-fix retry preferences
@@ -243,6 +428,43 @@ export async function runPostUnitVerification(
               );
             }
 
+            if (uokFlags.gates) {
+              const strictMode = prefs?.enhanced_verification_strict === true;
+              const warnEscalated = postExecResult.status === "warn" && strictMode;
+              const blockingFailure = postExecResult.status === "fail" || warnEscalated;
+              const findings = postExecResult.checks
+                .filter((check) => !check.passed)
+                .map((check) => `[${check.category}] ${check.target}: ${check.message}`)
+                .join("\n");
+              const gateRunner = new UokGateRunner();
+              gateRunner.register({
+                id: "post-execution-checks",
+                type: "artifact",
+                execute: async () => ({
+                  outcome: blockingFailure ? "fail" : "pass",
+                  failureClass: postExecResult.status === "fail"
+                    ? "artifact"
+                    : warnEscalated
+                      ? "policy"
+                      : "none",
+                  rationale: blockingFailure
+                    ? `post-execution checks ${postExecResult.status}${warnEscalated ? " (strict)" : ""}`
+                    : "post-execution checks passed",
+                  findings,
+                }),
+              });
+              await gateRunner.run("post-execution-checks", {
+                basePath: s.basePath,
+                traceId: `verification:${s.currentUnit.id}`,
+                turnId: s.currentUnit.id,
+                milestoneId: mid,
+                sliceId: sid,
+                taskId: tid,
+                unitType: s.currentUnit.type,
+                unitId: s.currentUnit.id,
+              });
+            }
+
             // Check for blocking failures
             if (postExecResult.status === "fail") {
               postExecBlockingFailure = true;
@@ -302,6 +524,39 @@ export async function runPostUnitVerification(
     // Update result.passed based on post-execution checks
     if (postExecBlockingFailure) {
       result.passed = false;
+    }
+
+    // Emit Layer 2 verify_result event with the final, post-exec verdict so hooks
+    // see the authoritative pass/fail and the complete set of failures.
+    try {
+      const { emitVerifyResult } = await import("./hook-emitter.js");
+      const checkFailures = result.checks
+        .filter((c) => c.exitCode !== 0)
+        .map((c) => ({
+          kind: "gate" as const,
+          message: `${c.command} exited ${c.exitCode}${c.stderr ? `: ${c.stderr.slice(0, 200)}` : ""}`,
+        }));
+      const runtimeFailures = (result.runtimeErrors ?? [])
+        .filter((e) => e.blocking)
+        .map((e) => ({
+          kind: "other" as const,
+          message: `[${e.source}] ${e.message.slice(0, 200)}`,
+        }));
+      const postExecFailures = (postExecChecks ?? [])
+        .filter((c) => !c.passed)
+        .map((c) => ({
+          kind: "other" as const,
+          message: `[${c.category}] ${c.target}: ${c.message}`,
+        }));
+      await emitVerifyResult({
+        passed: result.passed,
+        failures: [...checkFailures, ...runtimeFailures, ...postExecFailures],
+        unitType: s.currentUnit.type,
+        unitId: s.currentUnit.id,
+        cwd: s.basePath,
+      });
+    } catch (hookErr) {
+      logWarning("engine", `verify_result hook emission failed: ${(hookErr as Error).message}`);
     }
 
     // ── Auto-fix retry logic ──

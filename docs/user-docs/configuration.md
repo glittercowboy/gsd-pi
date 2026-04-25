@@ -544,15 +544,19 @@ Why: `osascript display notification` is attributed to your terminal app (Ghostt
 
 ### `remote_questions`
 
-Route interactive questions to Slack or Discord for headless auto mode:
+Route interactive questions **and informational notifications** to Slack, Discord, or Telegram for headless auto mode:
 
 ```yaml
 remote_questions:
-  channel: slack              # or discord
+  channel: slack              # or discord or telegram
   channel_id: "C1234567890"
   timeout_minutes: 15         # question timeout (1-30 minutes)
   poll_interval_seconds: 10   # poll interval (2-30 seconds)
 ```
+
+When `notifications.enabled: true` is set **and** a remote channel is configured, informational notifications (milestone complete, blocker, budget alerts, all milestones done) are also sent to the remote channel — not just to the desktop. No additional configuration is needed.
+
+See [Remote Questions](./remote-questions.md) for setup instructions and Telegram command reference.
 
 ### `post_unit_hooks`
 

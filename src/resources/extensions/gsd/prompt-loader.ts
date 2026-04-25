@@ -24,6 +24,35 @@ import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { logWarning } from "./workflow-logger.js";
 
+type ExistsFn = (path: string) => boolean;
+
+function hasRequiredExtensionAssets(rootDir: string, exists: ExistsFn = existsSync): boolean {
+  return (
+    exists(join(rootDir, "prompts")) &&
+    exists(join(rootDir, "templates", "task-summary.md"))
+  );
+}
+
+export function resolveExtensionDirFromCandidates(
+  moduleDir: string,
+  agentGsdDir: string,
+  exists: ExistsFn = existsSync,
+): string {
+  const moduleUsable = hasRequiredExtensionAssets(moduleDir, exists);
+  const agentUsable = hasRequiredExtensionAssets(agentGsdDir, exists);
+
+  // Prefer the user-local extension tree when both are valid. This avoids
+  // leaking npm/global-install paths into prompts on Windows.
+  if (agentUsable) return agentGsdDir;
+  if (moduleUsable) return moduleDir;
+
+  // Degraded fallback: if required template is missing in both locations,
+  // keep previous behavior and prefer whichever still has prompts/.
+  if (exists(join(moduleDir, "prompts"))) return moduleDir;
+  if (exists(join(agentGsdDir, "prompts"))) return agentGsdDir;
+  return moduleDir;
+}
+
 /**
  * Resolve the GSD extension directory.
  *
@@ -36,15 +65,9 @@ import { logWarning } from "./workflow-logger.js";
  */
 function resolveExtensionDir(): string {
   const moduleDir = dirname(fileURLToPath(import.meta.url));
-  if (existsSync(join(moduleDir, "prompts"))) return moduleDir;
-
-  // Fallback: user-local agent directory
   const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
   const agentGsdDir = join(gsdHome, "agent", "extensions", "gsd");
-  if (existsSync(join(agentGsdDir, "prompts"))) return agentGsdDir;
-
-  // Last resort: return the module dir (warmCache will silently handle the miss)
-  return moduleDir;
+  return resolveExtensionDirFromCandidates(moduleDir, agentGsdDir);
 }
 
 const __extensionDir = resolveExtensionDir();

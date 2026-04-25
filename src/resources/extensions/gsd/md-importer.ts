@@ -16,6 +16,7 @@ import {
   insertTask,
   openDatabase,
   transaction,
+  updateSliceStatus,
   _getAdapter,
 } from './gsd-db.js';
 import {
@@ -672,11 +673,8 @@ export function migrateHierarchyToDb(basePath: string): {
           return t.done && existsSync(summaryFile);
         });
         if (allTasksDone && hasSliceSummary) {
-          const adapter = _getAdapter();
-          if (adapter) {
-            adapter.prepare(
-              `UPDATE slices SET status = 'complete' WHERE id = :sid AND milestone_id = :mid`,
-            ).run({ ':sid': sliceEntry.id, ':mid': milestoneId });
+          if (_getAdapter()) {
+            updateSliceStatus(milestoneId, sliceEntry.id, 'complete');
             process.stderr.write(
               `gsd-migrate: ${milestoneId}/${sliceEntry.id} all tasks + slice summary complete — upgrading slice to complete\n`,
             );

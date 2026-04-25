@@ -1,8 +1,13 @@
 {
   "name": "@gsd-build/mcp-server",
-  "version": "2.52.0",
+  "version": "2.77.0",
   "description": "MCP server exposing GSD orchestration tools for Claude Code, Cursor, and other MCP clients",
   "license": "MIT",
+  "gsd": {
+    "linkable": true,
+    "scope": "@gsd-build",
+    "name": "mcp-server"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/gsd-build/gsd-2.git",
@@ -25,11 +30,12 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --test dist/mcp-server.test.js"
+    "build:test": "tsc -p tsconfig.test.json",
+    "test": "npm run build:test && node --test dist/mcp-server.test.js dist/remote-questions.test.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@gsd-build/rpc-client": "^2.52.0",
+    "@gsd-build/rpc-client": "^2.77.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {

@@ -12,8 +12,18 @@ type CopilotCredentials = OAuthCredentials & {
 	modelLimits?: Record<string, { contextWindow: number; maxTokens: number }>;
 };
 
-const decode = (s: string) => atob(s);
-const CLIENT_ID = decode("SXYxLmI1MDdhMDhjODdlY2ZlOTg=");
+// GitHub Copilot OAuth Client ID
+//
+// NOTE: This credential is public in the source code. It should NOT be
+// obfuscated because security scanners flag obfuscated data as potentially
+// malicious (see: https://socket.dev/npm/package/gsd-pi/alerts/2.70.1?alert_name=obfuscatedFile)
+//
+// GitHub's device flow for public clients (CLI/desktop apps) does not use
+// a client secret - only the client ID is required. This is standard OAuth
+// for public clients and is intentionally public.
+//
+// See: https://docs.github.com/en/developers/apps/building-oauth-apps/authorizing-oauth-apps
+const CLIENT_ID = "Iv1.b507a08c87ecfe98";
 
 const COPILOT_HEADERS = {
 	"User-Agent": "GitHubCopilotChat/0.35.0",

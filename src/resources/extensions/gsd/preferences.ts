@@ -50,6 +50,8 @@ export type {
   AutoSupervisorConfig,
   RemoteQuestionsConfig,
   CmuxPreferences,
+  UokTurnActionMode,
+  UokPreferences,
   CodebaseMapPreferences,
   GSDPreferences,
   LoadedGSDPreferences,
@@ -66,13 +68,13 @@ export { resolveAllSkillReferences } from "./preferences-skills.js";
 // These lived in preferences-skills.ts but imported loadEffectiveGSDPreferences
 // back from this file, creating a circular dependency. Moved here since they
 // are trivial wrappers over loadEffectiveGSDPreferences.
-export function resolveSkillDiscoveryMode(): SkillDiscoveryMode {
-  const prefs = loadEffectiveGSDPreferences();
+export function resolveSkillDiscoveryMode(basePath?: string): SkillDiscoveryMode {
+  const prefs = loadEffectiveGSDPreferences(basePath);
   return prefs?.preferences.skill_discovery ?? "suggest";
 }
 
-export function resolveSkillStalenessDays(): number {
-  const prefs = loadEffectiveGSDPreferences();
+export function resolveSkillStalenessDays(basePath?: string): number {
+  const prefs = loadEffectiveGSDPreferences(basePath);
   return prefs?.preferences.skill_staleness_days ?? 60;
 }
 
@@ -100,23 +102,23 @@ function gsdHome(): string {
 }
 
 function globalPreferencesPath(): string {
-  return join(gsdHome(), "preferences.md");
+  return join(gsdHome(), "PREFERENCES.md");
 }
 
 function legacyGlobalPreferencesPath(): string {
   return join(homedir(), ".pi", "agent", "gsd-preferences.md");
 }
 
-function projectPreferencesPath(): string {
-  return join(gsdRoot(process.cwd()), "preferences.md");
+function projectPreferencesPath(basePath: string = process.cwd()): string {
+  return join(gsdRoot(basePath), "PREFERENCES.md");
 }
-// Bootstrap in gitignore.ts historically created PREFERENCES.md (uppercase) by mistake.
-// Check uppercase as a fallback so those files aren't silently ignored.
-function globalPreferencesPathUppercase(): string {
-  return join(gsdHome(), "PREFERENCES.md");
+// Legacy lowercase files can still exist in older projects. Keep them as a
+// compatibility-only fallback, but route new reads/writes through PREFERENCES.md.
+function legacyGlobalPreferencesPathLowercase(): string {
+  return join(gsdHome(), "preferences.md");
 }
-function projectPreferencesPathUppercase(): string {
-  return join(gsdRoot(process.cwd()), "PREFERENCES.md");
+function legacyProjectPreferencesPathLowercase(basePath: string = process.cwd()): string {
+  return join(gsdRoot(basePath), "preferences.md");
 }
 
 export function getGlobalGSDPreferencesPath(): string {
@@ -127,26 +129,26 @@ export function getLegacyGlobalGSDPreferencesPath(): string {
   return legacyGlobalPreferencesPath();
 }
 
-export function getProjectGSDPreferencesPath(): string {
-  return projectPreferencesPath();
+export function getProjectGSDPreferencesPath(basePath?: string): string {
+  return projectPreferencesPath(basePath);
 }
 
 // ─── Loading ────────────────────────────────────────────────────────────────
 
 export function loadGlobalGSDPreferences(): LoadedGSDPreferences | null {
   return loadPreferencesFile(globalPreferencesPath(), "global")
-    ?? loadPreferencesFile(globalPreferencesPathUppercase(), "global")
+    ?? loadPreferencesFile(legacyGlobalPreferencesPathLowercase(), "global")
     ?? loadPreferencesFile(legacyGlobalPreferencesPath(), "global");
 }
 
-export function loadProjectGSDPreferences(): LoadedGSDPreferences | null {
-  return loadPreferencesFile(projectPreferencesPath(), "project")
-    ?? loadPreferencesFile(projectPreferencesPathUppercase(), "project");
+export function loadProjectGSDPreferences(basePath?: string): LoadedGSDPreferences | null {
+  return loadPreferencesFile(projectPreferencesPath(basePath), "project")
+    ?? loadPreferencesFile(legacyProjectPreferencesPathLowercase(basePath), "project");
 }
 
-export function loadEffectiveGSDPreferences(): LoadedGSDPreferences | null {
+export function loadEffectiveGSDPreferences(basePath?: string): LoadedGSDPreferences | null {
   const globalPreferences = loadGlobalGSDPreferences();
-  const projectPreferences = loadProjectGSDPreferences();
+  const projectPreferences = loadProjectGSDPreferences(basePath);
 
   if (!globalPreferences && !projectPreferences) return null;
 
@@ -378,6 +380,32 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     dynamic_routing: (base.dynamic_routing || override.dynamic_routing)
       ? { ...(base.dynamic_routing ?? {}), ...(override.dynamic_routing ?? {}) } as DynamicRoutingConfig
       : undefined,
+    uok: (base.uok || override.uok)
+      ? {
+          enabled: override.uok?.enabled ?? base.uok?.enabled,
+          legacy_fallback: (base.uok?.legacy_fallback || override.uok?.legacy_fallback)
+            ? { ...(base.uok?.legacy_fallback ?? {}), ...(override.uok?.legacy_fallback ?? {}) }
+            : undefined,
+          gates: (base.uok?.gates || override.uok?.gates)
+            ? { ...(base.uok?.gates ?? {}), ...(override.uok?.gates ?? {}) }
+            : undefined,
+          model_policy: (base.uok?.model_policy || override.uok?.model_policy)
+            ? { ...(base.uok?.model_policy ?? {}), ...(override.uok?.model_policy ?? {}) }
+            : undefined,
+          execution_graph: (base.uok?.execution_graph || override.uok?.execution_graph)
+            ? { ...(base.uok?.execution_graph ?? {}), ...(override.uok?.execution_graph ?? {}) }
+            : undefined,
+          gitops: (base.uok?.gitops || override.uok?.gitops)
+            ? { ...(base.uok?.gitops ?? {}), ...(override.uok?.gitops ?? {}) }
+            : undefined,
+          audit_unified: (base.uok?.audit_unified || override.uok?.audit_unified)
+            ? { ...(base.uok?.audit_unified ?? {}), ...(override.uok?.audit_unified ?? {}) }
+            : undefined,
+          plan_v2: (base.uok?.plan_v2 || override.uok?.plan_v2)
+            ? { ...(base.uok?.plan_v2 ?? {}), ...(override.uok?.plan_v2 ?? {}) }
+            : undefined,
+        }
+      : undefined,
     token_profile: override.token_profile ?? base.token_profile,
     phases: (base.phases || override.phases)
       ? { ...(base.phases ?? {}), ...(override.phases ?? {}) }
@@ -419,6 +447,7 @@ function mergePreferences(base: GSDPreferences, override: GSDPreferences): GSDPr
     slice_parallel: (base.slice_parallel || override.slice_parallel)
       ? { ...(base.slice_parallel ?? {}), ...(override.slice_parallel ?? {}) }
       : undefined,
+    language: override.language ?? base.language,
   };
 }
 
@@ -534,6 +563,11 @@ export function renderPreferencesForSystemPrompt(preferences: GSDPreferences, re
     }
   }
 
+  if (preferences.language) {
+    const safeLang = preferences.language.replace(/[\r\n]/g, " ").slice(0, 50);
+    lines.push(`- Language: Always respond in ${safeLang}.`);
+  }
+
   return lines.join("\n");
 }
 
@@ -569,8 +603,8 @@ export function resolvePreDispatchHooks(): PreDispatchHookConfig[] {
  * Worktree isolation requires explicit opt-in because it depends on git
  * branch infrastructure that must be set up before use.
  */
-export function getIsolationMode(): "none" | "worktree" | "branch" {
-  const prefs = loadEffectiveGSDPreferences()?.preferences?.git;
+export function getIsolationMode(basePath?: string): "none" | "worktree" | "branch" {
+  const prefs = loadEffectiveGSDPreferences(basePath)?.preferences?.git;
   if (prefs?.isolation === "worktree") return "worktree";
   if (prefs?.isolation === "branch") return "branch";
   return "none"; // default — no isolation, work on current branch

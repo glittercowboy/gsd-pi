@@ -13,6 +13,9 @@ export type {
 } from './types.js';
 export { MAX_EVENTS, INIT_TIMEOUT_MS } from './types.js';
 
+// Path resolution utilities
+export { resolveGsdRoot } from './readers/paths.js';
+
 // Read-only state readers (usable without a running session)
 export { readProgress } from './readers/state.js';
 export type { ProgressResult } from './readers/state.js';
@@ -26,3 +29,15 @@ export { readKnowledge } from './readers/knowledge.js';
 export type { KnowledgeResult, KnowledgeEntry } from './readers/knowledge.js';
 export { runDoctorLite } from './readers/doctor-lite.js';
 export type { DoctorResult, DoctorIssue } from './readers/doctor-lite.js';
+export { buildGraph, writeGraph, writeSnapshot, graphStatus, graphQuery, graphDiff } from './readers/graph.js';
+export type {
+  NodeType,
+  EdgeType,
+  ConfidenceTier,
+  GraphNode,
+  GraphEdge,
+  KnowledgeGraph,
+  GraphStatusResult,
+  GraphQueryResult,
+  GraphDiffResult,
+} from './readers/graph.js';

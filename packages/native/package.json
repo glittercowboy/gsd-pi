@@ -1,15 +1,20 @@
 {
   "name": "@gsd/native",
-  "version": "0.1.0",
-  "description": "Native Rust bindings for GSD \u2014 high-performance native modules via N-API",
+  "version": "2.77.0",
+  "description": "Native Rust bindings for GSD — high-performance native modules via N-API",
   "type": "commonjs",
+  "gsd": {
+    "linkable": true,
+    "scope": "@gsd",
+    "name": "native"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:native": "node ../../native/scripts/build.js",
     "build:native:dev": "node ../../native/scripts/build.js --dev",
-    "test": "npm run build:native:dev && node --test src/__tests__/grep.test.mjs src/__tests__/ps.test.mjs src/__tests__/glob.test.mjs src/__tests__/clipboard.test.mjs src/__tests__/highlight.test.mjs src/__tests__/html.test.mjs src/__tests__/text.test.mjs src/__tests__/fd.test.mjs src/__tests__/image.test.mjs"
+    "test": "npm run build && npm run build:native:dev && node --test src/__tests__/*.test.mjs"
   },
   "exports": {
     ".": {

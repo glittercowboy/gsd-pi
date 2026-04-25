@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
  *   state_file_stale, gitignore_missing_patterns
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, realpathSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -252,6 +252,37 @@ node_modules/
     } else {
     }
 
+    // ─── Test 8b: Symlinked .gsd without .gitignore entry (#4423) ─────
+    if (process.platform !== "win32") {
+    test('symlinked_gsd_unignored', async () => {
+      const dir = createGitProject();
+      cleanups.push(dir);
+
+      // Create .gsd as a symlink to an external directory (standard external
+      // state layout), and write a .gitignore that does NOT list .gsd.
+      const externalGsd = mkdtempSync(join(tmpdir(), "gsd-external-doctor-"));
+      cleanups.push(externalGsd);
+      writeFileSync(join(externalGsd, "STATE.md"), "# State\n");
+      symlinkSync(externalGsd, join(dir, ".gsd"));
+
+      writeFileSync(join(dir, ".gitignore"), "node_modules/\n");
+
+      const detect = await runGSDDoctor(dir);
+      const symlinkIssues = detect.issues.filter(i => i.code === "symlinked_gsd_unignored");
+      assert.ok(symlinkIssues.length > 0, "detects symlinked .gsd without gitignore entry");
+
+      const fixed = await runGSDDoctor(dir, { fix: true });
+      assert.ok(
+        fixed.fixesApplied.some(f => f.includes(".gitignore")),
+        "fix updates .gitignore",
+      );
+
+      const content = readFileSync(join(dir, ".gitignore"), "utf-8");
+      assert.ok(/^\.gsd\/?$/m.test(content), "gitignore now has .gsd entry");
+    });
+    } else {
+    }
+
     // ─── Test 9: Orphaned completed-units detection & fix ─────────────
     test('orphaned_completed_units', async () => {
       const dir = createMinimalProject();
@@ -275,6 +306,42 @@ node_modules/
       // Verify keys were cleaned
       const content = JSON.parse(readFileSync(join(dir, ".gsd", "completed-units.json"), "utf-8"));
       assert.deepStrictEqual(content.length, 0, "all orphaned keys removed");
+    });
+
+    // ─── Test: hook/ compound keys are NOT flagged as orphaned (#2826) ─
+    test('orphaned_completed_units — hook/ compound keys not flagged', async () => {
+      const dir = createMinimalProject();
+      cleanups.push(dir);
+
+      // Hook unit types are stored as "hook/<hookName>/<unitId...>".
+      // These are valid completions with no artifact to verify — they must
+      // not be reported as orphaned_completed_units.
+      const completedKeys = [
+        "hook/telegram-progress/M001/S01",
+        "hook/telegram-progress/M001/S01/T01",
+        "hook/my-custom-hook/M001",
+        // Mix in a genuinely missing plain key to confirm detection still works
+        "execute-task/M001/S01/T99",
+      ];
+      writeFileSync(join(dir, ".gsd", "completed-units.json"), JSON.stringify(completedKeys));
+
+      const detect = await runGSDDoctor(dir);
+      const orphanIssues = detect.issues.filter(i => i.code === "orphaned_completed_units");
+
+      // Only the plain "execute-task/M001/S01/T99" should be flagged, not the hooks.
+      // If the compound-type parsing is broken, all 4 keys (including the 3 hook/
+      // keys) would be flagged. With the fix, at most 1 key is flagged.
+      if (orphanIssues.length > 0) {
+        const msg = orphanIssues[0]!.message;
+        assert.ok(
+          !msg.includes("hook/telegram-progress") && !msg.includes("hook/my-custom-hook"),
+          `hook/ keys must not appear in orphaned_completed_units message — got: ${msg}`,
+        );
+        assert.ok(
+          !msg.includes("4 completed-unit key") && !msg.includes("3 completed-unit key"),
+          `hook/ keys must not inflate the orphaned count — got: ${msg}`,
+        );
+      }
     });
 
     // ─── Test: Stranded lock directory detection & fix ────────────────

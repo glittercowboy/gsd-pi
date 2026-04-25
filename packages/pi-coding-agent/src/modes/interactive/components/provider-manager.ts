@@ -12,7 +12,7 @@ import {
 	type TUI,
 } from "@gsd/pi-tui";
 import type { AuthStorage } from "../../../core/auth-storage.js";
-import { getDiscoverableProviders } from "../../../core/model-discovery.js";
+import { getDiscoverableProviders, getDiscoveryAdapter } from "../../../core/model-discovery.js";
 import { providerDisplayName } from "./model-selector.js";
 import type { ModelRegistry } from "../../../core/model-registry.js";
 import { ModelsJsonWriter } from "../../../core/models-json-writer.js";
@@ -102,12 +102,21 @@ export class ProviderManagerComponent extends Container implements Focusable {
 
 		this.providers = Array.from(providerNames)
 			.sort()
-			.map((name) => ({
-				name,
-				hasAuth: this.authStorage.hasAuth(name),
-				supportsDiscovery: discoverableSet.has(name),
-				modelCount: providerModelCounts.get(name) ?? 0,
-			}));
+			.map((name) => {
+				const providerApis = new Set(
+					allModels
+						.filter((m) => m.provider === name)
+						.map((m) => m.api)
+						.filter((api): api is string => typeof api === "string" && api.length > 0),
+				);
+				return {
+					name,
+					hasAuth: this.authStorage.hasAuth(name),
+					supportsDiscovery:
+						discoverableSet.has(name) || getDiscoveryAdapter(name, providerApis).supportsDiscovery,
+					modelCount: providerModelCounts.get(name) ?? 0,
+				};
+			});
 		this.clampSelectedIndex();
 	}
 

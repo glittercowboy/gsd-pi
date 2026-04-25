@@ -260,6 +260,23 @@ Fire-and-forget thought capture. Captures are triaged automatically between task
 
 Open the workflow visualizer — interactive tabs for progress, dependencies, metrics, and timeline. See [Workflow Visualizer](./visualizer.md).
 
+### Remote Control via Telegram
+
+When Telegram is configured as your remote channel, you can control auto-mode and query project status directly from the Telegram chat — without touching the terminal.
+
+| Command | What it does |
+|---------|-------------|
+| `/pause` | Pause auto-mode after the current unit finishes |
+| `/resume` | Clear a pause directive and continue auto-mode |
+| `/status` | Show current milestone, active unit, and session cost |
+| `/progress` | Roadmap overview (done / open milestones) |
+| `/budget` | Token usage and cost for the current session |
+| `/log [n]` | Last `n` activity log entries (default: 5) |
+
+GSD polls for incoming Telegram commands every ~5 seconds while auto-mode is active. Commands are only available during active auto-mode sessions.
+
+See [Remote Questions — Telegram Commands](./remote-questions.md#telegram-commands) for the full command reference and setup instructions.
+
 ## Dashboard
 
 `Ctrl+Alt+G` or `/gsd status` shows real-time progress:

@@ -18,7 +18,7 @@ import {
 } from "./auto-recovery.js";
 import { existsSync } from "node:fs";
 
-import { resolveAgentEnd } from "./auto-loop.js";
+import { bumpAndResolveSynthetic } from "./auto/resolve.js";
 
 export interface RecoveryContext {
   basePath: string;
@@ -35,6 +35,13 @@ export async function recoverTimedOutUnit(
   reason: "idle" | "hard",
   rctx: RecoveryContext,
 ): Promise<"recovered" | "paused"> {
+  // Note on turn epoch: the bump is intentionally NOT unconditional at
+  // function entry. Two branches below (the "steering retry" paths) keep
+  // the same LLM turn alive and let it try again — they must NOT bump,
+  // otherwise the retry's legitimate writes get marked stale and drop.
+  // Each advance branch calls `bumpAndResolveSynthetic` to bump+resolve
+  // atomically. Search for that helper to find all supersede sites.
+
   const { basePath, verbose, currentUnitStartedAt, unitRecoveryCount } = rctx;
 
   const runtime = readUnitRuntimeRecord(basePath, unitType, unitId);
@@ -74,7 +81,7 @@ export async function recoverTimedOutUnit(
         "info",
       );
       unitRecoveryCount.delete(recoveryKey);
-      resolveAgentEnd({ messages: [], _synthetic: "timeout-recovery" } as any);
+      bumpAndResolveSynthetic(`timeout-recovery:${reason}:${unitType}/${unitId}`);
       return "recovered";
     }
 
@@ -145,7 +152,7 @@ export async function recoverTimedOutUnit(
         "warning",
       );
       unitRecoveryCount.delete(recoveryKey);
-      resolveAgentEnd({ messages: [], _synthetic: "timeout-recovery" } as any);
+      bumpAndResolveSynthetic(`timeout-recovery:${reason}:${unitType}/${unitId}`);
       return "recovered";
     }
 
@@ -179,7 +186,7 @@ export async function recoverTimedOutUnit(
       "info",
     );
     unitRecoveryCount.delete(recoveryKey);
-    resolveAgentEnd({ messages: [], _synthetic: "timeout-recovery" } as any);
+    bumpAndResolveSynthetic(`timeout-recovery:${reason}:${unitType}/${unitId}`);
     return "recovered";
   }
 
@@ -230,6 +237,23 @@ export async function recoverTimedOutUnit(
     return "recovered";
   }
 
+  // #4175: For complete-milestone, never write a blocker placeholder — a stub
+  // SUMMARY has no recovery value (milestone is terminal), it does not update
+  // DB status, and downstream merge paths can treat the stub as a legitimate
+  // completion signal. Pause instead so the worktree branch is preserved.
+  if (unitType === "complete-milestone") {
+    writeUnitRuntimeRecord(basePath, unitType, unitId, currentUnitStartedAt, {
+      phase: "paused",
+      recoveryAttempts: recoveryAttempts + 1,
+      lastRecoveryReason: reason,
+    });
+    ctx.ui.notify(
+      `Milestone ${unitId} ${reason}-recovery exhausted ${maxRecoveryAttempts} attempt(s) — worktree branch preserved. Re-run /gsd auto once blockers are resolved.`,
+      "error",
+    );
+    return "paused";
+  }
+
   // Retries exhausted — write a blocker placeholder and advance the pipeline
   // instead of silently stalling.
   const placeholder = writeBlockerPlaceholder(
@@ -248,7 +272,7 @@ export async function recoverTimedOutUnit(
       "warning",
     );
     unitRecoveryCount.delete(recoveryKey);
-    resolveAgentEnd({ messages: [], _synthetic: "timeout-recovery" } as any);
+    bumpAndResolveSynthetic(`timeout-recovery:${reason}:${unitType}/${unitId}`);
     return "recovered";
   }
 

@@ -25,12 +25,38 @@ pkg.version = newVersion;
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
 console.log(`[bump-version] package.json: ${oldVersion} → ${newVersion}`);
 
-// 2. Update packages/pi-coding-agent/package.json (sync-pkg-version reads from here)
-const piPkgPath = resolve(root, "packages", "pi-coding-agent", "package.json");
-const piPkg = JSON.parse(readFileSync(piPkgPath, "utf-8"));
-piPkg.version = newVersion;
-writeFileSync(piPkgPath, JSON.stringify(piPkg, null, 2) + "\n");
-console.log(`[bump-version] pi-coding-agent: ${oldVersion} → ${newVersion}`);
+// 2. Update all non-private workspace packages under packages/
+//    These share the root version to keep the repo's source of truth coherent
+//    with what ships. Private packages (studio, web) are skipped — they're not
+//    published and have their own lifecycle.
+const workspacePackages = [
+  "daemon",
+  "mcp-server",
+  "native",
+  "pi-agent-core",
+  "pi-ai",
+  "pi-coding-agent",
+  "pi-tui",
+  "rpc-client",
+];
+for (const name of workspacePackages) {
+  const wsPath = resolve(root, "packages", name, "package.json");
+  if (!existsSync(wsPath)) continue;
+  const ws = JSON.parse(readFileSync(wsPath, "utf-8"));
+  const wsOld = ws.version;
+  ws.version = newVersion;
+  // Bump any internal @gsd-build/* or @gsd/* dep references to match.
+  for (const field of ["dependencies", "devDependencies", "peerDependencies"]) {
+    if (!ws[field]) continue;
+    for (const dep of Object.keys(ws[field])) {
+      if (workspacePackages.some((n) => dep === `@gsd-build/${n}` || dep === `@gsd/${n}`)) {
+        ws[field][dep] = `^${newVersion}`;
+      }
+    }
+  }
+  writeFileSync(wsPath, JSON.stringify(ws, null, 2) + "\n");
+  console.log(`[bump-version] ${name}: ${wsOld} → ${newVersion}`);
+}
 
 // 3. Sync platform package versions (reads from root package.json)
 execSync("node native/scripts/sync-platform-versions.cjs", { cwd: root, stdio: "inherit" });

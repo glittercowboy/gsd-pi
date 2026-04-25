@@ -118,8 +118,12 @@ export function extractRelativeImports(
 
 /**
  * Check if a relative import resolves to an existing file.
- * Handles .ts, .tsx, .js, .jsx extensions and index files.
- * Also handles TypeScript ESM convention where imports use .js but resolve to .ts.
+ * Resolution order:
+ *   1. Imports carrying an explicit extension are checked as-is (handles assets
+ *      like .css/.scss/images/fonts and .json, not just code extensions).
+ *   2. TypeScript ESM convention where .js imports resolve to .ts files.
+ *   3. Extensionless imports resolved against .ts/.tsx/.js/.jsx/.mjs/.cjs.
+ *   4. Directory imports resolved against index.{ts,tsx,js,jsx,mjs,cjs}.
  */
 export function resolveImportPath(
   importPath: string,
@@ -128,6 +132,27 @@ export function resolveImportPath(
 ): { exists: boolean; resolvedPath: string | null } {
   const sourceDir = dirname(resolve(basePath, sourceFile));
   const extensions = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+
+  // If the import already has an explicit extension, check it as-is first.
+  // This correctly resolves asset imports like .css, .scss, images, fonts
+  // without requiring each extension to be enumerated (issue #4411). We only
+  // do this when the import carries an extension so that extensionless module
+  // imports still flow through the TS ESM convention and index-file resolvers.
+  const explicitExt = extname(importPath);
+  if (explicitExt !== "") {
+    const directPath = resolve(sourceDir, importPath);
+    if (existsSync(directPath)) {
+      return { exists: true, resolvedPath: directPath };
+    }
+    // Only .js/.jsx/.mjs/.cjs imports legitimately fall through for the TS
+    // ESM convention (.js → .ts). Any other explicit extension (.css, .json,
+    // .svg, images, fonts, .ts, .tsx, …) must stay unresolved when the direct
+    // path is missing — otherwise a stray `./missing.css.ts` could shadow a
+    // genuinely missing `./missing.css` import.
+    if (![".js", ".jsx", ".mjs", ".cjs"].includes(explicitExt)) {
+      return { exists: false, resolvedPath: null };
+    }
+  }
 
   // Handle TypeScript ESM convention: .js imports resolve to .ts files
   // e.g., import './types.js' -> ./types.ts
@@ -142,7 +167,7 @@ export function resolveImportPath(
     normalizedPath = importPath.slice(0, -4);
   }
 
-  // Try the normalized path with common extensions first
+  // Try the normalized path with common extensions
   for (const ext of extensions) {
     const fullPath = resolve(sourceDir, normalizedPath + ext);
     if (existsSync(fullPath)) {
@@ -155,17 +180,6 @@ export function resolveImportPath(
     const indexPath = resolve(sourceDir, normalizedPath, `index${ext}`);
     if (existsSync(indexPath)) {
       return { exists: true, resolvedPath: indexPath };
-    }
-  }
-
-  // Check if path already has extension (for .json, etc.)
-  const hasExt = [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".json"].some(
-    (ext) => importPath.endsWith(ext)
-  );
-  if (hasExt) {
-    const fullPath = resolve(sourceDir, importPath);
-    if (existsSync(fullPath)) {
-      return { exists: true, resolvedPath: fullPath };
     }
   }
 
@@ -227,11 +241,20 @@ export function checkImportResolution(
 
 // ─── Cross-Task Signature Check ──────────────────────────────────────────────
 
+/**
+ * Normalized function signature extracted from a source file.
+ * Used to compare definitions across tasks and detect signature drift.
+ */
 interface FunctionSignature {
+  /** Function or exported const name. */
   name: string;
+  /** Parameter list with defaults and comments stripped. */
   params: string;
+  /** Declared return type, or "void" when none is annotated. */
   returnType: string;
+  /** Source file the signature was extracted from. */
   file: string;
+  /** 1-based line number of the declaration. */
   lineNum: number;
 }
 

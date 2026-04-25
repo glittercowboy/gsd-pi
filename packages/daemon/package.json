@@ -1,6 +1,6 @@
 {
   "name": "@gsd-build/daemon",
-  "version": "0.1.0",
+  "version": "2.77.0",
   "description": "GSD daemon — background process for project monitoring and Discord integration",
   "license": "MIT",
   "repository": {
@@ -29,7 +29,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
-    "@gsd-build/rpc-client": "^2.52.0",
+    "@gsd-build/rpc-client": "^2.77.0",
     "discord.js": "^14.25.1",
     "yaml": "^2.8.0",
     "zod": "^3.24.0"

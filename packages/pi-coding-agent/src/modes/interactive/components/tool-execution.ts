@@ -9,6 +9,7 @@ import {
 	Text,
 	type TUI,
 	truncateToWidth,
+	visibleWidth,
 } from "@gsd/pi-tui";
 import stripAnsi from "strip-ansi";
 import type { ToolDefinition } from "../../../core/extensions/types.js";
@@ -65,6 +66,68 @@ function parseMcpToolName(name: string): { server: string; tool: string } | null
 	return { server: rest.slice(0, delim), tool: rest.slice(delim + 2) };
 }
 
+/**
+ * Prettify a raw tool name for display. Prefers the registered `label`
+ * ("Complete Slice") when available; otherwise strips a leading `gsd_`
+ * prefix and converts snake_case to Title Case.
+ */
+function prettifyToolName(name: string, label?: string): string {
+	if (label && label.trim().length > 0) return label;
+	const stripped = name.replace(/^gsd_/, "");
+	if (stripped.length === 0) return name;
+	return stripped
+		.split("_")
+		.map((word) => (word.length === 0 ? word : word[0].toUpperCase() + word.slice(1)))
+		.join(" ");
+}
+
+type ToolFrameTone = "pending" | "success" | "error";
+
+function trimOuterBlankLines(lines: string[]): string[] {
+	let start = 0;
+	let end = lines.length;
+	while (start < end && lines[start].trim().length === 0) start++;
+	while (end > start && lines[end - 1].trim().length === 0) end--;
+	return lines.slice(start, end);
+}
+
+function renderToolFrame(
+	contentLines: string[],
+	width: number,
+	opts: {
+		label: string;
+		status: string;
+		tone: ToolFrameTone;
+	},
+): string[] {
+	const outerWidth = Math.max(20, width);
+	const contentWidth = Math.max(1, outerWidth - 2); // "│ " + content
+
+	const borderColor = opts.tone === "error" ? "error" : "toolTitle";
+	const topColor = opts.tone === "error" ? "error" : "toolTitle";
+	const labelColor = opts.tone === "error" ? "error" : "toolTitle";
+	const statusColor = opts.tone === "error" ? "error" : opts.tone === "pending" ? "warning" : "success";
+	const border = (s: string) => theme.fg(borderColor, s);
+
+	const leftStyled = theme.fg(labelColor, theme.bold(`• ${opts.label}`));
+	const rightStyled = theme.fg(statusColor, opts.status);
+	const gap = Math.max(1, outerWidth - visibleWidth(leftStyled) - visibleWidth(rightStyled));
+	const headerRow = `${leftStyled}${" ".repeat(gap)}${rightStyled}`;
+	const headerPad = Math.max(0, outerWidth - visibleWidth(headerRow));
+
+	const sourceLines = trimOuterBlankLines(contentLines);
+	const bodyLines = (sourceLines.length > 0 ? sourceLines : [""]).map((line) => {
+		const clipped = truncateToWidth(line, contentWidth, "");
+		return border("│ ") + clipped;
+	});
+
+	return [
+		theme.fg(topColor, "─".repeat(outerWidth)),
+		headerRow + " ".repeat(headerPad),
+		...bodyLines,
+	];
+}
+
 const COMPACT_ARG_VALUE_LIMIT = 60;
 const GENERIC_OUTPUT_PREVIEW_LINES = 10;
 const GENERIC_ARGS_JSON_PREVIEW_LINES = 10;
@@ -83,15 +146,19 @@ function formatCompactArgs(args: unknown, expanded: boolean): string {
 
 	const allPrimitive = entries.every(([, value]) => {
 		const t = typeof value;
-		if (t === "number" || t === "boolean") return true;
-		if (t === "string") return (value as string).length <= COMPACT_ARG_VALUE_LIMIT;
-		return value == null;
+		return t === "number" || t === "boolean" || t === "string" || value == null;
 	});
 
 	if (allPrimitive) {
 		return entries
 			.map(([key, value]) => {
-				if (typeof value === "string") return `${key}=${JSON.stringify(value)}`;
+				if (typeof value === "string") {
+					const truncated =
+						!expanded && value.length > COMPACT_ARG_VALUE_LIMIT
+							? `${value.slice(0, COMPACT_ARG_VALUE_LIMIT - 1)}…`
+							: value;
+					return `${key}=${JSON.stringify(truncated)}`;
+				}
 				if (value == null) return `${key}=null`;
 				return `${key}=${String(value)}`;
 			})
@@ -380,6 +447,23 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	/**
+	 * Mark a tool call as historical when replaying from session context and
+	 * no matching tool result is available. Happens after compaction squashes
+	 * tool_result messages out of history — the tool call block survives but
+	 * the result is gone. Without this, the component stays in "Running" state
+	 * forever even though the tool completed long ago.
+	 */
+	markHistoricalNoResult(): void {
+		if (this.result) return; // real result already set, nothing to do
+		this.isPartial = false;
+		this.result = {
+			content: [],
+			isError: false,
+		};
+		this.updateDisplay();
+	}
+
+	/**
 	 * Finalize a pending tool call as failed/interrupted while preserving any streamed partial output.
 	 */
 	completeWithError(message?: string): void {
@@ -452,16 +536,27 @@ export class ToolExecutionComponent extends Container {
 		if (this.hideComponent) {
 			return [];
 		}
-		return super.render(width);
+		const frameWidth = Math.max(20, width);
+		const contentWidth = Math.max(1, frameWidth - 4);
+		const lines = super.render(contentWidth);
+		const frameTone: ToolFrameTone =
+			this.result?.isError ? "error" : this.isPartial || !this.result ? "pending" : "success";
+		const frameStatus = this.isPartial || !this.result ? "Running" : this.result.isError ? "Error" : "Done";
+		const parsed = parseMcpToolName(this.toolName);
+		const frameLabel = parsed
+			? `Tool ${parsed.server}·${parsed.tool}`
+			: `Tool ${prettifyToolName(this.toolName, this.toolDefinition?.label) || "unknown"}`;
+		const framed = renderToolFrame(lines, frameWidth, {
+			label: frameLabel,
+			status: frameStatus,
+			tone: frameTone,
+		});
+		return framed.length > 0 ? ["", ...framed] : framed;
 	}
 
 	private updateDisplay(): void {
-		// Set background based on state
-		const bgFn = this.isPartial
-			? (text: string) => theme.bg("toolPendingBg", text)
-			: this.result?.isError
-				? (text: string) => theme.bg("toolErrorBg", text)
-				: (text: string) => theme.bg("toolSuccessBg", text);
+		// Tool body now uses transparent background; status is conveyed in the frame header.
+		const bgFn = (text: string) => text;
 
 		const useBuiltInRenderer = this.shouldUseBuiltInRenderer();
 		let customRendererHasContent = false;
@@ -494,12 +589,30 @@ export class ToolExecutionComponent extends Container {
 					}
 				} catch {
 					// Fall back to default on error
-					this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+					this.contentBox.addChild(
+						new Text(
+							theme.fg(
+								"toolTitle",
+								theme.bold(prettifyToolName(this.toolName, this.toolDefinition?.label)),
+							),
+							0,
+							0,
+						),
+					);
 					customRendererHasContent = true;
 				}
 			} else {
-				// No custom renderCall, show tool name
-				this.contentBox.addChild(new Text(theme.fg("toolTitle", theme.bold(this.toolName)), 0, 0));
+				// No custom renderCall, show prettified tool name
+				this.contentBox.addChild(
+					new Text(
+						theme.fg(
+							"toolTitle",
+							theme.bold(prettifyToolName(this.toolName, this.toolDefinition?.label)),
+						),
+						0,
+						0,
+					),
+				);
 				customRendererHasContent = true;
 			}
 
@@ -1050,7 +1163,9 @@ export class ToolExecutionComponent extends Container {
 			// cleanly. GSD-registered MCP tools have already had their prefix
 			// stripped upstream in partial-builder.ts and won't reach this branch.
 			const parsed = parseMcpToolName(this.toolName);
-			const displayName = parsed ? parsed.tool : this.toolName;
+			const displayName = parsed
+				? parsed.tool
+				: prettifyToolName(this.toolName, this.toolDefinition?.label);
 			const serverPrefix = parsed ? theme.fg("muted", `${parsed.server}\u00b7`) : "";
 			text = serverPrefix + theme.fg("toolTitle", theme.bold(displayName));
 

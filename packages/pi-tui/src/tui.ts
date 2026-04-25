@@ -197,6 +197,17 @@ export class Container implements Component {
 		this._prevRender = null;
 	}
 
+	/**
+	 * Remove all children without calling dispose on them.
+	 * Use when child lifecycle is owned elsewhere and the container is only a
+	 * render mount (e.g. extension widget containers in InteractiveMode, where
+	 * the extensionWidgets* maps own disposal).
+	 */
+	detachChildren(): void {
+		this.children = [];
+		this._prevRender = null;
+	}
+
 	invalidate(): void {
 		for (const child of this.children) {
 			child.invalidate?.();
@@ -244,6 +255,7 @@ export class TUI extends Container {
 	private cellSizeQueryPending = false;
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1" || process.env.TERM_PROGRAM === "WarpTerminal";
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
+	private _shrinkDebounceActive = false;
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
@@ -660,7 +672,15 @@ export class TUI extends Container {
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
-			if (clear) buffer += "\x1b[2J\x1b[H"; // Clear screen and home (no scrollback clear — preserves view position)
+			if (clear) {
+				// Clear viewport (scrollback preserved) and anchor the rendered
+				// block to the terminal bottom so the editor / belowEditor
+				// widgets do not jump to row 1 after a chat clear. When the
+				// block is taller than the viewport, Math.max(1, …) falls back
+				// to row 1 — same as the prior `\x1b[H` behavior.
+				const startRow = Math.max(1, height - Math.max(1, newLines.length) + 1);
+				buffer += `\x1b[2J\x1b[${startRow};1H`;
+			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
 				let line = newLines[i];
@@ -712,9 +732,25 @@ export class TUI extends Container {
 		// (overlays need the padding, so only do this when no overlays are active)
 		// Configurable via setClearOnShrink() or PI_CLEAR_ON_SHRINK=0 env var
 		if (this.clearOnShrink && newLines.length < this.maxLinesRendered && this.overlayStack.length === 0) {
-			logRedraw(`clearOnShrink (maxLinesRendered=${this.maxLinesRendered})`);
-			fullRender(true);
-			return;
+			if (!this._shrinkDebounceActive) {
+				// First shrink detection: defer the full redraw by one tick.
+				// If content grows back immediately (pinned clear → new streaming),
+				// the full redraw is avoided.
+				this._shrinkDebounceActive = true;
+				// Do NOT update maxLinesRendered here — keep the old value so the
+				// condition `newLines.length < maxLinesRendered` still triggers on
+				// the next render if content stays shrunk.
+				logRedraw(`clearOnShrink deferred (maxLinesRendered=${this.maxLinesRendered})`);
+				// Fall through to differential render for this frame
+			} else {
+				// Still shrunk on second render — commit the full redraw
+				this._shrinkDebounceActive = false;
+				logRedraw(`clearOnShrink committed (maxLinesRendered=${this.maxLinesRendered})`);
+				fullRender(true);
+				return;
+			}
+		} else {
+			this._shrinkDebounceActive = false;
 		}
 
 		// Find first and last changed lines

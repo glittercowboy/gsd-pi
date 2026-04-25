@@ -37,12 +37,23 @@ import { renderAllProjections, renderSummaryContent } from "../workflow-projecti
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
 import { logWarning, logError } from "../workflow-logger.js";
+import { loadEffectiveGSDPreferences } from "../preferences.js";
+import { isStaleWrite } from "../auto/turn-epoch.js";
+import { buildEscalationArtifact, writeEscalationArtifact } from "../escalation.js";
 
 export interface CompleteTaskResult {
   taskId: string;
   sliceId: string;
   milestoneId: string;
   summaryPath: string;
+  /**
+   * True when this call re-completed an already-closed task from a turn that
+   * had been superseded by timeout recovery or cancellation. The underlying
+   * state was not mutated; the response is a no-op shaped like a success so
+   * the orphaned LLM tool call resolves cleanly.
+   */
+  duplicate?: boolean;
+  stale?: boolean;
 }
 
 import type { TaskRow } from "../gsd-db.js";
@@ -111,6 +122,11 @@ function paramsToTaskRow(params: CompleteTaskParams, completedAt: string): TaskR
     observability_impact: "",
     full_plan_md: "",
     sequence: 0,
+    blocker_source: "",
+    escalation_pending: 0,
+    escalation_awaiting_review: 0,
+    escalation_artifact_path: null,
+    escalation_override_applied_at: null,
   };
 }
 
@@ -153,6 +169,39 @@ export async function handleCompleteTask(
   const completedAt = new Date().toISOString();
   let guardError: string | null = null;
 
+  // ── ADR-011 Phase 2: validate escalation payload BEFORE any side effects ─
+  // Building the artifact runs the full shape validation (2-4 options, unique
+  // ids, recommendation references a real id). If the payload is malformed
+  // we must reject the call before marking the task complete, writing
+  // SUMMARY.md, flipping the plan checkbox, or closing execute-task gates —
+  // otherwise a rejected payload would leave the task marked complete with
+  // no escalation recorded, and the loop would silently advance past it.
+  // The filesystem write happens later (after side effects) because that's
+  // the cheapest ordering and validation is where 99% of failures live.
+  let validatedEscalationArtifact: ReturnType<typeof buildEscalationArtifact> | null = null;
+  let escalationWriteEnabled = false;
+  if (params.escalation) {
+    escalationWriteEnabled = loadEffectiveGSDPreferences()?.preferences?.phases?.mid_execution_escalation === true;
+    if (escalationWriteEnabled) {
+      try {
+        validatedEscalationArtifact = buildEscalationArtifact({
+          taskId: params.taskId,
+          sliceId: params.sliceId,
+          milestoneId: params.milestoneId,
+          question: params.escalation.question,
+          options: params.escalation.options,
+          recommendation: params.escalation.recommendation,
+          recommendationRationale: params.escalation.recommendationRationale,
+          continueWithDefault: params.escalation.continueWithDefault,
+        });
+      } catch (validationErr) {
+        return {
+          error: `complete-task escalation payload invalid for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(validationErr as Error).message}`,
+        };
+      }
+    }
+  }
+
   transaction(() => {
     // State machine preconditions (inside txn for atomicity).
     // Milestone/slice not existing is OK — insertMilestone/insertSlice below will auto-create.
@@ -171,6 +220,18 @@ export async function handleCompleteTask(
 
     const existingTask = getTask(params.milestoneId, params.sliceId, params.taskId);
     if (existingTask && isClosedStatus(existingTask.status)) {
+      // Stale-turn path: a timed-out turn that was superseded by recovery
+      // can still reach this code when its LLM call eventually returns and
+      // invokes gsd_complete_task. Returning an error would produce noisy
+      // "already complete — use reopen first" logs in the orphaned turn.
+      // Instead, signal the duplicate via a non-mutating success shape that
+      // callers can detect via `duplicate: true` / `stale: true`.
+      if (isStaleWrite("complete-task")) {
+        // Sentinel handled below — outside the transaction — so we don't
+        // render SUMMARY.md or flip plan checkboxes for a stale duplicate.
+        guardError = "__stale_duplicate__";
+        return;
+      }
       guardError = `task ${params.taskId} is already complete — use gsd_task_reopen first if you need to redo it`;
       return;
     }
@@ -207,6 +268,34 @@ export async function handleCompleteTask(
       });
     }
   });
+
+  if (guardError === "__stale_duplicate__") {
+    // Orphaned-turn duplicate: the task is already complete from the
+    // superseded turn's earlier (real) call. Return a non-mutating success
+    // so the stale LLM tool call unwinds cleanly. summaryPath is synthesized
+    // from the existing on-disk layout; no file is written.
+    const tasksDir = resolveTasksDir(basePath, params.milestoneId, params.sliceId);
+    const staleSummaryPath = tasksDir
+      ? join(tasksDir, `${params.taskId}-SUMMARY.md`)
+      : join(
+          basePath,
+          ".gsd",
+          "milestones",
+          params.milestoneId,
+          "slices",
+          params.sliceId,
+          "tasks",
+          `${params.taskId}-SUMMARY.md`,
+        );
+    return {
+      taskId: params.taskId,
+      sliceId: params.sliceId,
+      milestoneId: params.milestoneId,
+      summaryPath: staleSummaryPath,
+      duplicate: true,
+      stale: true,
+    };
+  }
 
   if (guardError) {
     return { error: guardError };
@@ -296,6 +385,53 @@ export async function handleCompleteTask(
     logWarning(
       "tool",
       `complete-task gate close warning for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(gateErr as Error).message}`,
+    );
+  }
+
+  // ── ADR-011 Phase 2: write escalation artifact (opt-in) ────────────────
+  // Validation already happened BEFORE side effects — this block only
+  // performs the disk write for a pre-validated artifact. For
+  // continueWithDefault=false, a write failure here would otherwise leave
+  // the task marked complete with SUMMARY.md + closed gates but no
+  // escalation, which silently advances the loop past a pause the user
+  // asked for. We compensate by reverting the DB-level completion: set
+  // status back to 'pending' and delete the verification_evidence rows
+  // (same shape as the disk-render-failure rollback above). SUMMARY.md
+  // on disk is left in place because the next complete-task retry will
+  // overwrite it; gate rows are UPSERT-keyed per task and will also be
+  // overwritten. This restores the invariant that deriveState() sees a
+  // consistent "task not done" view so the loop re-dispatches the task.
+  if (validatedEscalationArtifact) {
+    try {
+      writeEscalationArtifact(basePath, validatedEscalationArtifact);
+    } catch (escalationErr) {
+      const msg = `complete-task escalation write failed for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(escalationErr as Error).message}`;
+      logWarning("tool", msg);
+      if (validatedEscalationArtifact.continueWithDefault === false) {
+        // Compensating rollback: revert DB completion so the loop pauses on
+        // re-dispatch instead of silently advancing. Mirror the existing
+        // renderErr rollback (line ~261).
+        try {
+          deleteVerificationEvidence(params.milestoneId, params.sliceId, params.taskId);
+          updateTaskStatus(params.milestoneId, params.sliceId, params.taskId, 'pending');
+          invalidateStateCache();
+          logWarning(
+            "tool",
+            `complete-task rolled back DB completion for ${params.milestoneId}/${params.sliceId}/${params.taskId} after escalation write failure; SUMMARY.md left on disk for retry.`,
+          );
+        } catch (rollbackErr) {
+          logWarning(
+            "tool",
+            `complete-task rollback failed after escalation write failure for ${params.milestoneId}/${params.sliceId}/${params.taskId}: ${(rollbackErr as Error).message}`,
+          );
+        }
+        return { error: msg };
+      }
+    }
+  } else if (params.escalation && !escalationWriteEnabled) {
+    logWarning(
+      "tool",
+      `complete-task received escalation payload but phases.mid_execution_escalation is not enabled; ignoring (${params.milestoneId}/${params.sliceId}/${params.taskId})`,
     );
   }
 

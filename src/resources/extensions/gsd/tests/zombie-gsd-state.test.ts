@@ -1,95 +1,81 @@
-import { readFileSync } from "node:fs";
+/**
+ * zombie-gsd-state.test.ts — #2942
+ *
+ * A partially initialized `.gsd/` (symlink exists but neither `PREFERENCES.md`
+ * nor `milestones/` is present) previously caused the init-wizard gate in
+ * `showSmartEntry` to be skipped. The fix introduces
+ * `hasGsdBootstrapArtifacts`, which requires at least one bootstrap artifact
+ * to be present before treating the project as initialized.
+ *
+ * These tests exercise that helper directly over synthetic filesystems and
+ * injected predicates — replacing the old source-grep assertions that only
+ * verified the function's *text* shape.
+ */
+
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-import { createTestContext } from "./test-helpers.ts";
+import { hasGsdBootstrapArtifacts } from "../detection.ts";
 
-const { assertTrue, assertMatch, assertNoMatch, report } = createTestContext();
+function makeGsdDir(t: { after: (fn: () => void) => void }): string {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-zombie-state-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
-// ─── #2942: Zombie .gsd state skips init wizard ─────────────────────────────
-//
-// A partially initialized .gsd/ (symlink exists but no PREFERENCES.md or
-// milestones/) causes the init wizard gate in showSmartEntry to be skipped,
-// resulting in an uninitialized project session.
+test("#2942: missing .gsd/ directory entirely → treated as un-bootstrapped", () => {
+  assert.equal(
+    hasGsdBootstrapArtifacts("/nonexistent/path/does/not/exist/.gsd"),
+    false,
+  );
+});
 
-console.log("\n=== #2942: zombie .gsd state must not skip init wizard ===");
+test("#2942: zombie .gsd/ (empty directory) must NOT count as bootstrapped", (t) => {
+  const gsd = makeGsdDir(t);
+  // Only the directory exists — neither PREFERENCES.md nor milestones/
+  assert.equal(
+    hasGsdBootstrapArtifacts(gsd),
+    false,
+    "an empty .gsd/ is a zombie state — init wizard must still run",
+  );
+});
 
-// ── guided-flow.ts — init wizard gate must check bootstrap completeness ──
+test("#2942: .gsd/ with PREFERENCES.md counts as bootstrapped", (t) => {
+  const gsd = makeGsdDir(t);
+  writeFileSync(join(gsd, "PREFERENCES.md"), "# prefs\n");
+  assert.equal(hasGsdBootstrapArtifacts(gsd), true);
+});
 
-const guidedFlowSrc = readFileSync(
-  join(import.meta.dirname, "..", "guided-flow.ts"),
-  "utf-8",
-);
+test("#2942: .gsd/ with milestones/ directory counts as bootstrapped", (t) => {
+  const gsd = makeGsdDir(t);
+  mkdirSync(join(gsd, "milestones"));
+  assert.equal(hasGsdBootstrapArtifacts(gsd), true);
+});
 
-// Find the showSmartEntry function
-const smartEntryIdx = guidedFlowSrc.indexOf("export async function showSmartEntry(");
-assertTrue(smartEntryIdx >= 0, "guided-flow.ts defines showSmartEntry");
+test("#2942: both artifacts present → bootstrapped", (t) => {
+  const gsd = makeGsdDir(t);
+  writeFileSync(join(gsd, "PREFERENCES.md"), "# prefs\n");
+  mkdirSync(join(gsd, "milestones"));
+  assert.equal(hasGsdBootstrapArtifacts(gsd), true);
+});
 
-// Extract the region between showSmartEntry and the first showProjectInit call
-// This is where the init wizard gate lives.
-const afterSmartEntry = smartEntryIdx >= 0 ? guidedFlowSrc.slice(smartEntryIdx, smartEntryIdx + 3000) : "";
+test("#2942: injected existsFn — zombie via predicate is rejected", () => {
+  // Only the .gsd/ directory exists; artifacts are missing.
+  const existsFn = (p: string) => p === "/proj/.gsd";
+  assert.equal(hasGsdBootstrapArtifacts("/proj/.gsd", existsFn), false);
+});
 
-// The gate must NOT be a bare `!existsSync(gsdRoot(basePath))` check.
-// It must also verify that bootstrap artifacts (PREFERENCES.md or milestones/) exist.
-assertTrue(
-  afterSmartEntry.includes("PREFERENCES.md") || afterSmartEntry.includes("PREFERENCES"),
-  "init wizard gate checks for PREFERENCES.md, not just .gsd/ existence (#2942)",
-);
+test("#2942: injected existsFn — PREFERENCES.md alone is enough", () => {
+  const existsFn = (p: string) =>
+    p === "/proj/.gsd" || p === "/proj/.gsd/PREFERENCES.md";
+  assert.equal(hasGsdBootstrapArtifacts("/proj/.gsd", existsFn), true);
+});
 
-assertTrue(
-  afterSmartEntry.includes("milestones"),
-  "init wizard gate checks for milestones/ directory, not just .gsd/ existence (#2942)",
-);
-
-// The init wizard should be shown when .gsd/ exists but has no bootstrap artifacts.
-// The old code was: if (!existsSync(gsdRoot(basePath))) { ... showProjectInit ... }
-// The fix should use a compound check so zombie states trigger the wizard.
-// Verify we no longer have the bare existence check as the sole gate.
-
-// Find the specific init wizard gate pattern — the detection preamble block.
-const detectionPreambleIdx = afterSmartEntry.indexOf("Detection preamble");
-const detectionRegion = detectionPreambleIdx >= 0
-  ? afterSmartEntry.slice(detectionPreambleIdx, detectionPreambleIdx + 600)
-  : afterSmartEntry.slice(0, 1500);
-
-// The gate condition must reference PREFERENCES.md or milestones (bootstrap artifacts)
-assertMatch(
-  detectionRegion,
-  /PREFERENCES\.md|milestones/,
-  "detection preamble gate references bootstrap artifacts, not just directory existence (#2942)",
-);
-
-// ── auto-start.ts — milestones/ dir creation must not be dead code ──────────
-
-console.log("\n=== #2942: auto-start milestones/ bootstrap not dead code ===");
-
-const autoStartSrc = readFileSync(
-  join(import.meta.dirname, "..", "auto-start.ts"),
-  "utf-8",
-);
-
-// After ensureGsdSymlink, the code that creates milestones/ must check for
-// the milestones directory specifically (not .gsd/ which ensureGsdSymlink already created).
-const symlinkIdx = autoStartSrc.indexOf("ensureGsdSymlink(base)");
-assertTrue(symlinkIdx >= 0, "auto-start.ts calls ensureGsdSymlink(base)");
-
-const afterSymlink = symlinkIdx >= 0 ? autoStartSrc.slice(symlinkIdx, symlinkIdx + 800) : "";
-
-// The milestones bootstrap must check milestones path, not gsdDir
-// Old (dead) code: if (!existsSync(gsdDir)) { mkdirSync(join(gsdDir, "milestones"), ...) }
-// Fixed code should check: if (!existsSync(milestonesPath)) or similar
-assertTrue(
-  afterSymlink.includes("milestones") && afterSymlink.includes("mkdirSync"),
-  "auto-start.ts creates milestones/ directory after ensureGsdSymlink (#2942)",
-);
-
-// The guard for milestones/ creation should NOT be `!existsSync(gsdDir)` —
-// that's dead code since ensureGsdSymlink already created gsdDir.
-// It should check for the milestones/ dir directly.
-const mkdirRegion = afterSymlink.slice(0, afterSymlink.indexOf("mkdirSync") + 200);
-assertMatch(
-  mkdirRegion,
-  /existsSync\([^)]*milestones/,
-  "milestones bootstrap checks milestones path existence, not .gsd/ (#2942)",
-);
-
-report();
+test("#2942: injected existsFn — milestones/ alone is enough", () => {
+  const existsFn = (p: string) =>
+    p === "/proj/.gsd" || p === "/proj/.gsd/milestones";
+  assert.equal(hasGsdBootstrapArtifacts("/proj/.gsd", existsFn), true);
+});

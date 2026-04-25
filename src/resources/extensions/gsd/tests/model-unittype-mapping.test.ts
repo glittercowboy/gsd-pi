@@ -215,6 +215,65 @@ test("unitVerb handles discuss-slice", () => {
 // auto-artifact-paths.ts: artifact resolution
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════
+// ADR-011: meta-test — every KNOWN_UNIT_TYPES entry must appear in all four
+// downstream registries so a future unit type added to KNOWN_UNIT_TYPES can't
+// silently fall through to wrong defaults in metrics/dashboard/artifacts/post-unit.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Intentional exceptions — unit types that legitimately rely on default/null
+// behavior in a specific registry. Entries captured here reflect the current
+// baseline at the time ADR-011 landed; adding to this allowlist for a NEW unit
+// type requires explicit justification in the commit.
+//
+// Test intent: catch the case where someone adds a new unit type to
+// KNOWN_UNIT_TYPES but forgets to wire it into one of the four registries.
+// The allowlist freezes the baseline so pre-existing omissions do not block
+// the test, but any brand-new addition must be either handled or justified.
+const REGISTRY_EXCEPTIONS: Record<string, Set<string>> = {
+  // metrics.ts classifyUnitPhase uses default → "execution" for most unit types.
+  "metrics.ts": new Set([
+    "worktree-merge", "custom-step",
+    "rewrite-docs", "run-uat", "gate-evaluate", "replan-slice",
+    "reactive-execute", "validate-milestone", "complete-milestone",
+  ]),
+  "auto-dashboard.ts": new Set([
+    "worktree-merge",
+    "gate-evaluate", "reactive-execute", "validate-milestone", "complete-milestone",
+  ]),
+  "auto-artifact-paths.ts": new Set([
+    "rewrite-docs", "gate-evaluate", "reactive-execute", "discuss-slice", "worktree-merge",
+  ]),
+  "auto-post-unit.ts": new Set([
+    "execute-task", "reactive-execute", "gate-evaluate", "worktree-merge",
+  ]),
+};
+
+const REGISTRY_SOURCES: Array<[string, string]> = [
+  ["metrics.ts", metricsSrc],
+  ["auto-dashboard.ts", dashboardSrc],
+  ["auto-artifact-paths.ts", artifactSrc],
+  ["auto-post-unit.ts", postUnitSrc],
+];
+
+test("ADR-011 meta: every KNOWN_UNIT_TYPES entry appears in all 4 downstream registries", () => {
+  const missing: Array<{ registry: string; unitType: string }> = [];
+  for (const [registry, src] of REGISTRY_SOURCES) {
+    for (const ut of ALL_KNOWN_UNIT_TYPES) {
+      if (REGISTRY_EXCEPTIONS[registry]?.has(ut)) continue;
+      if (!src.includes(`"${ut}"`)) {
+        missing.push({ registry, unitType: ut });
+      }
+    }
+  }
+  assert.deepEqual(
+    missing,
+    [],
+    "Each listed unit type is absent from the given registry — either add a handler or add to REGISTRY_EXCEPTIONS with justification:\n" +
+      missing.map((m) => `  ${m.registry}: "${m.unitType}"`).join("\n"),
+  );
+});
+
 test("resolveExpectedArtifactPath handles discuss-slice", () => {
   assert.ok(artifactSrc.includes('"discuss-slice"'), "missing discuss-slice in artifact paths");
 });

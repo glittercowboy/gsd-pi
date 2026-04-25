@@ -30,6 +30,7 @@ import { checkOwnership, sliceUnitKey } from "../unit-ownership.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
 import { renderRoadmapCheckboxes } from "../markdown-renderer.js";
+import { isStaleWrite } from "../auto/turn-epoch.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
@@ -40,6 +41,14 @@ export interface CompleteSliceResult {
   milestoneId: string;
   summaryPath: string;
   uatPath: string;
+  /**
+   * True when this call re-completed an already-closed slice from a turn
+   * superseded by timeout recovery or cancellation. Response is shaped like
+   * success so the orphaned LLM tool call unwinds cleanly without mutating
+   * state.
+   */
+  duplicate?: boolean;
+  stale?: boolean;
 }
 
 /**
@@ -283,6 +292,10 @@ export async function handleCompleteSlice(
 
     const slice = getSlice(params.milestoneId, params.sliceId);
     if (slice && isClosedStatus(slice.status)) {
+      if (isStaleWrite("complete-slice")) {
+        guardError = "__stale_duplicate__";
+        return;
+      }
       guardError = `slice ${params.sliceId} is already complete — use gsd_slice_reopen first if you need to redo it`;
       return;
     }
@@ -306,6 +319,31 @@ export async function handleCompleteSlice(
     insertSlice({ id: params.sliceId, milestoneId: params.milestoneId, title: params.sliceId });
     updateSliceStatus(params.milestoneId, params.sliceId, "complete", completedAt);
   });
+
+  if (guardError === "__stale_duplicate__") {
+    // Stale duplicate from a turn superseded by timeout recovery. Return a
+    // non-mutating success so the orphaned LLM tool call unwinds quietly.
+    const sliceDir = resolveSlicePath(basePath, params.milestoneId, params.sliceId);
+    const staleSummaryPath = sliceDir
+      ? join(sliceDir, `${params.sliceId}-SUMMARY.md`)
+      : join(
+          basePath,
+          ".gsd",
+          "milestones",
+          params.milestoneId,
+          "slices",
+          params.sliceId,
+          `${params.sliceId}-SUMMARY.md`,
+        );
+    return {
+      sliceId: params.sliceId,
+      milestoneId: params.milestoneId,
+      summaryPath: staleSummaryPath,
+      uatPath: staleSummaryPath.replace(/-SUMMARY\.md$/, "-UAT.md"),
+      duplicate: true,
+      stale: true,
+    };
+  }
 
   if (guardError) {
     return { error: guardError };
@@ -423,6 +461,32 @@ export async function handleCompleteSlice(
   } catch (eventErr) {
     logError("tool", `complete-slice event log FAILED — completion invisible to reconciliation`, { error: (eventErr as Error).message });
   }
+
+  // Fire-and-forget graph rebuild — must NOT await, must NOT crash slice completion.
+  // Dynamic import of the package name (not a relative path) so it resolves
+  // correctly via package.json#exports in both development and production.
+  // eslint-disable-next-line @typescript-eslint/no-floating-promises
+  (async () => {
+    try {
+      const graphMod = await import("@gsd-build/mcp-server") as unknown as Partial<{
+        buildGraph: (dir: string) => Promise<{ nodes: unknown[]; edges: unknown[]; builtAt: string }>;
+        writeGraph: (gsdRoot: string, graph: unknown) => Promise<void>;
+        resolveGsdRoot: (basePath: string) => string;
+      }>;
+      if (
+        typeof graphMod.buildGraph !== "function"
+        || typeof graphMod.writeGraph !== "function"
+        || typeof graphMod.resolveGsdRoot !== "function"
+      ) {
+        throw new Error("graph helpers unavailable from @gsd-build/mcp-server");
+      }
+      const g = await graphMod.buildGraph(basePath);
+      await graphMod.writeGraph(graphMod.resolveGsdRoot(basePath), g);
+    } catch (graphErr) {
+      // Graph rebuild is best-effort — log at warning level but never propagate
+      logWarning("tool", `complete-slice graph rebuild failed (non-fatal): ${(graphErr as Error).message ?? String(graphErr)}`);
+    }
+  })();
 
   return {
     sliceId: params.sliceId,

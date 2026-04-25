@@ -23,6 +23,21 @@ import { loadQueueOrder, saveQueueOrder } from "./queue-order.js";
 import { deleteMilestone, getMilestone, isDbAvailable, updateMilestoneStatus } from "./gsd-db.js";
 import { removeWorktree } from "./worktree-manager.js";
 import { logWarning } from "./workflow-logger.js";
+import { isAutoActive } from "./auto.js";
+
+/**
+ * Writer-side assert for mutations that race with auto-mode's squash merge (#4704).
+ * Auto-mode is confirmed not to call parkMilestone/discardMilestone/unparkMilestone
+ * internally — these throws only surface invariant violations from new or forgotten
+ * call sites, which is the correct failure mode to catch loudly.
+ */
+function assertNotAutoActive(action: string): void {
+  if (isAutoActive()) {
+    throw new Error(
+      `${action} cannot run while auto-mode is active. Stop auto-mode first with /gsd stop.`,
+    );
+  }
+}
 
 // ─── Park ──────────────────────────────────────────────────────────────────
 
@@ -32,6 +47,7 @@ import { logWarning } from "./workflow-logger.js";
  * Returns true if successfully parked, false if milestone not found or already parked.
  */
 export function parkMilestone(basePath: string, milestoneId: string, reason: string): boolean {
+  assertNotAutoActive("park milestone");
   const mDir = resolveMilestonePath(basePath, milestoneId);
   if (!mDir || !existsSync(mDir)) return false;
 
@@ -74,6 +90,7 @@ export function parkMilestone(basePath: string, milestoneId: string, reason: str
  * Returns true if successfully unparked, false if milestone not found or not parked.
  */
 export function unparkMilestone(basePath: string, milestoneId: string): boolean {
+  assertNotAutoActive("unpark milestone");
   const mDir = resolveMilestonePath(basePath, milestoneId);
   if (!mDir || !existsSync(mDir)) return false;
 
@@ -108,6 +125,7 @@ export function unparkMilestone(basePath: string, milestoneId: string): boolean 
  * Returns true if successfully discarded, false if milestone not found.
  */
 export function discardMilestone(basePath: string, milestoneId: string): boolean {
+  assertNotAutoActive("discard milestone");
   const mDir = resolveMilestonePath(basePath, milestoneId);
   if (!mDir || !existsSync(mDir)) return false;
 

@@ -15,6 +15,16 @@ export { type BashExecutorOptions, type BashResult, executeBash, executeBashWith
 export { FallbackResolver, type FallbackResult } from "./fallback-resolver.js";
 export type { CompactionResult } from "./compaction/index.js";
 export { createEventBus, type EventBus, type EventBusController } from "./event-bus.js";
+export {
+	createHooksRunner,
+	isProjectHooksTrusted,
+	type HookInvocation,
+	type HookName,
+	type HookScope,
+	type HookStdoutResult,
+	type HooksRunner,
+	type HooksRunnerOptions,
+} from "./hooks-runner.js";
 
 // Extensions system
 export {

@@ -4,6 +4,9 @@
 
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { printWelcomeScreen } from '../../dist/welcome-screen.js'
 
@@ -40,10 +43,25 @@ test('renders version', () => {
   assert.ok(out.includes('Get Shit Done'), 'brand name missing')
 })
 
-test('renders model and provider', () => {
+test('renders GSD project state or fallback hint', (t) => {
+  // Model/provider intentionally removed from the welcome screen — they live
+  // in the persistent footer. Without .gsd/STATE.md present the welcome
+  // should surface the "No active GSD project" fallback instead.
+  // chdir into an empty tmp dir so the fallback path is actually exercised
+  // regardless of what the repo we're running from has in .gsd/.
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-welcome-fallback-'))
+  const origCwd = process.cwd()
+  process.chdir(tmp)
+  t.after(() => {
+    process.chdir(origCwd)
+    rmSync(tmp, { recursive: true, force: true })
+  })
+
   const out = strip(capture({ version: '1.0.0', modelName: 'claude-opus-4-6', provider: 'Anthropic' }))
-  assert.ok(out.includes('claude-opus-4-6'), 'model name missing')
-  assert.ok(out.includes('Anthropic'), 'provider missing')
+  assert.ok(
+    out.includes('No active GSD project') || /Active\s+M\d+/.test(out),
+    'welcome should show GSD state lines or the no-project fallback',
+  )
 })
 
 test('renders cwd hint', () => {
@@ -82,6 +100,58 @@ test('omits remote channel when not provided', () => {
   assert.ok(!out.includes('Discord'), 'should not show Discord when no remote')
   assert.ok(!out.includes('Slack'), 'should not show Slack when no remote')
   assert.ok(!out.includes('Telegram'), 'should not show Telegram when no remote')
+})
+
+test('Active row truncates with ellipsis when milestone text overflows panel width', (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-welcome-test-'))
+  mkdirSync(join(tmp, '.gsd'))
+  writeFileSync(
+    join(tmp, '.gsd', 'STATE.md'),
+    [
+      '**Active Milestone:** M001: Todo App – Core add/complete/delete with localStorage persistence and offline sync support',
+      '**Phase:** evaluating-gates',
+      '**Active Slice:** S01: implement full persistence layer with IndexedDB fallback',
+    ].join('\n'),
+  )
+  const origCwd = process.cwd()
+  process.chdir(tmp)
+  const origColumns = (process.stderr as any).columns
+  ;(process.stderr as any).columns = 120
+
+  t.after(() => {
+    process.chdir(origCwd)
+    ;(process.stderr as any).columns = origColumns
+    rmSync(tmp, { recursive: true, force: true })
+  })
+
+  const columns = (process.stderr as any).columns as number
+  const out = strip(capture({ version: '1.0.0' }))
+  const activeLine = out.split('\n').find(l => /Active\s/.test(l))
+  assert.ok(activeLine, 'Active row should be present')
+  assert.ok(activeLine!.includes('…'), 'Active row should truncate long text with ellipsis')
+  assert.ok(activeLine!.length <= columns, `Active row length ${activeLine!.length} should not exceed terminal width ${columns}`)
+})
+
+test('Active row does not truncate short milestone text', (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-welcome-test-'))
+  mkdirSync(join(tmp, '.gsd'))
+  writeFileSync(join(tmp, '.gsd', 'STATE.md'), '**Active Milestone:** M001: Short title\n')
+  const origCwd = process.cwd()
+  process.chdir(tmp)
+  const origColumns = (process.stderr as any).columns
+  ;(process.stderr as any).columns = 120
+
+  t.after(() => {
+    process.chdir(origCwd)
+    ;(process.stderr as any).columns = origColumns
+    rmSync(tmp, { recursive: true, force: true })
+  })
+
+  const out = strip(capture({ version: '1.0.0' }))
+  const activeLine = out.split('\n').find(l => /Active\s/.test(l))
+  assert.ok(activeLine, 'Active row should be present')
+  assert.ok(activeLine!.includes('M001: Short title'), 'short title should appear in full')
+  assert.ok(!activeLine!.includes('…'), 'short title should not be truncated')
 })
 
 test('separator lines extend to full terminal width on wide terminals', (t) => {

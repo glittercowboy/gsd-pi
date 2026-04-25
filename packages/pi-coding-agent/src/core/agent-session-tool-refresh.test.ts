@@ -1,64 +1,133 @@
-// GSD-2 — Regression tests for #3616: tool list persistence across newSession() calls
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
+// Regression test for #3616: newSession() must restore the full tool set
+// when cwd is unchanged.
+//
+// The bug: extensions may narrow the active tool list via setActiveTools()
+// during a session. Without a refresh in the else branch of newSession(),
+// the narrowed set persists into the next session — breaking auto-mode
+// subagent sessions that expect a full tool palette.
+//
+// Verified behaviourally: construct an AgentSession, wrap _refreshToolRegistry
+// to record its args, call newSession() with cwd unchanged, and assert that
+// a refresh was requested with includeAllExtensionTools: true.
 
-import test, { describe } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, it } from "node:test";
 
-const source = readFileSync(
-	join(process.cwd(), "packages/pi-coding-agent/src/core/agent-session.ts"),
-	"utf-8",
-);
+import { Agent } from "@gsd/pi-agent-core";
+import { AgentSession } from "./agent-session.js";
+import { AuthStorage } from "./auth-storage.js";
+import { ModelRegistry } from "./model-registry.js";
+import { DefaultResourceLoader } from "./resource-loader.js";
+import { SessionManager } from "./session-manager.js";
+import { SettingsManager } from "./settings-manager.js";
 
-describe("#3616 — newSession() must restore full tool set", () => {
-	test("newSession() calls _refreshToolRegistry with includeAllExtensionTools when cwd is unchanged", () => {
-		// Find the newSession method
-		const newSessionStart = source.indexOf("async newSession(options?:");
-		assert.ok(newSessionStart >= 0, "should find newSession method");
+let testDir: string;
 
-		// Get the method body (up to the next top-level method)
-		const methodBody = source.slice(newSessionStart, newSessionStart + 3000);
+async function createSession(): Promise<AgentSession> {
+	const agentDir = join(testDir, "agent-home");
+	const authStorage = AuthStorage.inMemory({});
+	const modelRegistry = new ModelRegistry(authStorage, join(agentDir, "models.json"));
+	const settingsManager = SettingsManager.inMemory();
+	const resourceLoader = new DefaultResourceLoader({
+		cwd: testDir,
+		agentDir,
+		settingsManager,
+		noExtensions: true,
+		noPromptTemplates: true,
+		noThemes: true,
+	});
+	await resourceLoader.reload();
 
-		// Verify the cwd-changed branch rebuilds tools
+	return new AgentSession({
+		agent: new Agent(),
+		sessionManager: SessionManager.inMemory(testDir),
+		settingsManager,
+		cwd: testDir,
+		resourceLoader,
+		modelRegistry,
+	});
+}
+
+describe("#3616 — newSession() restores narrowed tool set when cwd unchanged", () => {
+	beforeEach(() => {
+		testDir = mkdtempSync(join(tmpdir(), "agent-session-tool-refresh-"));
+	});
+
+	afterEach(() => {
+		rmSync(testDir, { recursive: true, force: true });
+	});
+
+	it("calls _refreshToolRegistry with includeAllExtensionTools: true when cwd unchanged", async () => {
+		const session = await createSession();
+		// Pin _cwd so newSession()'s `process.cwd()` branch takes the
+		// cwd-unchanged path. The production code compares `this._cwd !==
+		// previousCwd`; we force equality by setting _cwd to current cwd.
+		(session as any)._cwd = process.cwd();
+
+		const refreshCalls: Array<{ includeAllExtensionTools?: boolean }> = [];
+		const originalRefresh = (session as any)._refreshToolRegistry.bind(session);
+		(session as any)._refreshToolRegistry = (options?: { includeAllExtensionTools?: boolean }) => {
+			refreshCalls.push(options ?? {});
+			return originalRefresh(options);
+		};
+
+		const ok = await session.newSession();
+		assert.equal(ok, true);
+
 		assert.ok(
-			methodBody.includes("if (this._cwd !== previousCwd)"),
-			"should have cwd-change guard",
+			refreshCalls.length > 0,
+			"newSession() should invoke _refreshToolRegistry in the cwd-unchanged branch",
 		);
-
-		// Verify the else branch exists and refreshes tools with includeAllExtensionTools
-		const elseIdx = methodBody.indexOf("} else {");
-		assert.ok(elseIdx >= 0, "should have else branch for cwd-unchanged case");
-
-		const elseBranch = methodBody.slice(elseIdx, elseIdx + 800);
 		assert.ok(
-			elseBranch.includes("_refreshToolRegistry"),
-			"else branch should call _refreshToolRegistry",
-		);
-		assert.ok(
-			elseBranch.includes("includeAllExtensionTools: true"),
-			"else branch should pass includeAllExtensionTools: true to restore narrowed tools",
+			refreshCalls.some((o) => o.includeAllExtensionTools === true),
+			`at least one _refreshToolRegistry call must pass includeAllExtensionTools: true; observed=${JSON.stringify(refreshCalls)}`,
 		);
 	});
 
-	test("newSession() references #3616 in the else-branch comment", () => {
-		const idx = source.indexOf("#3616");
-		assert.ok(idx >= 0, "source should reference issue #3616 for the tool restore fix");
+	it("agent.reset() does not clear _state.tools (tools persist across reset)", () => {
+		// Structural invariant protecting #3616: if reset() starts clearing
+		// tools, newSession()'s refresh becomes the only defense against loss.
+		// Assertion is behavioural — seed tools, call reset(), observe survival.
+		const agent = new Agent();
+		const tool = {
+			name: "test_tool",
+			description: "x",
+			schema: { type: "object", properties: {}, additionalProperties: false } as any,
+			execute: async () => ({ content: [] }),
+		};
+		(agent as any)._state.tools = [tool];
+		agent.reset();
+		assert.deepEqual(
+			(agent as any)._state.tools,
+			[tool],
+			"Agent.reset() must preserve _state.tools",
+		);
 	});
 
-	test("agent.reset() does not clear _state.tools (tools persist across reset)", () => {
-		// This is a structural invariant — if reset() starts clearing tools,
-		// the newSession() refresh becomes the only defense against tool loss.
-		const agentSource = readFileSync(
-			join(process.cwd(), "packages/pi-agent-core/src/agent.ts"),
-			"utf-8",
-		);
-		const resetStart = agentSource.indexOf("reset()");
-		assert.ok(resetStart >= 0, "should find reset() method");
-		const resetBody = agentSource.slice(resetStart, resetStart + 400);
+	it("takes the cwd-changed branch (rebuilds runtime) when cwd differs", async () => {
+		const session = await createSession();
+		// Force the cwd-changed branch: set _cwd to something that won't equal process.cwd().
+		(session as any)._cwd = join(testDir, "some", "other", "cwd");
+
+		let buildRuntimeCalled = false;
+		let buildRuntimeIncludedAll = false;
+		const originalBuild = (session as any)._buildRuntime.bind(session);
+		(session as any)._buildRuntime = (options?: { includeAllExtensionTools?: boolean }) => {
+			buildRuntimeCalled = true;
+			if (options?.includeAllExtensionTools === true) buildRuntimeIncludedAll = true;
+			return originalBuild(options);
+		};
+
+		const ok = await session.newSession();
+		assert.equal(ok, true);
+
+		assert.ok(buildRuntimeCalled, "cwd-changed branch must rebuild the tool runtime");
 		assert.ok(
-			!resetBody.includes("tools"),
-			"reset() should NOT touch _state.tools — tools are managed by agent-session",
+			buildRuntimeIncludedAll,
+			"cwd-changed branch must rebuild with includeAllExtensionTools: true",
 		);
 	});
 });

@@ -152,11 +152,20 @@ export class GsdSidebarProvider implements vscode.WebviewViewProvider {
 				case "toggleFollowUpMode":
 					await vscode.commands.executeCommand("gsd.toggleFollowUpMode");
 					break;
-				case "showHistory":
-					await vscode.commands.executeCommand("gsd.showHistory");
-					break;
-			}
-		});
+					case "showHistory":
+						await vscode.commands.executeCommand("gsd.showHistory");
+						break;
+					case "fixProblemsInFile":
+						await vscode.commands.executeCommand("gsd.fixProblemsInFile");
+						break;
+					case "selectApprovalMode":
+						await vscode.commands.executeCommand("gsd.selectApprovalMode");
+						break;
+					default:
+						vscode.window.showWarningMessage(`Unknown GSD sidebar command: ${msg.command}`);
+						break;
+				}
+			});
 
 		// Periodic refresh while connected (for token stats)
 		this.refreshTimer = setInterval(() => {

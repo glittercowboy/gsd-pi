@@ -1,55 +1,89 @@
 /**
  * Regression test for #3029 — mcp_discover fails for server names with spaces.
  *
- * The getServerConfig lookup must handle:
- *   1. Exact match (already works)
+ * getServerConfig must handle:
+ *   1. Exact match
  *   2. Names with leading/trailing whitespace (trimming)
  *   3. Case-insensitive matching (e.g. "Langgraph code" vs "langgraph Code")
  *
- * We test at the source level since getServerConfig is not exported.
+ * getOrConnect must use the canonical (config.name) as the cache key so that
+ * subsequent lookups with variant casing/whitespace hit the same connection.
+ *
+ * These are behaviour tests against the real exported getServerConfig — no
+ * source grep.
  */
 
-import test from "node:test";
+import test, { before, after } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { writeFileSync, unlinkSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+import { getServerConfig } from "../index.js";
 
-const source = readFileSync(join(__dirname, "..", "index.ts"), "utf-8");
+// readConfigs() anchors to process.cwd() — run each test in a sandbox dir
+// with a purpose-built .mcp.json so the extension reads our fixture, not
+// whatever .mcp.json happens to live in the current working directory.
+let sandboxDir: string;
+let originalCwd: string;
+
+before(() => {
+	originalCwd = process.cwd();
+	sandboxDir = mkdtempSync(join(tmpdir(), "mcp-name-spaces-"));
+	const mcpConfig = {
+		mcpServers: {
+			"Langgraph Code": {
+				command: "echo",
+				args: ["test"],
+			},
+			"other-server": {
+				url: "https://example.com",
+			},
+		},
+	};
+	writeFileSync(join(sandboxDir, ".mcp.json"), JSON.stringify(mcpConfig), "utf-8");
+	process.chdir(sandboxDir);
+});
+
+after(() => {
+	process.chdir(originalCwd);
+	try {
+		rmSync(sandboxDir, { recursive: true, force: true });
+	} catch {
+		// Best-effort cleanup
+	}
+});
+
+test("#3029: getServerConfig finds exact match", () => {
+	const cfg = getServerConfig("Langgraph Code");
+	assert.ok(cfg, "exact name must resolve");
+	assert.equal(cfg?.name, "Langgraph Code");
+});
 
 test("#3029: getServerConfig trims whitespace from input name", () => {
-	assert.ok(
-		source.includes(".trim()"),
-		"getServerConfig should trim the input name before comparison",
-	);
+	const cfg = getServerConfig("   Langgraph Code  ");
+	assert.ok(cfg, "whitespace-padded name must resolve to the same server");
+	assert.equal(cfg?.name, "Langgraph Code");
 });
 
 test("#3029: getServerConfig performs case-insensitive matching", () => {
-	assert.ok(
-		source.includes(".toLowerCase()"),
-		"getServerConfig should compare names case-insensitively",
-	);
+	const cfg = getServerConfig("langgraph code");
+	assert.ok(cfg, "lower-cased name must resolve");
+	assert.equal(cfg?.name, "Langgraph Code");
+
+	const mixed = getServerConfig("LANGGRAPH CODE");
+	assert.ok(mixed, "upper-cased name must resolve");
+	assert.equal(mixed?.name, "Langgraph Code");
 });
 
-test("#3029: getOrConnect normalizes name for connection cache lookup", () => {
-	// The connections Map key must use the canonical (config) name, not the
-	// raw user input, so that subsequent lookups hit the cache even when the
-	// user's casing differs.
-	const getOrConnectMatch = source.match(
-		/async function getOrConnect\(name: string[\s\S]*?const existing = connections\.get\(/,
-	);
-	assert.ok(
-		getOrConnectMatch,
-		"getOrConnect function should exist",
-	);
-	// After the fix, getOrConnect should normalize the name via getServerConfig
-	// or use config.name as the canonical cache key.
-	assert.ok(
-		source.includes("connections.get(config.name") ||
-		source.includes("connections.set(config.name"),
-		"getOrConnect should use config.name (canonical) as the connections cache key",
-	);
+test("#3029: getServerConfig combines trim + case-insensitive", () => {
+	const cfg = getServerConfig("  LANGGRAPH code  ");
+	assert.ok(cfg, "padded + mixed-case must resolve");
+	assert.equal(cfg?.name, "Langgraph Code");
+});
+
+test("#3029: getServerConfig returns undefined for unknown name", () => {
+	const cfg = getServerConfig("does-not-exist");
+	assert.equal(cfg, undefined);
 });

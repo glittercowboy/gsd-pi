@@ -125,9 +125,9 @@ console.log('\n=== complete-slice: schema v6 migration ===');
 
   const adapter = _getAdapter()!;
 
-  // Verify schema version is current (v14 after indexes + slice_dependencies)
+  // Verify schema version is current (v22 — quality_gates DDL fix)
   const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(versionRow?.['v'], 14, 'schema version should be 14');
+  assertEq(versionRow?.['v'], 22, 'schema version should be 22');
 
   // Verify slices table has full_summary_md and full_uat_md columns
   const cols = adapter.prepare("PRAGMA table_info(slices)").all();
@@ -231,13 +231,11 @@ console.log('\n=== complete-slice: handler happy path ===');
     assertMatch(uatContent, /Milestone:\*\* M001/, 'UAT should reference milestone');
     assertMatch(uatContent, /Smoke Test/, 'UAT should contain smoke test from params');
 
-    // (c) Verify roadmap shows S01 complete (✅) and S02 pending (⬜) in table format
-    // Projection renders roadmap as a Slice Overview table, not checkbox list
+    // (c) Verify roadmap shows S01 complete ([x]) and S02 pending ([ ]) in checkbox list.
+    // Authoritative renderer (renderRoadmapFromDb) emits a checkbox list (#4402).
     const roadmapContent = fs.readFileSync(roadmapPath, 'utf-8');
-    assertMatch(roadmapContent, /\| S01 \|/, 'S01 should appear in roadmap table');
-    assertTrue(roadmapContent.includes('✅'), 'completed S01 should show ✅ in roadmap table');
-    assertMatch(roadmapContent, /\| S02 \|/, 'S02 should appear in roadmap table');
-    assertTrue(roadmapContent.includes('⬜'), 'pending S02 should show ⬜ in roadmap table');
+    assertMatch(roadmapContent, /- \[x\] \*\*S01:/, 'completed S01 should be a checked checkbox list item');
+    assertMatch(roadmapContent, /- \[ \] \*\*S02:/, 'pending S02 should be an unchecked checkbox list item');
 
     // (d) Verify full_summary_md and full_uat_md stored in DB for D004 recovery
     const sliceAfter = getSlice('M001', 'S01');

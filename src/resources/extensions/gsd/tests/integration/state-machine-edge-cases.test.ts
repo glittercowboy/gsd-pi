@@ -691,7 +691,7 @@ describe("transition boundary failures", () => {
     );
   });
 
-  test("blocked state: all slices have unmet deps → blocked phase", async () => {
+  test("blocked state: all slices have unmet deps → fallback picks slice", async () => {
     base = makeTempDir();
     const mDir = join(base, ".gsd", "milestones", "M001");
     mkdirSync(join(mDir, "slices", "S01", "tasks"), { recursive: true });
@@ -736,7 +736,9 @@ describe("transition boundary failures", () => {
 
     invalidateAllCaches();
     const state = await deriveStateFromDb(base);
-    assert.equal(state.phase, "blocked", "circular deps should produce blocked phase");
+    // With partial-dep fallback, circular deps no longer block — fallback picks first eligible slice
+    assert.equal(state.phase, "planning", "circular deps: fallback picks a slice instead of blocking");
+    assert.ok(state.activeSlice !== null, "activeSlice set via fallback");
   });
 });
 
@@ -1153,7 +1155,7 @@ describe("dispatch guard integration", () => {
     assert.ok(existsSync(validationPath), "VALIDATION file should be written");
     const content = readFileSync(validationPath, "utf-8");
     assert.ok(content.includes("verdict: pass"), "should contain pass verdict");
-    assert.ok(content.includes("skipped by preference"), "should note it was skipped");
+    assert.ok(content.includes("`skip_milestone_validation` preference"), "should note it was skipped via the preference path (#4781)");
   });
 
   test("rewrite-docs circuit breaker: exceeding MAX attempts resolves all overrides", async () => {

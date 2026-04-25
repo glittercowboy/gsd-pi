@@ -32,11 +32,13 @@ export interface TaskMetadata {
 // ─── Unit Type → Default Tier Mapping ────────────────────────────────────────
 
 const UNIT_TYPE_TIERS: Record<string, ComplexityTier> = {
-  // Tier 1 — Light: structured summaries, completion, UAT
-  "complete-slice": "light",
+  // Tier 1 — Light: compact verification turns
   "run-uat": "light",
 
-  // Tier 2 — Standard: research, routine discussion
+  // Tier 2 — Standard: research, routine discussion, slice completion
+  // complete-slice can carry large inlined context; avoid routing it to the
+  // cheapest "light" model by default (#4520).
+  "complete-slice": "standard",
   "discuss-milestone": "standard",
   "discuss-slice": "standard",
   "research-milestone": "standard",

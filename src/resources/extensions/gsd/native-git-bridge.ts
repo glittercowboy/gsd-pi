@@ -6,7 +6,7 @@
 // execSync calls because git2 credential handling is too complex.
 
 import { execSync, execFileSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GSDError, GSD_GIT_ERROR } from "./errors.js";
 import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
@@ -323,7 +323,7 @@ export function nativeIsRepo(basePath: string): boolean {
     return native.gitIsRepo(basePath);
   }
   try {
-    execSync("git rev-parse --git-dir", { cwd: basePath, stdio: "pipe" });
+    execFileSync("git", ["rev-parse", "--git-dir"], { cwd: basePath, stdio: "pipe" });
     return true;
   } catch {
     return false;
@@ -690,6 +690,134 @@ export function nativeAddTracked(basePath: string): void {
   gitFileExec(basePath, ["add", "-u"]);
 }
 
+function isDotGsdIgnored(basePath: string): boolean {
+  for (const path of [".gsd", ".gsd/"]) {
+    try {
+      execFileSync("git", ["check-ignore", "-q", path], {
+        cwd: basePath,
+        stdio: "pipe",
+        env: GIT_NO_PROMPT_ENV,
+      });
+      return true;
+    } catch {
+      // exit 1 means this form is not ignored; try the next variant
+    }
+  }
+  return false;
+}
+
+/**
+ * Determine whether the project opts out of GSD-managed `.gitignore` via
+ * `git.manage_gitignore: false` in `.gsd/PREFERENCES.md`. Uses a minimal
+ * inline parser to avoid importing the full preferences module (which would
+ * introduce a circular dependency back into this low-level bridge).
+ *
+ * Returns true when management is disabled. Any parse failure or missing
+ * file returns false (default: GSD may manage `.gitignore`).
+ */
+function isGitignoreManagementDisabled(basePath: string): boolean {
+  const prefsPath = join(basePath, ".gsd", "PREFERENCES.md");
+  if (!existsSync(prefsPath)) return false;
+  try {
+    const content = readFileSync(prefsPath, "utf-8");
+    // Look for `manage_gitignore: false` under a `git:` block. The preference
+    // is indented; a loose regex is sufficient since we only care about the
+    // explicit opt-out case.
+    return /^\s*manage_gitignore\s*:\s*false\s*$/m.test(content);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Self-heal path for the symlinked-`.gsd` staging failure: append `.gsd` to
+ * `.gitignore` so subsequent `git add -A` calls succeed without the symlink
+ * pathspec error. Honors the `git.manage_gitignore: false` opt-out.
+ *
+ * Returns true when `.gitignore` now contains an entry covering `.gsd`
+ * (either pre-existing or newly appended). Returns false when the opt-out
+ * is set or the write fails.
+ */
+function trySelfHealGsdGitignore(basePath: string): boolean {
+  if (isGitignoreManagementDisabled(basePath)) return false;
+
+  const gitignorePath = join(basePath, ".gitignore");
+  try {
+    const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf-8") : "";
+    const lines = new Set(
+      existing.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#")),
+    );
+    if (lines.has(".gsd") || lines.has(".gsd/")) return true;
+
+    const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+    const block = `${prefix}\n# ── GSD self-heal: .gsd is a symlink to external state ──\n.gsd\n`;
+    writeFileSync(gitignorePath, existing + block, "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Stage untracked files individually while skipping anything under `.gsd`.
+ * Used as a last-resort when `.gsd` is a symlink, not gitignored, and
+ * `git.manage_gitignore: false` forbids the self-heal path. Protects user
+ * work by never silently dropping new real files.
+ */
+function stageUntrackedExcludingDotGsd(basePath: string): void {
+  // Stage tracked modifications first. `git add -u` never fails on pathspec
+  // issues because it doesn't walk untracked trees.
+  gitFileExec(basePath, ["add", "-u"]);
+
+  // Enumerate untracked paths via porcelain output. `?? ` prefix marks
+  // untracked files (status respects `.gitignore`).
+  const status = gitFileExec(basePath, ["status", "--porcelain=v1", "-z"], true);
+  if (!status) return;
+
+  const untracked: string[] = [];
+  for (const entry of status.split("\0")) {
+    if (!entry) continue;
+    // Porcelain format: "XY path" where XY is the 2-char status code.
+    if (entry.length < 4) continue;
+    const code = entry.slice(0, 2);
+    const path = entry.slice(3);
+    if (code !== "??") continue;
+    // Skip GSD runtime artifacts. Under `manage_gitignore: false` the user
+    // may not have these in `.gitignore`, so we filter explicitly to avoid
+    // committing transient state (.gsd external link, migration lock,
+    // background shell scratch dir).
+    if (path === ".gsd" || path.startsWith(".gsd/")) continue;
+    if (path === ".gsd-id" || path === ".gsd.migrating") continue;
+    if (path === ".bg-shell" || path.startsWith(".bg-shell/")) continue;
+    untracked.push(path);
+  }
+
+  if (untracked.length === 0) return;
+  // Stage in chunks to avoid exceeding ARG_MAX on large change sets.
+  const CHUNK = 200;
+  for (let i = 0; i < untracked.length; i += CHUNK) {
+    gitFileExec(basePath, ["add", "--", ...untracked.slice(i, i + CHUNK)]);
+  }
+}
+
+/**
+ * Handle `nativeAddAllWithExclusions` failing with "beyond a symbolic link"
+ * when `.gsd` is a symlink. Self-heals by adding `.gsd` to `.gitignore`, or
+ * falls back to explicit per-file staging so user work is never dropped.
+ */
+function fallbackStageWithSymlinkedDotGsd(basePath: string): void {
+  if (isDotGsdIgnored(basePath)) {
+    gitFileExec(basePath, ["add", "-A"]);
+    return;
+  }
+  if (trySelfHealGsdGitignore(basePath)) {
+    gitFileExec(basePath, ["add", "-A"]);
+    return;
+  }
+  // `manage_gitignore: false` — protect work by staging files explicitly.
+  stageUntrackedExcludingDotGsd(basePath);
+}
+
 /**
  * Stage all files with pathspec exclusions (git add -A -- ':!pattern' ...).
  * Excluded paths are never hashed by git, preventing hangs on large
@@ -724,12 +852,12 @@ export function nativeAddAllWithExclusions(basePath: string, exclusions: readonl
       return;
     }
     // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
-    // "beyond a symbolic link". Fall back to `git add -u` which only
-    // stages changes to already-tracked files — O(tracked) not O(filesystem).
-    // Using `git add -A` here would traverse the entire working tree,
-    // hanging indefinitely on repos with large untracked data dirs. (#1977)
+    // "beyond a symbolic link". Hand off to the self-heal fallback which
+    // either adds `.gsd` to `.gitignore` and retries `git add -A`, or stages
+    // real files explicitly when `git.manage_gitignore: false` forbids the
+    // self-heal path. Either way, user work is protected from silent drops.
     if (stderr.includes("beyond a symbolic link")) {
-      gitFileExec(basePath, ["add", "-u"]);
+      fallbackStageWithSymlinkedDotGsd(basePath);
       return;
     }
     throw new GSDError(GSD_GIT_ERROR, `git add -A with exclusions failed in ${basePath}: ${getErrorMessage(err)}`);
@@ -790,16 +918,15 @@ export function nativeCommit(
 
   // Fallback: use git commit with stdin pipe for safe multi-line messages
   try {
-    const result = execSync(
-      `git commit --no-verify -F -${options?.allowEmpty ? " --allow-empty" : ""}`,
-      {
-        cwd: basePath,
-        stdio: ["pipe", "pipe", "pipe"],
-        encoding: "utf-8",
-        env: GIT_NO_PROMPT_ENV,
-        input: message,
-      },
-    ).trim();
+    const args = ["commit", "--no-verify", "-F", "-"];
+    if (options?.allowEmpty) args.push("--allow-empty");
+    const result = execFileSync("git", args, {
+      cwd: basePath,
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+      env: GIT_NO_PROMPT_ENV,
+      input: message,
+    }).trim();
     return result;
   } catch (err: unknown) {
     const errObj = err as { stdout?: string; stderr?: string; message?: string };
@@ -940,7 +1067,7 @@ export function nativeResetHard(basePath: string): void {
     native.gitResetHard(basePath);
     return;
   }
-  execSync("git reset --hard HEAD", { cwd: basePath, stdio: "pipe" });
+  execFileSync("git", ["reset", "--hard", "HEAD"], { cwd: basePath, stdio: "pipe" });
 }
 
 /**

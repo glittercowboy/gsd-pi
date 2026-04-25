@@ -1,6 +1,28 @@
 /**
+ * Strict plain-object guard. True only for object literals and
+ * `Object.create(null)` — not for `Date`, `URL`, `Map`, `Set`, class instances,
+ * or arrays. Used to gate `structuredContent` forwarding so the MCP transport
+ * receives only true JSON objects (the protocol contract). See #4477 review.
+ *
+ * Mirrored in `packages/mcp-server/src/workflow-tools.ts` for the
+ * `adaptExecutorResult` adapter on the workflow path. Keep both copies in
+ * sync if the contract definition needs to evolve.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object') return false
+  if (Array.isArray(value)) return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === null || proto === Object.prototype
+}
+
+/**
  * Minimal tool interface matching GSD's AgentTool shape.
  * Avoids a direct dependency on @gsd/pi-agent-core from this compiled module.
+ *
+ * `details` and `isError` are optional fields that runtime tool implementations
+ * may populate. The MCP transport drops non-standard fields, so the wrapper at
+ * the call site mirrors `details` into `structuredContent` and forwards
+ * `isError` directly. See #4472.
  */
 export interface McpToolDef {
   name: string
@@ -13,6 +35,8 @@ export interface McpToolDef {
     onUpdate?: unknown,
   ): Promise<{
     content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>
+    details?: Record<string, unknown>
+    isError?: boolean
   }>
 }
 
@@ -121,7 +145,23 @@ export async function startMcpServer(options: {
         // by stringifying into a text block so clients see the payload.
         return { type: 'text' as const, text: JSON.stringify(block) }
       })
-      return { content }
+
+      // Forward a tool's runtime `details` field to MCP's `structuredContent`
+      // channel. The protocol drops non-standard fields on the wire, so tools
+      // that populate `details` for client-side renderers (e.g. save_gate_result)
+      // would otherwise arrive empty on the other side. See #4472.
+      //
+      // Use a strict plain-object guard (prototype-chain check) rather than just
+      // `typeof === 'object' && !Array.isArray()` — Date, URL, Map, Set, and
+      // class instances would otherwise pass through and end up as
+      // `structuredContent`, violating the protocol's JSON-object contract.
+      // The mirror discipline applies in `workflow-tools.ts adaptExecutorResult`.
+      const base: Record<string, unknown> = { content }
+      if (isPlainObject(result.details)) {
+        base.structuredContent = result.details
+      }
+      if (result.isError === true) base.isError = true
+      return base
     } catch (err: unknown) {
       // AbortError from a cancelled tool surfaces as a normal error — MCP
       // clients interpret `isError: true` as a failed call, which is the

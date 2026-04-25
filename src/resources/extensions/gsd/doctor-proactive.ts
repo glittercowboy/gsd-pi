@@ -301,9 +301,12 @@ export async function preDispatchHealthGate(basePath: string): Promise<PreDispat
   try {
     if (nativeIsRepo(basePath)) {
       const prefs = loadEffectiveGSDPreferences()?.preferences ?? {};
+      // `git.snapshots: false` is the canonical toggle that disables WIP
+      // snapshot commits — honour it before touching the threshold path (#4420).
+      const snapshotsEnabled = prefs.git?.snapshots !== false;
       const thresholdMinutes = prefs.stale_commit_threshold_minutes ?? 30;
 
-      if (thresholdMinutes > 0 && nativeHasChanges(basePath)) {
+      if (snapshotsEnabled && thresholdMinutes > 0 && nativeHasChanges(basePath)) {
         const branch = nativeGetCurrentBranch(basePath);
         const lastEpoch = nativeLastCommitEpoch(basePath, branch || "HEAD");
         const nowEpoch = Math.floor(Date.now() / 1000);

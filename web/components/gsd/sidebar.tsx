@@ -62,6 +62,9 @@ const StatusIcon = ({ status }: { status: ItemStatus }) => {
   if (status === "in-progress") {
     return <Play className="h-4 w-4 shrink-0 text-warning" />
   }
+  if (status === "parked") {
+    return <SkipForward className="h-4 w-4 shrink-0 text-muted-foreground" />
+  }
   return <Circle className="h-4 w-4 shrink-0 text-muted-foreground" />
 }
 
@@ -477,7 +480,7 @@ export function MilestoneExplorer({ isConnecting = false, width, onCollapse }: {
                     <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
                   )}
                   <StatusIcon status={status} />
-                  <span className={cn("truncate", status === "pending" && "text-muted-foreground")}>
+                  <span className={cn("truncate", (status === "pending" || status === "parked") && "text-muted-foreground")}>
                     {milestone.id}: {milestone.title}
                   </span>
                 </button>
