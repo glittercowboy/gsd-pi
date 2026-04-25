@@ -2,6 +2,7 @@ import type { DoctorIssue, DoctorIssueCode, DoctorReport, DoctorSummary } from "
 
 function matchesScope(unitId: string, scope?: string): boolean {
   if (!scope) return true;
+  if (unitId === "project" || unitId === "environment") return true;
   return unitId === scope || unitId.startsWith(`${scope}/`) || unitId.startsWith(`${scope}`);
 }
 

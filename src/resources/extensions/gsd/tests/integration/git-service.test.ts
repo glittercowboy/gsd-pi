@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, symlinkSync, readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -248,23 +248,26 @@ describe('git-service', async () => {
 
   assert.deepStrictEqual(
     RUNTIME_EXCLUSION_PATHS.length,
-    13,
-    "exactly 13 runtime exclusion paths"
+    16,
+    "exactly 16 runtime exclusion paths"
   );
 
   const expectedPaths = [
     ".gsd/activity/",
+    ".gsd/audit/",
+    ".gsd/forensics/",
     ".gsd/runtime/",
     ".gsd/worktrees/",
+    ".gsd/parallel/",
     ".gsd/auto.lock",
     ".gsd/metrics.json",
-    ".gsd/completed-units.json",
+    ".gsd/completed-units*.json",
+    ".gsd/state-manifest.json",
     ".gsd/STATE.md",
-    ".gsd/gsd.db",
-    ".gsd/gsd.db-shm",
-    ".gsd/gsd.db-wal",
+    ".gsd/gsd.db*",
     ".gsd/journal/",
     ".gsd/doctor-history.jsonl",
+    ".gsd/event-log.jsonl",
     ".gsd/DISCUSSION-MANIFEST.json",
   ];
 
@@ -1233,6 +1236,7 @@ describe('git-service', async () => {
     const content = readFileSync(join(repo, ".gitignore"), "utf-8");
     const lines = content.split("\n").map(l => l.trim()).filter(l => l && !l.startsWith("#"));
     assert.ok(lines.includes(".gsd"), "ensureGitignore: .gitignore contains .gsd");
+    assert.ok(lines.includes(".mcp.json"), "ensureGitignore: .gitignore contains .mcp.json");
 
     // Idempotent — calling again doesn't add duplicates
     const modified2 = ensureGitignore(repo);
@@ -1245,8 +1249,8 @@ describe('git-service', async () => {
 
   test('nativeAddAllWithExclusions: symlinked .gsd fallback', () => {
     // When .gsd is a symlink, git rejects `:!.gsd/...` pathspecs with
-    // "fatal: pathspec '...' is beyond a symbolic link". The fix falls
-    // back to plain `git add -A`, which respects .gitignore.
+    // "fatal: pathspec '...' is beyond a symbolic link". When `.gsd` is
+    // already gitignored, the fallback should still stage untracked real files.
     const repo = initTempRepo();
 
     // Create the real .gsd directory outside the repo, then symlink it
@@ -1258,11 +1262,18 @@ describe('git-service', async () => {
     // Symlink .gsd -> external directory
     symlinkSync(externalGsd, join(repo, ".gsd"));
 
-    // Add .gitignore so git add -A fallback skips .gsd/
+    // Add .gitignore so .gsd/ is ignored
     writeFileSync(join(repo, ".gitignore"), ".gsd\n");
 
-    // Create a real file that should be staged
+    // Create a tracked file and commit it, then modify it
     createFile(repo, "src/app.ts", "export const x = 1;");
+    run("git add -A", repo);
+    run('git commit -m "add app"', repo);
+    writeFileSync(join(repo, "src/app.ts"), "export const x = 2;");
+
+    // Create an untracked file that should still be staged by the fallback
+    // because `.gsd` itself is already protected by .gitignore.
+    createFile(repo, "src/new-feature.ts", "export const fresh = true;");
 
     // nativeAddAllWithExclusions should NOT throw despite .gsd being a symlink
     let threw = false;
@@ -1274,10 +1285,114 @@ describe('git-service', async () => {
     }
     assert.ok(!threw, "nativeAddAllWithExclusions does not throw with symlinked .gsd");
 
-    // Verify the real file was staged
+    // Verify the tracked modified file was staged
     const staged = run("git diff --cached --name-only", repo);
-    assert.ok(staged.includes("src/app.ts"), "real file staged despite symlinked .gsd");
+    assert.ok(staged.includes("src/app.ts"), "modified tracked file staged despite symlinked .gsd");
+
+    assert.ok(staged.includes("src/new-feature.ts"),
+      "symlink fallback should still stage new real files when .gsd is gitignored");
     assert.ok(!staged.includes(".gsd"), ".gsd content not staged");
+
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(externalGsd, { recursive: true, force: true });
+  });
+
+  test('nativeAddAllWithExclusions: self-heals symlinked .gsd when .gitignore lacks it (#4423)', () => {
+    // When `.gsd` is a symlink AND not listed in `.gitignore`, the staging
+    // fallback must self-heal by appending `.gsd` to `.gitignore` and retrying
+    // `git add -A`. Without this, new user files are silently dropped.
+    const repo = initTempRepo();
+
+    const externalGsd = mkdtempSync(join(tmpdir(), "gsd-external-unignored-"));
+    mkdirSync(join(externalGsd, "activity"), { recursive: true });
+    writeFileSync(join(externalGsd, "activity", "log.jsonl"), "log data");
+    writeFileSync(join(externalGsd, "STATE.md"), "# State");
+
+    symlinkSync(externalGsd, join(repo, ".gsd"));
+
+    createFile(repo, "src/app.ts", "export const x = 1;");
+    run("git add -A", repo);
+    run('git commit -m "add app"', repo);
+    writeFileSync(join(repo, "src/app.ts"), "export const x = 2;");
+    createFile(repo, "src/new-feature.ts", "export const fresh = true;");
+
+    let threw = false;
+    try {
+      nativeAddAllWithExclusions(repo, RUNTIME_EXCLUSION_PATHS);
+    } catch (e) {
+      threw = true;
+      console.error("  unexpected error:", e);
+    }
+    assert.ok(!threw, "nativeAddAllWithExclusions does not throw with symlinked .gsd when .gsd is not gitignored");
+
+    const staged = run("git diff --cached --name-only", repo);
+    assert.ok(staged.includes("src/app.ts"), "tracked modifications stage");
+    assert.ok(
+      staged.includes("src/new-feature.ts"),
+      "self-heal adds .gsd to .gitignore so new user files are staged",
+    );
+    assert.ok(!staged.includes(".gsd"), ".gsd contents stay unstaged after self-heal");
+
+    // Verify the self-heal actually wrote to .gitignore
+    const gitignore = readFileSync(join(repo, ".gitignore"), "utf-8");
+    assert.ok(/^\.gsd\/?$/m.test(gitignore), ".gitignore contains .gsd entry after self-heal");
+
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(externalGsd, { recursive: true, force: true });
+  });
+
+  test('nativeAddAllWithExclusions: explicit staging protects work when manage_gitignore:false (#4423)', () => {
+    // When `git.manage_gitignore: false` is set in PREFERENCES.md, the
+    // self-heal path is disabled. The fallback must still protect user work
+    // by explicitly staging untracked real files while skipping `.gsd`.
+    const repo = initTempRepo();
+
+    const externalGsd = mkdtempSync(join(tmpdir(), "gsd-external-optout-"));
+    mkdirSync(join(externalGsd, "activity"), { recursive: true });
+    writeFileSync(join(externalGsd, "activity", "log.jsonl"), "log data");
+    writeFileSync(join(externalGsd, "STATE.md"), "# State");
+
+    symlinkSync(externalGsd, join(repo, ".gsd"));
+
+    // Create PREFERENCES.md inside the symlink target (the linked .gsd dir)
+    // with the opt-out flag. The regex matches a top-level occurrence.
+    writeFileSync(
+      join(repo, ".gsd", "PREFERENCES.md"),
+      "---\nversion: 1\ngit:\n  manage_gitignore: false\n---\n",
+    );
+
+    createFile(repo, "src/app.ts", "export const x = 1;");
+    run("git add -A", repo);
+    run('git commit -m "add app"', repo);
+    writeFileSync(join(repo, "src/app.ts"), "export const x = 2;");
+    createFile(repo, "src/new-feature.ts", "export const fresh = true;");
+
+    let threw = false;
+    try {
+      nativeAddAllWithExclusions(repo, RUNTIME_EXCLUSION_PATHS);
+    } catch (e) {
+      threw = true;
+      console.error("  unexpected error:", e);
+    }
+    assert.ok(!threw, "nativeAddAllWithExclusions does not throw under manage_gitignore:false");
+
+    const staged = run("git diff --cached --name-only", repo);
+    assert.ok(staged.includes("src/app.ts"), "tracked modifications stage");
+    assert.ok(
+      staged.includes("src/new-feature.ts"),
+      "explicit staging protects new files even when self-heal is disabled",
+    );
+    assert.ok(!staged.includes(".gsd"), ".gsd contents stay unstaged");
+
+    // Self-heal must NOT have written to .gitignore
+    const gitignoreExists = existsSync(join(repo, ".gitignore"));
+    if (gitignoreExists) {
+      const gitignore = readFileSync(join(repo, ".gitignore"), "utf-8");
+      assert.ok(
+        !/^\.gsd\/?$/m.test(gitignore),
+        "manage_gitignore:false must prevent writes to .gitignore",
+      );
+    }
 
     rmSync(repo, { recursive: true, force: true });
     rmSync(externalGsd, { recursive: true, force: true });
@@ -1435,13 +1550,20 @@ describe('git-service', async () => {
     run('git add .gitignore', repo);
     run('git commit -m "add gitignore"', repo);
 
+    // Pre-commit a tracked source file so git add -u can stage modifications.
+    // The symlink fallback uses git add -u (tracked files only), so the file
+    // must be tracked before the autoCommit scenario runs.
+    createFile(repo, "src/feature.ts", "export const feature = true;");
+    run('git add src/feature.ts', repo);
+    run('git commit -m "add feature"', repo);
+
     // Simulate new milestone artifacts created during execution
     writeFileSync(join(externalGsd, "milestones", "M009", "M009-SUMMARY.md"), "# M009 Summary");
     writeFileSync(join(externalGsd, "milestones", "M009", "S01-SUMMARY.md"), "# S01 Summary");
     writeFileSync(join(externalGsd, "milestones", "M009", "T01-VERIFY.json"), '{"passed":true}');
 
-    // Also create a normal source file change
-    createFile(repo, "src/feature.ts", "export const feature = true;");
+    // Modify the tracked source file — git add -u will stage this change
+    writeFileSync(join(repo, "src/feature.ts"), "export const feature = false; // updated");
 
     const svc = new GitServiceImpl(repo);
     const msg = svc.autoCommit("complete-milestone", "M009");
@@ -1454,5 +1576,73 @@ describe('git-service', async () => {
 
     try { rmSync(repo, { recursive: true, force: true }); } catch {}
     try { rmSync(externalGsd, { recursive: true, force: true }); } catch {}
+  });
+
+  // ─── autoCommit: absorbs preceding gsd snapshot commits ─────────────────
+
+  test('autoCommit: absorbs preceding gsd snapshot commits', () => {
+    const repo = initTempRepo();
+
+    // Simulate 2 gsd snapshot commits
+    createFile(repo, "file1.ts", "v1");
+    run("git add -A", repo);
+    run('git commit -m "gsd snapshot: uncommitted changes after 35m inactivity"', repo);
+
+    createFile(repo, "file2.ts", "v2");
+    run("git add -A", repo);
+    run('git commit -m "gsd snapshot: pre-dispatch, uncommitted changes after 40m inactivity"', repo);
+
+    // Verify we have 3 commits (init + 2 snapshots)
+    const countBefore = run("git rev-list --count HEAD", repo);
+    assert.deepStrictEqual(countBefore, "3", "precondition: 3 commits before autoCommit");
+
+    // Now make a real change and autoCommit
+    createFile(repo, "feature.ts", "real work");
+
+    const svc = new GitServiceImpl(repo);
+    const msg = svc.autoCommit("execute-task", "S01/T01");
+    assert.ok(msg !== null, "autoCommit succeeds");
+
+    // Should be 2 commits: init + squashed real commit (snapshots absorbed)
+    const countAfter = run("git rev-list --count HEAD", repo);
+    assert.deepStrictEqual(countAfter, "2", "snapshot commits absorbed into real commit");
+
+    // All files should be present
+    const files = run("git show --name-only HEAD", repo);
+    assert.ok(files.includes("file1.ts"), "file1.ts from snapshot 1 preserved");
+    assert.ok(files.includes("file2.ts"), "file2.ts from snapshot 2 preserved");
+    assert.ok(files.includes("feature.ts"), "feature.ts from real commit preserved");
+
+    // No gsd snapshot commits in log
+    const log = run("git log --oneline", repo);
+    assert.ok(!log.includes("gsd snapshot"), "no gsd snapshot commits remain in history");
+
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  // ─── autoCommit: does not absorb non-snapshot commits ───────────────────
+
+  test('autoCommit: does not absorb non-snapshot commits', () => {
+    const repo = initTempRepo();
+
+    // Create a normal (non-snapshot) commit
+    createFile(repo, "earlier.ts", "earlier work");
+    run("git add -A", repo);
+    run('git commit -m "feat: earlier work"', repo);
+
+    const countBefore = run("git rev-list --count HEAD", repo);
+    assert.deepStrictEqual(countBefore, "2", "precondition: 2 commits before autoCommit");
+
+    // Make a real change and autoCommit
+    createFile(repo, "feature.ts", "new work");
+
+    const svc = new GitServiceImpl(repo);
+    svc.autoCommit("execute-task", "S01/T02");
+
+    // Should be 3 commits — earlier commit not absorbed
+    const countAfter = run("git rev-list --count HEAD", repo);
+    assert.deepStrictEqual(countAfter, "3", "non-snapshot commits NOT absorbed");
+
+    rmSync(repo, { recursive: true, force: true });
   });
 });

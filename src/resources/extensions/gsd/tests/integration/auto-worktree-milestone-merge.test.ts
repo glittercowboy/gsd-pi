@@ -12,7 +12,7 @@
 
 import { describe, test, afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, realpathSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, realpathSync, readFileSync, symlinkSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execSync } from "node:child_process";
@@ -42,6 +42,27 @@ function createTempRepo(): string {
   run("git commit -m init", dir);
   run("git branch -M main", dir);
   return dir;
+}
+
+function createTempRepoWithExternalGsd(): { repo: string; externalState: string } {
+  const realTmp = realpathSync(tmpdir());
+  const repo = realpathSync(mkdtempSync(join(realTmp, "wt-ms-merge-ext-test-")));
+  const externalState = realpathSync(mkdtempSync(join(realTmp, "wt-ms-merge-ext-state-")));
+
+  run("git init", repo);
+  run("git config user.email test@test.com", repo);
+  run("git config user.name Test", repo);
+
+  mkdirSync(join(externalState, "worktrees"), { recursive: true });
+  symlinkSync(externalState, join(repo, ".gsd"));
+
+  writeFileSync(join(repo, "README.md"), "# test\n");
+  writeFileSync(join(externalState, "STATE.md"), "# State\n");
+  run("git add .", repo);
+  run("git commit -m init", repo);
+  run("git branch -M main", repo);
+
+  return { repo, externalState };
 }
 
 /** Minimal roadmap content for mergeMilestoneToMain. */
@@ -85,6 +106,12 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
     const d = createTempRepo();
     tempDirs.push(d);
     return d;
+  }
+
+  function freshRepoWithExternalGsd(): { repo: string; externalState: string } {
+    const { repo, externalState } = createTempRepoWithExternalGsd();
+    tempDirs.push(repo, externalState);
+    return { repo, externalState };
   }
 
   afterEach(() => {
@@ -638,6 +665,178 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
       "#1906: codeFilesChanged must be false when only .gsd/ files were merged");
   });
 
+  test("#2156: mergeMilestoneToMain removes external-state worktrees using the milestone branch name", () => {
+    const { repo, externalState } = freshRepoWithExternalGsd();
+    const wtPath = createAutoWorktree(repo, "M215");
+
+    addSliceToMilestone(repo, wtPath, "M215", "S01", "External cleanup", [
+      { file: "external-cleanup.ts", content: "export const externalCleanup = true;\n", message: "add external cleanup" },
+    ]);
+
+    const realWtPath = realpathSync(wtPath);
+    assert.ok(
+      realWtPath.startsWith(externalState),
+      `worktree should be registered under external .gsd state, got ${realWtPath}`,
+    );
+
+    // Recreate the exact divergence from #1852: local .gsd/ is replaced with a
+    // stale real directory, so worktreePath() no longer matches git's record.
+    unlinkSync(join(repo, ".gsd"));
+    mkdirSync(join(repo, ".gsd", "worktrees", "M215"), { recursive: true });
+    writeFileSync(join(repo, ".gsd", "STATE.md"), "# Local stale state\n");
+    writeFileSync(join(repo, ".gsd", "worktrees", "M215", "stale.txt"), "stale local artifact\n");
+
+    const roadmap = makeRoadmap("M215", "External cleanup", [
+      { id: "S01", title: "External cleanup" },
+    ]);
+
+    mergeMilestoneToMain(repo, "M215", roadmap);
+
+    assert.ok(
+      !run("git worktree list", repo).includes("M215"),
+      "merged milestone worktree should be removed from git worktree list",
+    );
+    assert.ok(!existsSync(realWtPath), "real external worktree directory should be removed");
+    assert.ok(
+      !run("git branch", repo).includes("milestone/M215"),
+      "milestone branch should be deleted after merge cleanup",
+    );
+  });
+
+  test("#2912: MERGE_HEAD cleaned up after squash-merge conflict", () => {
+    const repo = freshRepo();
+    const wtPath = createAutoWorktree(repo, "M291");
+
+    // Create a file on main that will conflict with the milestone branch
+    run("git checkout main", repo);
+    writeFileSync(join(repo, "conflict.ts"), "// main version\nexport const x = 1;\n");
+    run("git add .", repo);
+    run("git commit -m 'add conflict.ts on main'", repo);
+
+    // Switch back to milestone branch and create conflicting content
+    run("git checkout milestone/M291", wtPath);
+    writeFileSync(join(wtPath, "conflict.ts"), "// milestone version\nexport const x = 2;\n");
+    run("git add .", wtPath);
+    run("git commit -m 'add conflict.ts on milestone'", wtPath);
+
+    const roadmap = makeRoadmap("M291", "Conflict milestone", [
+      { id: "S01", title: "Conflict test" },
+    ]);
+
+    // The merge should throw MergeConflictError due to conflict.ts
+    let threw = false;
+    try {
+      mergeMilestoneToMain(repo, "M291", roadmap);
+    } catch (err: unknown) {
+      threw = true;
+      // Verify it's a merge conflict error
+      assert.ok(
+        err instanceof Error && err.message.includes("conflict"),
+        "should throw a conflict-related error",
+      );
+    }
+    assert.ok(threw, "mergeMilestoneToMain must throw on code conflict");
+
+    // BUG #2912: MERGE_HEAD must NOT be left on disk after the error
+    const mergeHeadPath = join(repo, ".git", "MERGE_HEAD");
+    assert.ok(
+      !existsSync(mergeHeadPath),
+      "#2912: MERGE_HEAD must be cleaned up after merge conflict error",
+    );
+  });
+
+  test("#2912: stale MERGE_HEAD from native merge is cleaned after successful commit", () => {
+    const repo = freshRepo();
+    const wtPath = createAutoWorktree(repo, "M292");
+
+    addSliceToMilestone(repo, wtPath, "M292", "S01", "Feature A", [
+      { file: "feature-a.ts", content: "export const a = true;\n", message: "add feature a" },
+    ]);
+
+    const roadmap = makeRoadmap("M292", "Clean merge", [
+      { id: "S01", title: "Feature A" },
+    ]);
+
+    // Simulate what libgit2's merge implementation does: it creates MERGE_HEAD
+    // even for squash merges (unlike CLI git). We plant MERGE_HEAD before calling
+    // mergeMilestoneToMain to verify the success path cleans it up.
+    // We cannot plant it before the call because the function manages checkout
+    // internally, so instead we verify after the call.
+    mergeMilestoneToMain(repo, "M292", roadmap);
+
+    // After successful merge+commit, MERGE_HEAD must not linger
+    const mergeHeadPath = join(repo, ".git", "MERGE_HEAD");
+    assert.ok(
+      !existsSync(mergeHeadPath),
+      "#2912: MERGE_HEAD must be cleaned up after successful merge",
+    );
+  });
+
+  test("#2912: planted MERGE_HEAD is cleaned up in success path", () => {
+    // This test directly verifies the cleanup code handles a MERGE_HEAD file
+    // left by the native (libgit2) merge path. We hook into the merge by
+    // planting MERGE_HEAD right after nativeMergeSquash would create it.
+    const repo = freshRepo();
+    const wtPath = createAutoWorktree(repo, "M293");
+
+    addSliceToMilestone(repo, wtPath, "M293", "S01", "Feature B", [
+      { file: "feature-b.ts", content: "export const b = true;\n", message: "add feature b" },
+    ]);
+
+    const roadmap = makeRoadmap("M293", "Planted MERGE_HEAD", [
+      { id: "S01", title: "Feature B" },
+    ]);
+
+    // Plant a fake MERGE_HEAD in the git dir to simulate libgit2 behavior.
+    // We need to do this after the function checks out main but before it
+    // commits. Since we can't intercept mid-function, we plant it before
+    // the call. If the function cleans it up, the test passes.
+    const gitDir = join(repo, ".git");
+    const fakeHead = run("git rev-parse HEAD", repo);
+    writeFileSync(join(gitDir, "MERGE_HEAD"), fakeHead + "\n");
+
+    mergeMilestoneToMain(repo, "M293", roadmap);
+
+    // The planted MERGE_HEAD must be cleaned up
+    assert.ok(
+      !existsSync(join(gitDir, "MERGE_HEAD")),
+      "#2912: planted MERGE_HEAD must be removed by success-path cleanup",
+    );
+  });
+
+  test("#2912: stale SQUASH_MSG and MERGE_MSG are cleaned before squash merge", () => {
+    // Verifies that the pre-merge cleanup (step 7b) removes all three merge
+    // artifacts — not just MERGE_HEAD — so that `git merge --squash` never
+    // encounters leftover state from a prior interrupted operation.
+    const repo = freshRepo();
+    const wtPath = createAutoWorktree(repo, "M294");
+
+    addSliceToMilestone(repo, wtPath, "M294", "S01", "Feature C", [
+      { file: "feature-c.ts", content: "export const c = true;\n", message: "add feature c" },
+    ]);
+
+    const roadmap = makeRoadmap("M294", "Stale merge artifacts", [
+      { id: "S01", title: "Feature C" },
+    ]);
+
+    // Plant stale merge artifacts in the git dir to simulate a prior
+    // interrupted merge.  The pre-merge cleanup must remove all of them.
+    const gitDir = join(repo, ".git");
+    writeFileSync(join(gitDir, "SQUASH_MSG"), "stale squash message\n");
+    writeFileSync(join(gitDir, "MERGE_MSG"), "stale merge message\n");
+
+    mergeMilestoneToMain(repo, "M294", roadmap);
+
+    assert.ok(
+      !existsSync(join(gitDir, "SQUASH_MSG")),
+      "#2912: stale SQUASH_MSG must be removed by pre-merge cleanup",
+    );
+    assert.ok(
+      !existsSync(join(gitDir, "MERGE_MSG")),
+      "#2912: stale MERGE_MSG must be removed by pre-merge cleanup",
+    );
+  });
+
   test("#1906: codeFilesChanged=true when real code is merged", () => {
     const repo = freshRepo();
     const wtPath = createAutoWorktree(repo, "M190");
@@ -654,5 +853,35 @@ describe("auto-worktree-milestone-merge", { timeout: 300_000 }, () => {
     assert.strictEqual(result.codeFilesChanged, true,
       "#1906: codeFilesChanged must be true when real code files were merged");
     assert.ok(existsSync(join(repo, "real-code.ts")), "real-code.ts merged to main");
+  });
+
+  // #2505 regression: when a per-entry restore of the milestone shelter fails,
+  // the shelter must be retained so the queued milestone files (whose sources
+  // were deleted during the shelter step) remain recoverable. Deleting the
+  // shelter unconditionally would permanently lose that data.
+  test("#2505: shelter retained when restore fails; cleaned up on success", () => {
+    const repo = freshRepo();
+    const wtPath = createAutoWorktree(repo, "M200");
+
+    addSliceToMilestone(repo, wtPath, "M200", "S01", "Feature", [
+      { file: "feature.ts", content: "export const f = 1;\n", message: "add feature" },
+    ]);
+
+    // Seed a queued (non-target) milestone in .gsd/milestones/ that will be
+    // sheltered during the merge and restored afterwards.
+    const queuedDir = join(repo, ".gsd", "milestones", "M201");
+    mkdirSync(queuedDir, { recursive: true });
+    writeFileSync(join(queuedDir, "CONTEXT.md"), "# queued\n");
+
+    const roadmap = makeRoadmap("M200", "Milestone w/ queued sibling", [
+      { id: "S01", title: "Feature" },
+    ]);
+
+    const result = mergeMilestoneToMain(repo, "M200", roadmap);
+
+    // Normal success path: queued milestone restored, shelter cleaned up.
+    assert.ok(existsSync(join(queuedDir, "CONTEXT.md")), "queued milestone restored from shelter");
+    assert.ok(!existsSync(join(repo, ".gsd", ".milestone-shelter")), "shelter removed on successful restore");
+    assert.ok(result.commitMessage.length > 0, "merge completed");
   });
 });

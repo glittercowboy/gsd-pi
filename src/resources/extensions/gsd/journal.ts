@@ -12,9 +12,21 @@
  * - Silent failure: journal writes never throw — absence of events is the failure signal
  */
 
-import { appendFileSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
+import { isStaleWrite } from "./auto/turn-epoch.js";
+import { withFileLockSync } from "./file-lock.js";
 import { gsdRoot } from "./paths.js";
+import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
+import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -37,7 +49,18 @@ export type JournalEventType =
   | "worktree-create-failed"
   | "worktree-skip"
   | "worktree-merge-start"
-  | "worktree-merge-failed";
+  | "worktree-merge-failed"
+  | "artifact-verification-retry"
+  // #4764 — worktree lifespan / divergence telemetry
+  | "worktree-created"
+  | "worktree-merged"
+  | "worktree-orphaned"
+  | "auto-exit"
+  | "worktree-sync"
+  | "canonical-root-redirect"
+  // #4765 — slice-cadence collapse
+  | "slice-merged"
+  | "milestone-resquash";
 
 /** A single structured event in the journal. */
 export interface JournalEntry {
@@ -81,14 +104,57 @@ export interface JournalQueryFilters {
  * Never throws — all errors are silently caught.
  */
 export function emitJournalEvent(basePath: string, entry: JournalEntry): void {
+  // Drop writes from a turn superseded by timeout recovery / cancellation.
+  // See auto/turn-epoch.ts for the full rationale.
+  if (isStaleWrite("journal")) return;
   try {
     const journalDir = join(gsdRoot(basePath), "journal");
     mkdirSync(journalDir, { recursive: true });
     const dateStr = entry.ts.slice(0, 10);
     const filePath = join(journalDir, `${dateStr}.jsonl`);
-    appendFileSync(filePath, JSON.stringify(entry) + "\n");
+    // Ensure file exists so proper-lockfile can acquire a lock against it.
+    if (!existsSync(filePath)) closeSync(openSync(filePath, "a"));
+    // onLocked: "skip" — journal writes are best-effort. POSIX O_APPEND
+    // atomicity still protects small entries; the lock mainly serializes
+    // larger writes and gives cross-process exclusivity on platforms where
+    // O_APPEND semantics are weaker (Windows).
+    withFileLockSync(
+      filePath,
+      () => {
+        appendFileSync(filePath, JSON.stringify(entry) + "\n");
+      },
+      { onLocked: "skip" },
+    );
   } catch {
     // Silent failure — journal must never break auto-mode
+  }
+
+  if (!isUnifiedAuditEnabled()) return;
+  try {
+    const causedBy = entry.causedBy
+      ? `${entry.causedBy.flowId}:${entry.causedBy.seq}`
+      : undefined;
+    const turnId =
+      typeof entry.data?.turnId === "string"
+        ? entry.data.turnId
+        : undefined;
+    emitUokAuditEvent(
+      basePath,
+      buildAuditEnvelope({
+        traceId: entry.flowId,
+        turnId,
+        causedBy,
+        category: "orchestration",
+        type: `journal-${entry.eventType}`,
+        payload: {
+          seq: entry.seq,
+          rule: entry.rule,
+          data: entry.data ?? {},
+        },
+      }),
+    );
+  } catch {
+    // Best-effort: audit projection must never block journal writes.
   }
 }
 

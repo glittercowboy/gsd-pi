@@ -30,25 +30,11 @@ test('startMcpServer accepts the correct argument shape', async () => {
   assert.strictEqual(startMcpServer.length, 1, 'startMcpServer should accept one argument')
 })
 
-test('startMcpServer can be called with mock tools', async () => {
-  const { startMcpServer } = await import(distUrl('mcp-server.js'))
+test('compiled MCP runtime dependencies resolve with explicit .js subpaths', async () => {
+  const stdioMod = await import('@modelcontextprotocol/sdk/server/stdio.js')
+  const typesMod = await import('@modelcontextprotocol/sdk/types.js')
 
-  // Create a mock tool matching the McpToolDef interface
-  const mockTool = {
-    name: 'test_tool',
-    description: 'A test tool',
-    parameters: { type: 'object', properties: {} },
-    execute: async () => ({
-      content: [{ type: 'text', text: 'hello' }],
-    }),
-  }
-
-  // Verify the function can be called with the correct signature
-  // without throwing during argument validation. It will attempt to
-  // connect to stdin/stdout as an MCP transport, which won't work in
-  // a test environment, but the Server instance is created successfully.
-  assert.doesNotThrow(() => {
-    void startMcpServer({ tools: [mockTool], version: '0.0.0-test' })
-      .catch(() => { /* expected: no MCP client on stdin */ })
-  })
+  assert.strictEqual(typeof stdioMod.StdioServerTransport, 'function')
+  assert.ok(typesMod.ListToolsRequestSchema, 'ListToolsRequestSchema should be exported')
+  assert.ok(typesMod.CallToolRequestSchema, 'CallToolRequestSchema should be exported')
 })

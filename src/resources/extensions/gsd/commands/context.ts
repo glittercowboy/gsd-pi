@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import { checkRemoteAutoSession, isAutoActive, isAutoPaused, stopAutoRemote } from "../auto.js";
-import { assertSafeDirectory } from "../validate-directory.js";
+import { validateDirectory } from "../validate-directory.js";
 import { resolveProjectRoot } from "../worktree.js";
 import { showNextAction } from "../../shared/tui.js";
 import { handleStatus } from "./handlers/core.js";
@@ -12,13 +12,30 @@ export interface GsdDispatchContext {
   trimmed: string;
 }
 
+/**
+ * Typed error for when GSD is run outside a valid project directory.
+ * Command handlers catch this to show a friendly message instead of a raw exception.
+ */
+export class GSDNoProjectError extends Error {
+  constructor(reason: string) {
+    super(reason);
+    this.name = "GSDNoProjectError";
+  }
+}
+
 export function projectRoot(): string {
-  const cwd = process.cwd();
+  let cwd: string;
+  try {
+    cwd = process.cwd();
+  } catch {
+    // cwd directory was deleted (e.g. worktree teardown) — fall back to HOME (#3598)
+    cwd = process.env.HOME ?? "/";
+  }
   const root = resolveProjectRoot(cwd);
-  if (root !== cwd) {
-    assertSafeDirectory(cwd);
-  } else {
-    assertSafeDirectory(root);
+  const pathToCheck = root !== cwd ? cwd : root;
+  const result = validateDirectory(pathToCheck);
+  if (result.severity === "blocked") {
+    throw new GSDNoProjectError(result.reason ?? "GSD must be run inside a project directory.");
   }
   return root;
 }

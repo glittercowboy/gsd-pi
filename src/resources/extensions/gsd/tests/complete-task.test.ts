@@ -14,6 +14,7 @@ import {
   getTask,
   getSliceTasks,
   insertVerificationEvidence,
+  SCHEMA_VERSION,
 } from '../gsd-db.ts';
 import { handleCompleteTask } from '../tools/complete-task.ts';
 
@@ -99,19 +100,22 @@ function makeValidParams() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// complete-task: Schema v5 migration
+// complete-task: Fresh DB is migrated to the current schema version
 // ═══════════════════════════════════════════════════════════════════════════
 
-console.log('\n=== complete-task: schema v5 migration ===');
+console.log('\n=== complete-task: fresh DB migrates to current schema version ===');
 {
   const dbPath = tempDbPath();
   openDatabase(dbPath);
 
   const adapter = _getAdapter()!;
 
-  // Verify schema version is current (v14 after indexes + slice_dependencies)
+  // Verify schema version matches the current source-of-truth constant.
+  // Asserting against SCHEMA_VERSION (not a hardcoded number) keeps this
+  // green across migration bumps while still catching a
+  // "fresh-DB-was-not-migrated" regression.
   const versionRow = adapter.prepare('SELECT MAX(version) as v FROM schema_version').get();
-  assertEq(versionRow?.['v'], 14, 'schema version should be 14');
+  assertEq(versionRow?.['v'], SCHEMA_VERSION, 'fresh DB should be migrated to current SCHEMA_VERSION');
 
   // Verify all 4 new tables exist
   const tables = adapter.prepare(
@@ -443,6 +447,45 @@ console.log('\n=== complete-task: handler with missing plan file ===');
   assertTrue(!('error' in result), 'handler should succeed without plan file');
   if (!('error' in result)) {
     assertTrue(fs.existsSync(result.summaryPath), 'summary should be written even without plan file');
+  }
+
+  cleanupDir(basePath);
+  cleanup(dbPath);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// complete-task: minimal params — no optional fields (#2771 regression)
+// ═══════════════════════════════════════════════════════════════════════════
+
+console.log('\n=== complete-task: minimal params (no keyFiles, keyDecisions, verificationEvidence, blockerDiscovered) ===');
+{
+  const dbPath = tempDbPath();
+  openDatabase(dbPath);
+
+  const { basePath, planPath } = createTempProject();
+
+  insertMilestone({ id: 'M001', title: 'Test Milestone' });
+  insertSlice({ id: 'S01', milestoneId: 'M001', title: 'Test Slice' });
+
+  // Minimal params — only required fields, all optional enrichment fields omitted
+  const minimalParams = {
+    taskId: 'T01',
+    sliceId: 'S01',
+    milestoneId: 'M001',
+    oneLiner: 'Basic task',
+    narrative: 'Did the work.',
+    verification: 'Looks good.',
+    // keyFiles, keyDecisions, verificationEvidence, blockerDiscovered intentionally omitted
+  };
+
+  const result = await handleCompleteTask(minimalParams as any, basePath);
+
+  assertTrue(!('error' in result), 'handler should not crash with minimal params (no optional fields)');
+  if (!('error' in result)) {
+    assertTrue(fs.existsSync(result.summaryPath), 'summary file should be written with minimal params');
+    const summaryContent = fs.readFileSync(result.summaryPath, 'utf-8');
+    assertMatch(summaryContent, /blocker_discovered:\s*false/, 'blocker_discovered should default to false');
+    assertMatch(summaryContent, /\(none\)/, 'key_files/key_decisions should show (none) placeholder');
   }
 
   cleanupDir(basePath);

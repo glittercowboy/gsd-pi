@@ -6,11 +6,15 @@ import { handleConfig } from "../../commands-config.js";
 import { handleDoctor, handleCapture, handleKnowledge, handleRunHook, handleSkillHealth, handleSteer, handleTriage, handleUpdate } from "../../commands-handlers.js";
 import { handleInspect } from "../../commands-inspect.js";
 import { handleLogs } from "../../commands-logs.js";
+import { handleDebug } from "../../commands-debug.js";
 import { handleCleanupBranches, handleCleanupSnapshots, handleSkip, handleCleanupProjects, handleCleanupWorktrees, handleRecover } from "../../commands-maintenance.js";
 import { handleExport } from "../../export.js";
 import { handleHistory } from "../../history.js";
 import { handleUndo } from "../../undo.js";
 import { handleRemote } from "../../../remote-questions/mod.js";
+import { handleShip } from "../../commands-ship.js";
+import { handleSessionReport } from "../../commands-session-report.js";
+import { handlePrBranch } from "../../commands-pr-branch.js";
 import { projectRoot } from "../context.js";
 
 export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<boolean> {
@@ -37,6 +41,10 @@ export async function handleOpsCommand(trimmed: string, ctx: ExtensionCommandCon
   }
   if (trimmed === "logs" || trimmed.startsWith("logs ")) {
     await handleLogs(trimmed.replace(/^logs\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "debug" || trimmed.startsWith("debug ")) {
+    await handleDebug(trimmed.replace(/^debug\s*/, "").trim(), ctx, pi);
     return true;
   }
   if (trimmed === "forensics" || trimmed.startsWith("forensics ")) {
@@ -178,6 +186,16 @@ Examples:
     await dispatchDirectPhase(ctx, pi, phase, projectRoot());
     return true;
   }
+  if (trimmed === "notifications" || trimmed.startsWith("notifications ")) {
+    const { handleNotificationsCommand } = await import("./notifications-handler.js");
+    await handleNotificationsCommand(trimmed.replace(/^notifications\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "escalate" || trimmed.startsWith("escalate ")) {
+    const { handleEscalateCommand } = await import("./escalate.js");
+    await handleEscalateCommand(trimmed.replace(/^escalate\s*/, "").trim(), ctx, pi);
+    return true;
+  }
   if (trimmed === "inspect") {
     await handleInspect(ctx);
     return true;
@@ -204,6 +222,44 @@ Examples:
   if (trimmed === "rethink") {
     const { handleRethink } = await import("../../rethink.js");
     await handleRethink(trimmed, ctx, pi);
+    return true;
+  }
+  if (trimmed === "codebase" || trimmed.startsWith("codebase ")) {
+    const { handleCodebase } = await import("../../commands-codebase.js");
+    await handleCodebase(trimmed.replace(/^codebase\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "ship" || trimmed.startsWith("ship ")) {
+    await handleShip(trimmed.replace(/^ship\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "session-report" || trimmed.startsWith("session-report ")) {
+    await handleSessionReport(trimmed.replace(/^session-report\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "pr-branch" || trimmed.startsWith("pr-branch ")) {
+    await handlePrBranch(trimmed.replace(/^pr-branch\s*/, "").trim(), ctx);
+    return true;
+  }
+  if (trimmed === "add-tests" || trimmed.startsWith("add-tests ")) {
+    const { handleAddTests } = await import("../../commands-add-tests.js");
+    await handleAddTests(trimmed.replace(/^add-tests\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "extract-learnings" || trimmed.startsWith("extract-learnings ")) {
+    const { handleExtractLearnings } = await import("../../commands-extract-learnings.js");
+    await handleExtractLearnings(trimmed.replace(/^extract-learnings\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "memory" || trimmed.startsWith("memory ") || trimmed === "memory help") {
+    const { handleMemory } = await import("../../commands-memory.js");
+    await handleMemory(trimmed.replace(/^memory\s*/, "").trim(), ctx, pi);
+    return true;
+  }
+  if (trimmed === "scan" || trimmed.startsWith("scan ")) {
+    const { handleScan } = await import("../../commands-scan.js");
+    // \s* (not \s+) is intentional: handles both /gsd scan (no args) and /gsd scan --focus X
+    await handleScan(trimmed.replace(/^scan\s*/, "").trim(), ctx, pi);
     return true;
   }
   return false;

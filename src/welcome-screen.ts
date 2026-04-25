@@ -6,14 +6,47 @@
  * Falls back to simple text on narrow terminals (<70 cols) or non-TTY.
  */
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import os from 'node:os'
 import chalk from 'chalk'
+import stripAnsi from 'strip-ansi'
 import { GSD_LOGO } from './logo.js'
+
+interface GsdState {
+  milestone?: string
+  phase?: string
+  slice?: string
+  nextAction?: string
+}
+
+function readGsdState(): GsdState | undefined {
+  try {
+    const raw = readFileSync(join(process.cwd(), '.gsd', 'STATE.md'), 'utf-8')
+    const state: GsdState = {}
+    const milestone = raw.match(/^\*\*Active Milestone:\*\*\s*(.+)$/m)
+    if (milestone) state.milestone = milestone[1].trim()
+    const slice = raw.match(/^\*\*Active Slice:\*\*\s*(.+)$/m)
+    if (slice) state.slice = slice[1].trim()
+    const phase = raw.match(/^\*\*Phase:\*\*\s*(.+)$/m)
+    if (phase) state.phase = phase[1].trim()
+    // Accept both template shapes: inline "**Next Action:** ..." and the
+    // "## Next Action\n<line>" heading format. Prefer the inline match.
+    const nextInline = raw.match(/^\*\*Next Action:\*\*\s*(.+)$/m)
+    const nextHeading = raw.match(/^##\s*Next Action\s*\n+([^\n]+)/m)
+    const nextMatch = nextInline ?? nextHeading
+    if (nextMatch) state.nextAction = nextMatch[1].trim()
+    return state
+  } catch {
+    return undefined
+  }
+}
 
 export interface WelcomeScreenOptions {
   version: string
   modelName?: string
   provider?: string
+  remoteChannel?: string
 }
 
 function getShortCwd(): string {
@@ -24,7 +57,7 @@ function getShortCwd(): string {
 
 /** Visible length — strips ANSI escape codes before measuring. */
 function visLen(s: string): number {
-  return s.replace(/\x1b\[[0-9;]*m/g, '').length
+  return stripAnsi(s).length
 }
 
 /** Right-pad a string to the given visible width. */
@@ -35,9 +68,9 @@ function rpad(s: string, w: number): string {
 export function printWelcomeScreen(opts: WelcomeScreenOptions): void {
   if (!process.stderr.isTTY) return
 
-  const { version, modelName, provider } = opts
+  const { version, remoteChannel } = opts
   const shortCwd = getShortCwd()
-  const termWidth = Math.min((process.stderr.columns || 80) - 1, 200)
+  const termWidth = (process.stderr.columns || 80) - 1
 
   // Narrow terminal fallback
   if (termWidth < 70) {
@@ -69,6 +102,7 @@ export function printWelcomeScreen(opts: WelcomeScreenOptions): void {
   if (process.env.JINA_API_KEY)       toolParts.push('Jina ✓')
   if (process.env.TAVILY_API_KEY)     toolParts.push('Tavily ✓')
   if (process.env.CONTEXT7_API_KEY)   toolParts.push('Context7 ✓')
+  if (remoteChannel)                  toolParts.push(`${remoteChannel.charAt(0).toUpperCase() + remoteChannel.slice(1)} ✓`)
 
   // Tools left, hint right-aligned on the same row
   const toolsLeft  = toolParts.length > 0 ? chalk.dim('  ' + toolParts.join('  ·  ')) : ''
@@ -76,16 +110,39 @@ export function printWelcomeScreen(opts: WelcomeScreenOptions): void {
   const footerFill = RIGHT_INNER - visLen(toolsLeft) - visLen(hintRight)
   const footerRow  = toolsLeft + ' '.repeat(Math.max(1, footerFill)) + hintRight
 
+  // "Welcome back" context lines — GSD state if available, else hint.
+  // Intentionally avoids data already shown in the footer (model, provider,
+  // pwd, branch).
+  const state = readGsdState()
+  let line1 = ''
+  let line2 = ''
+  if (state?.milestone) {
+    const statusParts = [state.milestone, state.phase, state.slice].filter(Boolean)
+    const activePrefix = '  Active     '
+    const maxActiveLen = RIGHT_INNER - activePrefix.length - 1
+    let activeText = statusParts.join(' · ')
+    if (activeText.length > maxActiveLen) activeText = activeText.slice(0, maxActiveLen - 1) + '…'
+    line1 = `${activePrefix}${chalk.dim(activeText)}`
+    line2 = state.nextAction
+      ? `  Next       ${chalk.dim(state.nextAction)}`
+      : ''
+  } else {
+    line1 = `  Status     ${chalk.dim('No active GSD project')}`
+    line2 = `             ${chalk.dim('/gsd to begin')}`
+  }
+  const sessionLine = line1
+  const projectLine = line2
+
   const DIVIDER = null
   const rightRows: (string | null)[] = [
     titleRow,
     DIVIDER,
-    modelName ? `  Model      ${chalk.dim(modelName)}`  : '',
-    provider  ? `  Provider   ${chalk.dim(provider)}`   : '',
-    `  Directory  ${chalk.dim(shortCwd)}`,
+    '',
+    sessionLine,
+    projectLine,
+    '',
     DIVIDER,
     footerRow,
-    '',
   ]
 
   // ── Render ──────────────────────────────────────────────────────────────────

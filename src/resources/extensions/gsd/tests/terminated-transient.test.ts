@@ -82,3 +82,47 @@ test("#2572: 'SyntaxError' with JSON context (truncated stream) is transient", (
   assert.equal(isTransient(result), true, "'SyntaxError...JSON' should be transient");
   assert.equal(result.kind, "stream", "JSON parse errors are stream kind");
 });
+
+// --- Catch-all: all V8 JSON.parse variants matched by "in JSON at position" ---
+
+test("V8 JSON.parse: 'No number after minus sign in JSON' is transient (#2882)", () => {
+  const result = classifyError("No number after minus sign in JSON at position 42");
+  assert.equal(isTransient(result), true);
+  assert.equal(result.kind, "stream");
+});
+
+test("V8 JSON.parse: 'Expected property value after colon' is transient", () => {
+  const result = classifyError("Expected ',' or '}' after property value in JSON at position 108");
+  assert.equal(isTransient(result), true);
+  assert.equal(result.kind, "stream");
+});
+
+test("V8 JSON.parse: 'Bad control character in string literal' is transient", () => {
+  const result = classifyError("Bad control character in string literal in JSON at position 5");
+  assert.equal(isTransient(result), true);
+  assert.equal(result.kind, "stream");
+});
+
+test("V8 JSON.parse: 'Bad escaped character' is transient", () => {
+  const result = classifyError("Bad escaped character in JSON at position 17");
+  assert.equal(isTransient(result), true);
+  assert.equal(result.kind, "stream");
+});
+
+test("V8 JSON.parse: 'Unexpected number' is transient", () => {
+  const result = classifyError("Unexpected number in JSON at position 0");
+  assert.equal(isTransient(result), true);
+  assert.equal(result.kind, "stream");
+});
+
+test("V8 JSON.parse: 'Unexpected string' is transient", () => {
+  const result = classifyError("Unexpected string in JSON at position 12");
+  assert.equal(isTransient(result), true);
+  assert.equal(result.kind, "stream");
+});
+
+test("V8 JSON.parse with line/column suffix is transient", () => {
+  const result = classifyError("Unexpected token x in JSON at position 99 (line 3 column 14)");
+  assert.equal(isTransient(result), true);
+  assert.equal(result.kind, "stream");
+});

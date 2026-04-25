@@ -14,6 +14,7 @@ export type UnitRuntimePhase =
   | "dispatched"
   | "wrapup-warning-sent"
   | "timeout"
+  | "finalize-timeout"
   | "recovered"
   | "finalized"
   | "paused"

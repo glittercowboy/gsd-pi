@@ -6,7 +6,34 @@
  */
 
 import type { Frame, Page } from "playwright";
-import sharp from "sharp";
+
+// sharp is an optional native dependency. Load it lazily so that the extension
+// can still be loaded on platforms where sharp is unavailable (e.g. bunx on
+// Raspberry Pi). constrainScreenshot falls back to returning the raw buffer
+// when sharp is not installed, which means screenshots won't be resized but
+// the tool remains functional.
+let _sharp: typeof import("sharp") | null | undefined;
+async function getSharp(): Promise<typeof import("sharp") | null> {
+	if (_sharp !== undefined) return _sharp;
+	try {
+		_sharp = (await import("sharp")).default;
+	} catch {
+		_sharp = null;
+	}
+	return _sharp;
+}
+
+/**
+ * Test-only seam: override the cached sharp module. Pass `null` to simulate
+ * an environment where the sharp native dep is unavailable; pass `undefined`
+ * to clear the cache and let the next getSharp() call re-import. See
+ * tests/capture-sharp-optional.test.cjs.
+ */
+export function __setSharpForTesting(
+	value: typeof import("sharp") | null | undefined,
+): void {
+	_sharp = value;
+}
 import type { CompactPageState, CompactSelectorState } from "./state.js";
 import { formatCompactStateSummary } from "./utils.js";
 
@@ -168,6 +195,9 @@ export async function constrainScreenshot(
 	mimeType: string,
 	quality: number,
 ): Promise<Buffer> {
+	const sharp = await getSharp();
+	if (!sharp) return buffer;
+
 	const meta = await sharp(buffer).metadata();
 	const width = meta.width;
 	const height = meta.height;

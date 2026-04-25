@@ -46,7 +46,11 @@ interface FormAnalysisResult {
  * Runs inside page.evaluate(). Finds the target form, inventories all fields
  * with full label resolution, and returns a structured result.
  */
-function buildFormAnalysisScript(selector?: string): string {
+// Exported for tests only (see tests/browser-tools-integration.test.mjs).
+// Keep this function treated as module-private for production call sites —
+// the only legitimate external caller is the Playwright-driven integration
+// suite that needs to evaluate the returned IIFE against real DOM.
+export function buildFormAnalysisScript(selector?: string): string {
 	// We return a string that will be evaluated in the page context.
 	// This avoids serialization issues with passing functions.
 	return `(() => {

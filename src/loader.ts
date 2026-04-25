@@ -3,7 +3,7 @@
 // Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 import { fileURLToPath } from 'url'
 import { dirname, resolve, join, relative, delimiter } from 'path'
-import { existsSync, readFileSync, mkdirSync, symlinkSync, cpSync } from 'fs'
+import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, symlinkSync, cpSync } from 'fs'
 
 // Fast-path: handle --version/-v and --help/-h before importing any heavy
 // dependencies. This avoids loading the entire pi-coding-agent barrel import
@@ -110,6 +110,11 @@ if (!existsSync(appRoot)) {
 // GSD_CODING_AGENT_DIR — tells pi's getAgentDir() to return ~/.gsd/agent/ instead of ~/.gsd/agent/
 process.env.GSD_CODING_AGENT_DIR = agentDir
 
+// GSD_PKG_ROOT — absolute path to gsd-pi package root. Used by deployed extensions
+// (e.g. auto.ts resume path) to import modules like resource-loader.js that live
+// in the package tree, not in the deployed ~/.gsd/agent/ tree.
+process.env.GSD_PKG_ROOT = gsdRoot
+
 // RTK environment — make ~/.gsd/agent/bin visible to all child-process paths,
 // not just the bash tool, and force-disable RTK telemetry for GSD-managed use.
 applyRtkProcessEnv(process.env)
@@ -175,14 +180,37 @@ if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.http_proxy 
 // On Windows without Developer Mode or admin rights, symlinkSync will throw even for
 // 'junction' type — so we fall back to cpSync (a full directory copy) which works
 // everywhere without elevated permissions.
-const gsdScopeDir = join(gsdNodeModules, '@gsd')
+// Discover linkable workspace packages by scanning packages/*/package.json for
+// `gsd.linkable === true`. This is the single source of truth — the same list
+// read by scripts/link-workspace-packages.cjs and scripts/validate-pack.js.
+// Adding a new linkable package requires only setting `gsd.linkable` in its
+// package.json; there is no enumeration to keep in sync here.
 const packagesDir = join(gsdRoot, 'packages')
-const wsPackages = ['native', 'pi-agent-core', 'pi-ai', 'pi-coding-agent', 'pi-tui']
+type WsPkg = { dir: string; scope: string; name: string }
+const wsPackages: WsPkg[] = []
 try {
-  if (!existsSync(gsdScopeDir)) mkdirSync(gsdScopeDir, { recursive: true })
+  if (existsSync(packagesDir)) {
+    for (const dir of readdirSync(packagesDir)) {
+      const pkgPath = join(packagesDir, dir)
+      if (!statSync(pkgPath).isDirectory()) continue
+      const pkgJsonPath = join(pkgPath, 'package.json')
+      if (!existsSync(pkgJsonPath)) continue
+      try {
+        const pkg = JSON.parse(readFileSync(pkgJsonPath, 'utf-8'))
+        const gsd = pkg.gsd
+        if (!gsd || gsd.linkable !== true) continue
+        if (gsd.scope && gsd.name) wsPackages.push({ dir, scope: gsd.scope, name: gsd.name })
+      } catch { /* ignore malformed package.json */ }
+    }
+  }
+} catch { /* non-fatal — validation below catches missing critical packages */ }
+
+try {
   for (const pkg of wsPackages) {
-    const target = join(gsdScopeDir, pkg)
-    const source = join(packagesDir, pkg)
+    const scopeDir = join(gsdNodeModules, pkg.scope)
+    if (!existsSync(scopeDir)) mkdirSync(scopeDir, { recursive: true })
+    const target = join(scopeDir, pkg.name)
+    const source = join(packagesDir, pkg.dir)
     if (!existsSync(source) || existsSync(target)) continue
     try {
       symlinkSync(source, target, 'junction')
@@ -193,6 +221,8 @@ try {
     }
   }
 } catch { /* non-fatal */ }
+
+const gsdScopeDir = join(gsdNodeModules, '@gsd')
 
 // Validate critical workspace packages are resolvable. If still missing after the
 // symlink+copy attempts, emit a clear diagnostic instead of a cryptic

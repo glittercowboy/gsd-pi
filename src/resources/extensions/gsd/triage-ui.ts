@@ -49,10 +49,18 @@ const CLASSIFICATION_LABELS: Record<Classification, { label: string; description
     label: "Note",
     description: "Informational only — no action needed.",
   },
+  "stop": {
+    label: "Stop",
+    description: "Halt auto-mode immediately — user directive to cease execution.",
+  },
+  "backtrack": {
+    label: "Backtrack",
+    description: "Abandon current milestone and return to a previous one.",
+  },
 };
 
 const ALL_CLASSIFICATIONS: Classification[] = [
-  "quick-task", "inject", "defer", "replan", "note",
+  "quick-task", "inject", "defer", "replan", "note", "stop", "backtrack",
 ];
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -83,8 +91,9 @@ export async function showTriageConfirmation(
     const capture = captureMap.get(result.captureId);
     if (!capture) continue;
 
-    // Auto-confirm note and defer — low-impact, no plan modification
-    if (result.classification === "note" || result.classification === "defer") {
+    // Auto-confirm note, defer, stop, and backtrack — low-impact or urgent directives
+    if (result.classification === "note" || result.classification === "defer"
+      || result.classification === "stop" || result.classification === "backtrack") {
       const resolution = result.classification === "note"
         ? "acknowledged as note"
         : `deferred${result.targetSlice ? ` to ${result.targetSlice}` : ""}`;

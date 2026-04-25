@@ -2,7 +2,9 @@
 // Centralized warning/error accumulator for the workflow engine pipeline.
 // Captures structured entries that the auto-loop can drain after each unit
 // to surface root causes for stuck loops, silent degradation, and blocked writes.
-// All entries are also persisted to .gsd/audit-log.jsonl for post-mortem analysis.
+// Error-severity entries are persisted to .gsd/audit-log.jsonl (sanitized) for
+// post-mortem analysis. Warnings are ephemeral (stderr + buffer only) to avoid
+// log amplification from expected-control-flow catch paths.
 //
 // Stderr policy: every logWarning/logError call writes immediately to stderr
 // for terminal visibility. This is intentional — unlike debug-logger (which is
@@ -14,8 +16,20 @@
 // the start of each unit to prevent log bleed between units running in the same
 // Node process.
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
+
+import { withFileLockSync } from "./file-lock.js";
+import { appendNotification } from "./notification-store.js";
+import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
+import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
@@ -31,7 +45,30 @@ export type LogComponent =
   | "state"         // deriveState fallback/degradation
   | "tool"          // Tool handler errors
   | "compaction"    // Event compaction
-  | "reconcile";    // Worktree reconciliation
+  | "reconcile"     // Worktree reconciliation
+  | "db"            // Database operations (gsd-db)
+  | "dispatch"      // Auto-dispatch rule evaluation
+  | "recovery"      // Auto-recovery and timeout recovery
+  | "session"       // Session lock and session state I/O
+  | "prompt"        // Prompt construction and context injection
+  | "dashboard"     // Auto-dashboard rendering
+  | "timer"         // Auto-timers (idle watchdog, hard timeout)
+  | "worktree"      // Worktree lifecycle (create, sync, merge)
+  | "command"       // Slash command execution and maintenance
+  | "parallel"      // Parallel orchestrator and merge
+  | "fs"            // Safe filesystem operations
+  | "bootstrap"     // Extension bootstrap (system-context, agent-end)
+  | "guided"        // Guided flow (discuss, plan wizards)
+  | "registry"      // Rule registry hook state
+  | "renderer"      // Markdown renderer and projections
+  | "safety"        // LLM safety harness
+  | "ecosystem"     // GSD ecosystem extension loader and dispatch
+  | "memory-embeddings" // Memory layer embedding generation
+  | "memory-ingest"     // Memory layer ingestion pipeline
+  | "memory-backfill"   // ADR-013: decisions->memories backfill
+  | "context-mode"     // Context-mode exec sandbox and compaction snapshot
+  | "preflight"        // Clean-root preflight gate at milestone completion
+  | "postUnit";     // Post-unit processing (abandon detection, overrides)
 
 export interface LogEntry {
   ts: string;
@@ -47,6 +84,7 @@ export interface LogEntry {
 const MAX_BUFFER = 100;
 let _buffer: LogEntry[] = [];
 let _auditBasePath: string | null = null;
+let _stderrEnabled = true;
 
 /**
  * Set the base path for persistent audit log writes.
@@ -55,6 +93,16 @@ let _auditBasePath: string | null = null;
  */
 export function setLogBasePath(basePath: string): void {
   _auditBasePath = basePath;
+}
+
+/**
+ * Enable or disable immediate stderr writes for workflow logs.
+ * Returns the previous setting so callers can restore it.
+ */
+export function setStderrLoggingEnabled(enabled: boolean): boolean {
+  const previous = _stderrEnabled;
+  _stderrEnabled = enabled;
+  return previous;
 }
 
 // ─── Public API ─────────────────────────────────────────────────────────
@@ -157,17 +205,22 @@ export function summarizeLogs(): string | null {
 
 /**
  * Format entries for display (used by auto-loop post-unit notification).
- * Note: context fields are not included in the formatted output.
+ * Includes key context fields (file paths, commands) when present.
  */
 export function formatForNotification(entries: readonly LogEntry[]): string {
   if (entries.length === 0) return "";
-  if (entries.length === 1) {
-    const e = entries[0];
-    return `[${e.component}] ${e.message}`;
-  }
-  return entries
-    .map((e) => `[${e.component}] ${e.message}`)
-    .join("\n");
+  return entries.map((e) => {
+    let line = `[${e.component}] ${e.message}`;
+    if (e.context) {
+      const ctxParts = Object.entries(e.context)
+        .filter(([k]) => k !== "error") // error is redundant with message
+        .map(([k, v]) => v.includes(",") ? `${k}: "${v}"` : `${k}: ${v}`);
+      if (ctxParts.length > 0) {
+        line += ` (${ctxParts.join(", ")})`;
+      }
+    }
+    return line;
+  }).join("\n");
 }
 
 /**
@@ -220,7 +273,18 @@ function _push(
   // Always forward to stderr so terminal watchers see it (see module header for policy)
   const prefix = severity === "error" ? "ERROR" : "WARN";
   const ctxStr = context ? ` ${JSON.stringify(context)}` : "";
-  process.stderr.write(`[gsd:${component}] ${prefix}: ${message}${ctxStr}\n`);
+  _writeStderr(`[gsd:${component}] ${prefix}: ${message}${ctxStr}\n`);
+
+  // Persist to notification store (both warnings and errors)
+  try {
+    appendNotification(
+      `[${component}] ${message}`,
+      severity === "error" ? "error" : "warning",
+      "workflow-logger",
+    );
+  } catch (notifErr) {
+    _writeStderr(`[gsd:workflow-logger] notification-store append failed: ${(notifErr as Error).message}\n`);
+  }
 
   // Buffer for auto-loop to drain
   _buffer.push(entry);
@@ -228,15 +292,85 @@ function _push(
     _buffer.shift();
   }
 
-  // Persist to .gsd/audit-log.jsonl so entries survive context resets
-  if (_auditBasePath) {
+  if (_auditBasePath && isUnifiedAuditEnabled()) {
+    try {
+      emitUokAuditEvent(
+        _auditBasePath,
+        buildAuditEnvelope({
+          traceId: `workflow-log:${component}`,
+          turnId: context?.id,
+          causedBy: context?.fn ?? context?.tool,
+          category: "orchestration",
+          type: severity === "error" ? "workflow-log-error" : "workflow-log-warn",
+          payload: {
+            component,
+            message,
+            context: context ?? {},
+          },
+        }),
+      );
+    } catch (auditEmitErr) {
+      // Best-effort: unified audit projection must never block workflow logger.
+      _writeStderr(`[gsd:workflow-logger] unified-audit emit failed: ${(auditEmitErr as Error).message}\n`);
+    }
+  }
+
+  // Persist errors to .gsd/audit-log.jsonl so they survive context resets.
+  // Only error-severity entries are persisted — warnings are ephemeral (stderr + buffer)
+  // to avoid log amplification from expected-control-flow catch paths.
+  if (_auditBasePath && severity === "error") {
     try {
       const auditDir = join(_auditBasePath, ".gsd");
       mkdirSync(auditDir, { recursive: true });
-      appendFileSync(join(auditDir, "audit-log.jsonl"), JSON.stringify(entry) + "\n", "utf-8");
+      const auditPath = join(auditDir, "audit-log.jsonl");
+      const sanitized = _sanitizeForAudit(entry);
+      // Ensure file exists so proper-lockfile can acquire a lock against it.
+      if (!existsSync(auditPath)) closeSync(openSync(auditPath, "a"));
+      // onLocked: "skip" — never block error logging on lock contention.
+      withFileLockSync(
+        auditPath,
+        () => {
+          appendFileSync(auditPath, JSON.stringify(sanitized) + "\n", "utf-8");
+        },
+        { onLocked: "skip" },
+      );
     } catch (auditErr) {
       // Best-effort — never let audit write failures bubble up
-      process.stderr.write(`[gsd:audit] failed to persist log entry: ${(auditErr as Error).message}\n`);
+      _writeStderr(`[gsd:audit] failed to persist log entry: ${(auditErr as Error).message}\n`);
     }
   }
+}
+
+function _writeStderr(message: string): void {
+  if (!_stderrEnabled) return;
+  process.stderr.write(message);
+}
+
+/**
+ * Sanitize a log entry before persisting to the audit JSONL file.
+ * Strips potentially sensitive context (raw paths, cwd, full error text)
+ * to avoid leaking local environment details into durable telemetry.
+ */
+function _sanitizeForAudit(entry: LogEntry): LogEntry {
+  const sanitized: LogEntry = {
+    ts: entry.ts,
+    severity: entry.severity,
+    component: entry.component,
+    // Truncate message to avoid persisting oversized raw error dumps
+    message: entry.message.length > 200 ? entry.message.slice(0, 200) + "…[truncated]" : entry.message,
+  };
+  if (entry.context) {
+    // Allowlist: only persist known-safe structured keys
+    const SAFE_KEYS = new Set(["fn", "tool", "mid", "sid", "tid", "worktree", "id", "error", "count"]);
+    const filtered: Record<string, string> = {};
+    for (const [k, v] of Object.entries(entry.context)) {
+      if (SAFE_KEYS.has(k)) {
+        filtered[k] = v;
+      }
+    }
+    if (Object.keys(filtered).length > 0) {
+      sanitized.context = filtered;
+    }
+  }
+  return sanitized;
 }

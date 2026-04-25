@@ -227,6 +227,166 @@ export async function nextDecisionId(): Promise<string> {
   }
 }
 
+/** Synchronous variant for use inside db.transaction(). */
+function nextDecisionIdSync(adapter: ReturnType<typeof import('./gsd-db.js')._getAdapter>): string {
+  if (!adapter) return 'D001';
+  const row = adapter
+    .prepare('SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) as max_num FROM decisions')
+    .get();
+  const maxNum = row ? (row['max_num'] as number | null) : null;
+  if (maxNum == null || isNaN(maxNum)) return 'D001';
+  const next = maxNum + 1;
+  return `D${String(next).padStart(3, '0')}`;
+}
+
+// ─── Next Requirement ID ─────────────────────────────────────────────────
+
+/**
+ * Compute the next requirement ID from the current DB state.
+ * Queries MAX(CAST(SUBSTR(id, 2) AS INTEGER)) from requirements table.
+ * Returns R001 if no requirements exist. Zero-pads to 3 digits.
+ */
+export async function nextRequirementId(): Promise<string> {
+  try {
+    const db = await import('./gsd-db.js');
+    const adapter = db._getAdapter();
+    if (!adapter) return 'R001';
+
+    const row = adapter
+      .prepare('SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) as max_num FROM requirements')
+      .get();
+
+    const maxNum = row ? (row['max_num'] as number | null) : null;
+    if (maxNum == null || isNaN(maxNum)) return 'R001';
+
+    const next = maxNum + 1;
+    return `R${String(next).padStart(3, '0')}`;
+  } catch (err) {
+    logError('manifest', 'nextRequirementId failed', { fn: 'nextRequirementId', error: String((err as Error).message) });
+    return 'R001';
+  }
+}
+
+// ─── Save Requirement to DB + Regenerate Markdown ────────────────────────
+
+export interface SaveRequirementFields {
+  class: string;
+  status?: string;
+  description: string;
+  why: string;
+  source: string;
+  primary_owner?: string;
+  supporting_slices?: string;
+  validation?: string;
+  notes?: string;
+}
+
+/**
+ * Save a new requirement to DB and regenerate REQUIREMENTS.md.
+ * Auto-assigns the next ID via nextRequirementId().
+ *
+ * The ID computation and insert are wrapped in a single transaction
+ * to prevent parallel race conditions (same pattern as saveDecisionToDb).
+ *
+ * Returns the assigned ID.
+ */
+export async function saveRequirementToDb(
+  fields: SaveRequirementFields,
+  basePath: string,
+): Promise<{ id: string }> {
+  try {
+    const db = await import('./gsd-db.js');
+
+    // Atomic ID assignment + insert inside a transaction.
+    const id = db.transaction(() => {
+      const adapter = db._getAdapter();
+      if (!adapter) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
+
+      const row = adapter
+        .prepare('SELECT MAX(CAST(SUBSTR(id, 2) AS INTEGER)) as max_num FROM requirements')
+        .get();
+      const maxNum = row ? (row['max_num'] as number | null) : null;
+      const nextId = (maxNum == null || isNaN(maxNum))
+        ? 'R001'
+        : `R${String(maxNum + 1).padStart(3, '0')}`;
+
+      const requirement: Requirement = {
+        id: nextId,
+        class: fields.class,
+        status: fields.status ?? 'active',
+        description: fields.description,
+        why: fields.why,
+        source: fields.source,
+        primary_owner: fields.primary_owner ?? '',
+        supporting_slices: fields.supporting_slices ?? '',
+        validation: fields.validation ?? '',
+        notes: fields.notes ?? '',
+        full_content: '',
+        superseded_by: null,
+      };
+
+      db.upsertRequirement(requirement);
+      return nextId;
+    });
+
+    // Fetch all requirements for full file regeneration
+    const adapter = db._getAdapter();
+    let allRequirements: Requirement[] = [];
+    if (adapter) {
+      const rows = adapter.prepare('SELECT * FROM requirements ORDER BY id').all();
+      allRequirements = rows.map(row => ({
+        id: row['id'] as string,
+        class: row['class'] as string,
+        status: row['status'] as string,
+        description: row['description'] as string,
+        why: row['why'] as string,
+        source: row['source'] as string,
+        primary_owner: row['primary_owner'] as string,
+        supporting_slices: row['supporting_slices'] as string,
+        validation: row['validation'] as string,
+        notes: row['notes'] as string,
+        full_content: row['full_content'] as string,
+        superseded_by: (row['superseded_by'] as string) ?? null,
+      }));
+    }
+
+    const nonSuperseded = allRequirements.filter(r => r.superseded_by == null);
+    const md = generateRequirementsMd(nonSuperseded);
+    const filePath = resolveGsdRootFile(basePath, 'REQUIREMENTS');
+    try {
+      await saveFile(filePath, md);
+    } catch (diskErr) {
+      logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveRequirementToDb', error: String((diskErr as Error).message) });
+      try {
+        db.deleteRequirementById(id);
+      } catch (rollbackErr) {
+        logError('manifest', 'SPLIT BRAIN: disk write failed AND DB rollback failed — DB has orphaned row', { fn: 'saveRequirementToDb', id, error: String((rollbackErr as Error).message) });
+      }
+      throw diskErr;
+    }
+    invalidateStateCache();
+    clearPathCache();
+    clearParseCache();
+
+    return { id };
+  } catch (err) {
+    logError('manifest', 'saveRequirementToDb failed', { fn: 'saveRequirementToDb', error: String((err as Error).message) });
+    throw err;
+  }
+}
+
+// ─── Async Mutex for Decision Saves ───────────────────────────────────────
+//
+// Serializes the entire saveDecisionToDb operation (ID generation + DB upsert
+// + file read + markdown regeneration + file write) so that parallel callers
+// cannot interleave and produce a last-writer-wins race on DECISIONS.md.
+let _decisionSaveLock: Promise<unknown> = Promise.resolve();
+
+/** Reset the mutex — only for tests. */
+export function _resetDecisionSaveLock(): void {
+  _decisionSaveLock = Promise.resolve();
+}
+
 // ─── Save Decision to DB + Regenerate Markdown ────────────────────────────
 
 export interface SaveDecisionFields {
@@ -237,36 +397,62 @@ export interface SaveDecisionFields {
   revisable?: string;
   when_context?: string;
   made_by?: import('./types.js').DecisionMadeBy;
+  /** ADR-011 Phase 2: origin of the decision — "discussion" (default), "planning", "escalation". */
+  source?: string;
 }
 
 /**
  * Save a new decision to DB and regenerate DECISIONS.md.
  * Auto-assigns the next ID via nextDecisionId().
+ *
+ * Concurrency: uses an async mutex (promise chain) to serialize the entire
+ * operation — ID generation, DB upsert, file read, markdown regeneration,
+ * and file write — preventing parallel callers from overwriting each other's
+ * output (last-writer-wins race condition).
+ *
  * Returns the assigned ID.
  */
 export async function saveDecisionToDb(
   fields: SaveDecisionFields,
   basePath: string,
 ): Promise<{ id: string }> {
+  // Serialize via async mutex: each call waits for the previous one to
+  // complete before starting, preventing interleaved DB + file writes.
+  let release: () => void;
+  const prev = _decisionSaveLock;
+  _decisionSaveLock = new Promise<void>(r => { release = r; });
+
+  try {
+    await prev;
+  } catch {
+    // Previous call failed — proceed regardless; the lock chain must continue.
+  }
+
   try {
     const db = await import('./gsd-db.js');
 
-    const id = await nextDecisionId();
+    const adapter = db._getAdapter();
 
-    db.upsertDecision({
-      id,
-      when_context: fields.when_context ?? '',
-      scope: fields.scope,
-      decision: fields.decision,
-      choice: fields.choice,
-      rationale: fields.rationale,
-      revisable: fields.revisable ?? 'Yes',
-      made_by: fields.made_by ?? 'agent',
-      superseded_by: null,
+    const id = db.transaction(() => {
+      const nextId = nextDecisionIdSync(adapter);
+      db.upsertDecision({
+        id: nextId,
+        when_context: fields.when_context ?? '',
+        scope: fields.scope,
+        decision: fields.decision,
+        choice: fields.choice,
+        rationale: fields.rationale,
+        revisable: fields.revisable ?? 'Yes',
+        made_by: fields.made_by ?? 'agent',
+        source: fields.source ?? 'discussion',
+        superseded_by: null,
+      });
+
+
+      return nextId;
     });
 
     // Fetch all decisions (including superseded for the full register)
-    const adapter = db._getAdapter();
     let allDecisions: Decision[] = [];
     if (adapter) {
       const rows = adapter.prepare('SELECT * FROM decisions ORDER BY seq').all();
@@ -313,20 +499,118 @@ export async function saveDecisionToDb(
       await saveFile(filePath, md);
     } catch (diskErr) {
       logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveDecisionToDb', error: String((diskErr as Error).message) });
-      adapter?.prepare('DELETE FROM decisions WHERE id = :id').run({ ':id': id });
+      try {
+        db.deleteDecisionById(id);
+      } catch (rollbackErr) {
+        logError('manifest', 'SPLIT BRAIN: disk write failed AND DB rollback failed — DB has orphaned row', { fn: 'saveDecisionToDb', id, error: String((rollbackErr as Error).message) });
+      }
       throw diskErr;
     }
+    // #2661: When a decision defers a slice, update the slice status in the DB
+    // so the dispatcher skips it. Without this, STATE.md and DECISIONS.md are
+    // in split-brain: the decision says "deferred" but the state still says
+    // "active", causing auto-mode to keep dispatching the deferred work.
+    try {
+      const sliceRef = extractDeferredSliceRef(fields);
+      if (sliceRef) {
+        db.updateSliceStatus(sliceRef.milestoneId, sliceRef.sliceId, 'deferred');
+      }
+    } catch (deferErr) {
+      // Non-fatal — log but don't fail the decision save
+      logError('manifest', 'failed to update deferred slice status', {
+        fn: 'saveDecisionToDb',
+        error: String((deferErr as Error).message),
+      });
+    }
+
     // Invalidate file-read caches so deriveState() sees the updated markdown.
     // Do NOT clear the artifacts table — we just wrote to it intentionally.
     invalidateStateCache();
     clearPathCache();
     clearParseCache();
 
+    // ADR-013 dual-write: keep the memory store in sync with every decision
+    // persisted via the legacy gsd_save_decision path. Without this, prompts
+    // that still call gsd_save_decision (discuss.md, plan-milestone.md,
+    // guided-plan-slice.md, et al. during the deprecation window) would
+    // create decisions rows invisible to memory_query and loadMemoryBlock.
+    // Best-effort — never throw, never roll back the decision on failure.
+    try {
+      const { createMemory } = await import('./memory-store.js');
+      const decisionText = (fields.decision ?? '').trim();
+      const choiceText = (fields.choice ?? '').trim();
+      const rationaleText = (fields.rationale ?? '').trim();
+      const contentParts: string[] = [];
+      if (decisionText) contentParts.push(decisionText);
+      if (choiceText) contentParts.push(`Chose: ${choiceText}.`);
+      if (rationaleText) contentParts.push(`Rationale: ${rationaleText}.`);
+      const content = contentParts.join(' ').slice(0, 600);
+      if (content) {
+        createMemory({
+          category: 'architecture',
+          content,
+          scope: fields.scope || 'project',
+          confidence: 0.85,
+          structuredFields: {
+            sourceDecisionId: id,
+            when_context: fields.when_context ?? '',
+            scope: fields.scope,
+            decision: fields.decision,
+            choice: fields.choice,
+            rationale: fields.rationale,
+            made_by: fields.made_by ?? 'agent',
+            revisable: fields.revisable ?? '',
+          },
+        });
+      }
+    } catch (mirrorErr) {
+      logError('manifest', 'memory-store mirror write failed (non-fatal)', {
+        fn: 'saveDecisionToDb',
+        decisionId: id,
+        error: String((mirrorErr as Error).message),
+      });
+    }
+
     return { id };
   } catch (err) {
     logError('manifest', 'saveDecisionToDb failed', { fn: 'saveDecisionToDb', error: String((err as Error).message) });
     throw err;
+  } finally {
+    release!();
   }
+}
+
+/**
+ * Extract a milestone/slice reference from a deferral decision.
+ *
+ * Detects deferrals by checking:
+ *   - scope contains "defer" (e.g., "deferral", "defer")
+ *   - choice or decision contains "defer" + an M###/S## pattern
+ *
+ * Returns { milestoneId, sliceId } if found, null otherwise.
+ */
+export function extractDeferredSliceRef(
+  fields: Pick<SaveDecisionFields, 'scope' | 'decision' | 'choice'>,
+): { milestoneId: string; sliceId: string } | null {
+  const isDeferral =
+    /\bdefer(?:ral|red|ring|s)?\b/i.test(fields.scope) ||
+    /\bdefer(?:ral|red|ring|s)?\b/i.test(fields.choice) ||
+    /\bdefer(?:ral|red|ring|s)?\b/i.test(fields.decision);
+
+  if (!isDeferral) return null;
+
+  // Look for M###/S## pattern in choice first, then decision
+  const slicePattern = /\b(M\d{3,4})\/(S\d{2,3})\b/;
+  const choiceMatch = fields.choice.match(slicePattern);
+  if (choiceMatch) {
+    return { milestoneId: choiceMatch[1], sliceId: choiceMatch[2] };
+  }
+  const decisionMatch = fields.decision.match(slicePattern);
+  if (decisionMatch) {
+    return { milestoneId: decisionMatch[1], sliceId: decisionMatch[2] };
+  }
+
+  return null;
 }
 
 // ─── Update Requirement in DB + Regenerate Markdown ───────────────────────
@@ -343,16 +627,55 @@ export async function updateRequirementInDb(
   try {
     const db = await import('./gsd-db.js');
 
-    const existing = db.getRequirementById(id);
+    let existing = db.getRequirementById(id);
+
+    // If requirement doesn't exist in DB, seed the entire requirements table
+    // from REQUIREMENTS.md first (#3346). This handles the standard workflow
+    // where requirements are authored in markdown during discussion but never
+    // imported into the database — making gsd_requirement_update always fail
+    // with "not_found" at milestone completion.
     if (!existing) {
-      throw new GSDError(GSD_STALE_STATE, `Requirement ${id} not found`);
+      const reqFilePath = resolveGsdRootFile(basePath, 'REQUIREMENTS');
+      try {
+        const content = readFileSync(reqFilePath, 'utf-8');
+        const { parseRequirementsSections } = await import('./md-importer.js');
+        const parsed = parseRequirementsSections(content);
+        if (parsed.length > 0) {
+          logWarning('manifest', `Seeding ${parsed.length} requirements from REQUIREMENTS.md into DB (first update triggers import)`, { fn: 'updateRequirementInDb' });
+          for (const req of parsed) {
+            // Only seed if not already in DB (avoid overwriting concurrent inserts)
+            if (!db.getRequirementById(req.id)) {
+              db.upsertRequirement(req);
+            }
+          }
+          // Re-check after seeding
+          existing = db.getRequirementById(id);
+        }
+      } catch {
+        // REQUIREMENTS.md missing or unparseable — fall through to skeleton
+      }
     }
 
-    // Merge updates into existing
+    const base: Requirement = existing ?? {
+      id,
+      class: '',
+      status: 'active',
+      description: '',
+      why: '',
+      source: '',
+      primary_owner: '',
+      supporting_slices: '',
+      validation: '',
+      notes: '',
+      full_content: '',
+      superseded_by: null,
+    };
+
+    // Merge updates into existing (or skeleton)
     const merged: Requirement = {
-      ...existing,
+      ...base,
       ...updates,
-      id: existing.id, // ID cannot be changed
+      id: base.id, // ID cannot be changed
     };
 
     db.upsertRequirement(merged);
@@ -388,7 +711,9 @@ export async function updateRequirementInDb(
       await saveFile(filePath, md);
     } catch (diskErr) {
       logError('manifest', 'disk write failed, reverting DB row', { fn: 'updateRequirementInDb', error: String((diskErr as Error).message) });
-      db.upsertRequirement(existing);
+      if (existing) {
+        db.upsertRequirement(existing);
+      }
       throw diskErr;
     }
     // Invalidate file-read caches so deriveState() sees the updated markdown.
@@ -462,8 +787,7 @@ export async function saveArtifactToDb(
         await saveFile(fullPath, opts.content);
       } catch (diskErr) {
         logError('manifest', 'disk write failed, rolling back DB row', { fn: 'saveArtifactToDb', error: String((diskErr as Error).message) });
-        const rollbackAdapter = db._getAdapter();
-        rollbackAdapter?.prepare('DELETE FROM artifacts WHERE path = :path').run({ ':path': opts.path });
+        db.deleteArtifactByPath(opts.path);
         throw diskErr;
       }
     }

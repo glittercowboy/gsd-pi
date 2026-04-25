@@ -85,8 +85,10 @@ test("auto.ts buildLoopDeps wires rebuildState", () => {
     "utf-8",
   );
 
-  // rebuildState should be in the LoopDeps object literal
-  const buildLoopDepsIdx = autoSrc.indexOf("function buildLoopDeps()");
+  // rebuildState should be in the LoopDeps object literal.
+  // Match the signature prefix so the test survives future param changes
+  // (e.g. the DECOUPLE-02 change from `()` to `(pi: ExtensionAPI)`).
+  const buildLoopDepsIdx = autoSrc.indexOf("function buildLoopDeps(");
   assert.ok(buildLoopDepsIdx > 0, "buildLoopDeps function should exist");
 
   const afterBuild = autoSrc.slice(buildLoopDepsIdx);

@@ -128,7 +128,17 @@ export class Editor implements Component, Focusable {
 	};
 
 	/** Focusable interface - set by TUI when focus changes */
-	focused: boolean = false;
+	private _focused: boolean = false;
+	get focused(): boolean {
+		return this._focused;
+	}
+	set focused(value: boolean) {
+		this._focused = value;
+		if (!value) {
+			this.isInPaste = false;
+			this.pasteBuffer = "";
+		}
+	}
 
 	protected tui: TUI;
 	private theme: EditorTheme;
@@ -376,8 +386,9 @@ export class Editor implements Component, Focusable {
 		}
 
 		// Render each visible layout line
-		// Emit hardware cursor marker only when focused and not showing autocomplete
-		const emitCursorMarker = this.focused && !this.autocompleteState;
+		// Keep the hardware cursor anchored while autocomplete is open so IME
+		// candidate windows still attach to the editor caret.
+		const emitCursorMarker = this.focused;
 
 		for (const layoutLine of visibleLines) {
 			let displayText = layoutLine.text;

@@ -22,25 +22,23 @@ import type {
 } from "./engine-types.js";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse } from "yaml";
 import {
   readGraph,
   writeGraph,
   getNextPendingStep,
+  markStepActive,
   markStepComplete,
   expandIteration,
   type WorkflowGraph,
 } from "./graph.js";
 import { injectContext } from "./context-injector.js";
-import type { WorkflowDefinition, StepDefinition } from "./definition-loader.js";
+import type { StepDefinition } from "./definition-loader.js";
+import { readFrozenDefinition } from "./definition-io.js";
 import { parseUnitId } from "./unit-id.js";
+import { withFileLock } from "./file-lock.js";
 
-/** Read and parse the frozen DEFINITION.yaml from a run directory. */
-export function readFrozenDefinition(runDir: string): WorkflowDefinition {
-  const defPath = join(runDir, "DEFINITION.yaml");
-  const raw = readFileSync(defPath, "utf-8");
-  return parse(raw, { schema: "core" }) as WorkflowDefinition;
-}
+// Re-export for downstream consumers
+export { readFrozenDefinition } from "./definition-io.js";
 
 export class CustomWorkflowEngine implements WorkflowEngine {
   readonly engineId = "custom";
@@ -93,78 +91,102 @@ export class CustomWorkflowEngine implements WorkflowEngine {
     state: EngineState,
     _context: { basePath: string },
   ): Promise<EngineDispatchAction> {
-    let graph = state.raw as WorkflowGraph;
-    let next = getNextPendingStep(graph);
+    const graphPath = join(this.runDir, "GRAPH.yaml");
 
-    if (!next) {
-      return {
-        action: "stop",
-        reason: "All steps complete",
-        level: "info",
-      };
-    }
-
-    // Check frozen DEFINITION.yaml for iterate config on this step
-    const def = readFrozenDefinition(this.runDir);
-    const stepDef = def.steps.find((s: StepDefinition) => s.id === next!.id);
-
-    if (stepDef?.iterate) {
-      const iterate = stepDef.iterate;
-
-      // Read source artifact
-      const sourcePath = join(this.runDir, iterate.source);
-      let sourceContent: string;
-      try {
-        sourceContent = readFileSync(sourcePath, "utf-8");
-      } catch {
-        throw new Error(
-          `Iterate source artifact not found: ${sourcePath} (step "${next.id}", source: "${iterate.source}")`,
-        );
+    return await withFileLock(graphPath, () => {
+      let graph = readGraph(this.runDir);
+      const active = graph.steps.find((step) => step.status === "active");
+      if (active) {
+        return {
+          action: "dispatch" as const,
+          step: {
+            unitType: "custom-step",
+            unitId: `${graph.metadata.name}/${active.id}`,
+            prompt: injectContext(this.runDir, active.id, active.prompt),
+          },
+        };
       }
 
-      // Extract items via regex with global+multiline flags.
-      // Guard against ReDoS: if matching takes too long on large inputs, bail.
-      const regex = new RegExp(iterate.pattern, "gm");
-      const items: string[] = [];
-      const matchStart = Date.now();
-      let match: RegExpExecArray | null;
-      while ((match = regex.exec(sourceContent)) !== null) {
-        if (match[1] !== undefined) items.push(match[1]);
-        if (Date.now() - matchStart > 5_000) {
-          throw new Error(
-            `Iterate pattern "${iterate.pattern}" exceeded 5s timeout on step "${next.id}" — possible ReDoS`,
-          );
-        }
-      }
-
-      // Expand the graph
-      const expandedGraph = expandIteration(graph, next.id, items, next.prompt);
-      writeGraph(this.runDir, expandedGraph);
-      graph = expandedGraph;
-
-      // Re-query for first instance step
-      next = getNextPendingStep(expandedGraph);
+      let next = getNextPendingStep(graph);
 
       if (!next) {
         return {
           action: "stop",
-          reason: "Iterate expansion produced no instances",
+          reason: "All steps complete",
           level: "info",
         };
       }
-    }
 
-    // Enrich prompt with context from prior step artifacts
-    const enrichedPrompt = injectContext(this.runDir, next.id, next.prompt);
+      // Check frozen DEFINITION.yaml for iterate config on this step
+      const def = readFrozenDefinition(this.runDir);
+      const stepDef = def.steps.find((s: StepDefinition) => s.id === next!.id);
 
-    return {
-      action: "dispatch",
-      step: {
-        unitType: "custom-step",
-        unitId: `${graph.metadata.name}/${next.id}`,
-        prompt: enrichedPrompt,
-      },
-    };
+      if (stepDef?.iterate) {
+        const iterate = stepDef.iterate;
+
+        // Read source artifact
+        const sourcePath = join(this.runDir, iterate.source);
+        let sourceContent: string;
+        try {
+          sourceContent = readFileSync(sourcePath, "utf-8");
+        } catch {
+          throw new Error(
+            `Iterate source artifact not found: ${sourcePath} (step "${next.id}", source: "${iterate.source}")`,
+          );
+        }
+
+        // Extract items via regex with global+multiline flags.
+        // Guard against ReDoS: if matching takes too long on large inputs, bail.
+        const regex = new RegExp(iterate.pattern, "gm");
+        const items: string[] = [];
+        const matchStart = Date.now();
+        let match: RegExpExecArray | null;
+        while ((match = regex.exec(sourceContent)) !== null) {
+          if (match[1] !== undefined) items.push(match[1]);
+          if (Date.now() - matchStart > 5_000) {
+            throw new Error(
+              `Iterate pattern "${iterate.pattern}" exceeded 5s timeout on step "${next.id}" — possible ReDoS`,
+            );
+          }
+        }
+
+        // Expand the graph
+        const expandedGraph = expandIteration(graph, next.id, items, next.prompt);
+        writeGraph(this.runDir, expandedGraph);
+        graph = expandedGraph;
+
+        // Re-query for first instance step
+        next = getNextPendingStep(expandedGraph);
+
+        if (!next) {
+          return {
+            action: "stop",
+            reason: "Iterate expansion produced no instances",
+            level: "info",
+          };
+        }
+      }
+
+      const activeGraph = markStepActive(graph, next.id);
+      writeGraph(this.runDir, activeGraph);
+
+      const activeStep = activeGraph.steps.find((s) => s.id === next.id);
+      if (!activeStep) {
+        throw new Error(`Active step not found after GRAPH.yaml update: ${next.id}`);
+      }
+
+      // Enrich prompt with context from prior step artifacts
+      const enrichedPrompt = injectContext(this.runDir, activeStep.id, activeStep.prompt);
+
+      return {
+        action: "dispatch" as const,
+        step: {
+          unitType: "custom-step",
+          unitId: `${activeGraph.metadata.name}/${activeStep.id}`,
+          prompt: enrichedPrompt,
+        },
+      };
+    });
   }
 
   /**
@@ -179,22 +201,28 @@ export class CustomWorkflowEngine implements WorkflowEngine {
     state: EngineState,
     completedStep: CompletedStep,
   ): Promise<ReconcileResult> {
-    const graph = state.raw as WorkflowGraph;
+    const graphPath = join(this.runDir, "GRAPH.yaml");
 
-    // Extract stepId from "<workflowName>/<stepId>"
-    const { milestone, slice, task } = parseUnitId(completedStep.unitId);
-    const stepId = task ?? slice ?? milestone;
+    return await withFileLock(graphPath, () => {
+      // Re-read the graph from disk so we do not overwrite concurrent
+      // workflow edits with a stale in-memory snapshot from deriveState().
+      const graph = readGraph(this.runDir);
 
-    const updatedGraph = markStepComplete(graph, stepId);
-    writeGraph(this.runDir, updatedGraph);
+      // Extract stepId from "<workflowName>/<stepId>"
+      const { milestone, slice, task } = parseUnitId(completedStep.unitId);
+      const stepId = task ?? slice ?? milestone;
 
-    const allDone = updatedGraph.steps.every(
-      (s) => s.status === "complete" || s.status === "expanded",
-    );
+      const updatedGraph = markStepComplete(graph, stepId);
+      writeGraph(this.runDir, updatedGraph);
 
-    return {
-      outcome: allDone ? "milestone-complete" : "continue",
-    };
+      const allDone = updatedGraph.steps.every(
+        (s) => s.status === "complete" || s.status === "expanded",
+      );
+
+      return {
+        outcome: allDone ? "milestone-complete" : "continue",
+      };
+    });
   }
 
   /**

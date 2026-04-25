@@ -56,5 +56,27 @@ describe("parallel-monitor-overlay", () => {
     overlay2.handleInput("q");
     assert.ok(closed, "pressing q should trigger onClose");
     overlay2.dispose();
+
+  });
+
+  it("ParallelMonitorOverlay clamps scrollOffset during render", async () => {
+    const mod = await import("../parallel-monitor-overlay.js");
+
+    const mockTui = { requestRender: () => {} };
+    const mockTheme = {
+      fg: (_color: string, text: string) => text,
+      bold: (text: string) => text,
+    };
+    const overlay = new mod.ParallelMonitorOverlay(
+      mockTui,
+      mockTheme as any,
+      () => {},
+      "/nonexistent/path",
+    );
+
+    (overlay as any).scrollOffset = 999;
+    overlay.render(80);
+    assert.equal((overlay as any).scrollOffset, 0, "empty overlays clamp scroll to zero");
+    overlay.dispose();
   });
 });

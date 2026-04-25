@@ -14,6 +14,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { spawnSync } from "node:child_process";
 
 // ---------------------------------------------------------------------------
 // Helpers — lightweight JSON-RPC over stdio (no dependency on our LSP code)
@@ -251,11 +252,23 @@ function fileToUri(filePath: string): string {
 	return `file://${path.resolve(filePath)}`;
 }
 
+function hasTypescriptLanguageServer(): boolean {
+	const probe = spawnSync("typescript-language-server", ["--help"], {
+		stdio: "ignore",
+	});
+	return probe.status === 0 || probe.status === 1;
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 test("LSP integration: typescript-language-server", async (t) => {
+	if (!hasTypescriptLanguageServer()) {
+		t.skip("typescript-language-server not installed in this environment");
+		return;
+	}
+
 	const { dir, cleanup } = createTempProject();
 	const mainPath = path.join(dir, "src", "main.ts");
 	const mathPath = path.join(dir, "src", "math.ts");
@@ -302,8 +315,19 @@ test("LSP integration: typescript-language-server", async (t) => {
 			textDocument: { uri: mathUri, languageId: "typescript", version: 1, text: mathContent },
 		});
 
-		// Give the server time to index
-		await new Promise((r) => setTimeout(r, 3000));
+		// Poll for a published diagnostics notification on main.ts, which
+		// is the observable signal that TypeScript has finished indexing
+		// the opened file. Previous magic-sleep (3000ms) was too short on
+		// slow CI machines and wasteful on fast ones (#4798).
+		const INDEX_DEADLINE_MS = 15_000;
+		const indexDeadline = Date.now() + INDEX_DEADLINE_MS;
+		while (Date.now() < indexDeadline) {
+			const diags = lsp
+				.getNotifications("textDocument/publishDiagnostics")
+				.filter((n) => (n.params as { uri: string }).uri === mainUri);
+			if (diags.length > 0) break;
+			await new Promise((r) => setTimeout(r, 50));
+		}
 
 		// ---- Hover ----
 		await t.test("hover on 'add' call", async () => {
@@ -368,8 +392,28 @@ test("LSP integration: typescript-language-server", async (t) => {
 
 		// ---- Diagnostics (published via notification) ----
 		await t.test("diagnostics for type error", async () => {
-			// Wait a bit more for diagnostics to arrive
-			await new Promise((r) => setTimeout(r, 2000));
+			// Poll for the specific type-error diagnostic on main.ts
+			// instead of sleeping a fixed 2s. tsserver pushes diagnostics
+			// incrementally — we need to wait until at least one diag
+			// contains a type-error signal, not just any diag.
+			const DIAG_DEADLINE_MS = 10_000;
+			const diagDeadline = Date.now() + DIAG_DEADLINE_MS;
+			while (Date.now() < diagDeadline) {
+				const candidates = lsp
+					.getNotifications("textDocument/publishDiagnostics")
+					.filter((n) => (n.params as { uri: string }).uri === mainUri)
+					.flatMap(
+						(n) => (n.params as { diagnostics: Array<{ message: string }> }).diagnostics,
+					);
+				if (
+					candidates.some(
+						(d) => d.message.includes("not assignable") || d.message.includes("Type"),
+					)
+				) {
+					break;
+				}
+				await new Promise((r) => setTimeout(r, 50));
+			}
 
 			const diagNotifications = lsp.getNotifications("textDocument/publishDiagnostics");
 			const mainDiags = diagNotifications.filter(

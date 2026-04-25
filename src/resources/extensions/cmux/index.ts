@@ -1,12 +1,13 @@
-import { execFile, execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
-import type { GSDPreferences } from "../gsd/preferences.js";
-import type { GSDState, Phase } from "../gsd/types.js";
+import { CMUX_CHANNELS, type CmuxSidebarEvent, type CmuxLogEvent, type CmuxPreferencesInput, type CmuxStateInput } from "../shared/cmux-events.js";
+import type { EventBus } from "@gsd/pi-coding-agent";
 
-const execFileAsync = promisify(execFile);
+type CmuxPreferences = CmuxPreferencesInput;
+type CmuxState = CmuxStateInput;
+type Phase = string;
 const DEFAULT_SOCKET_PATH = "/tmp/cmux.sock";
 const STATUS_KEY = "gsd";
 const lastSidebarSnapshots = new Map<string, string>();
@@ -55,7 +56,7 @@ export function detectCmuxEnvironment(
 }
 
 export function resolveCmuxConfig(
-  preferences: GSDPreferences | undefined,
+  preferences: CmuxPreferences | undefined,
   env: NodeJS.ProcessEnv = process.env,
   socketExists: (path: string) => boolean = existsSync,
   cliAvailable: () => boolean = isCmuxCliAvailable,
@@ -74,7 +75,7 @@ export function resolveCmuxConfig(
 }
 
 export function shouldPromptToEnableCmux(
-  preferences: GSDPreferences | undefined,
+  preferences: CmuxPreferences | undefined,
   env: NodeJS.ProcessEnv = process.env,
   socketExists: (path: string) => boolean = existsSync,
   cliAvailable: () => boolean = isCmuxCliAvailable,
@@ -116,7 +117,7 @@ export function emitOsc777Notification(title: string, body: string): void {
   process.stdout.write(`\x1b]777;notify;${safeTitle};${safeBody}\x07`);
 }
 
-export function buildCmuxStatusLabel(state: GSDState): string {
+export function buildCmuxStatusLabel(state: CmuxState): string {
   const parts: string[] = [];
   if (state.activeMilestone) parts.push(state.activeMilestone.id);
   if (state.activeSlice) parts.push(state.activeSlice.id);
@@ -128,7 +129,7 @@ export function buildCmuxStatusLabel(state: GSDState): string {
   return `${parts.join(" ")} · ${state.phase}`;
 }
 
-export function buildCmuxProgress(state: GSDState): CmuxSidebarProgress | null {
+export function buildCmuxProgress(state: CmuxState): CmuxSidebarProgress | null {
   const progress = state.progress;
   if (!progress) return null;
 
@@ -174,7 +175,7 @@ export class CmuxClient {
     this.config = config;
   }
 
-  static fromPreferences(preferences: GSDPreferences | undefined): CmuxClient {
+  static fromPreferences(preferences: CmuxPreferences | undefined): CmuxClient {
     return new CmuxClient(resolveCmuxConfig(preferences));
   }
 
@@ -200,6 +201,7 @@ export class CmuxClient {
       return execFileSync("cmux", args, {
         encoding: "utf-8",
         timeout: 3000,
+        stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
       });
     } catch {
@@ -209,16 +211,24 @@ export class CmuxClient {
 
   private async runAsync(args: string[]): Promise<string | null> {
     if (!this.canRun()) return null;
-    try {
-      const result = await execFileAsync("cmux", args, {
-        encoding: "utf-8",
-        timeout: 5000,
+    return new Promise<string | null>((resolve) => {
+      const child = spawn("cmux", args, {
+        stdio: ["ignore", "pipe", "pipe"],
         env: process.env,
       });
-      return result.stdout;
-    } catch {
-      return null;
-    }
+      const chunks: Buffer[] = [];
+      let settled = false;
+      const done = (result: string | null) => {
+        if (!settled) { settled = true; resolve(result); }
+      };
+      const timer = setTimeout(() => { child.kill(); done(null); }, 5000);
+      child.stdout!.on("data", (chunk: Buffer) => chunks.push(chunk));
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        done(code === 0 ? Buffer.concat(chunks).toString("utf-8") : null);
+      });
+      child.on("error", () => { clearTimeout(timer); done(null); });
+    });
   }
 
   getCapabilities(): unknown | null {
@@ -366,7 +376,7 @@ export class CmuxClient {
   }
 }
 
-export function syncCmuxSidebar(preferences: GSDPreferences | undefined, state: GSDState): void {
+export function syncCmuxSidebar(preferences: CmuxPreferences | undefined, state: CmuxState): void {
   const client = CmuxClient.fromPreferences(preferences);
   const config = client.getConfig();
   if (!config.sidebar) return;
@@ -382,7 +392,7 @@ export function syncCmuxSidebar(preferences: GSDPreferences | undefined, state: 
   lastSidebarSnapshots.set(key, snapshot);
 }
 
-export function clearCmuxSidebar(preferences: GSDPreferences | undefined): void {
+export function clearCmuxSidebar(preferences: CmuxPreferences | undefined): void {
   const config = resolveCmuxConfig(preferences);
   if (!config.available || !config.cliAvailable) return;
   const client = new CmuxClient({ ...config, enabled: true, sidebar: true });
@@ -393,7 +403,7 @@ export function clearCmuxSidebar(preferences: GSDPreferences | undefined): void 
 }
 
 export function logCmuxEvent(
-  preferences: GSDPreferences | undefined,
+  preferences: CmuxPreferences | undefined,
   message: string,
   level: CmuxLogLevel = "info",
 ): void {
@@ -439,4 +449,25 @@ function extractSurfaceIds(value: unknown): string[] {
 
   visit(value);
   return Array.from(found);
+}
+
+/**
+ * Wire event subscriptions so cmux reacts to gsd events.
+ * Called by the gsd extension during registration, passing pi.events.
+ */
+export function initCmuxEventListeners(events: EventBus): void {
+  events.on(CMUX_CHANNELS.SIDEBAR, (data) => {
+    const event = data as CmuxSidebarEvent;
+    if (event.action === "sync" && event.state) {
+      syncCmuxSidebar(event.preferences as CmuxPreferences | undefined, event.state as CmuxState);
+    }
+    if (event.action === "clear") {
+      clearCmuxSidebar(event.preferences as CmuxPreferences | undefined);
+    }
+  });
+
+  events.on(CMUX_CHANNELS.LOG, (data) => {
+    const event = data as CmuxLogEvent;
+    logCmuxEvent(event.preferences as CmuxPreferences | undefined, event.message, event.level);
+  });
 }

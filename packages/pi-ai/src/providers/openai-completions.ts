@@ -39,7 +39,8 @@ import {
 	finalizeStream,
 	handleStreamError,
 } from "./openai-shared.js";
-import { transformMessages } from "./transform-messages.js";
+import { ThinkTagParser } from "./think-tag-parser.js";
+import { transformMessagesWithReport } from "./transform-messages.js";
 
 /**
  * Check if conversation messages contain tool calls or tool results.
@@ -91,6 +92,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			stream.push({ type: "start", partial: output });
 
 			let currentBlock: TextContent | ThinkingContent | (ToolCall & { partialArgs?: string }) | null = null;
+			const thinkTagParser = new ThinkTagParser();
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			const finishCurrentBlock = (block?: typeof currentBlock) => {
@@ -119,6 +121,55 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 							partial: output,
 						});
 					}
+				}
+			};
+			const appendTextDelta = (delta: string) => {
+				if (!delta) return;
+				if (!currentBlock || currentBlock.type !== "text") {
+					finishCurrentBlock(currentBlock);
+					currentBlock = { type: "text", text: "" };
+					output.content.push(currentBlock);
+					stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+				}
+
+				if (currentBlock.type === "text") {
+					currentBlock.text += delta;
+					stream.push({
+						type: "text_delta",
+						contentIndex: blockIndex(),
+						delta,
+						partial: output,
+					});
+				}
+			};
+			const appendThinkingDelta = (delta: string) => {
+				if (!delta) return;
+				if (!currentBlock || currentBlock.type !== "thinking") {
+					finishCurrentBlock(currentBlock);
+					currentBlock = {
+						type: "thinking",
+						thinking: "",
+						thinkingSignature: "think-tag",
+					};
+					output.content.push(currentBlock);
+					stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+				}
+
+				if (currentBlock.type === "thinking") {
+					currentBlock.thinking += delta;
+					stream.push({
+						type: "thinking_delta",
+						contentIndex: blockIndex(),
+						delta,
+						partial: output,
+					});
+				}
+			};
+			const appendContentDelta = (delta: string) => {
+				const segments = thinkTagParser.consume(delta);
+				for (const segment of segments) {
+					if (segment.type === "thinking") appendThinkingDelta(segment.text);
+					else appendTextDelta(segment.text);
 				}
 			};
 
@@ -161,22 +212,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 						choice.delta.content !== undefined &&
 						choice.delta.content.length > 0
 					) {
-						if (!currentBlock || currentBlock.type !== "text") {
-							finishCurrentBlock(currentBlock);
-							currentBlock = { type: "text", text: "" };
-							output.content.push(currentBlock);
-							stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
-						}
-
-						if (currentBlock.type === "text") {
-							currentBlock.text += choice.delta.content;
-							stream.push({
-								type: "text_delta",
-								contentIndex: blockIndex(),
-								delta: choice.delta.content,
-								partial: output,
-							});
-						}
+						appendContentDelta(choice.delta.content);
 					}
 
 					// Some endpoints return reasoning in reasoning_content (llama.cpp),
@@ -276,6 +312,11 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				}
 			}
 
+			for (const segment of thinkTagParser.flush()) {
+				if (segment.type === "thinking") appendThinkingDelta(segment.text);
+				else appendTextDelta(segment.text);
+			}
+
 			finishCurrentBlock(currentBlock);
 			assertStreamSuccess(output, options?.signal);
 			finalizeStream(stream, output);
@@ -343,6 +384,7 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 
 	if (context.tools) {
 		params.tools = convertTools(context.tools, compat);
+		maybeAddOpenRouterAnthropicToolCacheControl(model, params.tools);
 	} else if (hasToolHistory(context.messages)) {
 		// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
 		params.tools = [];
@@ -377,6 +419,19 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 	}
 
 	return params;
+}
+
+function maybeAddOpenRouterAnthropicToolCacheControl(
+	model: Model<"openai-completions">,
+	tools: OpenAI.Chat.Completions.ChatCompletionTool[] | undefined,
+): void {
+	if (model.provider !== "openrouter" || !model.id.startsWith("anthropic/")) return;
+	if (!tools?.length) return;
+
+	const lastTool = tools[tools.length - 1];
+	if ("function" in lastTool) {
+		Object.assign(lastTool.function, { cache_control: { type: "ephemeral" } });
+	}
 }
 
 function mapReasoningEffort(
@@ -441,7 +496,7 @@ export function convertMessages(
 		return id;
 	};
 
-	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
+	const transformedMessages = transformMessagesWithReport(context.messages, model, (id) => normalizeToolCallId(id), "openai-completions");
 
 	if (context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;

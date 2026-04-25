@@ -11,15 +11,18 @@
 import { spawn } from 'node:child_process'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = resolve(__dirname, '..')
+const require = createRequire(import.meta.url)
+const tscBin = require.resolve('typescript/bin/tsc')
 
 const procs = [
   spawn('node', [resolve(__dirname, 'watch-resources.js')], {
     cwd: root, stdio: 'inherit'
   }),
-  spawn(resolve(root, 'node_modules', '.bin', 'tsc'), ['--watch'], {
+  spawn(process.execPath, [tscBin, '--watch'], {
     cwd: root, stdio: 'inherit'
   })
 ]

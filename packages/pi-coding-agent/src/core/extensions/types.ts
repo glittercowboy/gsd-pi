@@ -88,6 +88,8 @@ export interface ExtensionUIDialogOptions {
 	timeout?: number;
 	/** When true, the user can select multiple options. The return type becomes `string[]`. */
 	allowMultiple?: boolean;
+	/** When true, text input dialogs should hide typed characters if supported by the client surface. */
+	secure?: boolean;
 }
 
 /** Placement for extension widgets. */
@@ -301,6 +303,11 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	newSession(options?: {
 		parentSession?: string;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
+		/** When aborted before the session is fully configured, newSession() returns
+		 *  early without rebuilding the tool runtime. Used by runUnit() to discard
+		 *  a late-resolving newSession() after the session-creation timeout fires,
+		 *  preventing the tool runtime from being rebuilt with the wrong cwd (#3731). */
+		abortSignal?: AbortSignal;
 	}): Promise<{ cancelled: boolean }>;
 
 	/** Fork from a specific entry, creating a new session file. */
@@ -332,6 +339,19 @@ export interface ToolRenderResultOptions {
 }
 
 /**
+ * Tool compatibility metadata for provider-aware tool filtering (ADR-005 Phase 2).
+ * Tools without compatibility metadata are assumed universally compatible.
+ */
+export interface ToolCompatibility {
+	/** Tool produces image content in results (filtered for providers without imageToolResults) */
+	producesImages?: boolean;
+	/** Tool requires schema features that some providers don't support (e.g., ["patternProperties"]) */
+	schemaFeatures?: string[];
+	/** Tool is effective only with models above a minimum capability threshold */
+	minCapabilityTier?: "light" | "standard" | "heavy";
+}
+
+/**
  * Tool definition for registerTool().
  */
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown> {
@@ -347,6 +367,8 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptGuidelines?: string[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
+	/** Provider compatibility metadata (ADR-005). Omit for universally compatible tools. */
+	compatibility?: ToolCompatibility;
 
 	/** Execute the tool. */
 	execute(
@@ -448,6 +470,13 @@ export interface SessionShutdownEvent {
 	type: "session_shutdown";
 }
 
+/** Fired when the in-process session ends (distinct from process shutdown). */
+export interface SessionEndEvent {
+	type: "session_end";
+	reason: "user" | "idle" | "error" | "programmatic";
+	sessionFile?: string;
+}
+
 /** Preparation data for tree navigation */
 export interface TreePreparation {
 	targetId: string;
@@ -489,6 +518,7 @@ export type SessionEvent =
 	| SessionBeforeCompactEvent
 	| SessionCompactEvent
 	| SessionShutdownEvent
+	| SessionEndEvent
 	| SessionBeforeTreeEvent
 	| SessionTreeEvent;
 
@@ -506,8 +536,8 @@ export interface ContextEvent {
 export interface BeforeProviderRequestEvent {
 	type: "before_provider_request";
 	payload: unknown;
-	/** The resolved model for this request (provider, id, etc.) */
-	model?: { provider: string; id: string };
+	/** The resolved model for this request (provider, id, api, etc.) */
+	model?: { provider: string; id: string; api?: string };
 }
 
 /** Fired after user submits prompt but before agent loop. */
@@ -527,6 +557,199 @@ export interface AgentStartEvent {
 export interface AgentEndEvent {
 	type: "agent_end";
 	messages: AgentMessage[];
+}
+
+/**
+ * Fired when the agent has truly stopped — no follow-up, no steering, no pending turn.
+ * Distinct from `agent_end`, which fires on every loop exit (including those that resume).
+ * Use this for "the agent is idle and waiting for the user" signals.
+ */
+export interface StopEvent {
+	type: "stop";
+	reason: "completed" | "cancelled" | "error" | "blocked";
+	lastMessage?: AgentMessage;
+}
+
+/**
+ * Fired when the agent needs user attention (blocked on a question, idle, milestone ready).
+ * Consumed by the Layer 0 shell-hook runner to dispatch `Notification` / `Blocked` hooks.
+ */
+export interface NotificationEvent {
+	type: "notification";
+	kind: "blocked" | "input_needed" | "milestone_ready" | "idle" | "error";
+	message: string;
+	details?: Record<string, unknown>;
+}
+
+// ============================================================================
+// Git Lifecycle Events
+// ============================================================================
+
+/** Fired before a commit is created. Handlers can veto or rewrite the message. */
+export interface BeforeCommitEvent {
+	type: "before_commit";
+	message: string;
+	files: string[];
+	cwd: string;
+	author?: string;
+}
+
+/** Result from before_commit event handler. */
+export interface BeforeCommitEventResult {
+	cancel?: boolean;
+	reason?: string;
+	message?: string;
+}
+
+/** Fired after a commit lands. */
+export interface CommitEvent {
+	type: "commit";
+	sha: string;
+	message: string;
+	files: string[];
+	cwd: string;
+}
+
+/** Fired before a git push. Handlers can veto. */
+export interface BeforePushEvent {
+	type: "before_push";
+	remote: string;
+	branch: string;
+	cwd: string;
+}
+
+/** Result from before_push event handler. */
+export interface BeforePushEventResult {
+	cancel?: boolean;
+	reason?: string;
+}
+
+/** Fired after a push completes. */
+export interface PushEvent {
+	type: "push";
+	remote: string;
+	branch: string;
+	cwd: string;
+}
+
+/** Fired before a pull request is opened. Handlers can veto or rewrite title/body. */
+export interface BeforePrEvent {
+	type: "before_pr";
+	branch: string;
+	targetBranch: string;
+	title: string;
+	body: string;
+	cwd: string;
+}
+
+/** Result from before_pr event handler. */
+export interface BeforePrEventResult {
+	cancel?: boolean;
+	reason?: string;
+	title?: string;
+	body?: string;
+}
+
+/** Fired after a pull request is opened. */
+export interface PrOpenedEvent {
+	type: "pr_opened";
+	url: string;
+	branch: string;
+	targetBranch: string;
+	cwd: string;
+}
+
+// ============================================================================
+// Verification Events
+// ============================================================================
+
+/** Fired before verification runs (tests, diagnostics, gates). */
+export interface BeforeVerifyEvent {
+	type: "before_verify";
+	unitType?: string;
+	unitId?: string;
+	cwd: string;
+}
+
+/** Result from before_verify event handler. */
+export interface BeforeVerifyEventResult {
+	cancel?: boolean;
+	reason?: string;
+}
+
+/** A single verification failure. */
+export interface VerifyFailure {
+	kind: "type" | "lint" | "test" | "diagnostic" | "gate" | "other";
+	file?: string;
+	line?: number;
+	message: string;
+}
+
+/** Fired when verification completes. */
+export interface VerifyResultEvent {
+	type: "verify_result";
+	passed: boolean;
+	failures: VerifyFailure[];
+	unitType?: string;
+	unitId?: string;
+	cwd: string;
+}
+
+// ============================================================================
+// Budget Events
+// ============================================================================
+
+/** Fired when the tracked cost crosses a configured fraction of the budget. */
+export interface BudgetThresholdEvent {
+	type: "budget_threshold";
+	fraction: number;
+	spent: number;
+	limit: number;
+	currency: "USD";
+}
+
+/** Result from budget_threshold event handler. */
+export interface BudgetThresholdEventResult {
+	action?: "pause" | "downgrade" | "continue";
+}
+
+// ============================================================================
+// Orchestrator Events (milestone / unit boundaries)
+// ============================================================================
+
+/** Fired at the start of an orchestrator milestone. */
+export interface MilestoneStartEvent {
+	type: "milestone_start";
+	milestoneId: string;
+	title?: string;
+	cwd: string;
+}
+
+/** Fired when a milestone ends. */
+export interface MilestoneEndEvent {
+	type: "milestone_end";
+	milestoneId: string;
+	status: "completed" | "failed" | "cancelled";
+	cwd: string;
+}
+
+/** Fired at the start of an orchestrator unit (sub-task within a milestone). */
+export interface UnitStartEvent {
+	type: "unit_start";
+	unitType: string;
+	unitId: string;
+	milestoneId?: string;
+	cwd: string;
+}
+
+/** Fired when a unit ends. */
+export interface UnitEndEvent {
+	type: "unit_end";
+	unitType: string;
+	unitId: string;
+	milestoneId?: string;
+	status: "completed" | "failed" | "cancelled" | "blocked";
+	cwd: string;
 }
 
 /** Fired at the start of each turn */
@@ -601,6 +824,46 @@ export interface ModelSelectEvent {
 	model: Model<any>;
 	previousModel: Model<any> | undefined;
 	source: ModelSelectSource;
+}
+
+/** Fired before model selection runs capability scoring. Extensions can override the selected model. */
+export interface BeforeModelSelectEvent {
+	type: "before_model_select";
+	unitType: string;
+	unitId: string;
+	classification: { tier: string; reason: string; downgraded: boolean };
+	taskMetadata?: Record<string, unknown>;
+	eligibleModels: string[];
+	phaseConfig?: { primary: string; fallbacks: string[] };
+}
+
+/** Result from before_model_select event handler. Return { modelId } to override selection. */
+export interface BeforeModelSelectResult {
+	modelId: string;
+}
+
+/**
+ * Fired after model selection to allow extensions to adjust the active tool set (ADR-005 Phase 4).
+ * Extensions can add, remove, or reorder tools based on the selected model's provider capabilities.
+ */
+export interface AdjustToolSetEvent {
+	type: "adjust_tool_set";
+	/** The selected model's API type */
+	selectedModelApi: string;
+	/** The selected model's provider */
+	selectedModelProvider: string;
+	/** The selected model ID */
+	selectedModelId: string;
+	/** Current active tool names */
+	activeToolNames: string[];
+	/** Tools already filtered by provider compatibility */
+	filteredTools: string[];
+}
+
+/** Result from adjust_tool_set event handler. Return { toolNames } to override tool set. */
+export interface AdjustToolSetResult {
+	/** Replacement tool names. If omitted, the default filtering is used. */
+	toolNames?: string[];
 }
 
 // ============================================================================
@@ -856,6 +1119,21 @@ export type ExtensionEvent =
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
+	| StopEvent
+	| NotificationEvent
+	| BeforeCommitEvent
+	| CommitEvent
+	| BeforePushEvent
+	| PushEvent
+	| BeforePrEvent
+	| PrOpenedEvent
+	| BeforeVerifyEvent
+	| VerifyResultEvent
+	| BudgetThresholdEvent
+	| MilestoneStartEvent
+	| MilestoneEndEvent
+	| UnitStartEvent
+	| UnitEndEvent
 	| TurnStartEvent
 	| TurnEndEvent
 	| MessageStartEvent
@@ -1028,6 +1306,7 @@ export interface ExtensionAPI {
 	): void;
 	on(event: "session_compact", handler: ExtensionHandler<SessionCompactEvent>): void;
 	on(event: "session_shutdown", handler: ExtensionHandler<SessionShutdownEvent>): void;
+	on(event: "session_end", handler: ExtensionHandler<SessionEndEvent>): void;
 	on(event: "session_before_tree", handler: ExtensionHandler<SessionBeforeTreeEvent, SessionBeforeTreeResult>): void;
 	on(event: "session_tree", handler: ExtensionHandler<SessionTreeEvent>): void;
 	on(event: "context", handler: ExtensionHandler<ContextEvent, ContextEventResult>): void;
@@ -1038,6 +1317,21 @@ export interface ExtensionAPI {
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
+	on(event: "stop", handler: ExtensionHandler<StopEvent>): void;
+	on(event: "notification", handler: ExtensionHandler<NotificationEvent>): void;
+	on(event: "before_commit", handler: ExtensionHandler<BeforeCommitEvent, BeforeCommitEventResult>): void;
+	on(event: "commit", handler: ExtensionHandler<CommitEvent>): void;
+	on(event: "before_push", handler: ExtensionHandler<BeforePushEvent, BeforePushEventResult>): void;
+	on(event: "push", handler: ExtensionHandler<PushEvent>): void;
+	on(event: "before_pr", handler: ExtensionHandler<BeforePrEvent, BeforePrEventResult>): void;
+	on(event: "pr_opened", handler: ExtensionHandler<PrOpenedEvent>): void;
+	on(event: "before_verify", handler: ExtensionHandler<BeforeVerifyEvent, BeforeVerifyEventResult>): void;
+	on(event: "verify_result", handler: ExtensionHandler<VerifyResultEvent>): void;
+	on(event: "budget_threshold", handler: ExtensionHandler<BudgetThresholdEvent, BudgetThresholdEventResult>): void;
+	on(event: "milestone_start", handler: ExtensionHandler<MilestoneStartEvent>): void;
+	on(event: "milestone_end", handler: ExtensionHandler<MilestoneEndEvent>): void;
+	on(event: "unit_start", handler: ExtensionHandler<UnitStartEvent>): void;
+	on(event: "unit_end", handler: ExtensionHandler<UnitEndEvent>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
 	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
 	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
@@ -1052,6 +1346,30 @@ export interface ExtensionAPI {
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
+	on(event: "before_model_select", handler: ExtensionHandler<BeforeModelSelectEvent, BeforeModelSelectResult>): void;
+	on(event: "adjust_tool_set", handler: ExtensionHandler<AdjustToolSetEvent, AdjustToolSetResult>): void;
+
+	// =========================================================================
+	// Event Emission (for host extensions that orchestrate model selection)
+	// =========================================================================
+
+	/** Emit before_model_select event. Returns override model ID or undefined. */
+	emitBeforeModelSelect(event: Omit<BeforeModelSelectEvent, "type">): Promise<BeforeModelSelectResult | undefined>;
+
+	/** Emit adjust_tool_set event (ADR-005). Returns override tool names or undefined. */
+	emitAdjustToolSet(event: Omit<AdjustToolSetEvent, "type">): Promise<AdjustToolSetResult | undefined>;
+
+	/**
+	 * Emit a Layer 2 extension event from an extension. Supports the
+	 * post-plan additions: `notification`, `stop`, `session_end`,
+	 * `before_commit` / `commit`, `before_push` / `push`, `before_pr` /
+	 * `pr_opened`, `before_verify` / `verify_result`, `budget_threshold`,
+	 * `milestone_start` / `milestone_end`, `unit_start` / `unit_end`.
+	 *
+	 * The returned value is the aggregate handler result where meaningful
+	 * (e.g. `{ cancel: true, reason }` from `before_commit`).
+	 */
+	emitExtensionEvent(event: ExtensionEvent): Promise<unknown>;
 
 	// =========================================================================
 	// Tool Registration
@@ -1317,6 +1635,8 @@ export interface ProviderModelConfig {
 	headers?: Record<string, string>;
 	/** OpenAI compatibility settings. */
 	compat?: Model<Api>["compat"];
+	/** Opaque provider-specific options (e.g. Ollama keep_alive, num_gpu). */
+	providerOptions?: Record<string, unknown>;
 }
 
 /** Extension factory function type. Supports both sync and async initialization. */
@@ -1367,6 +1687,17 @@ export interface ExtensionRuntimeState {
 	 */
 	registerProvider: (name: string, config: ProviderConfig) => void;
 	unregisterProvider: (name: string) => void;
+	/** Emit before_model_select event to all registered handlers. Bound by ExtensionRunner. */
+	emitBeforeModelSelect: (event: Omit<BeforeModelSelectEvent, "type">) => Promise<BeforeModelSelectResult | undefined>;
+	/** Emit adjust_tool_set event to all registered handlers. Bound by ExtensionRunner (ADR-005). */
+	emitAdjustToolSet: (event: Omit<AdjustToolSetEvent, "type">) => Promise<AdjustToolSetResult | undefined>;
+	/**
+	 * Emit a Layer 2 extension event from an extension. Supports the
+	 * post-plan additions (notification, stop, git lifecycle, verify,
+	 * budget, milestone, unit, session_end). Returns the handler chain's
+	 * aggregate result for events that support vetoes / mutations.
+	 */
+	emitExtensionEvent: (event: ExtensionEvent) => Promise<unknown>;
 }
 
 /**
@@ -1421,6 +1752,8 @@ export interface ExtensionCommandContextActions {
 	newSession: (options?: {
 		parentSession?: string;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
+		/** See ExtensionCommandContext.newSession for docs (#3731). */
+		abortSignal?: AbortSignal;
 	}) => Promise<{ cancelled: boolean }>;
 	fork: (entryId: string) => Promise<{ cancelled: boolean }>;
 	navigateTree: (
@@ -1450,10 +1783,18 @@ export interface Extension {
 	lifecycleHooks: LifecycleHookMap;
 }
 
+/** Warning from extension dependency sort (missing deps, cycles). */
+export interface ExtensionLoadWarning {
+	declaringId: string;
+	missingId: string;
+	message: string;
+}
+
 /** Result of loading extensions. */
 export interface LoadExtensionsResult {
 	extensions: Extension[];
 	errors: Array<{ path: string; error: string }>;
+	warnings: ExtensionLoadWarning[];
 	/** Shared runtime - actions are throwing stubs until runner.initialize() */
 	runtime: ExtensionRuntime;
 }

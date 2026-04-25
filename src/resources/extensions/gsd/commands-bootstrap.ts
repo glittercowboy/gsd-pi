@@ -45,6 +45,7 @@ const TOP_LEVEL_SUBCOMMANDS = [
   { cmd: "start", desc: "Start a workflow template" },
   { cmd: "templates", desc: "List available workflow templates" },
   { cmd: "extensions", desc: "Manage extensions" },
+  { cmd: "codebase", desc: "Generate, refresh, and inspect the codebase map cache" },
 ] as const;
 
 function filterStartsWith(
@@ -216,6 +217,15 @@ function getGsdArgumentCompletions(prefix: string) {
       { cmd: "disable", desc: "Disable an extension" },
       { cmd: "info", desc: "Show extension details" },
     ], "extensions");
+  }
+
+  if (parts[0] === "codebase" && parts.length <= 2) {
+    return filterStartsWith(partial, [
+      { cmd: "generate", desc: "Generate or regenerate CODEBASE.md" },
+      { cmd: "update", desc: "Refresh the CODEBASE.md cache immediately" },
+      { cmd: "stats", desc: "Show codebase-map coverage and generation time" },
+      { cmd: "help", desc: "Show usage and subcommands" },
+    ], "codebase");
   }
 
   if (parts[0] === "doctor" && parts.length <= 2) {

@@ -39,6 +39,21 @@ export function registerChatParticipant(
 			message = `${fileContext}\n\n${message}`;
 		}
 
+		// Auto-include editor selection if present and not already referenced
+		const selectionContext = getSelectionContext();
+		if (selectionContext) {
+			message = `${selectionContext}\n\n${message}`;
+		}
+
+		// Auto-include diagnostics for the active file if the prompt mentions "fix", "error", "problem", "warning"
+		const fixKeywords = /\b(fix|error|problem|warning|issue|bug|lint|diagnos)/i;
+		if (fixKeywords.test(message)) {
+			const diagContext = getActiveDiagnosticsContext();
+			if (diagContext) {
+				message = `${message}\n\n${diagContext}`;
+			}
+		}
+
 		// Track streaming state
 		let agentDone = false;
 		let totalInputTokens = 0;
@@ -280,4 +295,43 @@ function resolveFileUri(fp: string): vscode.Uri | null {
 	} catch {
 		return null;
 	}
+}
+
+/**
+ * Get the current editor selection as context, if any text is selected.
+ */
+function getSelectionContext(): string | null {
+	const editor = vscode.window.activeTextEditor;
+	if (!editor || editor.selection.isEmpty) return null;
+
+	const selection = editor.document.getText(editor.selection);
+	if (!selection.trim()) return null;
+
+	const relativePath = vscode.workspace.asRelativePath(editor.document.uri);
+	const { start, end } = editor.selection;
+	return `Selected code in \`${relativePath}\` (lines ${start.line + 1}-${end.line + 1}):\n\`\`\`\n${selection}\n\`\`\``;
+}
+
+/**
+ * Get diagnostics (errors/warnings) for the active editor file.
+ */
+function getActiveDiagnosticsContext(): string | null {
+	const editor = vscode.window.activeTextEditor;
+	if (!editor) return null;
+
+	const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
+	const significant = diagnostics.filter(
+		(d) => d.severity === vscode.DiagnosticSeverity.Error || d.severity === vscode.DiagnosticSeverity.Warning,
+	);
+	if (significant.length === 0) return null;
+
+	const relativePath = vscode.workspace.asRelativePath(editor.document.uri);
+	const lines = [`Current diagnostics in \`${relativePath}\`:`];
+	for (const d of significant) {
+		const sev = d.severity === vscode.DiagnosticSeverity.Error ? "Error" : "Warning";
+		const line = d.range.start.line + 1;
+		const source = d.source ? ` [${d.source}]` : "";
+		lines.push(`- ${sev} (line ${line}): ${d.message}${source}`);
+	}
+	return lines.join("\n");
 }

@@ -17,7 +17,7 @@
  */
 
 import type { Api, Model } from "@gsd/pi-ai";
-import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 import type { GitServiceImpl } from "../git-service.js";
 import type { CaptureEntry } from "../captures.js";
 import type { BudgetAlertLevel } from "../auto-budget.js";
@@ -39,6 +39,8 @@ export interface StartModel {
   provider: string;
   id: string;
 }
+
+export type ThinkingLevelSnapshot = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 
 export interface PendingVerificationRetry {
   unitId: string;
@@ -62,12 +64,21 @@ export interface SidecarItem {
   captureId?: string;
 }
 
+export interface PreExecFailure {
+  /** Milestone/slice that failed (e.g. "M001/S02"). */
+  unitId: string;
+  /** Verbatim blocking check strings from the failed gate run. */
+  blockingFindings: string[];
+  /** Condensed gate verdict excerpt for context (status + rationale). */
+  verdictExcerpt: string;
+}
+
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 export const MAX_UNIT_DISPATCHES = 3;
 export const STUB_RECOVERY_THRESHOLD = 2;
 export const MAX_LIFETIME_DISPATCHES = 6;
-export const NEW_SESSION_TIMEOUT_MS = 30_000;
+export const NEW_SESSION_TIMEOUT_MS = 120_000;
 
 // ─── AutoSession ─────────────────────────────────────────────────────────────
 
@@ -84,6 +95,13 @@ export class AutoSession {
   // ── Paths ────────────────────────────────────────────────────────────────
   basePath = "";
   originalBasePath = "";
+  previousProjectRootEnv: string | null = null;
+  hadProjectRootEnv = false;
+  projectRootEnvCaptured = false;
+  previousMilestoneLockEnv: string | null = null;
+  hadMilestoneLockEnv = false;
+  milestoneLockEnvCaptured = false;
+  sessionMilestoneLock: string | null = null;
   gitService: GitServiceImpl | null = null;
 
   // ── Dispatch counters ────────────────────────────────────────────────────
@@ -99,14 +117,22 @@ export class AutoSession {
 
   // ── Current unit ─────────────────────────────────────────────────────────
   currentUnit: CurrentUnit | null = null;
+  currentTraceId: string | null = null;
+  currentTurnId: string | null = null;
   currentUnitRouting: UnitRouting | null = null;
   currentMilestoneId: string | null = null;
 
   // ── Model state ──────────────────────────────────────────────────────────
   autoModeStartModel: StartModel | null = null;
+  /** Explicit /gsd model pin captured at bootstrap (session-scoped policy override). */
+  manualSessionModelOverride: StartModel | null = null;
   currentUnitModel: Model<Api> | null = null;
+  /** Fully-qualified model ID (provider/id) set after selectAndApplyModel + hook overrides (#2899). */
+  currentDispatchedModelId: string | null = null;
   originalModelId: string | null = null;
   originalModelProvider: string | null = null;
+  autoModeStartThinkingLevel: ThinkingLevelSnapshot | null = null;
+  originalThinkingLevel: ThinkingLevelSnapshot | null = null;
   lastBudgetAlertLevel: BudgetAlertLevel = 0;
 
   // ── Recovery ─────────────────────────────────────────────────────────────
@@ -114,11 +140,34 @@ export class AutoSession {
   pendingVerificationRetry: PendingVerificationRetry | null = null;
   readonly verificationRetryCount = new Map<string, number>();
   pausedSessionFile: string | null = null;
+  pausedUnitType: string | null = null;
+  pausedUnitId: string | null = null;
   resourceVersionOnStart: string | null = null;
   lastStateRebuildAt = 0;
 
   // ── Sidecar queue ─────────────────────────────────────────────────────
   sidecarQueue: SidecarItem[] = [];
+
+  // ── Pre-exec gate failure context (#4551) ───────────────────────────
+  /**
+   * Persisted when a pre-execution gate fails on a plan-slice or refine-slice
+   * unit. The planning → plan-slice dispatch rule reads this field and injects
+   * the failure details into the next re-dispatch prompt so the LLM can fix the
+   * specific issues instead of producing an identical plan.
+   *
+   * Cleared after it has been consumed (injected into the prompt) to avoid
+   * stale context bleeding into unrelated slices.
+   */
+  lastPreExecFailure: PreExecFailure | null = null;
+
+  // ── Tool invocation errors (#2883) ──────────────────────────────────
+  /** Set when a GSD tool execution ends with isError due to malformed/truncated
+   *  JSON arguments. Checked by postUnitPreVerification to break retry loops. */
+  lastToolInvocationError: string | null = null;
+  /** Set when turn-level git action fails during closeout. */
+  lastGitActionFailure: string | null = null;
+  /** Last turn-level git action status captured during finalize. */
+  lastGitActionStatus: "ok" | "failed" | null = null;
 
   // ── Isolation degradation ────────────────────────────────────────────
   /** Set to true when worktree creation fails; prevents merge of nonexistent branch. */
@@ -129,8 +178,17 @@ export class AutoSession {
    *  stopAuto does not attempt the same merge a second time (#2645). */
   milestoneMergedInPhases = false;
 
+  // #4765 — slice-cadence collapse: main-branch SHAs at the moment each
+  // milestone's first slice merge began. Used by resquashMilestoneOnMain at
+  // milestone completion to collapse N slice commits into one. Cleared when
+  // the milestone finishes (or resquash runs).
+  milestoneStartShas: Map<string, string> = new Map();
+
   // ── Dispatch circuit breakers ──────────────────────────────────────
   rewriteAttemptCount = 0;
+  /** Tracks consecutive bootstrap attempts that found phase === "complete".
+   *  Moved from module-level to per-session so s.reset() clears it (#1348). */
+  consecutiveCompleteBootstraps = 0;
 
   // ── Metrics ──────────────────────────────────────────────────────────────
   autoStartTime = 0;
@@ -138,8 +196,16 @@ export class AutoSession {
   lastBaselineCharCount: number | undefined;
   pendingQuickTasks: CaptureEntry[] = [];
 
+  // ── Safety harness ───────────────────────────────────────────────────────
+  /** SHA of the pre-unit git checkpoint ref. Cleared on success or rollback. */
+  checkpointSha: string | null = null;
+
   // ── Signal handler ───────────────────────────────────────────────────────
   sigtermHandler: (() => void) | null = null;
+
+  // ── Remote command polling ───────────────────────────────────────────────
+  /** Cleanup function returned by startCommandPolling(); null when not running. */
+  commandPollingCleanup: (() => void) | null = null;
 
   // ── Loop promise state ──────────────────────────────────────────────────
   // Per-unit resolve function and session-switch guard live at module level
@@ -160,7 +226,12 @@ export class AutoSession {
   }
 
   get lockBasePath(): string {
-    return this.originalBasePath || this.basePath;
+    // Prefer originalBasePath (project root); fall back to basePath.
+    // Strip /.gsd/worktrees/ suffix if basePath is itself a worktree path
+    // to avoid reading/writing the lock inside the worktree (#3729).
+    const resolved = this.originalBasePath || this.basePath;
+    const markerIdx = resolved.indexOf("/.gsd/worktrees/");
+    return markerIdx !== -1 ? resolved.slice(0, markerIdx) : resolved;
   }
 
   reset(): void {
@@ -178,6 +249,13 @@ export class AutoSession {
     // Paths
     this.basePath = "";
     this.originalBasePath = "";
+    this.previousProjectRootEnv = null;
+    this.hadProjectRootEnv = false;
+    this.projectRootEnvCaptured = false;
+    this.previousMilestoneLockEnv = null;
+    this.hadMilestoneLockEnv = false;
+    this.milestoneLockEnvCaptured = false;
+    this.sessionMilestoneLock = null;
     this.gitService = null;
 
     // Dispatch
@@ -187,14 +265,20 @@ export class AutoSession {
 
     // Unit
     this.currentUnit = null;
+    this.currentTraceId = null;
+    this.currentTurnId = null;
     this.currentUnitRouting = null;
     this.currentMilestoneId = null;
 
     // Model
     this.autoModeStartModel = null;
+    this.manualSessionModelOverride = null;
     this.currentUnitModel = null;
+    this.currentDispatchedModelId = null;
     this.originalModelId = null;
     this.originalModelProvider = null;
+    this.autoModeStartThinkingLevel = null;
+    this.originalThinkingLevel = null;
     this.lastBudgetAlertLevel = 0;
 
     // Recovery
@@ -202,6 +286,8 @@ export class AutoSession {
     this.pendingVerificationRetry = null;
     this.verificationRetryCount.clear();
     this.pausedSessionFile = null;
+    this.pausedUnitType = null;
+    this.pausedUnitId = null;
     this.resourceVersionOnStart = null;
     this.lastStateRebuildAt = 0;
 
@@ -212,11 +298,21 @@ export class AutoSession {
     this.pendingQuickTasks = [];
     this.sidecarQueue = [];
     this.rewriteAttemptCount = 0;
+    this.consecutiveCompleteBootstraps = 0;
+    this.lastPreExecFailure = null;
+    this.lastToolInvocationError = null;
+    this.lastGitActionFailure = null;
+    this.lastGitActionStatus = null;
     this.isolationDegraded = false;
     this.milestoneMergedInPhases = false;
+    this.milestoneStartShas = new Map();
+    this.checkpointSha = null;
 
     // Signal handler
     this.sigtermHandler = null;
+
+    // Remote command polling — cleanup must be called before reset (auto.ts stopAuto)
+    this.commandPollingCleanup = null;
 
     // Loop promise state lives in auto-loop.ts module scope
   }

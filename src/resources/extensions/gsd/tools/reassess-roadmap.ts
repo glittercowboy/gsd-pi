@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { existsSync, unlinkSync } from "node:fs";
 import { clearParseCache } from "../files.js";
 import { isClosedStatus } from "../status-guards.js";
 import { isNonEmptyString } from "../validation.js";
@@ -10,6 +11,7 @@ import {
   insertSlice,
   updateSliceFields,
   insertAssessment,
+  deleteAssessmentByScope,
   deleteSlice,
 } from "../gsd-db.js";
 import { invalidateStateCache } from "../state.js";
@@ -17,6 +19,7 @@ import { renderRoadmapFromDb, renderAssessmentFromDb } from "../markdown-rendere
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
+import { logWarning } from "../workflow-logger.js";
 
 export interface SliceChangeInput {
   sliceId: string;
@@ -183,8 +186,10 @@ export async function handleReassessRoadmap(
         });
       }
 
-      // Insert new slices
-      for (const added of params.sliceChanges.added) {
+      // Insert new slices — assign sequence after existing slices (#3356)
+      const existingCount = getMilestoneSlices(params.milestoneId).length;
+      for (let i = 0; i < params.sliceChanges.added.length; i++) {
+        const added = params.sliceChanges.added[i]!;
         insertSlice({
           id: added.sliceId,
           milestoneId: params.milestoneId,
@@ -193,12 +198,28 @@ export async function handleReassessRoadmap(
           risk: added.risk,
           depends: added.depends,
           demo: added.demo ?? "",
+          sequence: existingCount + i + 1,
         });
       }
 
       // Delete removed slices
       for (const removedId of params.sliceChanges.removed) {
         deleteSlice(params.milestoneId, removedId);
+      }
+
+      // ── Invalidate stale milestone validation (#2957) ──────────────
+      // When roadmap structure changes (slices added/modified/removed),
+      // any prior milestone-validation verdict is stale. Delete the DB
+      // row so deriveState() returns phase: 'validating-milestone' once
+      // the new slices complete, rather than advancing directly to
+      // 'completing-milestone' with a stale needs-remediation verdict.
+      const hasStructuralChanges =
+        params.sliceChanges.added.length > 0 ||
+        params.sliceChanges.modified.length > 0 ||
+        params.sliceChanges.removed.length > 0;
+
+      if (hasStructuralChanges) {
+        deleteAssessmentByScope(params.milestoneId, "milestone-validation");
       }
     });
   } catch (err) {
@@ -218,6 +239,24 @@ export async function handleReassessRoadmap(
       completedSliceId: params.completedSliceId,
     });
 
+    // ── Remove stale VALIDATION file from disk (#2957) ────────────
+    const hasStructuralChanges =
+      params.sliceChanges.added.length > 0 ||
+      params.sliceChanges.modified.length > 0 ||
+      params.sliceChanges.removed.length > 0;
+
+    if (hasStructuralChanges) {
+      const validationFile = join(
+        basePath, ".gsd", "milestones", params.milestoneId,
+        `${params.milestoneId}-VALIDATION.md`,
+      );
+      try {
+        if (existsSync(validationFile)) unlinkSync(validationFile);
+      } catch (e) {
+        logWarning("tool", `validation file cleanup failed: ${(e as Error).message}`);
+      }
+    }
+
     // ── Invalidate caches ─────────────────────────────────────────
     invalidateStateCache();
     clearParseCache();
@@ -235,9 +274,7 @@ export async function handleReassessRoadmap(
         trigger_reason: params.triggerReason,
       });
     } catch (hookErr) {
-      process.stderr.write(
-        `gsd: reassess-roadmap post-mutation hook warning: ${(hookErr as Error).message}\n`,
-      );
+      logWarning("tool", `reassess-roadmap post-mutation hook warning: ${(hookErr as Error).message}`);
     }
 
     return {

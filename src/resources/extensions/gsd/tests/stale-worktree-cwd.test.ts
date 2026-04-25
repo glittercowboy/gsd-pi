@@ -17,6 +17,8 @@ import {
   teardownAutoWorktree,
   mergeMilestoneToMain,
 } from "../auto-worktree.ts";
+import { _resetServiceCache } from "../worktree.ts";
+import { _clearGsdRootCache } from "../paths.ts";
 
 function run(command: string, cwd: string): string {
   return execSync(command, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -62,6 +64,13 @@ test("mergeMilestoneToMain restores cwd to project root", () => {
   const savedCwd = process.cwd();
   let tempDir = "";
 
+  // Isolate from user's global preferences (which may have git.main_branch set)
+  const originalHome = process.env.HOME;
+  const fakeHome = realpathSync(mkdtempSync(join(tmpdir(), "gsd-fake-home-")));
+  process.env.HOME = fakeHome;
+  _clearGsdRootCache();
+  _resetServiceCache();
+
   try {
     tempDir = createTempRepo();
 
@@ -97,9 +106,13 @@ test("mergeMilestoneToMain restores cwd to project root", () => {
     assert.ok(!existsSync(wtPath), "worktree directory removed after merge");
   } finally {
     process.chdir(savedCwd);
+    process.env.HOME = originalHome;
+    _clearGsdRootCache();
+    _resetServiceCache();
     if (tempDir && existsSync(tempDir)) {
       rmSync(tempDir, { recursive: true, force: true });
     }
+    rmSync(fakeHome, { recursive: true, force: true });
   }
 });
 

@@ -3,10 +3,22 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execSync } from 'node:child_process';
 
 import { deriveState, invalidateStateCache, getActiveMilestoneId } from '../state.ts';
 import { clearPathCache } from '../paths.ts';
 import { parkMilestone, unparkMilestone, discardMilestone, isParked, getParkedReason } from '../milestone-actions.ts';
+import {
+  closeDatabase,
+  getMilestone,
+  getMilestoneSlices,
+  getSliceTasks,
+  insertMilestone,
+  insertSlice,
+  insertTask,
+  openDatabase,
+} from "../gsd-db.ts";
+import { createWorktree } from "../worktree-manager.ts";
 
 
 
@@ -60,7 +72,27 @@ function createMilestone(base: string, mid: string, opts?: { withRoadmap?: boole
 }
 
 function cleanup(base: string): void {
+  try {
+    closeDatabase();
+  } catch {
+    // ignore
+  }
   rmSync(base, { recursive: true, force: true });
+}
+
+function run(cmd: string, cwd: string): string {
+  return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
+}
+
+function initGitRepo(base: string): void {
+  writeFileSync(join(base, "README.md"), "# test\n", "utf-8");
+  writeFileSync(join(base, ".gsd", "STATE.md"), "# State\n", "utf-8");
+  run("git init", base);
+  run("git config user.email test@test.com", base);
+  run("git config user.name Test", base);
+  run("git add .", base);
+  run('git commit -m "init"', base);
+  run("git branch -M main", base);
 }
 
 function clearCaches(): void {
@@ -289,6 +321,38 @@ test('discardMilestone updates queue order', () => {
       const queueContent = JSON.parse(readFileSync(queuePath, 'utf-8'));
       assert.ok(!queueContent.order.includes('M001'), 'M001 removed from queue order');
       assert.ok(queueContent.order.includes('M002'), 'M002 still in queue order');
+    } finally {
+      cleanup(base);
+    }
+});
+
+test('discardMilestone removes DB rows, worktree, and milestone branch', () => {
+    const base = createFixtureBase();
+    try {
+      createMilestone(base, 'M001', { withRoadmap: true });
+      initGitRepo(base);
+      clearCaches();
+
+      assert.ok(openDatabase(join(base, '.gsd', 'gsd.db')), 'database opens');
+      insertMilestone({ id: 'M001', title: 'Discard me', status: 'active' });
+      insertSlice({ milestoneId: 'M001', id: 'S01', title: 'Only slice', status: 'pending' });
+      insertTask({ milestoneId: 'M001', sliceId: 'S01', id: 'T01', title: 'Only task', status: 'pending' });
+
+      const wt = createWorktree(base, 'M001', { branch: 'milestone/M001' });
+      assert.ok(existsSync(wt.path), 'worktree exists before discard');
+      assert.ok(run('git branch', base).includes('milestone/M001'), 'milestone branch exists before discard');
+      assert.ok(getMilestone('M001'), 'milestone exists in DB before discard');
+      assert.equal(getMilestoneSlices('M001').length, 1, 'slice exists in DB before discard');
+      assert.equal(getSliceTasks('M001', 'S01').length, 1, 'task exists in DB before discard');
+
+      const success = discardMilestone(base, 'M001');
+      assert.ok(success, 'discardMilestone returns true');
+
+      assert.equal(getMilestone('M001'), null, 'milestone row removed from DB');
+      assert.equal(getMilestoneSlices('M001').length, 0, 'slice rows removed from DB');
+      assert.equal(getSliceTasks('M001', 'S01').length, 0, 'task rows removed from DB');
+      assert.ok(!existsSync(wt.path), 'worktree removed after discard');
+      assert.ok(!run('git branch', base).includes('milestone/M001'), 'milestone branch removed after discard');
     } finally {
       cleanup(base);
     }

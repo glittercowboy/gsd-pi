@@ -25,6 +25,24 @@ import {
 export type { AnthropicEffort, AnthropicOptions };
 export { extractRetryAfterMs };
 
+/**
+ * Resolve the base URL for Anthropic API requests.
+ *
+ * Resolution order:
+ * 1. ANTHROPIC_BASE_URL environment variable (if set and non-empty after trim)
+ * 2. model.baseUrl (from the model definition)
+ *
+ * This allows routing traffic through custom proxy endpoints (e.g. OpusMax,
+ * local mirrors, corporate gateways) without modifying model definitions.
+ */
+export function resolveAnthropicBaseUrl(model: Model<"anthropic-messages">): string {
+	const envBaseUrl = process.env.ANTHROPIC_BASE_URL?.trim();
+	if (envBaseUrl) {
+		return envBaseUrl;
+	}
+	return model.baseUrl;
+}
+
 let _AnthropicClass: typeof Anthropic | undefined;
 async function getAnthropicClass(): Promise<typeof Anthropic> {
 	if (!_AnthropicClass) {
@@ -33,9 +51,6 @@ async function getAnthropicClass(): Promise<typeof Anthropic> {
 	}
 	return _AnthropicClass;
 }
-
-// Stealth mode: Mimic Claude Code's tool naming exactly
-const claudeCodeVersion = "2.1.62";
 
 function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]): Record<string, string> {
 	const merged: Record<string, string> = {};
@@ -47,8 +62,13 @@ function mergeHeaders(...headerSources: (Record<string, string> | undefined)[]):
 	return merged;
 }
 
-function isOAuthToken(apiKey: string): boolean {
-	return apiKey.includes("sk-ant-oat");
+export function usesAnthropicBearerAuth(provider: Model<"anthropic-messages">["provider"]): boolean {
+	return provider === "alibaba-coding-plan" || provider === "minimax" || provider === "minimax-cn";
+}
+
+function hasBearerAuthorizationHeader(model: Model<"anthropic-messages">): boolean {
+	const authHeader = model.headers?.Authorization ?? model.headers?.authorization;
+	return typeof authHeader === "string" && authHeader.trim().toLowerCase().startsWith("bearer ");
 }
 
 async function createClient(
@@ -73,7 +93,7 @@ async function createClient(
 		const client = new AnthropicClass({
 			apiKey: null,
 			authToken: apiKey,
-			baseURL: model.baseUrl,
+			baseURL: resolveAnthropicBaseUrl(model),
 			dangerouslyAllowBrowser: true,
 			defaultHeaders: mergeHeaders(
 				{
@@ -90,43 +110,26 @@ async function createClient(
 		return { client, isOAuthToken: false };
 	}
 
-	// Skip beta headers for providers that don't support them (e.g., Alibaba Coding Plan)
-	const skipBetaHeaders = model.provider === "alibaba-coding-plan";
+	// Skip beta headers for providers that don't support fine-grained-tool-streaming.
+	// MiniMax and minimax-cn implement the beta by emitting empty tool names in
+	// content_block_start (name arrives as a delta instead), which corrupts conversation
+	// history and triggers MiniMax error 2013 on the next request (#4538).
+	const skipBetaHeaders =
+		model.provider === "alibaba-coding-plan" ||
+		model.provider === "minimax" ||
+		model.provider === "minimax-cn";
 	const betaFeatures = skipBetaHeaders ? [] : ["fine-grained-tool-streaming-2025-05-14"];
 	if (needsInterleavedBeta && !skipBetaHeaders) {
 		betaFeatures.push("interleaved-thinking-2025-05-14");
 	}
 
-	// OAuth: Bearer auth, Claude Code identity headers
-	if (isOAuthToken(apiKey)) {
-		const client = new AnthropicClass({
-			apiKey: null,
-			authToken: apiKey,
-			baseURL: model.baseUrl,
-			dangerouslyAllowBrowser: true,
-			defaultHeaders: mergeHeaders(
-				{
-					accept: "application/json",
-					"anthropic-dangerous-direct-browser-access": "true",
-					...(betaFeatures.length > 0 ? { "anthropic-beta": `claude-code-20250219,oauth-2025-04-20,${betaFeatures.join(",")}` } : {}),
-					"user-agent": `claude-cli/${claudeCodeVersion}`,
-					"x-app": "cli",
-				},
-				model.headers,
-				optionsHeaders,
-			),
-		});
-
-		return { client, isOAuthToken: true };
-	}
-
-	// API key auth
-	// Alibaba Coding Plan uses Bearer token auth instead of x-api-key
-	const isAlibabaProvider = model.provider === "alibaba-coding-plan";
+	// API key auth (Anthropic OAuth removed per TOS compliance — use API keys or Claude CLI)
+	// Some Anthropic-compatible providers require Bearer auth instead of x-api-key.
+	const usesBearerAuth = usesAnthropicBearerAuth(model.provider) || hasBearerAuthorizationHeader(model);
 	const client = new AnthropicClass({
-		apiKey: isAlibabaProvider ? null : apiKey,
-		authToken: isAlibabaProvider ? apiKey : undefined,
-		baseURL: model.baseUrl,
+		apiKey: usesBearerAuth ? null : apiKey,
+		authToken: usesBearerAuth ? apiKey : undefined,
+		baseURL: resolveAnthropicBaseUrl(model),
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: mergeHeaders(
 			{

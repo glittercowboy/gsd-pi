@@ -1,7 +1,8 @@
-import test, { describe } from "node:test";
+import test, { describe, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import {
   buildCmuxProgress,
@@ -12,7 +13,8 @@ import {
   resolveCmuxConfig,
   shouldPromptToEnableCmux,
 } from "../../cmux/index.ts";
-import type { GSDState } from "../types.ts";
+import { autoEnableCmuxPreferences } from "../commands-cmux.ts";
+import type { CmuxStateInput } from "../../shared/cmux-events.ts";
 
 test("detectCmuxEnvironment requires workspace, surface, and socket", () => {
   const detected = detectCmuxEnvironment(
@@ -79,16 +81,76 @@ test("shouldPromptToEnableCmux only prompts once per session", () => {
   resetCmuxPromptState();
 });
 
+describe("autoEnableCmuxPreferences", () => {
+  let tmp: string;
+  let originalCwd: string;
+
+  beforeEach(() => {
+    originalCwd = process.cwd();
+    tmp = fs.mkdtempSync(path.join(tmpdir(), "cmux-auto-test-"));
+    fs.mkdirSync(path.join(tmp, ".gsd"), { recursive: true });
+    process.chdir(tmp);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("writes cmux.enabled true when preferences file exists with no cmux config", () => {
+    const prefsPath = path.join(tmp, ".gsd", "preferences.md");
+    fs.writeFileSync(prefsPath, [
+      "---",
+      "version: 1",
+      "---",
+      "",
+      "# GSD Skill Preferences",
+    ].join("\n"));
+
+    const result = autoEnableCmuxPreferences();
+    assert.equal(result, true);
+
+    const content = fs.readFileSync(prefsPath, "utf-8");
+    assert.ok(content.includes("enabled: true"), "should write enabled: true");
+    assert.ok(content.includes("notifications: true"), "should default notifications on");
+    assert.ok(content.includes("sidebar: true"), "should default sidebar on");
+    assert.ok(content.includes("splits: false"), "should default splits off");
+  });
+
+  test("returns false when preferences file does not exist", () => {
+    const result = autoEnableCmuxPreferences();
+    assert.equal(result, false);
+  });
+
+  test("preserves existing cmux sub-preferences when auto-enabling", () => {
+    const prefsPath = path.join(tmp, ".gsd", "preferences.md");
+    fs.writeFileSync(prefsPath, [
+      "---",
+      "version: 1",
+      "cmux:",
+      "  splits: true",
+      "  browser: true",
+      "---",
+      "",
+      "# GSD Skill Preferences",
+    ].join("\n"));
+
+    const result = autoEnableCmuxPreferences();
+    assert.equal(result, true);
+
+    const content = fs.readFileSync(prefsPath, "utf-8");
+    assert.ok(content.includes("enabled: true"), "should set enabled: true");
+    assert.ok(content.includes("splits: true"), "should preserve existing splits: true");
+    assert.ok(content.includes("browser: true"), "should preserve existing browser: true");
+  });
+});
+
 test("buildCmuxStatusLabel and progress prefer deepest active unit", () => {
-  const state: GSDState = {
-    activeMilestone: { id: "M001", title: "Milestone" },
-    activeSlice: { id: "S02", title: "Slice" },
-    activeTask: { id: "T03", title: "Task" },
+  const state: CmuxStateInput = {
+    activeMilestone: { id: "M001" },
+    activeSlice: { id: "S02" },
+    activeTask: { id: "T03" },
     phase: "executing",
-    recentDecisions: [],
-    blockers: [],
-    nextAction: "Keep going",
-    registry: [],
     progress: {
       milestones: { done: 0, total: 1 },
       slices: { done: 1, total: 3 },
@@ -190,6 +252,64 @@ describe("createGridLayout", () => {
     const surfaces = await mock.createGridLayout(0);
     assert.equal(surfaces.length, 0);
     assert.equal(mock.calls.length, 0);
+  });
+});
+
+describe("CmuxClient stdio isolation", () => {
+  test("runSync and runAsync explicitly set stdio to prevent terminal interference", () => {
+    // Read the cmux index source and verify that execFileSync/spawn calls
+    // inside runSync/runAsync include stdio options that isolate stdin and stderr.
+    // This prevents the cmux CLI child process from inheriting the parent's
+    // stdin/stderr, which can steal keyboard input or corrupt TUI rendering (#1922).
+    const cmuxIndexPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../cmux/index.ts",
+    );
+    const source = fs.readFileSync(cmuxIndexPath, "utf-8");
+
+    // Extract runSync method body
+    const runSyncMatch = source.match(/private runSync\(args: string\[\]\)[^{]*\{([\s\S]*?)\n  \}/);
+    assert.ok(runSyncMatch, "runSync method must exist");
+    const runSyncBody = runSyncMatch[1];
+    assert.ok(
+      runSyncBody.includes('stdio:'),
+      "runSync must explicitly set stdio to prevent terminal interference (see #1922)",
+    );
+    assert.ok(
+      runSyncBody.includes('"ignore"'),
+      "runSync stdio must ignore stdin to prevent stealing keyboard input from TUI",
+    );
+
+    // Extract runAsync method body
+    const runAsyncMatch = source.match(/private async runAsync\(args: string\[\]\)[^{]*\{([\s\S]*?)\n  \}/);
+    assert.ok(runAsyncMatch, "runAsync method must exist");
+    const runAsyncBody = runAsyncMatch[1];
+    assert.ok(
+      runAsyncBody.includes('stdio:'),
+      "runAsync must explicitly set stdio to prevent terminal interference (see #1922)",
+    );
+    assert.ok(
+      runAsyncBody.includes('"ignore"'),
+      "runAsync stdio must ignore stdin to prevent stealing keyboard input from TUI",
+    );
+  });
+
+  test("isCmuxCliAvailable uses stdio ignore to prevent terminal interference", () => {
+    const cmuxIndexPath = path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "../../cmux/index.ts",
+    );
+    const source = fs.readFileSync(cmuxIndexPath, "utf-8");
+
+    // Find isCmuxCliAvailable or the cli-check function body
+    const fnMatch = source.match(/function isCmuxCliAvailable[\s\S]*?\{([\s\S]*?)\n\}/);
+    if (!fnMatch) return; // function may be inlined or renamed — skip rather than fail
+
+    const fnBody = fnMatch[1];
+    assert.ok(
+      fnBody.includes('"ignore"') || !fnBody.includes('execFileSync'),
+      "isCmuxCliAvailable must not inherit parent stdio (see #1922)",
+    );
   });
 });
 

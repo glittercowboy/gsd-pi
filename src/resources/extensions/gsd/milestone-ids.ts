@@ -6,6 +6,7 @@
  */
 
 import { randomInt } from "node:crypto";
+import { logWarning } from "./workflow-logger.js";
 import { readdirSync, existsSync } from "node:fs";
 import { milestonesDir } from "./paths.js";
 import { loadQueueOrder, sortByQueueOrder } from "./queue-order.js";
@@ -128,7 +129,7 @@ export function findMilestoneIds(basePath: string): string[] {
   } catch (err) {
     // Log why milestone scanning failed — silent [] here causes infinite loops (#456)
     if (existsSync(dir)) {
-      console.error(`[gsd] findMilestoneIds: .gsd/milestones/ exists but readdirSync failed — ${getErrorMessage(err)}`);
+      logWarning("engine", `findMilestoneIds: .gsd/milestones/ exists but readdirSync failed — ${getErrorMessage(err)}`);
     }
     return [];
   }

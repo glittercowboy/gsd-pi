@@ -35,6 +35,26 @@ export interface BuildSystemPromptOptions {
 	contextFiles?: Array<{ path: string; content: string }>;
 	/** Pre-loaded skills. */
 	skills?: Skill[];
+	/**
+	 * Optional predicate applied to the `skills` list before rendering the
+	 * <available_skills> catalog. Returning `false` omits a skill from the
+	 * prompt (the skill remains loaded and invocable by name — only the
+	 * catalog listing is suppressed).
+	 *
+	 * Intended for consumers that can narrow the relevant skill surface
+	 * (e.g. per-unit-type manifests) to reduce cached system-prompt bloat.
+	 * When omitted, all non-`disableModelInvocation` skills render — i.e.
+	 * behavior is unchanged from before this option existed.
+	 *
+	 * Contract: the predicate must be **pure and synchronous**. It may be
+	 * invoked on every system-prompt rebuild (tool-set changes and
+	 * runtime resource-loader extensions both trigger one), so any state
+	 * the closure captures should be stable across the rebuild window.
+	 * If the predicate throws, `buildSystemPrompt` logs a warning and
+	 * falls back to the unfiltered skill list — callers never see the
+	 * exception and the session stays consistent.
+	 */
+	skillFilter?: (skill: Skill) => boolean;
 }
 
 /** Build the system prompt with tools, guidelines, and context */
@@ -48,6 +68,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		cwd,
 		contextFiles: providedContextFiles,
 		skills: providedSkills,
+		skillFilter,
 	} = options;
 	const resolvedCwd = toPosixPath(cwd ?? process.cwd());
 
@@ -66,7 +87,20 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
 
 	const contextFiles = providedContextFiles ?? [];
-	const skills = providedSkills ?? [];
+	const skillsBase = providedSkills ?? [];
+	let skills = skillsBase;
+	if (skillFilter) {
+		try {
+			skills = skillsBase.filter(skillFilter);
+		} catch (error) {
+			// A consumer's predicate threw. Fall back to the unfiltered list so
+			// the session stays consistent — callers (e.g. AgentSession.setTools)
+			// must not be left with updated tools but a stale system prompt.
+			const message = error instanceof Error ? error.message : String(error);
+			console.warn(`buildSystemPrompt: skillFilter threw; falling back to unfiltered skills. Error: ${message}`);
+			skills = skillsBase;
+		}
+	}
 
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -109,9 +143,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	}
 
 	// Get absolute paths to documentation and examples
-	const readmePath = getReadmePath();
-	const docsPath = getDocsPath();
-	const examplesPath = getExamplesPath();
+	const readmePath = toPosixPath(getReadmePath());
+	const docsPath = toPosixPath(getDocsPath());
+	const examplesPath = toPosixPath(getExamplesPath());
 
 	// Build tools list based on selected tools.
 	// Built-ins use toolDescriptions. Custom tools can provide one-line snippets.

@@ -14,6 +14,7 @@ import { execSync } from "node:child_process";
 import { join } from "node:path";
 
 import type { DoctorIssue, DoctorIssueCode } from "./doctor-types.js";
+import { detectPythonExecutable } from "./python-resolver.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -402,7 +403,7 @@ function checkProjectTools(basePath: string): EnvironmentCheckResult[] {
 
     // Check for Python if pyproject.toml or requirements.txt exists
     if (existsSync(join(basePath, "pyproject.toml")) || existsSync(join(basePath, "requirements.txt"))) {
-      if (!commandExists("python3", basePath) && !commandExists("python", basePath)) {
+      if (detectPythonExecutable() === null) {
         results.push({
           name: "python",
           status: "warning",

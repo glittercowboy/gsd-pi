@@ -65,3 +65,22 @@ test("/gsd update is listed in completions with correct description", () => {
     "completion description should mention updating",
   );
 });
+
+test("/gsd codebase appears in top-level completions", () => {
+  const pi = createMockPi();
+  registerGSDCommand(pi as any);
+
+  const gsd = pi.commands.get("gsd");
+  const completions = gsd.getArgumentCompletions("code");
+  const codebaseEntry = completions.find((c: any) => c.value === "codebase");
+  assert.ok(codebaseEntry, "codebase should appear in completions");
+  assert.match(codebaseEntry.description, /codebase map cache/i);
+});
+
+test("/gsd codebase appears in help description", () => {
+  const pi = createMockPi();
+  registerGSDCommand(pi as any);
+
+  const gsd = pi.commands.get("gsd");
+  assert.ok(gsd?.description?.includes("codebase"), "description should mention codebase");
+});

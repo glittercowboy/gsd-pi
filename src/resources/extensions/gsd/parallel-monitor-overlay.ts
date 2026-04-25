@@ -2,7 +2,8 @@
  * GSD Parallel Monitor Overlay
  *
  * Full-screen TUI overlay showing real-time parallel worker progress.
- * Opened via `/gsd parallel watch` or Ctrl+Alt+P.
+ * Opened via `/gsd parallel watch`, Ctrl+Alt+P (⌃⌥P on macOS),
+ * or Ctrl+Shift+P fallback.
  * Reads the same data sources as `scripts/parallel-monitor.mjs` but
  * renders as a native pi-tui overlay with theme integration.
  */
@@ -15,6 +16,7 @@ import type { Theme } from "@gsd/pi-coding-agent";
 import { truncateToWidth, visibleWidth, matchesKey, Key } from "@gsd/pi-tui";
 
 import { formatDuration, STATUS_GLYPH, STATUS_COLOR } from "../shared/mod.js";
+import { formattedShortcutPair } from "./shortcut-defs.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -347,7 +349,12 @@ export class ParallelMonitorOverlay {
   }
 
   handleInput(data: string): void {
-    if (matchesKey(data, Key.escape) || data === "q") {
+    if (
+      matchesKey(data, Key.escape) ||
+      matchesKey(data, Key.ctrlAlt("p")) ||
+      matchesKey(data, Key.ctrlShift("p")) ||
+      data === "q"
+    ) {
       this.dispose();
       this.onClose();
       return;
@@ -486,10 +493,12 @@ export class ParallelMonitorOverlay {
       }
       lines.push(`  ${t.bold("Total: $" + this.workers.reduce((s, wk) => s + wk.cost, 0).toFixed(2))}`);
     }
-    lines.push(t.fg("muted", "  ESC/q to close  │  ↑↓ scroll"));
+    lines.push(t.fg("muted", `  ESC/q/${formattedShortcutPair("parallel")} close  │  ↑↓ scroll`));
 
     // Apply scroll — use terminal rows as height estimate
     const termHeight = process.stdout.rows || 40;
+    const maxScroll = Math.max(0, lines.length - termHeight);
+    this.scrollOffset = Math.min(Math.max(this.scrollOffset, 0), maxScroll);
     const visible = lines.slice(this.scrollOffset, this.scrollOffset + termHeight);
     this.cachedLines = visible;
     return visible;

@@ -29,6 +29,7 @@ export class BashExecutionComponent extends Container {
 	private expanded = false;
 	private contentContainer: Container;
 	private ui: TUI;
+	private _borderColorKey: "dim" | "bashMode";
 
 	constructor(command: string, ui: TUI, excludeFromContext = false) {
 		super();
@@ -37,6 +38,7 @@ export class BashExecutionComponent extends Container {
 
 		// Use dim border for excluded-from-context commands (!! prefix)
 		const colorKey = excludeFromContext ? "dim" : "bashMode";
+		this._borderColorKey = colorKey;
 		const borderColor = (str: string) => theme.fg(colorKey, str);
 
 		// Add spacer
@@ -137,7 +139,7 @@ export class BashExecutionComponent extends Container {
 		this.contentContainer.clear();
 
 		// Command header
-		const header = new Text(theme.fg("bashMode", theme.bold(`$ ${this.command}`)), 1, 0);
+		const header = new Text(theme.fg(this._borderColorKey, theme.bold(`$ ${this.command}`)), 1, 0);
 		this.contentContainer.addChild(header);
 
 		// Output

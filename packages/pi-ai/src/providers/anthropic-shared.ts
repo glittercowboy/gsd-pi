@@ -1,5 +1,7 @@
 /**
  * Shared utilities for Anthropic providers (direct API and Vertex AI).
+ * Includes message conversion, tool normalisation, cache-control helpers,
+ * adaptive-thinking detection, and the core `processAnthropicStream` pump.
  */
 import type Anthropic from "@anthropic-ai/sdk";
 import type {
@@ -31,11 +33,14 @@ import type {
 export type AnthropicApi = "anthropic-messages" | "anthropic-vertex";
 import type { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
+import { hasXmlParameterTags, repairToolJson } from "../utils/repair-tool-json.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { transformMessages } from "./transform-messages.js";
+import { transformMessagesWithReport } from "./transform-messages.js";
 
-export type AnthropicEffort = "low" | "medium" | "high" | "max";
+/** Effort levels accepted by the Anthropic `output_config.effort` field. */
+export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
+/** Extended stream options for Anthropic-protocol providers (direct API and Vertex AI). */
 export interface AnthropicOptions extends StreamOptions {
 	thinkingEnabled?: boolean;
 	thinkingBudgetTokens?: number;
@@ -44,6 +49,7 @@ export interface AnthropicOptions extends StreamOptions {
 	toolChoice?: "auto" | "any" | "none" | { type: "tool"; name: string };
 }
 
+/** Canonical list of Claude Code built-in tool names used for case-normalisation. */
 const claudeCodeTools = [
 	"Read",
 	"Write",
@@ -64,9 +70,12 @@ const claudeCodeTools = [
 	"WebSearch",
 ];
 
+/** Lowercase-keyed lookup map built from `claudeCodeTools` for O(1) case-insensitive name resolution. */
 const ccToolLookup = new Map(claudeCodeTools.map((t) => [t.toLowerCase(), t]));
 
+/** Normalise a tool name to its canonical Claude Code casing. */
 export const toClaudeCodeName = (name: string) => ccToolLookup.get(name.toLowerCase()) ?? name;
+/** Reverse-map a Claude Code tool name back to the provider's own casing, using the tools list if available. */
 export const fromClaudeCodeName = (name: string, tools?: Tool[]) => {
 	if (tools && tools.length > 0) {
 		const lowerName = name.toLowerCase();
@@ -76,6 +85,10 @@ export const fromClaudeCodeName = (name: string, tools?: Tool[]) => {
 	return name;
 };
 
+/**
+ * Resolve cache retention preference.
+ * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
+ */
 function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRetention {
 	if (cacheRetention) {
 		return cacheRetention;
@@ -86,6 +99,7 @@ function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRetention 
 	return "short";
 }
 
+/** Resolve cache retention and return the matching Anthropic `cache_control` block. */
 export function getCacheControl(
 	baseUrl: string,
 	cacheRetention?: CacheRetention,
@@ -101,6 +115,7 @@ export function getCacheControl(
 	};
 }
 
+/** Convert GSD content blocks to the Anthropic SDK's user-message content format. */
 export function convertContentBlocks(content: (TextContent | ImageContent)[]):
 	| string
 	| Array<
@@ -147,15 +162,23 @@ export function convertContentBlocks(content: (TextContent | ImageContent)[]):
 	return blocks;
 }
 
+/** Returns true for models that support the adaptive thinking API (Opus 4.6/4.7, Sonnet 4.6/4.7, Haiku 4.5). */
 export function supportsAdaptiveThinking(modelId: string): boolean {
 	return (
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
+		modelId.includes("opus-4-7") ||
+		modelId.includes("opus-4.7") ||
 		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
+		modelId.includes("sonnet-4.6") ||
+		modelId.includes("sonnet-4-7") ||
+		modelId.includes("sonnet-4.7") ||
+		modelId.includes("haiku-4-5") ||
+		modelId.includes("haiku-4.5")
 	);
 }
 
+/** Map a GSD thinking level to the corresponding Anthropic effort value; model-specific for xhigh. */
 export function mapThinkingLevelToEffort(level: string | undefined, modelId: string): AnthropicEffort {
 	switch (level) {
 		case "minimal":
@@ -167,12 +190,15 @@ export function mapThinkingLevelToEffort(level: string | undefined, modelId: str
 		case "high":
 			return "high";
 		case "xhigh":
-			return modelId.includes("opus-4-6") || modelId.includes("opus-4.6") ? "max" : "high";
+			if (modelId.includes("opus-4-7") || modelId.includes("opus-4.7")) return "xhigh";
+			if (modelId.includes("opus-4-6") || modelId.includes("opus-4.6")) return "max";
+			return "high";
 		default:
 			return "high";
 	}
 }
 
+/** Returns true for low-level network errors that are safe to retry (reset, pipe, timeout, DNS). */
 export function isTransientNetworkError(error: unknown): boolean {
 	if (!(error instanceof Error)) return false;
 	const msg = error.message.toLowerCase();
@@ -191,6 +217,7 @@ export function isTransientNetworkError(error: unknown): boolean {
 	);
 }
 
+/** Parse `Retry-After` / rate-limit reset headers and return a suggested delay in milliseconds. */
 export function extractRetryAfterMs(headers: Headers | { get(name: string): string | null }, errorText = ""): number | undefined {
 	const normalizeDelay = (ms: number): number | undefined => (ms > 0 ? Math.ceil(ms + 1000) : undefined);
 
@@ -222,10 +249,12 @@ export function extractRetryAfterMs(headers: Headers | { get(name: string): stri
 	return undefined;
 }
 
+/** Sanitise a tool-call ID to only alphanumeric, underscore, and hyphen characters (max 64 chars). */
 export function normalizeToolCallId(id: string): string {
 	return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
 }
 
+/** Convert GSD messages to Anthropic SDK `MessageParam` format, applying cache control to the last user turn. */
 export function convertMessages(
 	messages: Message[],
 	model: Model<AnthropicApi>,
@@ -234,7 +263,7 @@ export function convertMessages(
 ): MessageParam[] {
 	const params: MessageParam[] = [];
 
-	const transformedMessages = transformMessages(messages, model, normalizeToolCallId);
+	const transformedMessages = transformMessagesWithReport(messages, model, normalizeToolCallId, "anthropic-messages");
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
@@ -310,10 +339,16 @@ export function convertMessages(
 						});
 					}
 				} else if (block.type === "toolCall") {
+					// Guard: never forward a tool_use block with an empty name.
+					// fine-grained-tool-streaming-2025-05-14 can cause the name to arrive
+					// as a delta on incompatible providers (e.g. MiniMax), leaving block.name
+					// as "". Re-sending that to MiniMax triggers error 2013 (#4538).
+					const toolName = isOAuthToken ? toClaudeCodeName(block.name) : block.name;
+					if (!toolName) continue;
 					blocks.push({
 						type: "tool_use",
 						id: block.id,
-						name: isOAuthToken ? toClaudeCodeName(block.name) : block.name,
+						name: toolName,
 						input: block.arguments ?? {},
 					});
 				} else if (block.type === "serverToolUse") {
@@ -393,10 +428,15 @@ export function convertMessages(
 	return params;
 }
 
-export function convertTools(tools: Tool[], isOAuthToken: boolean): Anthropic.Messages.Tool[] {
+/** Convert GSD tools to Anthropic SDK tool definitions, applying cache control to the last entry. */
+export function convertTools(
+	tools: Tool[],
+	isOAuthToken: boolean,
+	cacheControl?: { type: "ephemeral"; ttl?: "1h" },
+): Anthropic.Messages.Tool[] {
 	if (!tools) return [];
 
-	return tools.map((tool) => {
+	const result = tools.map((tool) => {
 		const jsonSchema = tool.parameters as any;
 
 		return {
@@ -409,8 +449,16 @@ export function convertTools(tools: Tool[], isOAuthToken: boolean): Anthropic.Me
 			},
 		};
 	});
+
+	// Add cache breakpoint to last tool — covers entire tool block
+	if (cacheControl && result.length > 0) {
+		(result[result.length - 1] as any).cache_control = cacheControl;
+	}
+
+	return result;
 }
 
+/** Build the `MessageCreateParamsStreaming` payload for an Anthropic API call. */
 export function buildParams(
 	model: Model<AnthropicApi>,
 	context: Context,
@@ -456,14 +504,16 @@ export function buildParams(
 	}
 
 	if (context.tools) {
-		params.tools = convertTools(context.tools, isOAuthToken);
+		params.tools = convertTools(context.tools, isOAuthToken, cacheControl);
 	}
 
 	if (options?.thinkingEnabled && model.reasoning) {
 		if (supportsAdaptiveThinking(model.id)) {
 			params.thinking = { type: "adaptive" };
 			if (options.effort) {
-				params.output_config = { effort: options.effort };
+				// The SDK's OutputConfig.effort type doesn't include "xhigh" yet.
+				// Cast so our superset AnthropicEffort type compiles cleanly.
+				params.output_config = { effort: options.effort as "low" | "medium" | "high" | "max" };
 			}
 		} else {
 			params.thinking = {
@@ -491,6 +541,7 @@ export function buildParams(
 	return params;
 }
 
+/** Map an Anthropic API stop reason string to GSD's internal `StopReason`. */
 export function mapStopReason(reason: string): StopReason {
 	switch (reason) {
 		case "end_turn":
@@ -502,7 +553,7 @@ export function mapStopReason(reason: string): StopReason {
 		case "refusal":
 			return "error";
 		case "pause_turn":
-			return "stop";
+			return "pauseTurn";
 		case "stop_sequence":
 			return "stop";
 		case "sensitive":
@@ -512,6 +563,7 @@ export function mapStopReason(reason: string): StopReason {
 	}
 }
 
+/** Arguments for `processAnthropicStream`. */
 export interface StreamAnthropicArgs {
 	client: Anthropic;
 	model: Model<AnthropicApi>;
@@ -521,6 +573,7 @@ export interface StreamAnthropicArgs {
 	AnthropicSdkClass?: typeof Anthropic;
 }
 
+/** Drive an Anthropic streaming response, pushing `AssistantMessageEvent`s into `stream` until done or error. */
 export function processAnthropicStream(
 	stream: AssistantMessageEventStream,
 	args: StreamAnthropicArgs,
@@ -596,12 +649,25 @@ export function processAnthropicStream(
 						output.content.push(block);
 						stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
 					} else if (event.content_block.type === "tool_use") {
+						// Guard: some Anthropic-compatible providers (e.g. MiniMax with
+						// fine-grained-tool-streaming beta) stream the tool name as a delta,
+						// leaving content_block.name as "" here. Fall back to the tool list
+						// if available to avoid storing an empty name in history (#4538).
+						const rawName = event.content_block.name;
+						let resolvedName: string;
+						if (rawName) {
+							resolvedName = isOAuthToken ? fromClaudeCodeName(rawName, context.tools) : rawName;
+						} else {
+							const fallbackName = context.tools?.[0]?.name ?? rawName;
+							if (fallbackName && fallbackName !== rawName) {
+								console.warn(`[anthropic-shared] Empty tool name in content_block_start (id=${event.content_block.id}); falling back to first tool: ${fallbackName}`);
+							}
+							resolvedName = fallbackName;
+						}
 						const block: Block = {
 							type: "toolCall",
 							id: event.content_block.id,
-							name: isOAuthToken
-								? fromClaudeCodeName(event.content_block.name, context.tools)
-								: event.content_block.name,
+							name: resolvedName,
 							arguments: (event.content_block.input as Record<string, any>) ?? {},
 							partialJson: "",
 							index: event.index,
@@ -696,7 +762,22 @@ export function processAnthropicStream(
 								partial: output,
 							});
 						} else if (block.type === "toolCall") {
-							block.arguments = parseStreamingJson(block.partialJson);
+							// Try strict parse first; if it fails, attempt YAML bullet
+							// repair (#2660) before falling back to the lenient streaming
+							// parser which silently swallows errors.
+							const raw = block.partialJson ?? "";
+							const rawForParse = hasXmlParameterTags(raw) ? repairToolJson(raw) : raw;
+							let parsed: Record<string, any> | undefined;
+							try {
+								parsed = JSON.parse(rawForParse);
+							} catch {
+								try {
+									parsed = JSON.parse(repairToolJson(rawForParse));
+								} catch {
+									// Fall through to streaming parser
+								}
+							}
+							block.arguments = parsed ?? parseStreamingJson(block.partialJson);
 							delete (block as any).partialJson;
 							stream.push({
 								type: "toolcall_end",

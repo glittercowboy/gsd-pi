@@ -75,7 +75,7 @@ export class CustomMessageComponent extends Container {
 		this.box.clear();
 
 		// Default rendering: label + content
-		const label = theme.fg("customMessageLabel", `\x1b[1m[${this.message.customType}]\x1b[22m`);
+		const label = theme.fg("customMessageLabel", theme.bold(`[${this.message.customType}]`));
 		this.box.addChild(new Text(label, 0, 0));
 		this.box.addChild(new Spacer(1));
 

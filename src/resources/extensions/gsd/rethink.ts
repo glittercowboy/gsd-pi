@@ -19,6 +19,7 @@ import { isParked, getParkedReason } from "./milestone-actions.js";
 import { getMilestoneSlices, isDbAvailable } from "./gsd-db.js";
 import { buildExistingMilestonesContext } from "./guided-flow-queue.js";
 import { loadPrompt } from "./prompt-loader.js";
+import { isGsdGitignored } from "./gitignore.js";
 
 // ─── Entry Point ──────────────────────────────────────────────────────────────
 
@@ -53,9 +54,14 @@ export async function handleRethink(
   const rethinkData = buildRethinkData(basePath, milestoneIds, state, queueOrder);
   const existingMilestonesContext = await buildExistingMilestonesContext(basePath, milestoneIds, state);
 
+  const commitInstruction = isGsdGitignored(basePath)
+    ? "Do not commit planning artifacts — .gsd/ is gitignored in this project."
+    : 'After changes, run `git add .gsd/ && git commit -m "docs(gsd): rethink milestone plan"` to persist (rethink runs interactively outside auto-mode, so no system auto-commit)';
+
   const content = loadPrompt("rethink", {
     rethinkData,
     existingMilestonesContext,
+    commitInstruction,
   });
 
   pi.sendMessage(
@@ -106,8 +112,11 @@ function buildRethinkData(
     if (dbAvailable && status !== "complete") {
       const slices = getMilestoneSlices(mid);
       if (slices.length > 0) {
-        const done = slices.filter(s => s.status === "complete").length;
-        sliceInfo = `${done}/${slices.length} complete`;
+        const done = slices.filter(s => s.status === "complete" || s.status === "done").length;
+        const skipped = slices.filter(s => s.status === "skipped").length;
+        sliceInfo = skipped > 0
+          ? `${done}/${slices.length} complete, ${skipped} skipped`
+          : `${done}/${slices.length} complete`;
       }
     }
 

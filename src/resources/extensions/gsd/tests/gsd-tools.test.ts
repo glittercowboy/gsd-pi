@@ -21,8 +21,10 @@ import {
 import {
   saveDecisionToDb,
   updateRequirementInDb,
+  saveRequirementToDb,
   saveArtifactToDb,
   nextDecisionId,
+  nextRequirementId,
 } from '../db-writer.ts';
 import type { Requirement } from '../types.ts';
 
@@ -160,18 +162,11 @@ describe('gsd-tools', () => {
       assert.ok(mdContent.includes('R001'), 'REQUIREMENTS.md should contain R001');
       assert.ok(mdContent.includes('validated'), 'REQUIREMENTS.md should reflect updated status');
 
-      // Updating non-existent requirement throws
-      let threwForMissing = false;
-      try {
-        await updateRequirementInDb('R999', { status: 'deferred' }, tmpDir);
-      } catch (err) {
-        threwForMissing = true;
-        assert.ok(
-          (err as Error).message.includes('R999'),
-          'Error should mention the missing requirement ID',
-        );
-      }
-      assert.ok(threwForMissing, 'Should throw for non-existent requirement');
+      // Updating non-existent requirement upserts (creates it) — see #2919
+      await updateRequirementInDb('R999', { status: 'deferred' }, tmpDir);
+      const upserted = getRequirementById('R999');
+      assert.ok(upserted !== null, 'R999 should be created by upsert');
+      assert.deepStrictEqual(upserted!.status, 'deferred', 'Upserted requirement should have the updated status');
 
       closeDatabase();
     } finally {
@@ -250,6 +245,41 @@ describe('gsd-tools', () => {
     }
   });
 
+  test('gsd_summary_save supports CONTEXT-DRAFT persistence', async () => {
+    const tmpDir = makeTmpDir();
+    try {
+      const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+      openDatabase(dbPath);
+
+      await saveArtifactToDb(
+        {
+          path: 'milestones/M001/M001-CONTEXT-DRAFT.md',
+          artifact_type: 'CONTEXT-DRAFT',
+          content: '# M001 Draft Context\n\nDraft notes.',
+          milestone_id: 'M001',
+        },
+        tmpDir,
+      );
+
+      const draftPath = path.join(tmpDir, '.gsd', 'milestones', 'M001', 'M001-CONTEXT-DRAFT.md');
+      assert.ok(fs.existsSync(draftPath), 'Draft context file should be created');
+      const draftContent = fs.readFileSync(draftPath, 'utf-8');
+      assert.ok(draftContent.includes('Draft Context'), 'Draft context file should contain draft content');
+
+      const adapter = _getAdapter();
+      assert.ok(adapter !== null, 'Adapter should be available');
+      const rows = adapter!.prepare(
+        "SELECT * FROM artifacts WHERE path = 'milestones/M001/M001-CONTEXT-DRAFT.md'",
+      ).all();
+      assert.deepStrictEqual(rows.length, 1, 'Should have 1 draft artifact row');
+      assert.deepStrictEqual(rows[0]['artifact_type'] as string, 'CONTEXT-DRAFT', 'Artifact type should be CONTEXT-DRAFT');
+
+      closeDatabase();
+    } finally {
+      cleanupDir(tmpDir);
+    }
+  });
+
   test('DB unavailable error paths', async () => {
     // (d) All tools return isError when DB unavailable
     // Close any open DB and don't open a new one
@@ -261,6 +291,124 @@ describe('gsd-tools', () => {
     // nextDecisionId degrades gracefully
     const fallbackId = await nextDecisionId();
     assert.deepStrictEqual(fallbackId, 'D001', 'nextDecisionId should return D001 when DB unavailable');
+  });
+
+  test('gsd_requirement_save creates new requirement', async () => {
+    const tmpDir = makeTmpDir();
+    try {
+      const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+      openDatabase(dbPath);
+
+      // (a) saveRequirementToDb creates a new requirement with auto-assigned ID
+      const result = await saveRequirementToDb(
+        {
+          class: 'functional',
+          status: 'active',
+          description: 'Must support dark mode',
+          why: 'Accessibility requirement',
+          source: 'user-research',
+        },
+        tmpDir,
+      );
+
+      assert.deepStrictEqual(result.id, 'R001', 'First requirement should be R001');
+
+      // Verify DB row exists
+      const row = getRequirementById('R001');
+      assert.ok(row !== null, 'Requirement R001 should exist in DB');
+      assert.deepStrictEqual(row!.class, 'functional', 'Class should match');
+      assert.deepStrictEqual(row!.description, 'Must support dark mode', 'Description should match');
+      assert.deepStrictEqual(row!.status, 'active', 'Status should match');
+
+      // Verify REQUIREMENTS.md was generated
+      const mdPath = path.join(tmpDir, '.gsd', 'REQUIREMENTS.md');
+      assert.ok(fs.existsSync(mdPath), 'REQUIREMENTS.md should be created');
+      const mdContent = fs.readFileSync(mdPath, 'utf-8');
+      assert.ok(mdContent.includes('R001'), 'REQUIREMENTS.md should contain R001');
+      assert.ok(mdContent.includes('dark mode'), 'REQUIREMENTS.md should contain description');
+
+      // (b) Auto-assigns correct next ID
+      const result2 = await saveRequirementToDb(
+        {
+          class: 'non-functional',
+          status: 'active',
+          description: 'Must load in under 2 seconds',
+          why: 'Performance SLA',
+          source: 'design',
+        },
+        tmpDir,
+      );
+      assert.deepStrictEqual(result2.id, 'R002', 'Second requirement should be R002');
+
+      closeDatabase();
+    } finally {
+      cleanupDir(tmpDir);
+    }
+  });
+
+  test('nextRequirementId computes correct next ID', async () => {
+    const tmpDir = makeTmpDir();
+    try {
+      const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+      openDatabase(dbPath);
+
+      // No requirements yet
+      const id1 = await nextRequirementId();
+      assert.deepStrictEqual(id1, 'R001', 'Should return R001 when no requirements exist');
+
+      // Add one requirement
+      upsertRequirement({
+        id: 'R001',
+        class: 'functional',
+        status: 'active',
+        description: 'Test',
+        why: '',
+        source: '',
+        primary_owner: '',
+        supporting_slices: '',
+        validation: '',
+        notes: '',
+        full_content: '',
+        superseded_by: null,
+      });
+
+      const id2 = await nextRequirementId();
+      assert.deepStrictEqual(id2, 'R002', 'Should return R002 after R001 exists');
+
+      closeDatabase();
+    } finally {
+      cleanupDir(tmpDir);
+    }
+  });
+
+  test('gsd_requirement_update upserts when requirement not in DB', async () => {
+    const tmpDir = makeTmpDir();
+    try {
+      const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+      openDatabase(dbPath);
+
+      // Requirement R025 does NOT exist in DB — simulates the bug scenario
+      // where requirements exist in REQUIREMENTS.md but were never imported.
+      // updateRequirementInDb should create the row instead of throwing.
+      await updateRequirementInDb(
+        'R025',
+        { status: 'validated', validation: 'Integration tests pass' },
+        tmpDir,
+      );
+
+      const created = getRequirementById('R025');
+      assert.ok(created !== null, 'R025 should be created by upsert');
+      assert.deepStrictEqual(created!.status, 'validated', 'Status should be set');
+      assert.deepStrictEqual(created!.validation, 'Integration tests pass', 'Validation should be set');
+
+      // Verify REQUIREMENTS.md was generated
+      const mdPath = path.join(tmpDir, '.gsd', 'REQUIREMENTS.md');
+      assert.ok(fs.existsSync(mdPath), 'REQUIREMENTS.md should be created');
+
+      closeDatabase();
+    } finally {
+      cleanupDir(tmpDir);
+    }
   });
 
   test('Tool result format', async () => {

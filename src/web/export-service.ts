@@ -74,6 +74,7 @@ export async function collectExportData(
           GSD_EXPORT_FORMAT: format,
         },
         maxBuffer: EXPORT_MAX_BUFFER,
+        windowsHide: true,
       },
       (error, stdout, stderr) => {
         if (error) {

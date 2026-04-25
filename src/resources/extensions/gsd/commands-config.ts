@@ -55,7 +55,17 @@ export function getConfigAuthStorage(): AuthStorage {
   return AuthStorage.create(authPath);
 }
 
+let deprecationWarned = false;
+
 export async function handleConfig(ctx: ExtensionCommandContext): Promise<void> {
+  if (!deprecationWarned) {
+    ctx.ui.notify(
+      "/gsd config is deprecated and will be removed. Use /gsd keys (manages both LLM and tool API keys).",
+      "warning",
+    );
+    deprecationWarned = true;
+  }
+
   const auth = getConfigAuthStorage();
 
   // Show current status

@@ -112,6 +112,13 @@ export {
 	lspTool,
 } from "../lsp/index.js";
 export type { LspServerStatus } from "../lsp/client.js";
+export {
+	registerToolCompatibility,
+	getToolCompatibility,
+	getAllToolCompatibility,
+	registerMcpToolCompatibility,
+	resetToolCompatibilityRegistry,
+} from "./tool-compatibility-registry.js";
 
 import type { AgentTool } from "@gsd/pi-agent-core";
 import { type BashToolOptions, bashTool, createBashTool } from "./bash.js";

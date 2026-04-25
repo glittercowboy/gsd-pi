@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Api, Model, SimpleStreamOptions, Context, AssistantMessageEventStream } from "@gsd/pi-ai";
 import { getApiProvider } from "@gsd/pi-ai";
-import type { AuthStorage } from "./auth-storage.js";
+import { AuthStorage, type AuthStorageData } from "./auth-storage.js";
 import { ModelRegistry } from "./model-registry.js";
 
 function createRegistry(hasAuthFn?: (provider: string) => boolean): ModelRegistry {
@@ -15,7 +15,11 @@ function createRegistry(hasAuthFn?: (provider: string) => boolean): ModelRegistr
 		getApiKey: async () => undefined,
 	} as unknown as AuthStorage;
 
-	return new ModelRegistry(authStorage, undefined);
+	return new ModelRegistry(authStorage, "");
+}
+
+function createInMemoryRegistry(data: AuthStorageData = {}): ModelRegistry {
+	return new ModelRegistry(AuthStorage.inMemory(data), "");
 }
 
 function createProviderModel(id: string, api?: string): NonNullable<Parameters<ModelRegistry["registerProvider"]>[1]["models"]>[number] {
@@ -33,6 +37,10 @@ function createProviderModel(id: string, api?: string): NonNullable<Parameters<M
 
 function findModel(registry: ModelRegistry, provider: string, id: string): Model<Api> | undefined {
 	return registry.getAvailable().find((m) => m.provider === provider && m.id === id);
+}
+
+function availableModelIds(registry: ModelRegistry): Set<string> {
+	return new Set(registry.getAvailable().map((model) => `${model.provider}/${model.id}`));
 }
 
 function makeModel(provider: string, id: string, api: string): Model<Api> {
@@ -89,6 +97,22 @@ function createStreamSpy(): {
 // ─── Registration ─────────────────────────────────────────────────────────────
 
 describe("ModelRegistry authMode — registration", () => {
+	it("includes GPT-5.5 in the authenticated all-models menu backing list", () => {
+		const registry = createInMemoryRegistry({
+			openai: { type: "api_key", key: "sk-test" },
+			"openai-codex": {
+				type: "oauth",
+				access: "codex-access",
+				refresh: "codex-refresh",
+				expires: Date.now() + 60_000,
+			},
+		});
+
+		const ids = availableModelIds(registry);
+		assert.ok(ids.has("openai/gpt-5.5"), "all-models menu backing list should include openai/gpt-5.5");
+		assert.ok(ids.has("openai-codex/gpt-5.5"), "all-models menu backing list should include openai-codex/gpt-5.5");
+	});
+
 	it("registers externalCli provider with streamSimple and without apiKey/oauth", () => {
 		const registry = createRegistry();
 		const spy = createStreamSpy();
@@ -388,6 +412,38 @@ describe("ModelRegistry authMode — getAvailable", () => {
 		const registry = createRegistry(() => false);
 		const available = registry.getAvailable();
 		assert.equal(available.length, 0);
+	});
+
+	it("prunes Codex models removed from ChatGPT-backed openai-codex OAuth", () => {
+		const registry = createInMemoryRegistry({
+			"openai-codex": {
+				type: "oauth",
+				access: "oauth-access",
+				refresh: "oauth-refresh",
+				expires: Date.now() + 60_000,
+				accountId: "acct_123",
+			},
+		});
+
+		assert.equal(registry.find("openai-codex", "gpt-5.1-codex-max"), undefined);
+		assert.equal(registry.find("openai-codex", "gpt-5.1"), undefined);
+		assert.equal(findModel(registry, "openai-codex", "gpt-5.2-codex"), undefined);
+		assert.ok(registry.find("openai-codex", "gpt-5.4"));
+		assert.ok(findModel(registry, "openai-codex", "gpt-5.4"));
+		assert.ok(registry.find("openai-codex", "gpt-5.4-mini"));
+		assert.ok(findModel(registry, "openai-codex", "gpt-5.4-mini"));
+	});
+
+	it("keeps API-backed OpenAI Codex-capable models available", () => {
+		const registry = createInMemoryRegistry({
+			openai: {
+				type: "api_key",
+				key: "sk-test",
+			},
+		});
+
+		assert.ok(registry.find("openai", "gpt-5.2-codex"));
+		assert.ok(findModel(registry, "openai", "gpt-5.2-codex"));
 	});
 });
 

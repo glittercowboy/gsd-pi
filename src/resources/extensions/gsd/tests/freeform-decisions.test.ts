@@ -6,6 +6,7 @@ import * as fs from 'node:fs';
 import {
   openDatabase,
   closeDatabase,
+  _getAdapter,
 } from '../gsd-db.ts';
 import {
   parseDecisionsTable,
@@ -28,6 +29,13 @@ function cleanupDir(dir: string): void {
   try {
     fs.rmSync(dir, { recursive: true, force: true });
   } catch { /* swallow */ }
+}
+
+/** Query all decisions from the DB ordered by seq. */
+function queryAllDecisions(): Array<Record<string, unknown>> {
+  const adapter = _getAdapter();
+  if (!adapter) return [];
+  return adapter.prepare('SELECT * FROM decisions ORDER BY seq').all();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -87,6 +95,13 @@ describe('freeform-decisions', () => {
 
       assert.deepStrictEqual(result.id, 'D001', 'decision ID assigned correctly');
 
+      // ── Assert DB state ──
+      const dbRows = queryAllDecisions();
+      assert.equal(dbRows.length, 1, 'DB has exactly 1 decision after first save');
+      assert.equal(dbRows[0]['id'], 'D001', 'DB row has correct ID');
+      assert.equal(dbRows[0]['scope'], 'testing', 'DB row has correct scope');
+      assert.equal(dbRows[0]['decision'], 'Use Jest for unit tests', 'DB row has correct decision text');
+
       // Read back the file
       const afterContent = fs.readFileSync(mdPath, 'utf-8');
 
@@ -124,6 +139,13 @@ describe('freeform-decisions', () => {
       }, tmpDir);
 
       assert.deepStrictEqual(result2.id, 'D002', 'second decision ID assigned correctly');
+
+      // ── Assert DB state after second save ──
+      const dbRows2 = queryAllDecisions();
+      assert.equal(dbRows2.length, 2, 'DB has exactly 2 decisions after second save');
+      assert.equal(dbRows2[0]['id'], 'D001', 'first DB row still D001');
+      assert.equal(dbRows2[1]['id'], 'D002', 'second DB row is D002');
+      assert.equal(dbRows2[1]['scope'], 'ci', 'second DB row has correct scope');
 
       const afterContent2 = fs.readFileSync(mdPath, 'utf-8');
 
@@ -182,6 +204,12 @@ describe('freeform-decisions', () => {
       // But the new decision should be there.
       assert.deepStrictEqual(result.id, 'D001', 'gets D001 since DB was empty');
 
+      // ── Assert DB state ──
+      const dbRows = queryAllDecisions();
+      assert.equal(dbRows.length, 1, 'DB has exactly 1 decision');
+      assert.equal(dbRows[0]['id'], 'D001', 'DB row has correct ID');
+      assert.equal(dbRows[0]['decision'], 'Use Vitest', 'DB row has correct decision text');
+
       const afterContent = fs.readFileSync(mdPath, 'utf-8');
       // Table-format file gets fully regenerated — this is the normal path
       assert.ok(
@@ -218,9 +246,43 @@ describe('freeform-decisions', () => {
       assert.deepStrictEqual(result.id, 'D001', 'first decision gets D001');
       assert.ok(fs.existsSync(mdPath), 'DECISIONS.md created');
 
+      // ── Assert DB state ──
+      const dbRows = queryAllDecisions();
+      assert.equal(dbRows.length, 1, 'DB has exactly 1 decision');
+      assert.equal(dbRows[0]['id'], 'D001', 'DB row ID is D001');
+      assert.equal(dbRows[0]['scope'], 'arch', 'DB row scope is arch');
+      assert.equal(dbRows[0]['decision'], 'Brand new decision', 'DB row decision text matches');
+
       const content = fs.readFileSync(mdPath, 'utf-8');
       assert.ok(content.includes('# Decisions Register'), 'new file has header');
       assert.ok(content.includes('Brand new decision'), 'new file has decision');
+    } finally {
+      closeDatabase();
+      cleanupDir(tmpDir);
+    }
+  });
+
+  test('parallel saveDecisionToDb calls assign unique IDs', async () => {
+    const tmpDir = makeTmpDir();
+    const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+    openDatabase(dbPath);
+
+    try {
+      const [r1, r2, r3] = await Promise.all([
+        saveDecisionToDb({ scope: 'a', decision: 'Decision A', choice: 'A', rationale: 'A' }, tmpDir),
+        saveDecisionToDb({ scope: 'b', decision: 'Decision B', choice: 'B', rationale: 'B' }, tmpDir),
+        saveDecisionToDb({ scope: 'c', decision: 'Decision C', choice: 'C', rationale: 'C' }, tmpDir),
+      ]);
+
+      const ids = new Set([r1.id, r2.id, r3.id]);
+      assert.strictEqual(ids.size, 3, `expected 3 unique IDs but got: ${[r1.id, r2.id, r3.id]}`);
+
+      // Verify all 3 decisions exist in the markdown file
+      const mdPath = path.join(tmpDir, '.gsd', 'DECISIONS.md');
+      const content = fs.readFileSync(mdPath, 'utf-8');
+      assert.ok(content.includes('Decision A'), 'Decision A in file');
+      assert.ok(content.includes('Decision B'), 'Decision B in file');
+      assert.ok(content.includes('Decision C'), 'Decision C in file');
     } finally {
       closeDatabase();
       cleanupDir(tmpDir);

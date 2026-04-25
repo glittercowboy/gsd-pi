@@ -1,4 +1,5 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
+import { mkdirSync } from "node:fs";
 
 export default function auditCommand(pi: ExtensionAPI) {
 	pi.registerCommand("audit", {
@@ -39,7 +40,7 @@ export default function auditCommand(pi: ExtensionAPI) {
 
 			// ── Step 3: Ensure the output directory exists ───────────────────────
 
-			await pi.exec("mkdir", ["-p", ".gsd/audits"]);
+			mkdirSync(".gsd/audits", { recursive: true });
 
 			// ── Step 4: Send the audit prompt to the agent ───────────────────────
 

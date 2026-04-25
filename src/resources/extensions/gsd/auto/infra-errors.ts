@@ -46,3 +46,41 @@ export function isInfrastructureError(err: unknown): string | null {
   if (msg.includes("database disk image is malformed")) return "SQLITE_CORRUPT";
   return null;
 }
+
+/**
+ * Default wait duration when a cooldown error is detected but no specific
+ * expiry is available from AuthStorage (e.g., error propagated across
+ * process boundary without structured backoff data).
+ */
+export const COOLDOWN_FALLBACK_WAIT_MS = 35_000; // 35s — slightly longer than the 30s rate-limit backoff
+
+/** Maximum consecutive cooldown retries before the auto-loop gives up. */
+export const MAX_COOLDOWN_RETRIES = 5;
+
+/**
+ * Detect whether an error is a transient credential cooldown that should
+ * be waited out rather than counted as a consecutive failure.
+ *
+ * Prefers the structured `CredentialCooldownError` (code: AUTH_COOLDOWN)
+ * thrown by sdk.ts. Falls back to message matching for errors that
+ * propagated across process boundaries without the typed class.
+ */
+export function isTransientCooldownError(err: unknown): boolean {
+  if (err && typeof err === "object" && (err as Record<string, unknown>).code === "AUTH_COOLDOWN") {
+    return true;
+  }
+  // Fallback: message match for cross-process error propagation
+  const msg = err instanceof Error ? err.message : String(err);
+  return /in a cooldown window/i.test(msg);
+}
+
+/**
+ * Extract retryAfterMs from a CredentialCooldownError, if available.
+ * Returns undefined for unstructured errors or when no retry hint exists.
+ */
+export function getCooldownRetryAfterMs(err: unknown): number | undefined {
+  if (err && typeof err === "object" && (err as Record<string, unknown>).code === "AUTH_COOLDOWN") {
+    return (err as Record<string, unknown>).retryAfterMs as number | undefined;
+  }
+  return undefined;
+}

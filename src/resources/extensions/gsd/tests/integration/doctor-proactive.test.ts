@@ -161,11 +161,27 @@ describe('doctor-proactive', async () => {
     });
 
     test('escalation: no double escalation', () => {
-      // Don't reset — should already be escalated from previous test
+      // Self-contained: drive the escalated state from scratch in this test.
+      // Previously this relied on module-singleton state left over from the
+      // preceding 'escalation: at threshold' test, which silently broke under
+      // filtered/parallel/reordered runs (the fallback `shouldEscalate: false`
+      // path was satisfied by the wrong reason — see #4828).
+      resetProactiveHealing();
+      for (let i = 0; i < 5; i++) {
+        recordHealthSnapshot(0, 0, 0); // older clean snapshots
+      }
+      for (let i = 0; i < 5; i++) {
+        recordHealthSnapshot(2, 1, 0); // recent error snapshots → degrading trend
+      }
+      // First check: trigger escalation.
+      const first = checkHealEscalation(2, [{ code: "test", message: "test error", unitId: "M001/S01" }]);
+      assert.deepStrictEqual(first.shouldEscalate, true, "precondition: first call escalates");
+
+      // Second check: same session, must NOT double-escalate.
       recordHealthSnapshot(2, 0, 0);
       const result = checkHealEscalation(2, [{ code: "test", message: "test error", unitId: "M001/S01" }]);
       assert.deepStrictEqual(result.shouldEscalate, false, "no double escalation in same session");
-      assert.ok(result.reason.includes("already escalated"), "reason explains why no escalation");
+      assert.ok(result.reason.includes("already escalated"), `reason must explain no-re-escalation (got: ${result.reason})`);
     });
 
     test('escalation: deferred when improving', () => {
@@ -314,6 +330,50 @@ describe('doctor-proactive', async () => {
       } finally {
         process.chdir(previousCwd);
       }
+    });
+
+    test('health gate: git.snapshots:false suppresses stale-commit snapshot (#4420)', async () => {
+      // Build a repo whose HEAD commit is far enough in the past that the
+      // default stale-commit threshold (30 min) is exceeded, then dirty the
+      // tracked file so the snapshot path has material to commit.
+      const dir = realpathSync(mkdtempSync(join(tmpdir(), "doc-proactive-4420-")));
+      cleanups.push(dir);
+      const oldDate = "2020-01-01T00:00:00Z";
+      const env = { ...process.env, GIT_AUTHOR_DATE: oldDate, GIT_COMMITTER_DATE: oldDate };
+      execSync("git init", { cwd: dir, stdio: "ignore", env });
+      execSync("git config user.email test@test.com", { cwd: dir, stdio: "ignore", env });
+      execSync("git config user.name Test", { cwd: dir, stdio: "ignore", env });
+      writeFileSync(join(dir, "README.md"), "# test\n");
+      execSync("git add .", { cwd: dir, stdio: "ignore", env });
+      execSync('git commit -m init', { cwd: dir, stdio: "ignore", env });
+      execSync("git branch -M main", { cwd: dir, stdio: "ignore", env });
+      mkdirSync(join(dir, ".gsd"), { recursive: true });
+
+      writeFileSync(join(dir, "README.md"), "# test\n\ndirty\n");
+      assert.ok(run("git status --porcelain", dir).length > 0, "working tree is dirty");
+
+      writeFileSync(
+        join(dir, ".gsd", "PREFERENCES.md"),
+        `---\ngit:\n  snapshots: false\n---\n`,
+      );
+
+      const commitCountBefore = run("git rev-list --count HEAD", dir);
+
+      const previousCwd = process.cwd();
+      process.chdir(dir);
+      try {
+        const result = await preDispatchHealthGate(dir);
+        assert.ok(result.proceed, "gate proceeds when snapshots are disabled");
+        assert.ok(
+          !result.fixesApplied.some(f => f.includes("gsd snapshot")),
+          `no snapshot fix reported when git.snapshots:false (got: ${JSON.stringify(result.fixesApplied)})`,
+        );
+      } finally {
+        process.chdir(previousCwd);
+      }
+
+      const commitCountAfter = run("git rev-list --count HEAD", dir);
+      assert.strictEqual(commitCountAfter, commitCountBefore, "no snapshot commit was created");
     });
 
   } finally {

@@ -77,13 +77,9 @@ const ALLOW_HARDCODED_TMP: Array<[string, string]> = [
 
 /** Pattern 4 — shell commands with interpolated variables */
 const ALLOW_SHELL_INTERPOLATION: Array<[string, string]> = [
-  // NPM_PACKAGE is a compile-time constant ('gsd-pi'), not user input.
-  ["update-cmd.ts", "npm view ${NPM_PACKAGE}"],
-  ["update-cmd.ts", "npm install -g ${NPM_PACKAGE}"],
-  ["update-check.ts", "npm install -g ${NPM_PACKAGE_NAME}"],
-  // Same constant forwarded through commands-handlers.
-  ["resources/extensions/gsd/commands-handlers.ts", "npm view ${NPM_PACKAGE}"],
-  ["resources/extensions/gsd/commands-handlers.ts", "npm install -g ${NPM_PACKAGE}"],
+  // update-cmd.ts, update-check.ts, and commands-handlers.ts all pass a
+  // pre-built variable (installCmd) to execSync — no template literal inside
+  // the execSync call, so no entries are needed here.
 ];
 
 function isAllowlisted(

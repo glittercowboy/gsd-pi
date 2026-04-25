@@ -53,8 +53,10 @@ interface Baseline {
 // Directory helpers
 // ============================================================================
 
-function encodeCwd(cwd: string): string {
-	return cwd.replace(/\//g, "--");
+export function encodeCwd(cwd: string): string {
+	// Encode the entire cwd so Windows drive letters, separators, and UNC
+	// prefixes cannot leak into the isolation path.
+	return Buffer.from(cwd, "utf8").toString("base64url");
 }
 
 const gsdHome = process.env.GSD_HOME || path.join(os.homedir(), ".gsd");
@@ -500,4 +502,3 @@ export function readIsolationMode(): IsolationMode {
 		return "none";
 	}
 }
-

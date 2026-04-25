@@ -1,4 +1,4 @@
-import { parseMemoryResponse, _resetExtractionState } from '../memory-extractor.ts';
+import { parseMemoryResponse, buildMemoryLLMCall } from '../memory-extractor.ts';
 import {
   openDatabase,
   closeDatabase,
@@ -9,7 +9,7 @@ import {
   getActiveMemoriesRanked,
 } from '../memory-store.ts';
 import type { MemoryAction } from '../memory-store.ts';
-import { describe, test, beforeEach, afterEach } from 'node:test';
+import { describe, test, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -160,12 +160,85 @@ test('integration: mixed action lifecycle', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// memory-extractor: _resetExtractionState
+// memory-extractor: buildMemoryLLMCall resolves OAuth API key via modelRegistry
+// Regression test for #2959 — OAuth users had broken memory extraction
+// because streamSimpleAnthropic only checked env vars, not auth.json.
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('memory-extractor: reset extraction state', () => {
-  // Just verify it doesn't throw
-  _resetExtractionState();
-  assert.ok(true, '_resetExtractionState should not throw');
+test('memory-extractor: buildMemoryLLMCall resolves API key from modelRegistry for OAuth users', async () => {
+  const OAUTH_TOKEN = 'sk-ant-oat-test-oauth-token-12345';
+  let getApiKeyCalled = false;
+
+  const fakeModel = {
+    id: 'claude-haiku-test',
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    cost: { input: 0.25, output: 1.25 },
+  };
+
+  const ctx = {
+    modelRegistry: {
+      getAvailable: () => [fakeModel],
+      getApiKey: async (_model: any) => {
+        getApiKeyCalled = true;
+        return OAUTH_TOKEN;
+      },
+    },
+  } as any;
+
+  const llmCallFn = buildMemoryLLMCall(ctx);
+  assert.ok(llmCallFn !== null, 'buildMemoryLLMCall should return a function when models are available');
+
+  // The function should have resolved the API key eagerly via modelRegistry.getApiKey.
+  // Await the exposed promise deterministically instead of polling via setTimeout.
+  await llmCallFn!.apiKeyReady;
+  assert.ok(getApiKeyCalled, 'buildMemoryLLMCall must call modelRegistry.getApiKey() to resolve OAuth tokens');
+});
+
+test('memory-extractor: buildMemoryLLMCall returns null when no models available', () => {
+  const ctx = {
+    modelRegistry: {
+      getAvailable: () => [],
+      getApiKey: async () => undefined,
+    },
+  } as any;
+
+  const llmCallFn = buildMemoryLLMCall(ctx);
+  assert.strictEqual(llmCallFn, null, 'should return null when no models available');
+});
+
+test('memory-extractor: buildMemoryLLMCall prefers haiku model', async () => {
+  let resolvedModelId: string | undefined;
+
+  const haikuModel = {
+    id: 'claude-3-5-haiku-20241022',
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    cost: { input: 0.25, output: 1.25 },
+  };
+  const sonnetModel = {
+    id: 'claude-sonnet-4-20250514',
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    cost: { input: 3, output: 15 },
+  };
+
+  const ctx = {
+    modelRegistry: {
+      getAvailable: () => [sonnetModel, haikuModel],
+      getApiKey: async (model: any) => {
+        resolvedModelId = model.id;
+        return 'sk-ant-oat-test-token';
+      },
+    },
+  } as any;
+
+  const llmCallFn = buildMemoryLLMCall(ctx);
+  assert.ok(llmCallFn !== null, 'should return a function');
+
+  // Await the exposed API-key-ready promise deterministically.
+  await llmCallFn!.apiKeyReady;
+  assert.strictEqual(resolvedModelId, 'claude-3-5-haiku-20241022',
+    'should resolve API key for haiku model, not sonnet');
 });
 

@@ -150,7 +150,15 @@ test('empty filter blocks all events', () => {
   assert.ok(!shouldEmit('message_update'))
 })
 
-import { mapStatusToExitCode, EXIT_SUCCESS, EXIT_ERROR, EXIT_BLOCKED, EXIT_CANCELLED } from '../headless-events.js'
+import {
+  mapStatusToExitCode,
+  EXIT_SUCCESS,
+  EXIT_ERROR,
+  EXIT_BLOCKED,
+  EXIT_CANCELLED,
+  isInteractiveHeadlessTool,
+  shouldArmHeadlessIdleTimeout,
+} from '../headless-events.js'
 
 // ─── mapStatusToExitCode ─────────────────────────────────────────────────
 
@@ -184,4 +192,32 @@ test('mapStatusToExitCode: "cancelled" returns EXIT_CANCELLED', () => {
 
 test('mapStatusToExitCode: unknown status returns EXIT_ERROR', () => {
   assert.equal(mapStatusToExitCode('unknown'), EXIT_ERROR)
+})
+
+test('isInteractiveHeadlessTool: ask_user_questions is interactive', () => {
+  assert.equal(isInteractiveHeadlessTool('ask_user_questions'), true)
+})
+
+test('isInteractiveHeadlessTool: secure_env_collect is interactive', () => {
+  assert.equal(isInteractiveHeadlessTool('secure_env_collect'), true)
+})
+
+test('isInteractiveHeadlessTool: non-interactive tools stay false', () => {
+  assert.equal(isInteractiveHeadlessTool('bash'), false)
+  assert.equal(isInteractiveHeadlessTool(undefined), false)
+})
+
+test('shouldArmHeadlessIdleTimeout: arms after tool calls when no interactive tool is in flight', () => {
+  assert.equal(shouldArmHeadlessIdleTimeout(1, 0), true)
+  assert.equal(shouldArmHeadlessIdleTimeout(3, 0), true)
+})
+
+test('shouldArmHeadlessIdleTimeout: stays disarmed while interactive tools are in flight (#3714)', () => {
+  assert.equal(shouldArmHeadlessIdleTimeout(1, 1), false)
+  assert.equal(shouldArmHeadlessIdleTimeout(5, 2), false)
+})
+
+test('shouldArmHeadlessIdleTimeout: stays disarmed before any tool call has started', () => {
+  assert.equal(shouldArmHeadlessIdleTimeout(0, 0), false)
+  assert.equal(shouldArmHeadlessIdleTimeout(0, 1), false)
 })

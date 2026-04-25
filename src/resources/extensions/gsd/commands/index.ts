@@ -8,7 +8,13 @@ export function registerGSDCommand(pi: ExtensionAPI): void {
     getArgumentCompletions: getGsdArgumentCompletions,
     handler: async (args: string, ctx: ExtensionCommandContext) => {
       const { handleGSDCommand } = await import("./dispatcher.js");
-      await handleGSDCommand(args, ctx, pi);
+      const { setStderrLoggingEnabled } = await import("../workflow-logger.js");
+      const previousStderrSetting = setStderrLoggingEnabled(false);
+      try {
+        await handleGSDCommand(args, ctx, pi);
+      } finally {
+        setStderrLoggingEnabled(previousStderrSetting);
+      }
     },
   });
 }

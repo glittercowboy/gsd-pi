@@ -7,6 +7,8 @@
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { snapshotUnitMetrics } from "./metrics.js";
 import { saveActivityLog } from "./activity-log.js";
+import { logWarning } from "./workflow-logger.js";
+import { writeTurnGitTransaction } from "./uok/gitops.js";
 
 export interface CloseoutOptions {
   promptCharCount?: number;
@@ -14,6 +16,12 @@ export interface CloseoutOptions {
   tier?: string;
   modelDowngraded?: boolean;
   continueHereFired?: boolean;
+  traceId?: string;
+  turnId?: string;
+  gitAction?: "commit" | "snapshot" | "status-only";
+  gitPush?: boolean;
+  gitStatus?: "ok" | "failed";
+  gitError?: string;
 }
 
 /**
@@ -37,11 +45,42 @@ export async function closeoutUnit(
       const { buildMemoryLLMCall, extractMemoriesFromUnit } = await import('./memory-extractor.js');
       const llmCallFn = buildMemoryLLMCall(ctx);
       if (llmCallFn) {
-        extractMemoriesFromUnit(activityFile, unitType, unitId, llmCallFn).catch((err) => {
-          if (process.env.GSD_DEBUG) console.error(`[gsd] memory extraction failed for ${unitType}/${unitId}:`, err);
-        });
+        // Awaited: a fire-and-forget here lets memory-extractor writes land in
+        // .gsd/ after closeoutUnit returns but before the milestone merge
+        // runs, which made the working tree appear dirty to `git merge
+        // --squash` (root cause class of #4704). Completion latency is now
+        // bounded by the extractor's LLM call, which is the acceptable price
+        // for not racing the merge boundary.
+        try {
+          await extractMemoriesFromUnit(activityFile, unitType, unitId, llmCallFn);
+        } catch (err) {
+          logWarning(
+            "engine",
+            `memory extraction failed for ${unitType}/${unitId}: ${(err as Error).message}`,
+          );
+        }
       }
-    } catch { /* non-fatal */ }
+    } catch (err) { /* non-fatal */
+      logWarning("engine", `operation failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  if (opts?.traceId && opts.turnId && opts.gitAction && opts.gitStatus) {
+    writeTurnGitTransaction({
+      basePath,
+      traceId: opts.traceId,
+      turnId: opts.turnId,
+      unitType,
+      unitId,
+      stage: "record",
+      action: opts.gitAction,
+      push: opts.gitPush === true,
+      status: opts.gitStatus,
+      error: opts.gitError,
+      metadata: {
+        activityFile,
+      },
+    });
   }
 
   return activityFile ?? undefined;

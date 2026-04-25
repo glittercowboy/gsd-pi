@@ -7,9 +7,11 @@ description: Create, debug, and iterate on GSD extensions (TypeScript modules th
 
 **Extensions are TypeScript modules** that hook into GSD's runtime (built on pi). They export a default function receiving `ExtensionAPI` and use it to subscribe to events, register tools/commands/shortcuts, and interact with the session.
 
-**GSD extension paths:**
-- Global extensions: `~/.gsd/agent/extensions/*.ts` or `~/.gsd/agent/extensions/*/index.ts`
-- Project-local extensions: `.gsd/extensions/*.ts` or `.gsd/extensions/*/index.ts`
+**GSD extension paths (community/user-installed extensions):**
+- Global: `~/.pi/agent/extensions/*.ts` or `~/.pi/agent/extensions/*/index.ts`
+- Project-local: `.gsd/extensions/*.ts` or `.gsd/extensions/*/index.ts`
+
+Note: `~/.gsd/agent/extensions/` is reserved for bundled extensions synced from the gsd-pi package. Community extensions placed there are silently ignored by the loader.
 
 **The three primitives:**
 1. **Events** — Listen and react (`pi.on("event", handler)`). Can block tool calls, modify messages, inject context.

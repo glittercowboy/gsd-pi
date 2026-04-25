@@ -7,12 +7,15 @@
  *   /gsd mcp             — Overview of all servers (alias: /gsd mcp status)
  *   /gsd mcp status      — Same as bare /gsd mcp
  *   /gsd mcp check <srv> — Detailed status for a specific server
+ *   /gsd mcp init [dir]  — Write project-local GSD workflow MCP config
  */
 
 import type { ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+
+import { ensureProjectWorkflowMcpConfig } from "./mcp-project-config.js";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -26,6 +29,28 @@ export interface McpServerStatus {
 
 export interface McpServerDetail extends McpServerStatus {
   tools: string[];
+}
+
+export function formatMcpInitResult(
+  status: "created" | "updated" | "unchanged",
+  configPath: string,
+  targetPath: string,
+): string {
+  const summary =
+    status === "created"
+      ? "Created project MCP config."
+      : status === "updated"
+        ? "Updated project MCP config."
+        : "Project MCP config is already up to date.";
+
+  return [
+    summary,
+    "",
+    `Project: ${targetPath}`,
+    `Config:   ${configPath}`,
+    "",
+    "Claude Code can now load the GSD workflow MCP server from this folder.",
+  ].join("\n");
 }
 
 // ─── Config reader (standalone — does not import mcp-client internals) ──────
@@ -94,6 +119,7 @@ export function formatMcpStatusReport(servers: McpServerStatus[]): string {
       "No MCP servers configured.",
       "",
       "Add servers to .mcp.json or .gsd/mcp.json to enable MCP integrations.",
+      "Tip: run /gsd mcp init . to write the local GSD workflow MCP config.",
       "See: https://modelcontextprotocol.io/quickstart",
     ].join("\n");
   }
@@ -153,12 +179,31 @@ export async function handleMcpStatus(
   args: string,
   ctx: ExtensionCommandContext,
 ): Promise<void> {
-  const trimmed = args.trim().toLowerCase();
+  const trimmed = args.trim();
+  const lowered = trimmed.toLowerCase();
   const configs = readMcpConfigs();
 
+  // /gsd mcp init [dir]
+  if (!lowered || lowered === "status") {
+    // handled below
+  } else if (lowered === "init" || lowered.startsWith("init ")) {
+    const rawPath = trimmed.slice("init".length).trim();
+    const targetPath = resolve(rawPath || ".");
+    try {
+      const result = ensureProjectWorkflowMcpConfig(targetPath);
+      ctx.ui.notify(formatMcpInitResult(result.status, result.configPath, targetPath), "info");
+    } catch (err) {
+      ctx.ui.notify(
+        `Failed to prepare MCP config for ${targetPath}: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    }
+    return;
+  }
+
   // /gsd mcp check <server>
-  if (trimmed.startsWith("check ")) {
-    const serverName = args.trim().slice("check ".length).trim();
+  if (lowered.startsWith("check ")) {
+    const serverName = trimmed.slice("check ".length).trim();
     const config = configs.find((c) => c.name === serverName);
     if (!config) {
       const available = configs.map((c) => c.name).join(", ") || "(none)";
@@ -202,7 +247,7 @@ export async function handleMcpStatus(
   }
 
   // /gsd mcp or /gsd mcp status
-  if (!trimmed || trimmed === "status") {
+  if (!lowered || lowered === "status") {
     // Build status for each server
     const statuses: McpServerStatus[] = [];
 
@@ -239,9 +284,10 @@ export async function handleMcpStatus(
 
   // Unknown subcommand
   ctx.ui.notify(
-    "Usage: /gsd mcp [status|check <server>]\n\n" +
+    "Usage: /gsd mcp [status|check <server>|init [dir]]\n\n" +
     "  status           Show all MCP server statuses (default)\n" +
-    "  check <server>   Detailed status for a specific server",
+    "  check <server>   Detailed status for a specific server\n" +
+    "  init [dir]       Write .mcp.json for the local GSD workflow MCP server",
     "warning",
   );
 }

@@ -35,9 +35,26 @@ test("workflow-start prompt defaults to autonomy instead of per-phase confirmati
   assert.doesNotMatch(prompt, /Gate between phases/i);
 });
 
+test("system prompt references CODEBASE.md and /gsd codebase", () => {
+  const prompt = readPrompt("system");
+  assert.match(prompt, /CODEBASE\.md/);
+  assert.match(prompt, /\/gsd codebase \[generate\|update\|stats\]/);
+  assert.match(prompt, /auto-refreshes it when tracked files change/i);
+});
+
+test("system prompt hard rules forbid fabricating user responses", () => {
+  const prompt = readPrompt("system");
+  assert.match(prompt, /never fabricate, simulate, or role-play user responses/i);
+  assert.match(prompt, /never generate markers like `?\[User\]`?, `?\[Human\]`?, `?User:`?/i);
+  assert.match(prompt, /ask one question round \(1-3 questions\), then stop and wait for the user's actual response/i);
+  assert.match(prompt, /ask_user_questions.*only valid structured user input/i);
+});
+
 test("discuss prompt allows implementation questions when they materially matter", () => {
   const prompt = readPrompt("discuss");
   assert.match(prompt, /Lead with experience, but ask implementation when it materially matters/i);
+  assert.match(prompt, /Never fabricate, simulate, or role-play user responses/i);
+  assert.match(prompt, /Ask one question round \(1-3 questions\) per turn, then stop and wait for the user's actual response/i);
   assert.match(prompt, /one gate, not two/i);
   assert.doesNotMatch(prompt, /Questions must be about the experience, not the implementation/i);
 });
@@ -49,6 +66,21 @@ test("guided discussion prompts avoid wrap-up prompts after every round", () => 
   assert.match(slicePrompt, /Do \*\*not\*\* ask a meta "ready to wrap up\?" question after every round/i);
   assert.doesNotMatch(milestonePrompt, /I think I have a solid picture of this milestone\. Ready to wrap up/i);
   assert.doesNotMatch(slicePrompt, /I think I have a solid picture of this slice\. Ready to wrap up/i);
+  assert.match(milestonePrompt, /Never fabricate or simulate user input/i);
+  assert.match(slicePrompt, /Never fabricate or simulate user input/i);
+});
+
+test("guided milestone discussion scopes depth verification to the milestone id", () => {
+  const prompt = readPrompt("guided-discuss-milestone");
+  assert.match(prompt, /depth_verification_\{\{milestoneId\}\}/, "depth verification id should include the milestone id");
+  assert.doesNotMatch(prompt, /depth_verification_confirm" — this enables the write-gate downstream/i, "legacy global depth gate wording should be gone");
+});
+
+test("queue prompt requires waiting for user response between rounds", () => {
+  const prompt = readPrompt("queue");
+  assert.match(prompt, /Never fabricate or simulate user input during this discussion/i);
+  assert.match(prompt, /Ask 1-3 questions per round, then wait for the user's response before asking the next round\./i);
+  assert.doesNotMatch(prompt, /treat that as permission to continue/i);
 });
 
 test("guided-resume-task prompt preserves recovery state until work is superseded", () => {
@@ -65,11 +97,13 @@ test("execute-task prompt references gsd_complete_task tool", () => {
   assert.match(prompt, /gsd_complete_task/);
 });
 
-test("execute-task prompt instructs writing task summary before tool call", () => {
+test("execute-task prompt uses gsd_complete_task as canonical summary write path", () => {
   const prompt = readPrompt("execute-task");
-  // The prompt instructs writing the summary file AND calling the tool
   assert.match(prompt, /\{\{taskSummaryPath\}\}/);
   assert.match(prompt, /gsd_complete_task/);
+  assert.match(prompt, /DB-backed tool is the canonical write path/i);
+  assert.match(prompt, /Do \*\*not\*\* manually write `?\{\{taskSummaryPath\}\}`?/i);
+  assert.doesNotMatch(prompt, /^\d+\.\s+Write `?\{\{taskSummaryPath\}\}`?\s*$/m);
 });
 
 test("execute-task prompt does not instruct LLM to toggle checkboxes manually", () => {
@@ -113,16 +147,29 @@ test("guided-complete-slice prompt references gsd_slice_complete tool", () => {
 
 test("complete-slice prompt instructs writing summary and UAT files before tool call", () => {
   const prompt = readPrompt("complete-slice");
-  // The prompt instructs writing the summary AND UAT files, then calling the tool
   assert.match(prompt, /\{\{sliceSummaryPath\}\}/);
   assert.match(prompt, /\{\{sliceUatPath\}\}/);
   assert.match(prompt, /gsd_complete_slice/);
+  assert.match(prompt, /DB-backed tool is the canonical write path/i);
+  assert.match(prompt, /Do \*\*not\*\* manually write `?\{\{sliceSummaryPath\}\}`?/i);
+  assert.match(prompt, /Do \*\*not\*\* manually write `?\{\{sliceUatPath\}\}`?/i);
+  assert.doesNotMatch(prompt, /^\d+\.\s+Write `?\{\{sliceSummaryPath\}\}`?.*$/m);
+  assert.doesNotMatch(prompt, /^\d+\.\s+Write `?\{\{sliceUatPath\}\}`?.*$/m);
 });
 
 test("complete-slice prompt preserves decisions and knowledge review steps", () => {
   const prompt = readPrompt("complete-slice");
   assert.match(prompt, /DECISIONS\.md/);
   assert.match(prompt, /KNOWLEDGE\.md/);
+});
+
+test("validate-milestone prompt uses gsd_validate_milestone as canonical validation write path", () => {
+  const prompt = readPrompt("validate-milestone");
+  assert.match(prompt, /gsd_validate_milestone/);
+  assert.match(prompt, /\{\{validationPath\}\}/);
+  assert.match(prompt, /DB-backed tool is the canonical write path/i);
+  assert.match(prompt, /Do \*\*not\*\* manually write `?\{\{validationPath\}\}`?/i);
+  assert.doesNotMatch(prompt, /Write to `?\{\{validationPath\}\}`?:/i);
 });
 
 test("complete-slice prompt still contains template variables for context", () => {
@@ -176,16 +223,44 @@ test("replan-slice prompt uses gsd_replan_slice as canonical DB-backed tool", ()
   assert.doesNotMatch(prompt, /Degraded fallback/i);
 });
 
+// ─── ADR-011 refine-slice prompt contracts ────────────────────────────
+
+test("refine-slice prompt names gsd_plan_slice as the DB-backed write path", () => {
+  const prompt = readPrompt("refine-slice");
+  assert.match(prompt, /gsd_plan_slice/, "refine-slice must call gsd_plan_slice to persist");
+});
+
+test("refine-slice prompt does not instruct direct PLAN.md writes", () => {
+  const prompt = readPrompt("refine-slice");
+  assert.match(
+    prompt,
+    /do NOT rely on direct `PLAN\.md` writes/i,
+    "refine-slice must not frame direct file writes as authoritative",
+  );
+});
+
+test("refine-slice prompt frames the unit as a transformation, not blank-sheet planning", () => {
+  const prompt = readPrompt("refine-slice");
+  // The framing language is load-bearing — the model should treat this as
+  // expanding an approved sketch, not planning from scratch.
+  assert.match(prompt, /expands an approved sketch/i);
+  assert.match(prompt, /Sketch Scope/);
+});
+
 test("reassess-roadmap prompt references gsd_reassess_roadmap tool", () => {
   const prompt = readPrompt("reassess-roadmap");
   assert.match(prompt, /gsd_reassess_roadmap/);
 });
 
-test("validate-milestone prompt persists verification classes through gsd_validate_milestone", () => {
+test("validate-milestone prompt dispatches parallel reviewers", () => {
   const prompt = readPrompt("validate-milestone");
-  assert.match(prompt, /verification classes section/i);
-  assert.match(prompt, /verificationClasses/);
-  assert.match(prompt, /gsd_validate_milestone/);
+  assert.match(prompt, /Reviewer A/);
+  assert.match(prompt, /Reviewer B/);
+  assert.match(prompt, /Reviewer C/);
+  assert.match(prompt, /Requirements Coverage/);
+  assert.match(prompt, /Cross-Slice Integration/);
+  assert.match(prompt, /Assessment & Acceptance Criteria/);
+  assert.match(prompt, /assessment evidence/i);
 });
 
 // ─── Prompt migration: replan-slice → gsd_replan_slice ────────────────
@@ -200,6 +275,60 @@ test("replan-slice prompt names gsd_replan_slice as the tool to use", () => {
 test("reassess-roadmap prompt names gsd_reassess_roadmap as the tool to use", () => {
   const prompt = readPrompt("reassess-roadmap");
   assert.match(prompt, /gsd_reassess_roadmap/);
+});
+
+// ─── Bug #2933: prompt parameter names must match camelCase TypeBox schema ───
+
+test("execute-task prompt uses camelCase parameter names matching TypeBox schema", () => {
+  const prompt = readPrompt("execute-task");
+  // The gsd_complete_task tool schema uses camelCase: milestoneId, sliceId, taskId
+  // Prompts must NOT tell the LLM to use snake_case (milestone_id, slice_id, task_id)
+  const toolCallLine = prompt.split("\n").find((l) => /gsd_complete_task/.test(l) || /gsd_task_complete/.test(l));
+  assert.ok(toolCallLine, "prompt must contain a gsd_complete_task or gsd_task_complete tool call line");
+  assert.doesNotMatch(toolCallLine!, /milestone_id/, "must use milestoneId, not milestone_id");
+  assert.doesNotMatch(toolCallLine!, /slice_id/, "must use sliceId, not slice_id");
+  assert.doesNotMatch(toolCallLine!, /task_id/, "must use taskId, not task_id");
+  // Positive: must mention the camelCase names
+  assert.match(toolCallLine!, /milestoneId/);
+  assert.match(toolCallLine!, /sliceId/);
+  assert.match(toolCallLine!, /taskId/);
+});
+
+test("complete-slice prompt uses camelCase parameter names matching TypeBox schema", () => {
+  const prompt = readPrompt("complete-slice");
+  // The gsd_complete_slice tool schema uses camelCase: milestoneId, sliceId
+  const toolCallLine = prompt.split("\n").find((l) => /gsd_complete_slice/.test(l) || /gsd_slice_complete/.test(l));
+  assert.ok(toolCallLine, "prompt must contain a gsd_complete_slice or gsd_slice_complete tool call line");
+  assert.doesNotMatch(toolCallLine!, /milestone_id/, "must use milestoneId, not milestone_id");
+  assert.doesNotMatch(toolCallLine!, /slice_id/, "must use sliceId, not slice_id");
+  // Positive: must mention the camelCase names
+  assert.match(toolCallLine!, /milestoneId/);
+  assert.match(toolCallLine!, /sliceId/);
+});
+
+// ─── File system safety: complete-slice parity with complete-milestone (#2935) ──
+
+test("complete-slice prompt includes filesystem safety guard against EISDIR", () => {
+  const prompt = readPrompt("complete-slice");
+  assert.match(
+    prompt,
+    /File system safety/i,
+    "complete-slice.md must include a 'File system safety' instruction to prevent EISDIR errors when the LLM passes a directory path to the read tool"
+  );
+  assert.match(
+    prompt,
+    /never pass.*directory path.*directly to the.*read.*tool/i,
+    "complete-slice.md must warn against passing directory paths to the read tool"
+  );
+});
+
+test("complete-milestone prompt still has its filesystem safety guard (regression)", () => {
+  const prompt = readPrompt("complete-milestone");
+  assert.match(
+    prompt,
+    /File system safety/i,
+    "complete-milestone.md must keep its filesystem safety guard"
+  );
 });
 
 test("reactive-execute prompt references tool calls instead of checkbox updates", () => {

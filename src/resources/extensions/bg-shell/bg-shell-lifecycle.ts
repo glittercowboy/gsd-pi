@@ -16,6 +16,7 @@ import {
 import {
 	processes,
 	pendingAlerts,
+	pushAlert,
 	cleanupAll,
 	cleanupSessionProcesses,
 	persistManifest,
@@ -37,18 +38,29 @@ export function registerBgShellLifecycle(pi: ExtensionAPI, state: BgShellSharedS
 		}
 	}
 
-	// Clean up on session shutdown
-	pi.on("session_shutdown", async () => {
-		cleanupAll();
-	});
-
 	// Register signal handlers to clean up bg processes on unexpected exit (fixes #428)
 	const signalCleanup = () => {
 		cleanupAll();
+		// Also kill bash-tool spawned children that bg-shell doesn't track
+		try {
+			const { listDescendants } = require("@gsd/native") as typeof import("@gsd/native");
+			const descendants = listDescendants(process.pid);
+			for (const childPid of descendants) {
+				try { process.kill(childPid, "SIGKILL"); } catch {}
+			}
+		} catch {}
 	};
 	process.on("SIGTERM", signalCleanup);
 	process.on("SIGINT", signalCleanup);
 	process.on("beforeExit", signalCleanup);
+
+	// Clean up on session shutdown — remove signal handlers to prevent accumulation
+	pi.on("session_shutdown", async () => {
+		process.off("SIGTERM", signalCleanup);
+		process.off("SIGINT", signalCleanup);
+		process.off("beforeExit", signalCleanup);
+		cleanupAll();
+	});
 
 	// ── Compaction Awareness: Survive Context Resets ───────────────
 
@@ -65,7 +77,7 @@ export function registerBgShellLifecycle(pi: ExtensionAPI, state: BgShellSharedS
 			return `  - id:${p.id} "${p.label}" [${p.processType}] status:${p.status} uptime:${formatUptime(Date.now() - p.startedAt)}${portInfo}${urlInfo}${errInfo}${groupInfo}`;
 		}).join("\n");
 
-		pendingAlerts.push(
+		pushAlert(null,
 			`${reason} ${alive.length} background process(es) are still running:\n${processSummaries}\nUse bg_shell digest/output/kill with these IDs.`
 		);
 	}
@@ -150,7 +162,7 @@ export function registerBgShellLifecycle(pi: ExtensionAPI, state: BgShellSharedS
 					`  - ${s.id}: ${s.label} (pid ${s.pid}, type: ${s.processType}${s.group ? `, group: ${s.group}` : ""})`
 				).join("\n");
 
-				pendingAlerts.push(
+				pushAlert(null,
 					`${surviving.length} background process(es) from previous session still running:\n${summary}\n  Note: These processes are outside bg_shell's control. Kill them manually if needed.`
 				);
 			}

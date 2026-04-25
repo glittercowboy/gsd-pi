@@ -202,6 +202,39 @@ export function markStepComplete(
   };
 }
 
+/**
+ * Return a new graph with the specified step marked as "active".
+ * Immutable — does not mutate the input graph.
+ *
+ * @param graph — the current workflow graph
+ * @param stepId — ID of the step to mark active
+ * @returns New graph with the step's status set to "active"
+ * @throws Error if stepId is not found in the graph
+ */
+export function markStepActive(
+  graph: WorkflowGraph,
+  stepId: string,
+): WorkflowGraph {
+  const found = graph.steps.some((s) => s.id === stepId);
+  if (!found) {
+    throw new Error(`Step not found: ${stepId}`);
+  }
+
+  const startedAt = new Date().toISOString();
+  return {
+    ...graph,
+    steps: graph.steps.map((s) =>
+      s.id === stepId
+        ? {
+            ...s,
+            status: "active" as const,
+            startedAt: s.startedAt ?? startedAt,
+          }
+        : s,
+    ),
+  };
+}
+
 // ─── Iteration expansion ─────────────────────────────────────────────────
 
 /**
@@ -307,6 +340,3 @@ export function initializeGraph(def: WorkflowDefinition): WorkflowGraph {
     },
   };
 }
-
-/** @deprecated Use initializeGraph instead. Kept for backward compatibility. */
-export { initializeGraph as graphFromDefinition };

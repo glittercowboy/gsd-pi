@@ -2,7 +2,7 @@
  * Armin says hi! A fun easter egg with animated XBM art.
  */
 
-import type { Component, TUI } from "@gsd/pi-tui";
+import { type Component, type TUI, visibleWidth } from "@gsd/pi-tui";
 import { theme } from "../theme/theme.js";
 
 // XBM image: 31x36 pixels, LSB first, 1=background, 0=foreground
@@ -88,20 +88,20 @@ export class ArminComponent implements Component {
 			return this.cachedLines;
 		}
 
-		const padding = 1;
-		const availableWidth = width - padding;
+		const center = (s: string) => {
+			const visible = visibleWidth(s);
+			const left = Math.max(0, Math.floor((width - visible) / 2));
+			return " ".repeat(left) + s;
+		};
 
 		this.cachedLines = this.currentGrid.map((row) => {
-			// Clip row to available width before applying color
-			const clipped = row.slice(0, availableWidth).join("");
-			const padRight = Math.max(0, width - padding - clipped.length);
-			return ` ${theme.fg("accent", clipped)}${" ".repeat(padRight)}`;
+			const clipped = row.slice(0, width).join("");
+			return center(theme.fg("accent", clipped));
 		});
 
 		// Add "ARMIN SAYS HI" at the end
 		const message = "ARMIN SAYS HI";
-		const msgPadRight = Math.max(0, width - padding - message.length);
-		this.cachedLines.push(` ${theme.fg("accent", message)}${" ".repeat(msgPadRight)}`);
+		this.cachedLines.push(center(theme.fg("accent", message)));
 
 		this.cachedWidth = width;
 		this.cachedVersion = this.gridVersion;

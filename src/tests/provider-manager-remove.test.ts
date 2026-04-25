@@ -86,7 +86,7 @@ function createComponent(options: {
   };
 }
 
-test("provider manager removes provider models and refreshes even when no auth is stored", (t) => {
+test("provider manager skips remove when provider has no auth", (t) => {
   const modelsJsonPath = createTempModelsJsonPath();
   const rootDir = join(modelsJsonPath, "..");
   t.after(() => rmSync(rootDir, { recursive: true, force: true }));
@@ -98,10 +98,35 @@ test("provider manager removes provider models and refreshes even when no auth i
 
   component.handleInput("r");
 
+  // No auth means remove is a no-op
+  assert.deepEqual(removedProviders, []);
+  assert.deepEqual(readProviders(modelsJsonPath), ["custom"]);
+  assert.equal(getRefreshCalls(), 0);
+  assert.equal(getRenderCalls(), 0);
+});
+
+test("provider manager removes provider models with confirmation when auth is stored", (t) => {
+  const modelsJsonPath = createTempModelsJsonPath();
+  const rootDir = join(modelsJsonPath, "..");
+  t.after(() => rmSync(rootDir, { recursive: true, force: true }));
+
+  const { component, removedProviders, getRefreshCalls, getRenderCalls } = createComponent({
+    modelsJsonPath,
+    authProviders: ["custom"],
+    providers: [{ name: "custom", modelIds: ["local-model"] }],
+  });
+
+  // First press enters confirmation mode
+  component.handleInput("r");
+  assert.deepEqual(removedProviders, []);
+  assert.equal((component as any).confirmingRemove, true);
+
+  // Second press confirms removal
+  component.handleInput("r");
   assert.deepEqual(removedProviders, ["custom"]);
   assert.deepEqual(readProviders(modelsJsonPath), []);
   assert.equal(getRefreshCalls(), 1);
-  assert.equal(getRenderCalls(), 1);
+  assert.ok(getRenderCalls() >= 2);
   assert.ok(!(component as any).providers.some((provider: { name: string; modelCount: number }) =>
     provider.name === "custom" || provider.modelCount > 0,
   ));
@@ -125,6 +150,9 @@ test("provider manager clamps selection after removing the selected provider", (
   (component as any).selectedIndex = (component as any).providers.findIndex(
     (provider: { name: string }) => provider.name === "zeta",
   );
+
+  // Double-press r to confirm removal
+  component.handleInput("r");
   component.handleInput("r");
 
   assert.deepEqual(readProviders(modelsJsonPath), ["alpha"]);

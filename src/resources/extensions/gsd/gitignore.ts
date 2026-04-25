@@ -15,24 +15,31 @@ import { GIT_NO_PROMPT_ENV } from "./git-constants.js";
 
 /**
  * GSD runtime patterns for git index cleanup.
+ *
+ * CANONICAL SOURCE OF TRUTH: This array is the authoritative list of runtime
+ * ignore patterns. Other modules (RUNTIME_EXCLUSION_PATHS in git-service.ts,
+ * SKIP_* arrays in worktree-manager.ts, criticalPatterns in doctor-runtime-checks.ts)
+ * must stay synchronized with this list.
+ *
  * With external state (symlink), these are a no-op in most cases,
  * but retained for backwards compatibility during migration.
  */
 const GSD_RUNTIME_PATTERNS = [
   ".gsd/activity/",
+  ".gsd/audit/",
   ".gsd/forensics/",
   ".gsd/runtime/",
   ".gsd/worktrees/",
   ".gsd/parallel/",
   ".gsd/auto.lock",
   ".gsd/metrics.json",
-  ".gsd/completed-units.json",
+  ".gsd/completed-units*.json", // covers completed-units.json and archived completed-units-{MID}.json
+  ".gsd/state-manifest.json",
   ".gsd/STATE.md",
-  ".gsd/gsd.db",
-  ".gsd/gsd.db-shm",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/gsd.db-wal",   // SQLite WAL sidecar — always created alongside gsd.db (#2296)
-  ".gsd/journal/",     // daily-rotated JSONL event journal (#2296)
-  ".gsd/doctor-history.jsonl", // doctor run history (#2296)
+  ".gsd/gsd.db*",
+  ".gsd/journal/",
+  ".gsd/doctor-history.jsonl",
+  ".gsd/event-log.jsonl",
   ".gsd/DISCUSSION-MANIFEST.json",
   ".gsd/milestones/**/*-CONTINUE.md",
   ".gsd/milestones/**/continue.md",
@@ -41,6 +48,9 @@ const GSD_RUNTIME_PATTERNS = [
 const BASELINE_PATTERNS = [
   // ── GSD state directory (symlink to external storage) ──
   ".gsd",
+  ".gsd-id",
+  ".mcp.json",
+  ".bg-shell/",
 
   // ── OS junk ──
   ".DS_Store",
@@ -83,6 +93,38 @@ const BASELINE_PATTERNS = [
   ".cache/",
   "tmp/",
 ];
+
+/**
+ * Check whether `.gsd` is covered by the project's `.gitignore`.
+ *
+ * Uses `git check-ignore` for accurate evaluation — this respects nested
+ * .gitignore files, global gitignore, and negation patterns. Returns true
+ * only when git would actually ignore `.gsd/`.
+ *
+ * Returns false (not ignored) if:
+ *   - No `.gitignore` exists
+ *   - `.gsd` is not listed in any active ignore rule
+ *   - Not a git repo or git is unavailable
+ */
+export function isGsdGitignored(basePath: string): boolean {
+  // Check both `.gsd` and `.gsd/` because `.gsd/` in .gitignore (trailing
+  // slash = directory-only pattern) only matches the directory form. Using
+  // both paths covers all gitignore pattern variants.
+  for (const path of [".gsd", ".gsd/"]) {
+    try {
+      // git check-ignore exits 0 when the path IS ignored, 1 when it is NOT.
+      execFileSync("git", ["check-ignore", "-q", path], {
+        cwd: basePath,
+        stdio: "pipe",
+        env: GIT_NO_PROMPT_ENV,
+      });
+      return true; // exit 0 → .gsd is ignored
+    } catch {
+      // exit 1 → this form is NOT ignored, try the other
+    }
+  }
+  return false; // neither form is ignored (or git unavailable)
+}
 
 /**
  * Check whether `.gsd/` contains files tracked by git.
@@ -279,4 +321,3 @@ custom_instructions:
   writeFileSync(preferencesPath, template, "utf-8");
   return true;
 }
-

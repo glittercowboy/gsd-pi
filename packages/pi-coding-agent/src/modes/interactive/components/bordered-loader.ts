@@ -34,8 +34,8 @@ export class BorderedLoader extends Container {
 		if (this.cancellable) {
 			this.addChild(new Spacer(1));
 			this.addChild(new Text(keyHint("selectCancel", "cancel"), 1, 0));
+			this.addChild(new Spacer(1));
 		}
-		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder(borderColor));
 	}
 

@@ -35,15 +35,20 @@ describe("/gsd quick auto-mode guard (#2417)", () => {
 
     const quickBlock = quickBlockMatch[1];
 
-    // Verify isAutoActive guard comes BEFORE handleQuick call
-    const guardIndex = quickBlock.indexOf("isAutoActive()");
+    // Verify the shared auto-mode guard comes BEFORE handleQuick call.
+    // Accepts either the inline isAutoActive() check (legacy) or the shared
+    // requireNotAutoActive() helper (#4712).
+    const guardIndex = Math.max(
+      quickBlock.indexOf("isAutoActive()"),
+      quickBlock.indexOf("requireNotAutoActive("),
+    );
     const handleQuickIndex = quickBlock.indexOf("handleQuick(");
 
-    assert.ok(guardIndex !== -1, "isAutoActive() guard exists in quick command block");
+    assert.ok(guardIndex !== -1, "auto-mode guard exists in quick command block");
     assert.ok(handleQuickIndex !== -1, "handleQuick() call exists in quick command block");
     assert.ok(
       guardIndex < handleQuickIndex,
-      "isAutoActive() guard appears before handleQuick() call",
+      "auto-mode guard appears before handleQuick() call",
     );
   });
 
@@ -59,10 +64,11 @@ describe("/gsd quick auto-mode guard (#2417)", () => {
       "utf-8",
     );
 
-    // The error message should tell the user to stop auto-mode first
+    // The shared helper assembles the message dynamically from the command name,
+    // so assert on the message fragment and the /gsd stop instruction.
     assert.ok(
-      src.includes("/gsd quick cannot run while auto-mode is active"),
-      "error message explains that quick cannot run during auto-mode",
+      src.includes("cannot run while auto-mode is active"),
+      "error message explains that the command cannot run during auto-mode",
     );
     assert.ok(
       src.includes("/gsd stop"),

@@ -7,7 +7,8 @@
  */
 
 import { execSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 import { RpcClient } from '@gsd-build/rpc-client';
 import type { SdkAgentEvent, RpcInitResult, RpcCostUpdateEvent, RpcExtensionUIRequest } from '@gsd-build/rpc-client';
 import type {
@@ -71,9 +72,16 @@ export class SessionManager {
 
     const existing = this.sessions.get(resolvedDir);
     if (existing) {
-      throw new Error(
-        `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
-      );
+      // Only block when a genuinely active session is running. Terminal
+      // states (error, completed, cancelled) are evicted so the caller can
+      // start a fresh session for the same projectDir.
+      if (existing.status === 'starting' || existing.status === 'running' || existing.status === 'blocked') {
+        throw new Error(
+          `Session already active for ${resolvedDir} (sessionId: ${existing.sessionId}, status: ${existing.status})`
+        );
+      }
+      existing.unsubscribe?.();
+      this.sessions.delete(resolvedDir);
     }
 
     const cliPath = options.cliPath ?? SessionManager.resolveCLIPath();
@@ -181,7 +189,48 @@ export class SessionManager {
   async cancelSession(sessionId: string): Promise<void> {
     const session = this.getSession(sessionId);
     if (!session) throw new Error(`Session not found: ${sessionId}`);
+    await this._cancelSessionObject(session);
+  }
 
+  /**
+   * Cancel a session looked up by project directory.
+   *
+   * This is the fallback path for interactive sessions (started via `/gsd auto`
+   * in the terminal) and sessions from a restarted MCP server that have no
+   * registered sessionId. The sessions map is keyed by projectDir, so this
+   * lookup always succeeds for any tracked session regardless of sessionId.
+   */
+  async cancelSessionByDir(projectDir: string): Promise<void> {
+    const session = this.getSessionByDir(projectDir);
+    if (session) {
+      await this._cancelSessionObject(session);
+      return;
+    }
+    const stopped = await this.stopDetachedAutoProcess(projectDir);
+    if (!stopped) {
+      throw new Error(`Session not found for projectDir: ${projectDir}`);
+    }
+  }
+
+  private async stopDetachedAutoProcess(projectDir: string): Promise<boolean> {
+    const lockPath = join(projectDir, '.gsd', 'auto.lock');
+    if (!existsSync(lockPath)) return false;
+    try {
+      const lockData = JSON.parse(readFileSync(lockPath, 'utf-8')) as { pid?: number };
+      const pid = lockData.pid;
+      if (typeof pid !== 'number') return false;
+      try { process.kill(pid, 0); } catch { return false; }
+      process.kill(pid, 'SIGTERM');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Internal: perform abort + stop + mark cancelled on a resolved session object.
+   */
+  private async _cancelSessionObject(session: ManagedSession): Promise<void> {
     try {
       await session.client.abort();
     } catch { /* may already be stopped */ }

@@ -96,6 +96,10 @@ export class ExtensionSelectorComponent extends Container {
 		if (idx < 0 || idx >= this.options.length) {
 			return Math.max(0, Math.min(from, this.options.length - 1));
 		}
+		// If all items are separators, idx may still point to one — fall back to original index
+		if (this.isSeparator(idx)) {
+			return Math.max(0, Math.min(from, this.options.length - 1));
+		}
 		return idx;
 	}
 

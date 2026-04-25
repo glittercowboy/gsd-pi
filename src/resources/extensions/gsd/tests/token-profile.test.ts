@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -34,11 +35,12 @@ const typesSrc = readFileSync(join(__dirname, "..", "types.ts"), "utf-8");
 // Type Definitions
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("types: TokenProfile type exported with budget/balanced/quality", () => {
+test("types: TokenProfile type exported with budget/balanced/quality/burn-max", () => {
   assert.ok(typesSrc.includes("export type TokenProfile"), "TokenProfile should be exported");
   assert.match(typesSrc, /["']budget["']/, "should include budget");
   assert.match(typesSrc, /["']balanced["']/, "should include balanced");
   assert.match(typesSrc, /["']quality["']/, "should include quality");
+  assert.match(typesSrc, /["']burn-max["']/, "should include burn-max");
 });
 
 test("types: InlineLevel type exported with full/standard/minimal", () => {
@@ -91,7 +93,7 @@ test("preferences: KNOWN_PREFERENCE_KEYS includes token_profile and phases", () 
 // Profile Resolution
 // ═══════════════════════════════════════════════════════════════════════════
 
-test("profile: resolveProfileDefaults exists and handles all 3 tiers", () => {
+test("profile: resolveProfileDefaults exists and handles all 4 tiers", () => {
   assert.ok(
     preferencesSrc.includes("export function resolveProfileDefaults"),
     "resolveProfileDefaults should be exported",
@@ -99,8 +101,9 @@ test("profile: resolveProfileDefaults exists and handles all 3 tiers", () => {
   assert.ok(
     preferencesSrc.includes('case "budget"') &&
     preferencesSrc.includes('case "balanced"') &&
-    preferencesSrc.includes('case "quality"'),
-    "resolveProfileDefaults should handle all 3 tiers",
+    preferencesSrc.includes('case "quality"') &&
+    preferencesSrc.includes('case "burn-max"'),
+    "resolveProfileDefaults should handle all 4 tiers",
   );
 });
 
@@ -125,7 +128,13 @@ test("profile: balanced profile skips research, reassess, and slice research (AD
 
 test("profile: quality profile skips research, slice research, and reassess (ADR-003)", () => {
   const qualityIdx = preferencesSrc.indexOf('case "quality":');
-  const qualityBlock = preferencesSrc.slice(qualityIdx, qualityIdx + 300);
+  // preferencesSrc is concatenated from multiple modules — bound the region
+  // with the next case marker so the assertion stays tightly scoped.
+  const qualityBlock = extractSourceRegion(
+    preferencesSrc,
+    'case "quality":',
+    'case "burn-max":',
+  );
   assert.ok(qualityBlock.includes("skip_research: true"), "quality should skip research");
   assert.ok(qualityBlock.includes("skip_slice_research: true"), "quality should skip slice research");
   assert.ok(qualityBlock.includes("skip_reassess: true"), "quality should skip reassess");
@@ -158,6 +167,7 @@ test("profile: resolveInlineLevel maps profile to inline level", () => {
   assert.ok(preferencesSrc.includes('case "budget": return "minimal"'), "budget → minimal");
   assert.ok(preferencesSrc.includes('case "balanced": return "standard"'), "balanced → standard");
   assert.ok(preferencesSrc.includes('case "quality": return "full"'), "quality → full");
+  assert.ok(preferencesSrc.includes('case "burn-max": return "full"'), "burn-max → full");
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -167,7 +177,7 @@ test("profile: resolveInlineLevel maps profile to inline level", () => {
 test("validate: validatePreferences handles token_profile", () => {
   assert.ok(
     preferencesSrc.includes("preferences.token_profile") &&
-    preferencesSrc.includes("budget, balanced, quality"),
+    preferencesSrc.includes("budget, balanced, quality, burn-max"),
     "validatePreferences should validate token_profile enum values",
   );
 });
@@ -263,6 +273,6 @@ test("dispatch: phase skip guards return null (not stop)", () => {
   const researchGuard = dispatchSrc.match(/skip_research\).*?return null/s);
   assert.ok(researchGuard, "skip_research guard should return null (fall-through)");
 
-  const reassessGuard = dispatchSrc.match(/reassess_after_slice\).*?return null/s);
+  const reassessGuard = dispatchSrc.match(/reassess_after_slice.*?return null/s);
   assert.ok(reassessGuard, "reassess_after_slice guard should return null (fall-through)");
 });

@@ -37,6 +37,48 @@ function newestSrcMtime(dir) {
   return newest
 }
 
+/**
+ * Detects workspace packages whose dist/ is missing or stale.
+ *
+ * Missing dist/index.js is always reported (the package won't work at all).
+ *
+ * Staleness (src/ newer than dist/) is ONLY checked when a .git directory
+ * exists at root — indicating a development clone. In npm tarball installs,
+ * file timestamps are unreliable (npm sets all files to a canonical date,
+ * but extraction ordering can cause src/ to appear 1-2 seconds newer than
+ * dist/). Attempting to rebuild in that scenario is dangerous: devDependencies
+ * (including TypeScript) are not installed, and any globally-installed tsc
+ * may produce broken output that overwrites the known-good dist/.
+ *
+ * @param {string} root    Project root directory
+ * @param {string[]} packages  Package directory names to check
+ * @returns {string[]} Package names that need rebuilding
+ */
+function detectStalePackages(root, packages) {
+  const packagesDir = join(root, 'packages')
+  const isDevClone = existsSync(join(root, '.git'))
+
+  const stale = []
+  for (const pkg of packages) {
+    const distIndex = join(packagesDir, pkg, 'dist', 'index.js')
+    if (!existsSync(distIndex)) {
+      stale.push(pkg)
+      continue
+    }
+    // Only check src vs dist timestamps in development clones.
+    // In npm tarball installs, timestamps are unreliable and rebuilding
+    // without devDependencies can corrupt the pre-built dist/ (#2877).
+    if (isDevClone) {
+      const distMtime = statSync(distIndex).mtimeMs
+      const srcMtime = newestSrcMtime(join(packagesDir, pkg, 'src'))
+      if (srcMtime > distMtime) {
+        stale.push(pkg)
+      }
+    }
+  }
+  return stale
+}
+
 if (require.main === module) {
   const root = resolve(__dirname, '..')
   const packagesDir = join(root, 'packages')
@@ -55,21 +97,11 @@ if (require.main === module) {
     'pi-ai',
     'pi-agent-core',
     'pi-coding-agent',
+    'rpc-client',
+    'mcp-server',
   ]
 
-  const stale = []
-  for (const pkg of WORKSPACE_PACKAGES) {
-    const distIndex = join(packagesDir, pkg, 'dist', 'index.js')
-    if (!existsSync(distIndex)) {
-      stale.push(pkg)
-      continue
-    }
-    const distMtime = statSync(distIndex).mtimeMs
-    const srcMtime = newestSrcMtime(join(packagesDir, pkg, 'src'))
-    if (srcMtime > distMtime) {
-      stale.push(pkg)
-    }
-  }
+  const stale = detectStalePackages(root, WORKSPACE_PACKAGES)
 
   if (stale.length === 0) process.exit(0)
 
@@ -78,6 +110,7 @@ if (require.main === module) {
   for (const pkg of stale) {
     const pkgDir = join(packagesDir, pkg)
     try {
+      // execSync is safe here: the command is a hardcoded string, not user input
       execSync('npm run build', { cwd: pkgDir, stdio: 'pipe' })
       process.stderr.write(`  ✓ ${pkg}\n`)
     } catch (err) {
@@ -87,4 +120,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { newestSrcMtime }
+module.exports = { newestSrcMtime, detectStalePackages }

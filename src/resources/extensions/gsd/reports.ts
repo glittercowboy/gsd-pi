@@ -14,8 +14,9 @@
  * Manual: /gsd export --html
  */
 
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, basename } from 'node:path';
+import { atomicWriteSync } from './atomic-write.js';
 import { gsdRoot } from './paths.js';
 import { formatCost, formatTokenCount } from './metrics.js';
 import { formatDateShort, formatDuration } from '../shared/format-utils.js';
@@ -83,7 +84,7 @@ export function loadReportsIndex(basePath: string): ReportsIndex | null {
 function saveReportsIndex(basePath: string, index: ReportsIndex): void {
   const dir = reportsDir(basePath);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(reportsIndexPath(basePath), JSON.stringify(index, null, 2) + '\n', 'utf-8');
+  atomicWriteSync(reportsIndexPath(basePath), JSON.stringify(index, null, 2) + '\n', 'utf-8');
 }
 
 // ─── Write a report snapshot ──────────────────────────────────────────────────
@@ -121,7 +122,7 @@ export function writeReportSnapshot(args: WriteReportSnapshotArgs): string {
   const filename = `${prefix}-${timestamp}.html`;
   const filePath = join(dir, filename);
 
-  writeFileSync(filePath, args.html, 'utf-8');
+  atomicWriteSync(filePath, args.html, 'utf-8');
 
   // Load or init registry
   const existing = loadReportsIndex(args.basePath);
@@ -170,7 +171,7 @@ export function writeReportSnapshot(args: WriteReportSnapshotArgs): string {
 
 export function regenerateHtmlIndex(basePath: string, index: ReportsIndex): void {
   const html = buildIndexHtml(index);
-  writeFileSync(reportsHtmlIndexPath(basePath), html, 'utf-8');
+  atomicWriteSync(reportsHtmlIndexPath(basePath), html, 'utf-8');
 }
 
 function buildIndexHtml(index: ReportsIndex): string {

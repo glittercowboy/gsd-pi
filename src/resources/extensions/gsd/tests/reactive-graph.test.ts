@@ -5,6 +5,7 @@ import {
   getReadyTasks,
   chooseNonConflictingSubset,
   isGraphAmbiguous,
+  getMissingAnnotationTasks,
   detectDeadlock,
   graphMetrics,
 } from "../reactive-graph.ts";
@@ -98,6 +99,25 @@ test("parseTaskPlanIO handles multiple backtick tokens on one line", () => {
   const io = parseTaskPlanIO(content);
   assert.deepEqual(io.inputFiles, ["src/a.ts", "src/b.ts"]);
   assert.deepEqual(io.outputFiles, ["src/c.ts"]);
+});
+
+test("parseTaskPlanIO strips inline descriptions from backtick-wrapped file references", () => {
+  const content = `# T01: Described Paths
+
+## Inputs
+
+- \`src/config.ts — existing configuration\`
+- \`src/flags.ts - feature flags\`
+
+## Expected Output
+
+- \`definitions/ac-audit.md — current state of AC CRM\`
+- \`docs/runbook.md - update deployment notes\`
+`;
+
+  const io = parseTaskPlanIO(content);
+  assert.deepEqual(io.inputFiles, ["src/config.ts", "src/flags.ts"]);
+  assert.deepEqual(io.outputFiles, ["definitions/ac-audit.md", "docs/runbook.md"]);
 });
 
 // ─── deriveTaskGraph ──────────────────────────────────────────────────────
@@ -296,4 +316,48 @@ test("graphMetrics computes correct values", () => {
   assert.equal(metrics.edgeCount, 1); // T02 depends on T01
   assert.equal(metrics.readySetSize, 2); // T02 (T01 done) and T03 (no deps)
   assert.equal(metrics.ambiguous, false);
+});
+
+// ─── getMissingAnnotationTasks ─────────────────────────────────────────────
+
+test("getMissingAnnotationTasks: returns empty array when all tasks have annotations", () => {
+  const graph: DerivedTaskNode[] = [
+    { id: "T01", title: "A", inputFiles: ["src/a.ts"], outputFiles: ["src/b.ts"], done: false, dependsOn: [] },
+    { id: "T02", title: "B", inputFiles: [], outputFiles: ["src/c.ts"], done: false, dependsOn: [] },
+  ];
+  assert.deepEqual(getMissingAnnotationTasks(graph), []);
+});
+
+test("getMissingAnnotationTasks: returns tasks with missing annotations", () => {
+  const graph: DerivedTaskNode[] = [
+    { id: "T01", title: "A", inputFiles: [], outputFiles: [], done: false, dependsOn: [] },
+    { id: "T02", title: "B", inputFiles: ["src/a.ts"], outputFiles: ["src/b.ts"], done: false, dependsOn: [] },
+    { id: "T03", title: "C", inputFiles: [], outputFiles: [], done: false, dependsOn: [] },
+  ];
+  assert.deepEqual(getMissingAnnotationTasks(graph), [
+    { id: "T01", title: "A" },
+    { id: "T03", title: "C" },
+  ]);
+});
+
+test("getMissingAnnotationTasks: skips done tasks", () => {
+  const graph: DerivedTaskNode[] = [
+    { id: "T01", title: "A", inputFiles: [], outputFiles: [], done: true, dependsOn: [] },
+    { id: "T02", title: "B", inputFiles: [], outputFiles: [], done: false, dependsOn: [] },
+  ];
+  assert.deepEqual(getMissingAnnotationTasks(graph), [
+    { id: "T02", title: "B" },
+  ]);
+});
+
+test("getMissingAnnotationTasks: returns only tasks missing BOTH inputFiles and outputFiles", () => {
+  const graph: DerivedTaskNode[] = [
+    { id: "T01", title: "InputOnly", inputFiles: ["src/a.ts"], outputFiles: [], done: false, dependsOn: [] },
+    { id: "T02", title: "OutputOnly", inputFiles: [], outputFiles: ["src/b.ts"], done: false, dependsOn: [] },
+    { id: "T03", title: "Neither", inputFiles: [], outputFiles: [], done: false, dependsOn: [] },
+    { id: "T04", title: "Both", inputFiles: ["src/c.ts"], outputFiles: ["src/d.ts"], done: false, dependsOn: [] },
+  ];
+  assert.deepEqual(getMissingAnnotationTasks(graph), [
+    { id: "T03", title: "Neither" },
+  ]);
 });

@@ -238,4 +238,44 @@ describe("discuss-queued-milestones (#2307)", () => {
       "queued milestone picker must label entries with [queued] to distinguish from active",
     );
   });
+
+  // ─── #3150: allDiscussed early-return must not block queued milestone discussion ──
+
+  test("12. allDiscussed path checks for pending milestones before returning (#3150)", () => {
+    const source = readGuidedFlowSource();
+
+    // Extract the allDiscussed block — the if (allDiscussed) { ... } body
+    const allDiscussedMatch = source.match(
+      /const allDiscussed = pendingSlices\.every\([\s\S]*?\n    if \(allDiscussed\) \{([\s\S]*?)\n    \}/,
+    );
+    assert.ok(!!allDiscussedMatch, "allDiscussed guard block must exist in showDiscuss()");
+
+    if (allDiscussedMatch) {
+      const body = allDiscussedMatch[1];
+      // The fix must check for pending milestones and route to showDiscussQueuedMilestone
+      assert.ok(
+        body.includes("pending") && body.includes("showDiscussQueuedMilestone"),
+        "allDiscussed block must check for pending milestones and call showDiscussQueuedMilestone before returning (#3150)",
+      );
+    }
+  });
+
+  test("13. pendingSlices.length===0 path checks for pending milestones before returning (#3150)", () => {
+    const source = readGuidedFlowSource();
+
+    // Find the pendingSlices.length === 0 guard block
+    const zeroSlicesMatch = source.match(
+      /if \(pendingSlices\.length === 0\) \{([\s\S]*?)\n  \}/,
+    );
+    assert.ok(!!zeroSlicesMatch, "pendingSlices.length === 0 guard block must exist in showDiscuss()");
+
+    if (zeroSlicesMatch) {
+      const body = zeroSlicesMatch[1];
+      // The fix must check for pending milestones and route to showDiscussQueuedMilestone
+      assert.ok(
+        body.includes("pending") && body.includes("showDiscussQueuedMilestone"),
+        "pendingSlices.length===0 block must check for pending milestones and call showDiscussQueuedMilestone before returning (#3150)",
+      );
+    }
+  });
 });

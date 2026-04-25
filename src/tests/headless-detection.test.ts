@@ -29,6 +29,20 @@ function isBlockedNotification(event: Record<string, unknown>): boolean {
   return message.includes('blocked:')
 }
 
+const QUICK_COMMANDS = new Set([
+  'status', 'queue', 'history', 'hooks', 'export', 'stop', 'pause',
+  'capture', 'skip', 'undo', 'knowledge', 'config', 'prefs',
+  'cleanup', 'migrate', 'doctor', 'remote', 'help', 'steer',
+  'triage', 'visualize',
+])
+
+const QUICK_WORKFLOW_SUBCOMMANDS = new Set(['list', 'validate'])
+
+function isQuickCommand(command: string, commandArgs: readonly string[] = []): boolean {
+  if (QUICK_COMMANDS.has(command)) return true
+  return command === 'workflow' && QUICK_WORKFLOW_SUBCOMMANDS.has(commandArgs[0] ?? '')
+}
+
 function makeNotify(message: string): Record<string, unknown> {
   return { type: 'extension_ui_request', method: 'notify', message }
 }
@@ -98,4 +112,22 @@ test("detects inline 'Blocked:' message", () => {
 
 test("does NOT match 'blocked' without colon (avoids false positives)", () => {
   assert.ok(!isBlockedNotification(makeNotify("The request was blocked by the firewall")))
+})
+
+// ─── isQuickCommand ─────────────────────────────────────────────────────────
+
+test("treats workflow validate as a quick command", () => {
+  assert.ok(isQuickCommand('workflow', ['validate', 'upgrade-probe']))
+})
+
+test("treats workflow list as a quick command", () => {
+  assert.ok(isQuickCommand('workflow', ['list']))
+})
+
+test("does NOT treat workflow run as a quick command", () => {
+  assert.ok(!isQuickCommand('workflow', ['run', 'upgrade-probe']))
+})
+
+test("does NOT treat bare workflow as a quick command", () => {
+  assert.ok(!isQuickCommand('workflow'))
 })

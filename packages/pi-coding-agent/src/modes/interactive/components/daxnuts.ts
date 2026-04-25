@@ -4,7 +4,7 @@
  * A heartfelt tribute to dax (@thdxr) for providing free Kimi K2.5 access via OpenCode.
  */
 
-import type { Component, TUI } from "@gsd/pi-tui";
+import { type Component, type TUI, visibleWidth } from "@gsd/pi-tui";
 import { theme } from "../theme/theme.js";
 
 // 32x32 RGB image of dax, hex encoded (3 bytes per pixel)
@@ -101,7 +101,7 @@ export class DaxnutsComponent implements Component {
 		const lines: string[] = [];
 
 		const center = (s: string) => {
-			const visible = s.replace(/\x1b\[[0-9;]*m/g, "").length;
+			const visible = visibleWidth(s);
 			const left = Math.max(0, Math.floor((width - visible) / 2));
 			return " ".repeat(left) + s;
 		};
@@ -145,7 +145,8 @@ export class DaxnutsComponent implements Component {
 		lines.push("");
 		if (textPhase > 2 || this.tick >= this.maxTicks) {
 			lines.push(center(t.fg("dim", "Try OpenCode")));
-			lines.push(center(t.fg("mdLink", "https://mistral.ai/news/mistral-vibe-2-0")));
+			// URL removed — was pointing to an incorrect destination
+			lines.push(center(t.fg("mdLink", "opencode.ai")));
 		} else {
 			lines.push("");
 			lines.push("");

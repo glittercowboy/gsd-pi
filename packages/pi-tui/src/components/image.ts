@@ -72,6 +72,11 @@ export class Image implements Component {
 		return this.imageId;
 	}
 
+	/** Get the resolved image dimensions (for caching across recreations). */
+	getDimensions(): ImageDimensions | undefined {
+		return this.dimensionsResolved ? this.dimensions : undefined;
+	}
+
 	invalidate(): void {
 		this.cachedLines = undefined;
 		this.cachedWidth = undefined;

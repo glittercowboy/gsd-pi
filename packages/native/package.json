@@ -1,88 +1,93 @@
 {
   "name": "@gsd/native",
-  "version": "0.1.0",
-  "description": "Native Rust bindings for GSD \u2014 high-performance native modules via N-API",
-  "type": "module",
+  "version": "2.77.0",
+  "description": "Native Rust bindings for GSD — high-performance native modules via N-API",
+  "type": "commonjs",
+  "gsd": {
+    "linkable": true,
+    "scope": "@gsd",
+    "name": "native"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "build:native": "node ../../native/scripts/build.js",
     "build:native:dev": "node ../../native/scripts/build.js --dev",
-    "test": "npm run build:native:dev && node --test src/__tests__/grep.test.mjs src/__tests__/ps.test.mjs src/__tests__/glob.test.mjs src/__tests__/clipboard.test.mjs src/__tests__/highlight.test.mjs src/__tests__/html.test.mjs src/__tests__/text.test.mjs src/__tests__/fd.test.mjs src/__tests__/image.test.mjs"
+    "test": "npm run build && npm run build:native:dev && node --test src/__tests__/*.test.mjs"
   },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "default": "./dist/index.js"
     },
     "./grep": {
       "types": "./dist/grep/index.d.ts",
-      "import": "./dist/grep/index.js"
+      "default": "./dist/grep/index.js"
     },
     "./ps": {
       "types": "./dist/ps/index.d.ts",
-      "import": "./dist/ps/index.js"
+      "default": "./dist/ps/index.js"
     },
     "./glob": {
       "types": "./dist/glob/index.d.ts",
-      "import": "./dist/glob/index.js"
+      "default": "./dist/glob/index.js"
     },
     "./clipboard": {
       "types": "./dist/clipboard/index.d.ts",
-      "import": "./dist/clipboard/index.js"
+      "default": "./dist/clipboard/index.js"
     },
     "./ast": {
       "types": "./dist/ast/index.d.ts",
-      "import": "./dist/ast/index.js"
+      "default": "./dist/ast/index.js"
     },
     "./html": {
       "types": "./dist/html/index.d.ts",
-      "import": "./dist/html/index.js"
+      "default": "./dist/html/index.js"
     },
     "./text": {
       "types": "./dist/text/index.d.ts",
-      "import": "./dist/text/index.js"
+      "default": "./dist/text/index.js"
     },
     "./fd": {
       "types": "./dist/fd/index.d.ts",
-      "import": "./dist/fd/index.js"
+      "default": "./dist/fd/index.js"
     },
     "./image": {
       "types": "./dist/image/index.d.ts",
-      "import": "./dist/image/index.js"
+      "default": "./dist/image/index.js"
     },
     "./xxhash": {
       "types": "./dist/xxhash/index.d.ts",
-      "import": "./dist/xxhash/index.js"
+      "default": "./dist/xxhash/index.js"
     },
     "./diff": {
       "types": "./dist/diff/index.d.ts",
-      "import": "./dist/diff/index.js"
+      "default": "./dist/diff/index.js"
     },
     "./gsd-parser": {
       "types": "./dist/gsd-parser/index.d.ts",
-      "import": "./dist/gsd-parser/index.js"
+      "default": "./dist/gsd-parser/index.js"
     },
     "./highlight": {
       "types": "./dist/highlight/index.d.ts",
-      "import": "./dist/highlight/index.js"
+      "default": "./dist/highlight/index.js"
     },
     "./json-parse": {
       "types": "./dist/json-parse/index.d.ts",
-      "import": "./dist/json-parse/index.js"
+      "default": "./dist/json-parse/index.js"
     },
     "./stream-process": {
       "types": "./dist/stream-process/index.d.ts",
-      "import": "./dist/stream-process/index.js"
+      "default": "./dist/stream-process/index.js"
     },
     "./truncate": {
       "types": "./dist/truncate/index.d.ts",
-      "import": "./dist/truncate/index.js"
+      "default": "./dist/truncate/index.js"
     },
     "./ttsr": {
       "types": "./dist/ttsr/index.d.ts",
-      "import": "./dist/ttsr/index.js"
+      "default": "./dist/ttsr/index.js"
     }
   },
   "files": [

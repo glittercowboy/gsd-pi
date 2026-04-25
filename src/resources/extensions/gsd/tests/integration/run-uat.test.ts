@@ -171,7 +171,7 @@ test('(k) run-uat prompt template', () => {
   const milestoneId = 'M001';
   const sliceId = 'S01';
   const uatPath = '.gsd/milestones/M001/slices/S01/S01-UAT.md';
-  const uatResultPath = '.gsd/milestones/M001/slices/S01/S01-UAT.md';
+  const uatResultPath = '.gsd/milestones/M001/slices/S01/S01-ASSESSMENT.md';
   const uatType = 'live-runtime';
   const inlinedContext = '<!-- no context -->';
   let promptResult: string | undefined;

@@ -52,7 +52,12 @@ export async function findExactModelMatch(host: any, searchTerm: string): Promis
 
 export async function getModelCandidates(host: any): Promise<Model<any>[]> {
 	if (host.session.scopedModels.length > 0) {
-		return host.session.scopedModels.map((scoped: any) => scoped.model);
+		// Filter scoped models by provider auth readiness so callers like
+		// findExactModelMatch can't resolve a scoped-but-unconfigured model.
+		const registry = host.session.modelRegistry;
+		return host.session.scopedModels
+			.filter((scoped: any) => registry.isProviderRequestReady(scoped.model.provider))
+			.map((scoped: any) => scoped.model);
 	}
 
 	host.session.modelRegistry.refresh();

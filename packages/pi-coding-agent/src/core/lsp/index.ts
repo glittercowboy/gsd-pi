@@ -340,6 +340,9 @@ async function runWorkspaceDiagnostics(
 	const proc = spawn(cmd, cmdArgs, {
 		cwd,
 		stdio: ["ignore", "pipe", "pipe"],
+		// On Windows, project-type commands (tsc, cargo, etc.) may be .cmd
+		// wrappers that need shell resolution to avoid ENOENT/EINVAL (#2854).
+		shell: process.platform === "win32",
 	});
 	const abortHandler = () => {
 		proc.kill();

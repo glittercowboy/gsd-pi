@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildDesktopNotificationCommand,
   shouldSendDesktopNotification,
+  formatNotificationTitle,
 } from "../notifications.js";
 import type { NotificationPreferences } from "../types.js";
 
@@ -86,4 +87,48 @@ test("buildDesktopNotificationCommand preserves literal shell characters on linu
 
 test("buildDesktopNotificationCommand skips unsupported platforms", () => {
   assert.equal(buildDesktopNotificationCommand("win32", "Title", "Message"), null);
+});
+
+// ─── formatNotificationTitle — project context in notifications (#2708) ──────
+
+test("formatNotificationTitle returns 'GSD' when no project name is given", () => {
+  assert.equal(formatNotificationTitle(), "GSD");
+  assert.equal(formatNotificationTitle(undefined), "GSD");
+  assert.equal(formatNotificationTitle(""), "GSD");
+});
+
+test("formatNotificationTitle includes project name when provided", () => {
+  assert.equal(formatNotificationTitle("my-app"), "GSD — my-app");
+});
+
+test("formatNotificationTitle trims whitespace from project name", () => {
+  assert.equal(formatNotificationTitle("  spaced  "), "GSD — spaced");
+});
+
+test("buildDesktopNotificationCommand includes project name in title on linux", () => {
+  const command = buildDesktopNotificationCommand(
+    "linux",
+    formatNotificationTitle("my-project"),
+    "All milestones complete!",
+    "success",
+  );
+  assert.ok(command);
+  assert.equal(command.args[2], "GSD — my-project");
+  assert.equal(command.args[3], "All milestones complete!");
+});
+
+test("buildDesktopNotificationCommand includes project name in title on macOS", () => {
+  const command = buildDesktopNotificationCommand(
+    "darwin",
+    formatNotificationTitle("my-project"),
+    "Budget 90%",
+    "warning",
+  );
+  assert.ok(command);
+  if (command.file.includes("terminal-notifier")) {
+    const titleIdx = command.args.indexOf("-title");
+    assert.equal(command.args[titleIdx + 1], "GSD — my-project");
+  } else {
+    assert.match(command.args[1], /GSD — my-project/);
+  }
 });

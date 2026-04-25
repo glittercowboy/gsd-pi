@@ -3,20 +3,18 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev, test, 'hotfix/**']
     paths-ignore:
       - '.github/workflows/ai-triage.yml'
       - '.github/workflows/build-native.yml'
       - '.github/workflows/cleanup-dev-versions.yml'
-      - '.github/workflows/pipeline.yml'
       - 'LICENSE'
   pull_request:
-    branches: [main]
+    branches: [main, dev, test]
     paths-ignore:
       - '.github/workflows/ai-triage.yml'
       - '.github/workflows/build-native.yml'
       - '.github/workflows/cleanup-dev-versions.yml'
-      - '.github/workflows/pipeline.yml'
       - 'LICENSE'
 
 concurrency:
@@ -29,6 +27,7 @@ jobs:
     runs-on: blacksmith-4vcpu-ubuntu-2404
     outputs:
       docs-only: ${{ steps.check.outputs.docs-only }}
+      portability-changed: ${{ steps.check.outputs.portability-changed }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -58,6 +57,15 @@ jobs:
             echo "docs-only=false" >> "$GITHUB_OUTPUT"
             echo "Non-docs files changed:"
             echo "$NON_DOCS"
+          fi
+          PORTABILITY=$(echo "$NON_DOCS" | grep -E '^(src/|packages/|native/|scripts/|web/|package\.json$|package-lock\.json$|web/package-lock\.json$|tsconfig[^/]*\.json$|packages/.*/tsconfig\.json$)' || true)
+          if [ -n "$PORTABILITY" ]; then
+            echo "portability-changed=true" >> "$GITHUB_OUTPUT"
+            echo "Portability-relevant files changed:"
+            echo "$PORTABILITY"
+          else
+            echo "portability-changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No portability-relevant changes detected — skipping portability matrix jobs"
           fi
 
   docs-check:
@@ -108,6 +116,21 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/require-tests.sh
 
+      - name: Reject source-grep tests
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: bash scripts/check-source-grep-tests.sh
+
+      - name: CodeRabbit-theme self-tests
+        run: node --test scripts/__tests__/check-coderabbit-themes.test.mjs
+
+      - name: Reject recurring CodeRabbit themes
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: node scripts/check-coderabbit-themes.mjs
+
   build:
     timeout-minutes: 15
     needs: detect-changes
@@ -130,8 +153,17 @@ jobs:
       - name: Install web host dependencies
         run: npm --prefix web ci
 
-      - name: Build
-        run: npm run build
+      - name: Cache Next.js build
+        uses: useblacksmith/cache@v5
+        with:
+          path: web/.next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**', 'web/hooks/**') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-
+            nextjs-${{ runner.os }}-
+
+      - name: Build core
+        run: npm run build:core
 
       - name: Build web host
         run: npm run build:web-host
@@ -142,23 +174,66 @@ jobs:
       - name: Validate package is installable
         run: npm run validate-pack
 
+      - name: Verify workspace coverage (every linkable package has tests)
+        run: npm run verify:workspace-coverage
+
       - name: Run unit tests
         run: npm run test:unit
 
       - name: Run package tests
         run: npm run test:packages
 
-      - name: Run integration tests
-        run: npm run test:integration
-
       - name: Check test coverage thresholds
         run: npm run test:coverage
 
-  windows-portability:
+  integration-tests:
     timeout-minutes: 15
     needs: detect-changes
+    if: needs.detect-changes.outputs.docs-only != 'true'
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Integration tests need core compiled artifacts:
+      # - dist/loader.js and packages/pi-coding-agent/dist/** from `npm run build:core`
+      # - web/node_modules/.bin/next for tests that shell `build:web-host` at runtime
+      # Duplicating the core build here (instead of sharing artifacts via needs: build)
+      # preserves wall-clock parallelism with the build job — see PR #4093.
+      - name: Install web host dependencies
+        run: npm --prefix web ci
+
+      - name: Cache Next.js build
+        uses: useblacksmith/cache@v5
+        with:
+          path: web/.next/cache
+          key: nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/app/**', 'web/components/**', 'web/lib/**', 'web/hooks/**') }}
+          restore-keys: |
+            nextjs-${{ runner.os }}-${{ hashFiles('web/package-lock.json') }}-
+            nextjs-${{ runner.os }}-
+
+      - name: Build core
+        run: npm run build:core
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+  windows-portability:
+    timeout-minutes: 25
+    needs: detect-changes
     if: >-
-      needs.detect-changes.outputs.docs-only != 'true'
+      needs.detect-changes.outputs.docs-only != 'true' &&
+      needs.detect-changes.outputs.portability-changed == 'true'
     runs-on: blacksmith-4vcpu-windows-2025
 
     steps:
@@ -174,22 +249,29 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build
-        run: npm run build
+      - name: Build core
+        run: npm run build:core
 
       - name: Typecheck extensions
         run: npm run typecheck:extensions
 
-      - name: Run unit tests
-        run: npm run test:unit
-
       - name: Run package tests
         run: npm run test:packages
+
+      - name: Run Windows portability tests
+        run: >-
+          node --import ./src/resources/extensions/gsd/tests/resolve-ts.mjs
+          --experimental-strip-types --test
+          src/tests/windows-portability.test.ts
+          src/resources/extensions/gsd/tests/validate-directory.test.ts
+          src/tests/integration/web-mode-windows-hide.test.ts
 
   rtk-portability:
     timeout-minutes: 20
     needs: detect-changes
-    if: needs.detect-changes.outputs.docs-only != 'true'
+    if: >-
+      needs.detect-changes.outputs.docs-only != 'true' &&
+      needs.detect-changes.outputs.portability-changed == 'true'
     strategy:
       fail-fast: false
       matrix:

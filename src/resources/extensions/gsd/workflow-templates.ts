@@ -25,10 +25,17 @@ function resolveGsdExtensionDir(): string {
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
+export type WorkflowMode =
+  | "oneshot"
+  | "yaml-step"
+  | "markdown-phase"
+  | "auto-milestone";
+
 export interface TemplateEntry {
   name: string;
   description: string;
   file: string;
+  mode?: WorkflowMode;
   phases: string[];
   triggers: string[];
   artifact_dir: string | null;
@@ -58,8 +65,17 @@ let cachedRegistry: TemplateRegistry | null = null;
 export function loadRegistry(): TemplateRegistry {
   if (cachedRegistry) return cachedRegistry;
 
-  const content = readFileSync(registryPath, "utf-8");
-  cachedRegistry = JSON.parse(content) as TemplateRegistry;
+  if (!existsSync(registryPath)) {
+    cachedRegistry = { version: 1, templates: {} };
+    return cachedRegistry;
+  }
+
+  try {
+    const content = readFileSync(registryPath, "utf-8");
+    cachedRegistry = JSON.parse(content) as TemplateRegistry;
+  } catch {
+    cachedRegistry = { version: 1, templates: {} };
+  }
   return cachedRegistry;
 }
 

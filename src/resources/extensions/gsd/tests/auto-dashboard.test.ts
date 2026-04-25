@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 
 import {
   unitVerb,
@@ -11,10 +13,32 @@ import {
   formatWidgetTokens,
   estimateTimeRemaining,
   extractUatSliceId,
+  getWidgetMode,
+  cycleWidgetMode,
+  _resetWidgetModeForTests,
+  _resetLastCommitCacheForTests,
+  _refreshLastCommitForTests,
+  _getLastCommitForTests,
+  _getLastCommitFetchedAtForTests,
 } from "../auto-dashboard.ts";
 
 const autoSource = readFileSync(join(process.cwd(), "src", "resources", "extensions", "gsd", "auto.ts"), "utf-8");
 const dashboardSource = readFileSync(join(process.cwd(), "src", "resources", "extensions", "gsd", "auto-dashboard.ts"), "utf-8");
+
+function makeTempDir(prefix: string): string {
+  return join(
+    tmpdir(),
+    `gsd-auto-dashboard-test-${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+}
+
+function cleanup(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // best-effort
+  }
+}
 
 // ─── unitVerb ─────────────────────────────────────────────────────────────
 
@@ -196,6 +220,50 @@ test("auto progress widget renders RTK savings under the footer stats line", () 
   assert.match(dashboardSource, /lines\.push\(rightAlign\("", theme\.fg\("dim", cachedRtkLabel\), width\)\);/);
 });
 
+test("last commit refresh backs off cleanly when base path is not a git repo", (t) => {
+  const dir = makeTempDir("non-git");
+  mkdirSync(dir, { recursive: true });
+
+  t.after(() => {
+    cleanup(dir);
+    _resetLastCommitCacheForTests();
+  });
+
+  _resetLastCommitCacheForTests();
+  _refreshLastCommitForTests(dir);
+
+  assert.equal(_getLastCommitForTests(dir), null);
+  assert.ok(
+    _getLastCommitFetchedAtForTests() > 0,
+    "non-git refresh should still advance fetchedAt to avoid render-loop retries",
+  );
+});
+
+test("last commit refresh still returns commit info for a valid git repo", (t) => {
+  const dir = makeTempDir("git");
+  mkdirSync(dir, { recursive: true });
+
+  execFileSync("git", ["init", "-b", "main"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.name", "GSD Test"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["config", "user.email", "gsd@example.com"], { cwd: dir, stdio: "pipe" });
+  writeFileSync(join(dir, "README.md"), "hello\n", "utf-8");
+  execFileSync("git", ["add", "README.md"], { cwd: dir, stdio: "pipe" });
+  execFileSync("git", ["commit", "-m", "test: seed dashboard repo"], { cwd: dir, stdio: "pipe" });
+
+  t.after(() => {
+    cleanup(dir);
+    _resetLastCommitCacheForTests();
+  });
+
+  _resetLastCommitCacheForTests();
+  _refreshLastCommitForTests(dir);
+
+  const lastCommit = _getLastCommitForTests(dir);
+  assert.ok(lastCommit, "git repo should produce last commit metadata");
+  assert.match(lastCommit!.message, /test: seed dashboard repo/);
+  assert.ok(lastCommit!.timeAgo.length > 0, "relative time should be populated");
+});
+
 // ─── extractUatSliceId ───────────────────────────────────────────────────
 
 test("extractUatSliceId extracts slice ID from M001/S01 format", () => {
@@ -208,4 +276,36 @@ test("extractUatSliceId returns null for invalid formats", () => {
   assert.equal(extractUatSliceId("M001"), null);
   assert.equal(extractUatSliceId(""), null);
   assert.equal(extractUatSliceId("M001/T01"), null);
+});
+
+test("widget mode respects project preference precedence and persists there", (t) => {
+  const homeDir = makeTempDir("home");
+  const projectDir = makeTempDir("project");
+  const globalPrefsPath = join(homeDir, ".gsd", "preferences.md");
+  const projectPrefsPath = join(projectDir, ".gsd", "preferences.md");
+
+  mkdirSync(join(homeDir, ".gsd"), { recursive: true });
+  mkdirSync(join(projectDir, ".gsd"), { recursive: true });
+  writeFileSync(globalPrefsPath, "---\nversion: 1\nwidget_mode: off\n---\n", "utf-8");
+  writeFileSync(projectPrefsPath, "---\nversion: 1\nwidget_mode: small\n---\n", "utf-8");
+
+  t.after(() => {
+    cleanup(homeDir);
+    cleanup(projectDir);
+    _resetWidgetModeForTests();
+  });
+
+  _resetWidgetModeForTests();
+
+  assert.equal(getWidgetMode(projectPrefsPath, globalPrefsPath), "small", "project widget_mode overrides global");
+  assert.equal(
+    cycleWidgetMode(projectPrefsPath, globalPrefsPath),
+    "min",
+    "cycling advances from the project-owned mode",
+  );
+
+  const projectPrefs = readFileSync(projectPrefsPath, "utf-8");
+  const globalPrefs = readFileSync(globalPrefsPath, "utf-8");
+  assert.match(projectPrefs, /widget_mode:\s*min/);
+  assert.match(globalPrefs, /widget_mode:\s*off/);
 });

@@ -77,7 +77,9 @@ export class GsdSlashCompletionProvider
 
 	private async refreshCache(): Promise<void> {
 		try {
-			this.cachedCommands = await this.client.getCommands();
+			const all = await this.client.getCommands();
+			// Only show /gsd commands — filter out unrelated extension/skill commands
+			this.cachedCommands = all.filter((cmd) => cmd.name.startsWith("gsd"));
 		} catch {
 			// Silently ignore — agent may not be ready yet.
 		}

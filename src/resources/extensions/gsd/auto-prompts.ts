@@ -23,17 +23,70 @@ import type { GSDPreferences } from "./preferences.js";
 import { getLoadedSkills, type Skill } from "@gsd/pi-coding-agent";
 import { join, basename } from "node:path";
 import { existsSync } from "node:fs";
-import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary } from "./context-budget.js";
-import { getPendingGates } from "./gsd-db.js";
+import { computeBudgets, resolveExecutorContextWindow, truncateAtSectionBoundary, type MinimalModelRegistry } from "./context-budget.js";
+import { getPendingGates, getPendingGatesForTurn } from "./gsd-db.js";
+import {
+  GATE_REGISTRY,
+  assertGateCoverage,
+  getGatesForTurn,
+  type GateDefinition,
+} from "./gate-registry.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
+import { readPhaseAnchor, formatAnchorForPrompt } from "./phase-anchor.js";
+import { composeInlinedContext, type ArtifactResolver } from "./unit-context-composer.js";
+import { logWarning } from "./workflow-logger.js";
+import { inlineGraphSubgraph } from "./graph-context.js";
+import { buildExtractionStepsBlock } from "./commands-extract-learnings.js";
+import { warnIfManifestHasMissingSkills } from "./skill-manifest.js";
 
 // ─── Preamble Cap ─────────────────────────────────────────────────────────────
 
+/**
+ * Historical static ceiling for the preamble cap. Kept as an upper bound even
+ * after context-window-aware sizing so large-window users don't suddenly see
+ * 10× looser caps than before. Small-window users get a tighter cap derived
+ * from their configured executor window.
+ */
 const MAX_PREAMBLE_CHARS = 30_000;
 
+/**
+ * Resolve prompt budgets from the configured executor context window.
+ *
+ * The prompt builders here don't have access to the runtime model registry
+ * (they're called from many non-ctx sites), so `resolveExecutorContextWindow`
+ * is fed the user-configurable `context_window_override` preference as the
+ * `sessionContextWindow` fallback. That preference exists specifically to
+ * cover small-window local models (e.g. 32K lemonade/llama.cpp servers) whose
+ * n_ctx is not discoverable through the model registry. Issue #4435.
+ */
+function resolvePromptBudgets(): ReturnType<typeof computeBudgets> {
+  try {
+    const prefs = loadEffectiveGSDPreferences();
+    const sessionWindow = prefs?.preferences.context_window_override;
+    const windowTokens = resolveExecutorContextWindow(undefined, prefs?.preferences, sessionWindow);
+    return computeBudgets(windowTokens);
+  } catch (e) {
+    logWarning("prompt", `resolvePromptBudgets failed: ${(e as Error).message}`);
+    return computeBudgets(200_000);
+  }
+}
+
+/**
+ * Character budget for dependency/prior slice summaries injected into dispatch
+ * prompts. Scales with the executor's configured context window (issue #4435).
+ */
+function resolveSummaryBudgetChars(): number {
+  return resolvePromptBudgets().summaryBudgetChars;
+}
+
 function capPreamble(preamble: string): string {
-  if (preamble.length <= MAX_PREAMBLE_CHARS) return preamble;
-  return truncateAtSectionBoundary(preamble, MAX_PREAMBLE_CHARS).content;
+  // Cap inlined context at min(historical 30K ceiling, scaled inline budget).
+  // The ceiling preserves pre-fix behavior for large-window users; the scaled
+  // budget tightens the cap for small-window users whose true safe limit is
+  // below 30K. `computeBudgets` allocates 40% of total chars to inline context.
+  const budget = Math.min(MAX_PREAMBLE_CHARS, resolvePromptBudgets().inlineContextBudgetChars);
+  if (preamble.length <= budget) return preamble;
+  return truncateAtSectionBoundary(preamble, budget).content;
 }
 
 // ─── Executor Constraints ─────────────────────────────────────────────────────
@@ -43,13 +96,19 @@ function capPreamble(preamble: string): string {
  * Uses the budget engine to compute task count ranges and inline context budgets
  * based on the configured executor model's context window.
  */
-function formatExecutorConstraints(): string {
+function formatExecutorConstraints(
+  sessionContextWindow?: number,
+  modelRegistry?: MinimalModelRegistry,
+): string {
   let windowTokens: number;
   try {
     const prefs = loadEffectiveGSDPreferences();
-    windowTokens = resolveExecutorContextWindow(undefined, prefs?.preferences);
-  } catch {
-    windowTokens = 200_000; // safe default
+    windowTokens = resolveExecutorContextWindow(modelRegistry, prefs?.preferences, sessionContextWindow);
+  } catch (e) {
+    logWarning("prompt", `resolveExecutorContextWindow failed: ${(e as Error).message}`);
+    // Delegate to the budget engine without prefs (the path that just threw)
+    // so DEFAULT_CONTEXT_WINDOW stays the single source of truth.
+    windowTokens = resolveExecutorContextWindow(undefined, undefined, sessionContextWindow);
   }
   const budgets = computeBudgets(windowTokens);
   const { min, max } = budgets.taskCountRange;
@@ -65,7 +124,18 @@ function formatExecutorConstraints(): string {
   ].join("\n");
 }
 
-function buildSourceFilePaths(
+/**
+ * Returns a markdown bullet list of known context file paths for the given
+ * milestone (and optionally slice). Falls back to a generic tool-agnostic
+ * instruction when no GSD artifacts are found.
+ *
+ * @param base - Absolute path to the project root.
+ * @param mid  - Milestone ID (e.g. `"M001"`).
+ * @param sid  - Optional slice ID (e.g. `"S01"`). When provided, the slice
+ *   RESEARCH file is preferred over the milestone-level one.
+ * @returns Markdown string of file path bullets, or a fallback instruction.
+ */
+export function buildSourceFilePaths(
   base: string,
   mid: string,
   sid?: string,
@@ -116,7 +186,7 @@ function buildSourceFilePaths(
 
   return paths.length > 0
     ? paths.join("\n")
-    : "- Use `rg --files` and targeted reads to identify the relevant source files before planning.";
+    : "- Use the Grep/Glob/Read tools to identify the relevant source files before planning.";
 }
 
 // ─── Inline Helpers ───────────────────────────────────────────────────────
@@ -180,6 +250,87 @@ export async function inlineFileSmart(
 }
 
 /**
+ * Compact slice-summary excerpt for milestone-level closers (#4780).
+ *
+ * Emits the frontmatter fields + short body section heads rather than the
+ * full SUMMARY.md body, and keeps the source path in the header so the
+ * closer agent can Read the full file on demand when drafting LEARNINGS.
+ *
+ * Scope: designed for `buildCompleteMilestonePrompt`, which previously
+ * inlined the full SUMMARY per slice and routinely paid ~300–500K tokens
+ * per close when the narrative was never synthesized. Not used by
+ * `buildValidateMilestonePrompt` yet — validate needs fuller verification
+ * evidence; follow-up PR can extend or parameterize.
+ *
+ * If parsing fails (unrecognizable frontmatter, missing id, etc.) the
+ * function falls back to `inlineFile` so the closer loses no information.
+ */
+export async function buildSliceSummaryExcerpt(
+  absPath: string | null, relPath: string, sid: string,
+): Promise<string> {
+  const header = `### ${sid} Summary (excerpt)\nSource: \`${relPath}\``;
+  const content = absPath ? await loadFile(absPath) : null;
+  if (!content) {
+    return `${header}\n\n_(not found — file does not exist yet)_`;
+  }
+  try {
+    const s = parseSummary(content);
+    if (!s.frontmatter.id) {
+      // Unrecognizable — fall back to full file so no context is lost.
+      return `### ${sid} Summary\nSource: \`${relPath}\`\n\n${content.trim()}`;
+    }
+    const lines: string[] = [header, ""];
+    if (s.title) lines.push(`**Title:** ${s.title}`);
+    if (s.oneLiner) lines.push(`**One-liner:** ${s.oneLiner}`);
+    if (s.frontmatter.verification_result) {
+      lines.push(`**Verification:** \`${s.frontmatter.verification_result}\``);
+    }
+    lines.push(`**Blockers:** ${s.frontmatter.blocker_discovered ? "⚠️ blocker recorded — Read full summary" : "none"}`);
+    if (s.frontmatter.duration) lines.push(`**Duration:** ${s.frontmatter.duration}`);
+    if (s.frontmatter.provides.length > 0) lines.push(`**Provides:** ${s.frontmatter.provides.join("; ")}`);
+    if (s.frontmatter.affects.length > 0) lines.push(`**Affects:** ${s.frontmatter.affects.join("; ")}`);
+    if (s.frontmatter.key_decisions.length > 0) lines.push(`**Key decisions:** ${s.frontmatter.key_decisions.join("; ")}`);
+    if (s.frontmatter.patterns_established.length > 0) lines.push(`**Patterns established:** ${s.frontmatter.patterns_established.join("; ")}`);
+    if (s.frontmatter.key_files.length > 0) {
+      const files = s.frontmatter.key_files.slice(0, 8);
+      const more = s.frontmatter.key_files.length > files.length ? ` (+${s.frontmatter.key_files.length - files.length} more)` : "";
+      lines.push(`**Key files:** ${files.join(", ")}${more}`);
+    }
+
+    // Cap section bodies (coderabbit review on #4908): if any of these
+    // narrative sections balloon, excerpt mode still inflates and
+    // undermines the token-reduction goal. 800 chars (~200 tokens) is
+    // enough to carry intent; the closer agent Reads the full file when
+    // it needs richer context for LEARNINGS synthesis.
+    const SECTION_CAP_CHARS = 800;
+    const capSection = (body: string): string => {
+      const trimmed = body.trim();
+      if (trimmed.length <= SECTION_CAP_CHARS) return trimmed;
+      return `${trimmed.slice(0, SECTION_CAP_CHARS)}\n… (truncated — see full \`${relPath}\`)`;
+    };
+
+    if (s.deviations && s.deviations.trim()) {
+      lines.push("", "#### Deviations", capSection(s.deviations));
+    }
+    if (s.knownLimitations && s.knownLimitations.trim()) {
+      lines.push("", "#### Known limitations", capSection(s.knownLimitations));
+    }
+    if (s.followUps && s.followUps.trim()) {
+      lines.push("", "#### Follow-ups", capSection(s.followUps));
+    }
+
+    lines.push(
+      "",
+      `> **On-demand:** read \`${relPath}\` for the full "What Happened" narrative, integration notes, and detailed file-change list when drafting LEARNINGS, the Decision Re-evaluation table, or cross-slice synthesis.`,
+    );
+    return lines.join("\n");
+  } catch {
+    // Defensive — any parse failure falls back to full inline.
+    return `### ${sid} Summary\nSource: \`${relPath}\`\n\n${content.trim()}`;
+  }
+}
+
+/**
  * Load and inline dependency slice summaries (full content, not just paths).
  */
 export async function inlineDependencySummaries(
@@ -197,7 +348,9 @@ export async function inlineDependencySummaries(
       }
       // If slice not found in DB, fall through to file-based parsing
     }
-  } catch { /* fall through */ }
+  } catch (err) {
+    logWarning("prompt", `inlineDependencySummaries DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // If DB didn't provide depends, fall back to roadmap parsing
   if (!depends) {
@@ -256,7 +409,12 @@ export async function inlineGsdRootFile(
 
 /**
  * Inline decisions with optional milestone scoping from the DB.
- * Falls back to filesystem via inlineGsdRootFile when DB unavailable or empty.
+ * Falls back to filesystem via inlineGsdRootFile only when DB is unavailable.
+ *
+ * Cascade logic (R005):
+ * 1. Query with { milestoneId, scope } if scope provided
+ * 2. If empty AND scope was provided, retry with { milestoneId } only (drop scope)
+ * 3. If still empty, return null (intentional per D020)
  */
 export async function inlineDecisionsFromDb(
   base: string, milestoneId?: string, scope?: string, level?: InlineLevel,
@@ -266,7 +424,15 @@ export async function inlineDecisionsFromDb(
     const { isDbAvailable } = await import("./gsd-db.js");
     if (isDbAvailable()) {
       const { queryDecisions, formatDecisionsForPrompt } = await import("./context-store.js");
-      const decisions = queryDecisions({ milestoneId, scope });
+
+      // First query: try with both milestoneId and scope (if scope provided)
+      let decisions = queryDecisions({ milestoneId, scope });
+
+      // Cascade: if empty AND scope was provided, retry without scope
+      if (decisions.length === 0 && scope) {
+        decisions = queryDecisions({ milestoneId });
+      }
+
       if (decisions.length > 0) {
         // Use compact format for non-full levels to save ~35% tokens
         const formatted = inlineLevel !== "full"
@@ -274,26 +440,29 @@ export async function inlineDecisionsFromDb(
           : formatDecisionsForPrompt(decisions);
         return `### Decisions\nSource: \`.gsd/DECISIONS.md\`\n\n${formatted}`;
       }
+      // DB available but cascade returned empty — intentional per D020, don't fall back to file
+      return null;
     }
-  } catch {
-    // DB not available — fall through to filesystem
+  } catch (err) {
+    logWarning("prompt", `inlineDecisionsFromDb failed: ${err instanceof Error ? err.message : String(err)}`);
   }
+  // DB unavailable — fall back to filesystem
   return inlineGsdRootFile(base, "decisions.md", "Decisions");
 }
 
 /**
- * Inline requirements with optional slice scoping from the DB.
+ * Inline requirements with optional milestone and slice scoping from the DB.
  * Falls back to filesystem via inlineGsdRootFile when DB unavailable or empty.
  */
 export async function inlineRequirementsFromDb(
-  base: string, sliceId?: string, level?: InlineLevel,
+  base: string, milestoneId?: string, sliceId?: string, level?: InlineLevel,
 ): Promise<string | null> {
   const inlineLevel = level ?? resolveInlineLevel();
   try {
     const { isDbAvailable } = await import("./gsd-db.js");
     if (isDbAvailable()) {
       const { queryRequirements, formatRequirementsForPrompt } = await import("./context-store.js");
-      const requirements = queryRequirements({ sliceId });
+      const requirements = queryRequirements({ milestoneId, sliceId });
       if (requirements.length > 0) {
         // Use compact format for non-full levels to save ~40% tokens
         const formatted = inlineLevel !== "full"
@@ -302,8 +471,8 @@ export async function inlineRequirementsFromDb(
         return `### Requirements\nSource: \`.gsd/REQUIREMENTS.md\`\n\n${formatted}`;
       }
     }
-  } catch {
-    // DB not available — fall through to filesystem
+  } catch (err) {
+    logWarning("prompt", `inlineRequirementsFromDb failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   return inlineGsdRootFile(base, "requirements.md", "Requirements");
 }
@@ -324,10 +493,177 @@ export async function inlineProjectFromDb(
         return `### Project\nSource: \`.gsd/PROJECT.md\`\n\n${content}`;
       }
     }
-  } catch {
-    // DB not available — fall through to filesystem
+  } catch (err) {
+    logWarning("prompt", `inlineProjectFromDb failed: ${err instanceof Error ? err.message : String(err)}`);
   }
   return inlineGsdRootFile(base, "project.md", "Project");
+}
+
+// ─── Stopwords for keyword extraction ─────────────────────────────────────
+const STOPWORDS = new Set(['of', 'the', 'and', 'a', 'for', '+', '-', 'to', 'in', 'on', 'with', 'is', 'as', 'by']);
+
+// Generic words that don't provide meaningful scope differentiation
+const GENERIC_WORDS = new Set([
+  'setup', 'integration', 'implementation', 'testing', 'test', 'tests',
+  'config', 'configuration', 'init', 'initial', 'basic', 'core',
+  'main', 'primary', 'final', 'complete', 'finish', 'end',
+  'start', 'begin', 'first', 'last', 'update', 'updates',
+  'fix', 'fixes', 'add', 'adds', 'remove', 'removes',
+  'create', 'creates', 'build', 'builds', 'deploy', 'deployment',
+  'refactor', 'refactoring', 'cleanup', 'polish', 'review',
+  // Process/activity words that describe what you're doing, not what domain
+  'hardening', 'validation', 'verification', 'optimization',
+  'improvement', 'enhancement', 'infrastructure',
+]);
+
+// Pattern to match slice/milestone/task IDs (e.g., S01, M001, T03)
+const UNIT_ID_PATTERN = /^[smt]\d+$/i;
+
+/**
+ * Derive a scope keyword from slice title and optional description.
+ * Returns the most specific noun (first non-generic keyword) for decision scoping.
+ *
+ * Examples:
+ * - "Auth Middleware & Protected Route" → "auth"
+ * - "Database & User Model Setup" → "database"
+ * - "Integration Testing" → undefined (too generic)
+ * - "API Rate Limiting" → "api"
+ *
+ * @param sliceTitle - The slice title
+ * @param sliceDescription - Optional roadmap description (demo text)
+ * @returns A single lowercase keyword or undefined if no meaningful scope
+ */
+export function deriveSliceScope(sliceTitle: string, sliceDescription?: string): string | undefined {
+  // Combine title and description for keyword extraction
+  const combinedText = sliceDescription
+    ? `${sliceTitle} ${sliceDescription}`
+    : sliceTitle;
+
+  // Extract all words, lowercase, remove punctuation
+  const words = combinedText
+    .split(/[\s&+,;:|/\\()-]+/)
+    .map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    .filter(w => w.length >= 2);
+
+  // Find the first word that is:
+  // 1. Not a stopword
+  // 2. Not a generic word
+  // 3. Not a unit ID (S01, M001, T03)
+  // 4. At least 3 characters (meaningful scope)
+  for (const word of words) {
+    if (STOPWORDS.has(word)) continue;
+    if (GENERIC_WORDS.has(word)) continue;
+    if (UNIT_ID_PATTERN.test(word)) continue;
+    if (word.length < 3) continue;
+    return word;
+  }
+
+  return undefined;
+}
+/**
+ * Extract keywords from a slice title for scoped knowledge queries.
+ * Splits on whitespace, filters stopwords, lowercases.
+ * Example: 'KNOWLEDGE scoping + roadmap excerpt' → ['knowledge', 'scoping', 'roadmap', 'excerpt']
+ */
+function extractKeywords(title: string): string[] {
+  return title
+    .split(/\s+/)
+    .map(w => w.toLowerCase().replace(/[^a-z0-9]/g, ''))
+    .filter(w => w.length > 0 && !STOPWORDS.has(w));
+}
+
+/**
+ * Inline scoped KNOWLEDGE.md content based on keywords from slice title.
+ * Reads KNOWLEDGE.md, filters to sections matching keywords, formats with header.
+ * Returns null if no KNOWLEDGE.md exists or no sections match.
+ */
+export async function inlineKnowledgeScoped(
+  base: string,
+  keywords: string[],
+): Promise<string | null> {
+  const knowledgePath = resolveGsdRootFile(base, "KNOWLEDGE");
+  if (!existsSync(knowledgePath)) return null;
+
+  const content = await loadFile(knowledgePath);
+  if (!content) return null;
+
+  // Import queryKnowledge from context-store
+  const { queryKnowledge } = await import("./context-store.js");
+  const scoped = await queryKnowledge(content, keywords);
+
+  // Return null if no sections matched (empty string from queryKnowledge)
+  if (!scoped) return null;
+
+  return `### Project Knowledge (scoped)\nSource: \`${relGsdRootFile("KNOWLEDGE")}\`\n\n${scoped.trim()}`;
+}
+
+/**
+ * Budget-capped knowledge inline for milestone-level prompt assembly.
+ *
+ * Addresses issue #4719: the six milestone-phase prompts (research-milestone,
+ * plan-milestone, complete-slice, complete-milestone, validate-milestone,
+ * reassess-roadmap) previously injected the full KNOWLEDGE.md (~226KB for a
+ * real project) on every invocation. This helper scopes by caller-supplied
+ * keywords and caps the payload at `maxChars` (default 30,000 chars).
+ *
+ * Returns null when no KNOWLEDGE.md exists or no entries match any keyword.
+ */
+export async function inlineKnowledgeBudgeted(
+  base: string,
+  keywords: string[],
+  options?: { maxChars?: number },
+): Promise<string | null> {
+  const DEFAULT_MAX_CHARS = 30_000;
+  const HARD_MAX_CHARS = 100_000;
+  const raw = Number(options?.maxChars ?? DEFAULT_MAX_CHARS);
+  const maxChars = Number.isFinite(raw)
+    ? Math.max(0, Math.min(Math.floor(raw), HARD_MAX_CHARS))
+    : DEFAULT_MAX_CHARS;
+
+  const knowledgePath = resolveGsdRootFile(base, "KNOWLEDGE");
+  if (!existsSync(knowledgePath)) return null;
+
+  const content = await loadFile(knowledgePath);
+  if (!content) return null;
+
+  const { queryKnowledge } = await import("./context-store.js");
+  const scoped = await queryKnowledge(content, keywords);
+  if (!scoped) return null;
+
+  const trimmed = scoped.trim();
+  const truncated =
+    trimmed.length > maxChars
+      ? `${trimmed.slice(0, maxChars)}\n\n[...truncated ${trimmed.length - maxChars} chars; rerun with narrower scope if needed]`
+      : trimmed;
+
+  return `### Project Knowledge (scoped)\nSource: \`${relGsdRootFile("KNOWLEDGE")}\`\n\n${truncated}`;
+}
+
+/**
+ * Inline a roadmap excerpt for a specific slice.
+ * Reads full roadmap, extracts minimal excerpt with header + predecessor + target row.
+ * Returns null if roadmap doesn't exist or slice not found.
+ */
+export async function inlineRoadmapExcerpt(
+  base: string,
+  mid: string,
+  sid: string,
+): Promise<string | null> {
+  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
+  if (!roadmapPath || !existsSync(roadmapPath)) return null;
+
+  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
+  const content = await loadFile(roadmapPath);
+  if (!content) return null;
+
+  // Import formatRoadmapExcerpt from context-store
+  const { formatRoadmapExcerpt } = await import("./context-store.js");
+  const excerpt = formatRoadmapExcerpt(content, sid, roadmapRel);
+
+  // Return null if slice not found in roadmap
+  if (!excerpt) return null;
+
+  return `### Milestone Roadmap (excerpt)\nSource: \`${roadmapRel}\`\n\n${excerpt}`;
 }
 
 // ─── Skill Activation & Discovery ─────────────────────────────────────────
@@ -451,8 +787,14 @@ export function buildSkillActivationBlock(params: {
   extraContext?: string[];
   taskPlanContent?: string | null;
   preferences?: GSDPreferences;
+  /**
+   * Unit type dispatching this prompt. When provided, skills are filtered
+   * through the per-unit-type manifest (see `skill-manifest.ts`). Unknown
+   * or omitted values retain the pre-manifest behavior (all skills eligible).
+   */
+  unitType?: string;
 }): string {
-  const prefs = params.preferences ?? loadEffectiveGSDPreferences()?.preferences;
+  const prefs = params.preferences ?? loadEffectiveGSDPreferences(params.base)?.preferences;
   const contextTokens = tokenizeSkillContext(
     params.milestoneId,
     params.milestoneTitle,
@@ -462,8 +804,22 @@ export function buildSkillActivationBlock(params: {
     params.taskTitle,
   );
 
-  const visibleSkills = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
+  const loaded = (typeof getLoadedSkills === 'function' ? getLoadedSkills() : []).filter(skill => !skill.disableModelInvocation);
+
+  // Skill activation here is driven entirely by explicit sources
+  // (always_use_skills, prefer_skills, skill_rules, task-plan skills_used).
+  // Every match is an explicit user/project intent and must not be dropped
+  // by the unit-type manifest — user intent is stronger signal than
+  // defaults. The manifest's real home is the skill catalog rendering
+  // layer (pi-coding-agent `formatSkillsForPrompt`); that wiring is tracked
+  // as the "load-time short-circuit" follow-up to RFC #4779.
+  //
+  // `unitType` stays plumbed so the strict-mode warning can surface
+  // manifest entries that reference uninstalled skills, and so the
+  // activation-block site is ready to opt in once PR B lands.
+  const visibleSkills = loaded;
   const installedNames = new Set(visibleSkills.map(skill => normalizeSkillReference(skill.name)));
+  warnIfManifestHasMissingSkills(params.unitType, installedNames);
   const avoided = new Set(resolvePreferenceSkillNames(prefs?.avoid_skills ?? [], params.base));
   const matched = new Set<string>();
 
@@ -485,8 +841,8 @@ export function buildSkillActivationBlock(params: {
       for (const skillName of taskPlan.frontmatter.skills_used) {
         matched.add(normalizeSkillReference(skillName));
       }
-    } catch {
-      // Non-fatal — malformed task plan should not break prompt construction
+    } catch (err) {
+      logWarning("prompt", `parseTaskPlanFile failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -735,7 +1091,9 @@ export async function checkNeedsReassessment(
         return { sliceId: lastCompleted };
       }
     }
-  } catch { /* fall through */ }
+  } catch (err) {
+    logWarning("prompt", `checkNeedsReassessment DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // File-based fallback using roadmap checkboxes
   const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
@@ -801,7 +1159,9 @@ export async function checkNeedsRunUat(
         return { sliceId: sid, uatType };
       }
     }
-  } catch { /* fall through */ }
+  } catch (err) {
+    logWarning("prompt", `checkNeedsRunUat DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
   // File-based fallback using roadmap checkboxes
   if (!prefs?.uat_dispatch) return null;
@@ -840,15 +1200,21 @@ export async function checkNeedsRunUat(
  * as a seed when present. The discussion agent interviews the user, writes
  * a full CONTEXT.md, and the phase transitions to pre-planning automatically.
  */
-export async function buildDiscussMilestonePrompt(mid: string, midTitle: string, base: string): Promise<string> {
+export async function buildDiscussMilestonePrompt(
+  mid: string,
+  midTitle: string,
+  base: string,
+  structuredQuestionsAvailable = "false",
+): Promise<string> {
   const discussTemplates = inlineTemplate("context", "Context");
 
   const basePrompt = loadPrompt("guided-discuss-milestone", {
     milestoneId: mid,
     milestoneTitle: midTitle,
     inlinedTemplates: discussTemplates,
-    structuredQuestionsAvailable: "true",
+    structuredQuestionsAvailable,
     commitInstruction: "Do not commit planning artifacts — .gsd/ is managed externally.",
+    fastPathInstruction: "",
   });
 
   // If a CONTEXT-DRAFT.md exists, append it as seed material
@@ -863,29 +1229,64 @@ export async function buildDiscussMilestonePrompt(mid: string, midTitle: string,
 }
 
 export async function buildResearchMilestonePrompt(mid: string, midTitle: string, base: string): Promise<string> {
-  const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
-  const contextRel = relMilestoneFile(base, mid, "CONTEXT");
+  // #4782 phase 3: research-milestone migrated through the composer.
+  // Declared inline order: milestone-context, project, requirements,
+  // decisions, templates. Knowledge stays outside the composer
+  // (budget-driven, scoped by keyword extraction — future phase folds
+  // policy-driven blocks in).
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    switch (key) {
+      case "milestone-context": {
+        const p = resolveMilestoneFile(base, mid, "CONTEXT");
+        const r = relMilestoneFile(base, mid, "CONTEXT");
+        return await inlineFile(p, r, "Milestone Context");
+      }
+      case "project":
+        return await inlineProjectFromDb(base);
+      case "requirements":
+        return await inlineRequirementsFromDb(base, mid);
+      case "decisions":
+        return await inlineDecisionsFromDb(base, mid);
+      case "templates":
+        return inlineTemplate("research", "Research");
+      default:
+        return null;
+    }
+  };
 
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(contextPath, contextRel, "Milestone Context"));
-  const projectInline = await inlineProjectFromDb(base);
-  if (projectInline) inlined.push(projectInline);
-  const requirementsInline = await inlineRequirementsFromDb(base);
-  if (requirementsInline) inlined.push(requirementsInline);
-  const decisionsInline = await inlineDecisionsFromDb(base, mid);
-  if (decisionsInline) inlined.push(decisionsInline);
-  const knowledgeInlineRM = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
-  if (knowledgeInlineRM) inlined.push(knowledgeInlineRM);
-  inlined.push(inlineTemplate("research", "Research"));
+  const composed = await composeInlinedContext("research-milestone", resolveArtifact);
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  // Knowledge block stays outside the composer — budgeted, scoped via
+  // keyword extraction (#4719). Inserted between decisions and the
+  // templates block to match the pre-migration output order. We split
+  // the composer output around the templates section to preserve that
+  // ordering.
+  const knowledgeInlineRM = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
+  const parts: string[] = [];
+  if (knowledgeInlineRM && composed) {
+    // Insert knowledge before the template block so the overall order is:
+    //   milestone-context → project → requirements → decisions → KNOWLEDGE → research template
+    const idx = composed.lastIndexOf("### Output Template:");
+    if (idx > 0) {
+      const before = composed.slice(0, idx).replace(/\n\n---\n\n$/, "");
+      const after = composed.slice(idx);
+      parts.push(before, knowledgeInlineRM, after);
+    } else {
+      parts.push(composed, knowledgeInlineRM);
+    }
+  } else if (composed) {
+    parts.push(composed);
+    if (knowledgeInlineRM) parts.push(knowledgeInlineRM);
+  }
+
+  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${parts.join("\n\n---\n\n")}`);
 
   const outputRelPath = relMilestoneFile(base, mid, "RESEARCH");
   return loadPrompt("research-milestone", {
     workingDirectory: base,
     milestoneId: mid, milestoneTitle: midTitle,
     milestonePath: relMilestonePath(base, mid),
-    contextPath: contextRel,
+    contextPath: relMilestoneFile(base, mid, "CONTEXT"),
     outputPath: join(base, outputRelPath),
     inlinedContext,
     skillActivation: buildSkillActivationBlock({
@@ -893,6 +1294,7 @@ export async function buildResearchMilestonePrompt(mid: string, midTitle: string
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "research-milestone",
     }),
     ...buildSkillDiscoveryVars(),
   });
@@ -906,6 +1308,11 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   const researchRel = relMilestoneFile(base, mid, "RESEARCH");
 
   const inlined: string[] = [];
+
+  // Inject phase handoff anchor from research phase (if available)
+  const researchAnchor = readPhaseAnchor(base, mid, "research-milestone");
+  if (researchAnchor) inlined.push(formatAnchorForPrompt(researchAnchor));
+
   inlined.push(await inlineFile(contextPath, contextRel, "Milestone Context"));
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Milestone Research");
   if (researchInline) inlined.push(researchInline);
@@ -915,7 +1322,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
   if (inlineLevel !== "minimal") {
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
     const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
@@ -930,7 +1337,8 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
     );
     inlined.push(queueInline);
   }
-  const knowledgeInlinePM = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
+  // Scoped + budgeted — see issue #4719
+  const knowledgeInlinePM = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
   if (knowledgeInlinePM) inlined.push(knowledgeInlinePM);
   inlined.push(inlineTemplate("roadmap", "Roadmap"));
   if (inlineLevel === "full") {
@@ -965,6 +1373,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "plan-milestone",
     }),
     ...buildSkillDiscoveryVars(),
   });
@@ -980,21 +1389,46 @@ export async function buildResearchSlicePrompt(
   const milestoneResearchPath = resolveMilestoneFile(base, mid, "RESEARCH");
   const milestoneResearchRel = relMilestoneFile(base, mid, "RESEARCH");
 
+  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
+
   const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+
+  // Use roadmap excerpt instead of full roadmap for context reduction
+  const roadmapExcerptRS = await inlineRoadmapExcerpt(base, mid, sid);
+  if (roadmapExcerptRS) {
+    inlined.push(roadmapExcerptRS);
+  } else {
+    // Fall back to full roadmap if excerpt fails
+    inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  }
+
   const contextInline = await inlineFileOptional(contextPath, contextRel, "Milestone Context");
   if (contextInline) inlined.push(contextInline);
+  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceCtxInline) inlined.push(sliceCtxInline);
   const researchInline = await inlineFileOptional(milestoneResearchPath, milestoneResearchRel, "Milestone Research");
   if (researchInline) inlined.push(researchInline);
-  const decisionsInline = await inlineDecisionsFromDb(base, mid);
+
+  // Derive scope from slice title for decision filtering (R005)
+  const derivedScope = deriveSliceScope(sTitle);
+  const decisionsInline = await inlineDecisionsFromDb(base, mid, derivedScope);
   if (decisionsInline) inlined.push(decisionsInline);
-  const requirementsInline = await inlineRequirementsFromDb(base, sid);
+  const requirementsInline = await inlineRequirementsFromDb(base, mid, sid);
   if (requirementsInline) inlined.push(requirementsInline);
-  const knowledgeInlineRS = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
+
+  // Use scoped knowledge based on slice title keywords
+  const keywords = extractKeywords(sTitle);
+  const knowledgeInlineRS = await inlineKnowledgeScoped(base, keywords);
   if (knowledgeInlineRS) inlined.push(knowledgeInlineRS);
+
+  // Knowledge graph: subgraph for this slice (graceful — skipped if no graph.json)
+  const graphBlockRS = await inlineGraphSubgraph(base, `${sid} ${sTitle}`, { budget: 3000 });
+  if (graphBlockRS) inlined.push(graphBlockRS);
+
   inlined.push(inlineTemplate("research", "Research"));
 
-  const depContent = await inlineDependencySummaries(mid, sid, base);
+  const depContent = await inlineDependencySummaries(mid, sid, base, resolveSummaryBudgetChars());
   const activeOverrides = await loadActiveOverrides(base);
   const overridesInline = formatOverridesSection(activeOverrides);
   if (overridesInline) inlined.unshift(overridesInline);
@@ -1018,50 +1452,94 @@ export async function buildResearchSlicePrompt(
       sliceId: sid,
       sliceTitle: sTitle,
       extraContext: [inlinedContext, depContent],
+      unitType: "research-slice",
     }),
     ...buildSkillDiscoveryVars(),
   });
 }
 
-export async function buildPlanSlicePrompt(
-  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
-): Promise<string> {
-  const inlineLevel = level ?? resolveInlineLevel();
+/**
+ * Shared assembly for plan-slice and refine-slice prompts. Both builders need
+ * the same inlined context (roadmap excerpt, slice context, research, decisions,
+ * requirements, knowledge, graph subgraph, templates, dependency summaries,
+ * overrides). Extracted to prevent drift between the two sites.
+ *
+ * `prependBlocks` are pushed onto the start of the inlined array BEFORE any
+ * shared content, so callers can add unit-specific headers (e.g., the refine
+ * sketch-scope constraint).
+ */
+async function renderSlicePrompt(options: {
+  mid: string;
+  sid: string;
+  sTitle: string;
+  base: string;
+  level: InlineLevel;
+  promptTemplate: "plan-slice" | "refine-slice";
+  prependBlocks?: string[];
+  extraVars?: Record<string, string>;
+  sessionContextWindow?: number;
+  modelRegistry?: MinimalModelRegistry;
+}): Promise<string> {
+  const {
+    mid, sid, sTitle, base, level, promptTemplate, prependBlocks = [], extraVars = {},
+    sessionContextWindow, modelRegistry,
+  } = options;
+
   const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
   const researchPath = resolveSliceFile(base, mid, sid, "RESEARCH");
   const researchRel = relSliceFile(base, mid, sid, "RESEARCH");
+  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
 
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  const inlined: string[] = [...prependBlocks];
+
+  // Phase handoff anchor from research phase (if available)
+  const researchSliceAnchor = readPhaseAnchor(base, mid, "research-slice");
+  if (researchSliceAnchor) inlined.push(formatAnchorForPrompt(researchSliceAnchor));
+
+  // Roadmap excerpt with full-roadmap fallback
+  const roadmapExcerpt = await inlineRoadmapExcerpt(base, mid, sid);
+  if (roadmapExcerpt) {
+    inlined.push(roadmapExcerpt);
+  } else {
+    inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  }
+
+  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceCtxInline) inlined.push(sliceCtxInline);
   const researchInline = await inlineFileOptional(researchPath, researchRel, "Slice Research");
   if (researchInline) inlined.push(researchInline);
-  if (inlineLevel !== "minimal") {
-    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
+
+  if (level !== "minimal") {
+    const derivedScope = deriveSliceScope(sTitle);
+    const decisionsInline = await inlineDecisionsFromDb(base, mid, derivedScope, level);
     if (decisionsInline) inlined.push(decisionsInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, sid, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, sid, level);
     if (requirementsInline) inlined.push(requirementsInline);
   }
-  const knowledgeInlinePS = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
-  if (knowledgeInlinePS) inlined.push(knowledgeInlinePS);
+
+  const knowledgeInline = await inlineKnowledgeScoped(base, extractKeywords(sTitle));
+  if (knowledgeInline) inlined.push(knowledgeInline);
+
+  const graphBlock = await inlineGraphSubgraph(base, `${sid} ${sTitle}`, { budget: 3000 });
+  if (graphBlock) inlined.push(graphBlock);
+
   inlined.push(inlineTemplate("plan", "Slice Plan"));
-  if (inlineLevel === "full") {
+  if (level === "full") {
     inlined.push(inlineTemplate("task-plan", "Task Plan"));
   }
 
-  const depContent = await inlineDependencySummaries(mid, sid, base);
-  const planActiveOverrides = await loadActiveOverrides(base);
-  const planOverridesInline = formatOverridesSection(planActiveOverrides);
-  if (planOverridesInline) inlined.unshift(planOverridesInline);
+  const depContent = await inlineDependencySummaries(mid, sid, base, resolveSummaryBudgetChars());
+  const overridesInline = formatOverridesSection(await loadActiveOverrides(base));
+  if (overridesInline) inlined.unshift(overridesInline);
 
   const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
-
-  // Build executor context constraints from the budget engine
-  const executorContextConstraints = formatExecutorConstraints();
-
+  const executorContextConstraints = formatExecutorConstraints(sessionContextWindow, modelRegistry);
   const outputRelPath = relSliceFile(base, mid, sid, "PLAN");
   const commitInstruction = "Do not commit — .gsd/ planning docs are managed externally and not tracked in git.";
-  return loadPrompt("plan-slice", {
+
+  return loadPrompt(promptTemplate, {
     workingDirectory: base,
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle,
     slicePath: relSlicePath(base, mid, sid),
@@ -1079,7 +1557,102 @@ export async function buildPlanSlicePrompt(
       sliceId: sid,
       sliceTitle: sTitle,
       extraContext: [inlinedContext, depContent],
+      unitType: promptTemplate,
     }),
+    ...extraVars,
+  });
+}
+
+export async function buildPlanSlicePrompt(
+  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
+  options?: {
+    softScopeHint?: string;
+    sessionContextWindow?: number;
+    modelRegistry?: MinimalModelRegistry;
+    /** Failure context from a prior pre-exec gate run (#4551). When present, a
+     *  "Fix these specific issues" section is appended so the LLM addresses the
+     *  exact problems instead of producing an identical plan that fails again. */
+    priorPreExecFailure?: {
+      blockingFindings: string[];
+      verdictExcerpt: string;
+    };
+  },
+): Promise<string> {
+  const prependBlocks: string[] = [];
+  // ADR-011: when the refining-phase dispatch rule gracefully downgrades to
+  // plan-slice (progressive_planning was toggled off mid-milestone), it
+  // forwards the stored sketch_scope as a SOFT hint — context, not a hard
+  // constraint. The planner is free to expand beyond it.
+  if (options?.softScopeHint && options.softScopeHint.trim().length > 0) {
+    prependBlocks.push(
+      `## Prior Sketch Scope (soft hint — non-binding)\n\n${options.softScopeHint.trim()}\n\n` +
+      `This scope was captured during an earlier progressive-planning pass that was later disabled. Treat it as context only — you may plan beyond it if the work genuinely requires more scope. Do NOT treat this as a hard boundary.`,
+    );
+  }
+  // #4551: inject pre-exec failure context so the re-dispatched plan-slice
+  // addresses the exact blocked references rather than reproducing the same plan.
+  if (options?.priorPreExecFailure) {
+    const { blockingFindings, verdictExcerpt } = options.priorPreExecFailure;
+    const findingsList = blockingFindings.length > 0
+      ? blockingFindings.map(f => `- ${f}`).join("\n")
+      : "- (no specific findings recorded)";
+    prependBlocks.push(
+      `## Fix these specific issues from the prior pre-exec check\n\n` +
+      `The previous plan-slice attempt was blocked by pre-execution validation.\n` +
+      `Gate verdict: ${verdictExcerpt}\n\n` +
+      `Blocked references that must be resolved in this plan:\n${findingsList}\n\n` +
+      `Revise the plan so that every reference listed above is satisfied before execution begins. ` +
+      `Do not reproduce the same file paths, package names, or task ordering that caused these failures.`,
+    );
+  }
+  return renderSlicePrompt({
+    mid, sid, sTitle, base,
+    level: level ?? resolveInlineLevel(),
+    promptTemplate: "plan-slice",
+    prependBlocks,
+    sessionContextWindow: options?.sessionContextWindow,
+    modelRegistry: options?.modelRegistry,
+  });
+}
+
+/**
+ * ADR-011 refine-slice: expand a sketch into a full plan using the current
+ * codebase state and prior slice summary. Mechanically similar to plan-slice
+ * but framed as a *transformation* (sketch → full plan) rather than a
+ * blank-sheet planning pass. Reuses inlineDependencySummaries for prior
+ * slice SUMMARY and inlines the stored sketch_scope as a hard constraint.
+ */
+export async function buildRefineSlicePrompt(
+  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
+  options?: { sessionContextWindow?: number; modelRegistry?: MinimalModelRegistry },
+): Promise<string> {
+  // Pull the stored sketch scope from the DB — the hard constraint we plan within.
+  let sketchScope = "";
+  try {
+    const { isDbAvailable, getSlice } = await import("./gsd-db.js");
+    if (isDbAvailable()) {
+      sketchScope = getSlice(mid, sid)?.sketch_scope ?? "";
+    }
+  } catch {
+    sketchScope = "";
+  }
+
+  const prependBlocks: string[] = [];
+  if (sketchScope.trim().length > 0) {
+    prependBlocks.push(
+      `## Sketch Scope (hard constraint)\n\n${sketchScope.trim()}\n\n` +
+      `Treat this as the authoritative boundary for the slice. Do not plan work outside this scope; if the scope is too narrow, surface it as a deviation rather than expanding silently.`,
+    );
+  }
+
+  return renderSlicePrompt({
+    mid, sid, sTitle, base,
+    level: level ?? resolveInlineLevel(),
+    promptTemplate: "refine-slice",
+    prependBlocks,
+    extraVars: { sketchScope },
+    sessionContextWindow: options?.sessionContextWindow,
+    modelRegistry: options?.modelRegistry,
   });
 }
 
@@ -1088,6 +1661,10 @@ export interface ExecuteTaskPromptOptions {
   level?: InlineLevel;
   /** Override carry-forward paths (dependency-based instead of order-based). */
   carryForwardPaths?: string[];
+  /** Session model context window in tokens, forwarded to the budget engine. */
+  sessionContextWindow?: number;
+  /** Model registry forwarded to the budget engine for executor-model lookup. */
+  modelRegistry?: MinimalModelRegistry;
 }
 
 export async function buildExecuteTaskPrompt(
@@ -1099,6 +1676,9 @@ export async function buildExecuteTaskPrompt(
     ? level
     : { level: level as InlineLevel | undefined };
   const inlineLevel = opts.level ?? resolveInlineLevel();
+
+  // Inject phase handoff anchor from planning phase (if available)
+  const planAnchor = readPhaseAnchor(base, mid, "plan-slice");
 
   const priorSummaries = opts.carryForwardPaths ?? await getPriorTaskSummaryPaths(mid, sid, tid, base);
   const priorLines = priorSummaries.length > 0
@@ -1157,12 +1737,16 @@ export async function buildExecuteTaskPrompt(
   // Only include if it has content (not a "not found" result)
   const knowledgeContent = knowledgeInlineET && !knowledgeInlineET.includes("not found") ? knowledgeInlineET : null;
 
+  // Knowledge graph: tight subgraph for this task (graceful — skipped if no graph.json)
+  const graphBlockET = await inlineGraphSubgraph(base, `${tid} ${tTitle}`, { budget: 2000 });
+
   const inlinedTemplates = inlineLevel === "minimal"
     ? inlineTemplate("task-summary", "Task Summary")
     : [
         inlineTemplate("task-summary", "Task Summary"),
         inlineTemplate("decisions", "Decisions"),
         ...(knowledgeContent ? [knowledgeContent] : []),
+        ...(graphBlockET ? [graphBlockET] : []),
       ].join("\n\n---\n\n");
 
   const taskSummaryPath = join(base, `${relSlicePath(base, mid, sid)}/tasks/${tid}-SUMMARY.md`);
@@ -1172,7 +1756,7 @@ export async function buildExecuteTaskPrompt(
 
   // Compute verification budget for the executor's context window (issue #707)
   const prefs = loadEffectiveGSDPreferences();
-  const contextWindow = resolveExecutorContextWindow(undefined, prefs?.preferences);
+  const contextWindow = resolveExecutorContextWindow(opts.modelRegistry, prefs?.preferences, opts.sessionContextWindow);
   const budgets = computeBudgets(contextWindow);
   const verificationBudget = `~${Math.round(budgets.verificationBudgetChars / 1000)}K chars`;
 
@@ -1190,9 +1774,44 @@ export async function buildExecuteTaskPrompt(
     ? `### Runtime Context\nSource: \`.gsd/RUNTIME.md\`\n\n${runtimeContent.trim()}`
     : "";
 
+  let phaseAnchorSection = planAnchor ? formatAnchorForPrompt(planAnchor) : "";
+
+  // ADR-011 Phase 2: inject any resolved-but-unapplied escalation override
+  // into this task's prompt. Claim is atomic via DB UPDATE WHERE IS NULL, so
+  // if a parallel build already injected it, we skip. Feature-gated by
+  // phases.mid_execution_escalation. Prepended to phaseAnchorSection so it
+  // appears near the top of the prompt above planning anchors.
+  if (prefs?.preferences?.phases?.mid_execution_escalation === true) {
+    try {
+      const { claimOverrideForInjection } = await import("./escalation.js");
+      const claimed = claimOverrideForInjection(base, mid, sid);
+      if (claimed) {
+        const block = claimed.injectionBlock + "\n\n---\n\n";
+        phaseAnchorSection = phaseAnchorSection
+          ? `${block}${phaseAnchorSection}`
+          : block;
+      }
+    } catch (escalationErr) {
+      // Escalation module unavailable or threw — log and proceed.
+      logWarning("prompt", `escalation override injection failed: ${(escalationErr as Error).message}`);
+    }
+  }
+
+  // Task-scoped gates owned by execute-task (Q5/Q6/Q7). Pull only the
+  // gates that plan-slice actually seeded for this task — tasks with no
+  // external dependencies legitimately skip Q5, tasks with no runtime
+  // load dimension skip Q6, etc.
+  const etPending = getPendingGatesForTurn(mid, sid, "execute-task", tid);
+  assertGateCoverage(etPending, "execute-task", { requireAll: false });
+  const gatesToClose = renderGatesToCloseBlock(
+    getGatesForTurn("execute-task"),
+    { pending: new Set(etPending.map((g) => g.gate_id)), allowOmit: true },
+  );
+
   return loadPrompt("execute-task", {
     overridesSection,
     runtimeContext,
+    phaseAnchorSection,
     workingDirectory: base,
     milestoneId: mid, sliceId: sid, sliceTitle: sTitle, taskId: tid, taskTitle: tTitle,
     planPath: join(base, relSliceFile(base, mid, sid, "PLAN")),
@@ -1206,6 +1825,7 @@ export async function buildExecuteTaskPrompt(
     taskSummaryPath,
     inlinedTemplates,
     verificationBudget,
+    gatesToClose,
     skillActivation: buildSkillActivationBlock({
       base,
       milestoneId: mid,
@@ -1220,52 +1840,118 @@ export async function buildExecuteTaskPrompt(
 }
 
 export async function buildCompleteSlicePrompt(
-  mid: string, _midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
+  mid: string, midTitle: string, sid: string, sTitle: string, base: string, level?: InlineLevel,
 ): Promise<string> {
   const inlineLevel = level ?? resolveInlineLevel();
 
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
-  const slicePlanRel = relSliceFile(base, mid, sid, "PLAN");
-
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
-  inlined.push(await inlineFile(slicePlanPath, slicePlanRel, "Slice Plan"));
-  if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base, sid, inlineLevel);
-    if (requirementsInline) inlined.push(requirementsInline);
-  }
-  const knowledgeInlineCS = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
-  if (knowledgeInlineCS) inlined.push(knowledgeInlineCS);
-
-  // Inline all task summaries for this slice
-  const tDir = resolveTasksDir(base, mid, sid);
-  if (tDir) {
-    const summaryFiles = resolveTaskFiles(tDir, "SUMMARY").sort();
-    for (const file of summaryFiles) {
-      const absPath = join(tDir, file);
-      const content = await loadFile(absPath);
-      const sRel = relSlicePath(base, mid, sid);
-      const relPath = `${sRel}/tasks/${file}`;
-      if (content) {
-        inlined.push(`### Task Summary: ${file.replace(/-SUMMARY\.md$/i, "")}\nSource: \`${relPath}\`\n\n${content.trim()}`);
+  // #4782 phase 3: complete-slice migrated through composer. Manifest
+  // declares [roadmap, slice-context, slice-plan, requirements,
+  // prior-task-summaries, templates]. Overrides prepend and knowledge
+  // splice stay imperative — they need the composer v2 contract
+  // (computed + prepend blocks; see RFC #4924).
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    switch (key) {
+      case "roadmap": {
+        const p = resolveMilestoneFile(base, mid, "ROADMAP");
+        const r = relMilestoneFile(base, mid, "ROADMAP");
+        return await inlineFile(p, r, "Milestone Roadmap");
       }
+      case "slice-context": {
+        const p = resolveSliceFile(base, mid, sid, "CONTEXT");
+        const r = relSliceFile(base, mid, sid, "CONTEXT");
+        return await inlineFileOptional(p, r, "Slice Context (from discussion)");
+      }
+      case "slice-plan": {
+        const p = resolveSliceFile(base, mid, sid, "PLAN");
+        const r = relSliceFile(base, mid, sid, "PLAN");
+        return await inlineFile(p, r, "Slice Plan");
+      }
+      case "requirements":
+        if (inlineLevel === "minimal") return null;
+        return await inlineRequirementsFromDb(base, mid, sid, inlineLevel);
+      case "prior-task-summaries": {
+        const tDir = resolveTasksDir(base, mid, sid);
+        if (!tDir) return null;
+        const summaryFiles = resolveTaskFiles(tDir, "SUMMARY").sort();
+        const sRel = relSlicePath(base, mid, sid);
+        const blocks: string[] = [];
+        for (const file of summaryFiles) {
+          const absPath = join(tDir, file);
+          const content = await loadFile(absPath);
+          if (!content) continue;
+          const relPath = `${sRel}/tasks/${file}`;
+          blocks.push(`### Task Summary: ${file.replace(/-SUMMARY\.md$/i, "")}\nSource: \`${relPath}\`\n\n${content.trim()}`);
+        }
+        return blocks.length > 0 ? blocks.join("\n\n---\n\n") : null;
+      }
+      case "templates": {
+        const parts = [inlineTemplate("slice-summary", "Slice Summary")];
+        if (inlineLevel !== "minimal") {
+          parts.push(inlineTemplate("uat", "UAT"));
+        }
+        return parts.join("\n\n---\n\n");
+      }
+      default:
+        return null;
+    }
+  };
+
+  const composed = await composeInlinedContext("complete-slice", resolveArtifact);
+
+  // Knowledge splices in between requirements and prior-task-summaries
+  // so overall order matches pre-migration: roadmap → slice-context →
+  // slice-plan → requirements → KNOWLEDGE → task summaries → templates.
+  const knowledgeInlineCS = await inlineKnowledgeBudgeted(
+    base,
+    [...extractKeywords(midTitle), ...extractKeywords(sTitle)],
+  );
+
+  let body = composed;
+  if (knowledgeInlineCS && body) {
+    // Splice knowledge right before the first "### Task Summary:" block
+    // to preserve pre-migration ordering. If no task summaries exist,
+    // splice before the templates block (which inlineTemplate emits as
+    // "### Output Template: Slice Summary").
+    const taskIdx = body.indexOf("### Task Summary:");
+    const templatesIdx = body.lastIndexOf("### Output Template: Slice Summary");
+    const spliceIdx = taskIdx > -1 ? taskIdx : templatesIdx;
+    if (spliceIdx > 0) {
+      const before = body.slice(0, spliceIdx).replace(/\n\n---\n\n$/, "");
+      const after = body.slice(spliceIdx);
+      body = [before, knowledgeInlineCS, after].join("\n\n---\n\n");
+    } else {
+      body = `${body}\n\n---\n\n${knowledgeInlineCS}`;
     }
   }
-  inlined.push(inlineTemplate("slice-summary", "Slice Summary"));
-  if (inlineLevel !== "minimal") {
-    inlined.push(inlineTemplate("uat", "UAT"));
-  }
+
+  // Overrides section prepends to the top of the inlined context —
+  // standard pattern for slice-level builders (until composer v2 lands
+  // the prepend contract).
   const completeActiveOverrides = await loadActiveOverrides(base);
   const completeOverridesInline = formatOverridesSection(completeActiveOverrides);
-  if (completeOverridesInline) inlined.unshift(completeOverridesInline);
+  const finalBody = completeOverridesInline
+    ? `${completeOverridesInline}\n\n---\n\n${body}`
+    : body;
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${finalBody}`);
+  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
 
   const sliceRel = relSlicePath(base, mid, sid);
   const sliceSummaryPath = join(base, `${sliceRel}/${sid}-SUMMARY.md`);
   const sliceUatPath = join(base, `${sliceRel}/${sid}-UAT.md`);
+
+  // Gates owned by complete-slice (e.g. Q8). Pull from the DB so the
+  // prompt only prompts for gates the plan actually seeded. The tool
+  // handler closes each gate based on the SUMMARY.md section content
+  // after the assistant calls gsd_complete_slice.
+  const csPending = getPendingGatesForTurn(mid, sid, "complete-slice");
+  // coverage check: every pending row must be owned by complete-slice.
+  // requireAll:false because a slice may have already closed some gates.
+  assertGateCoverage(csPending, "complete-slice", { requireAll: false });
+  const gatesToClose = renderGatesToCloseBlock(
+    getGatesForTurn("complete-slice"),
+    { pending: new Set(csPending.map((g) => g.gate_id)), allowOmit: true },
+  );
 
   return loadPrompt("complete-slice", {
     workingDirectory: base,
@@ -1275,6 +1961,7 @@ export async function buildCompleteSlicePrompt(
     inlinedContext,
     sliceSummaryPath,
     sliceUatPath,
+    gatesToClose,
   });
 }
 
@@ -1293,9 +1980,13 @@ export async function buildCompleteMilestonePrompt(
   try {
     const { isDbAvailable, getMilestoneSlices } = await import("./gsd-db.js");
     if (isDbAvailable()) {
-      sliceIds = getMilestoneSlices(mid).map(s => s.id);
+      sliceIds = getMilestoneSlices(mid)
+        .filter(s => s.status !== "skipped")
+        .map(s => s.id);
     }
-  } catch { /* fall through */ }
+  } catch (err) {
+    logWarning("prompt", `buildCompleteMilestonePrompt DB lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
   // File-based fallback: parse roadmap for slice IDs when DB has no data
   if (sliceIds.length === 0 && roadmapPath) {
     const roadmapContent = await loadFile(roadmapPath);
@@ -1304,24 +1995,35 @@ export async function buildCompleteMilestonePrompt(
     }
   }
   const seenSlices = new Set<string>();
+  const summaryRelPaths: string[] = [];
   for (const sid of sliceIds) {
     if (seenSlices.has(sid)) continue;
     seenSlices.add(sid);
     const summaryPath = resolveSliceFile(base, mid, sid, "SUMMARY");
     const summaryRel = relSliceFile(base, mid, sid, "SUMMARY");
-    inlined.push(await inlineFile(summaryPath, summaryRel, `${sid} Summary`));
+    summaryRelPaths.push(summaryRel);
+    // Compact excerpt instead of full inline (#4780). Closer Reads the
+    // full file on-demand when synthesizing LEARNINGS narrative.
+    inlined.push(await buildSliceSummaryExcerpt(summaryPath, summaryRel, sid));
+  }
+  if (summaryRelPaths.length > 0) {
+    const pathList = summaryRelPaths.map(p => `- \`${p}\``).join("\n");
+    inlined.push(
+      `### On-demand Slice Summaries\n\nExcerpted above. Read the full file for any slice when the excerpt's section heads don't carry enough narrative for the milestone summary you're drafting:\n\n${pathList}`,
+    );
   }
 
   // Inline root GSD files (skip for minimal — completion can read these if needed)
   if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
     const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
   }
-  const knowledgeInlineCM = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
+  // Scoped + budgeted — see issue #4719
+  const knowledgeInlineCM = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
   if (knowledgeInlineCM) inlined.push(knowledgeInlineCM);
   // Inline milestone context file (milestone-level, not GSD root)
   const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
@@ -1334,6 +2036,14 @@ export async function buildCompleteMilestonePrompt(
 
   const milestoneSummaryPath = join(base, `${relMilestonePath(base, mid)}/${mid}-SUMMARY.md`);
 
+  const learningsRelPath = join(relMilestonePath(base, mid), `${mid}-LEARNINGS.md`);
+  const learningsAbsPath = join(base, learningsRelPath);
+  const extractLearningsSteps = buildExtractionStepsBlock({
+    milestoneId: mid,
+    outputPath: learningsAbsPath,
+    relativeOutputPath: learningsRelPath,
+  });
+
   return loadPrompt("complete-milestone", {
     workingDirectory: base,
     milestoneId: mid,
@@ -1341,11 +2051,13 @@ export async function buildCompleteMilestonePrompt(
     roadmapPath: roadmapRel,
     inlinedContext,
     milestoneSummaryPath,
+    extractLearningsSteps,
     skillActivation: buildSkillActivationBlock({
       base,
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "complete-milestone",
     }),
   });
 }
@@ -1376,16 +2088,22 @@ export async function buildValidateMilestonePrompt(
         }
       }
     }
-  } catch { /* fall through */ }
+  } catch (err) {
+    logWarning("prompt", `buildValidateMilestonePrompt verification classes lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
 
-  // Inline all slice summaries and UAT results
+  // Inline all slice summaries and assessment results
   let valSliceIds: string[] = [];
   try {
     const { isDbAvailable, getMilestoneSlices } = await import("./gsd-db.js");
     if (isDbAvailable()) {
-      valSliceIds = getMilestoneSlices(mid).map(s => s.id);
+      valSliceIds = getMilestoneSlices(mid)
+        .filter(s => s.status !== "skipped")
+        .map(s => s.id);
     }
-  } catch { /* fall through */ }
+  } catch (err) {
+    logWarning("prompt", `buildValidateMilestonePrompt slice IDs lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
   // File-based fallback: parse roadmap for slice IDs when DB has no data
   if (valSliceIds.length === 0 && roadmapPath) {
     const roadmapContent = await loadFile(roadmapPath);
@@ -1401,10 +2119,10 @@ export async function buildValidateMilestonePrompt(
     const summaryRel = relSliceFile(base, mid, sid, "SUMMARY");
     inlined.push(await inlineFile(summaryPath, summaryRel, `${sid} Summary`));
 
-    const uatPath = resolveSliceFile(base, mid, sid, "UAT");
-    const uatRel = relSliceFile(base, mid, sid, "UAT");
-    const uatInline = await inlineFileOptional(uatPath, uatRel, `${sid} UAT Result`);
-    if (uatInline) inlined.push(uatInline);
+    const assessmentPath = resolveSliceFile(base, mid, sid, "ASSESSMENT");
+    const assessmentRel = relSliceFile(base, mid, sid, "ASSESSMENT");
+    const assessmentInline = await inlineFileOptional(assessmentPath, assessmentRel, `${sid} Assessment`);
+    if (assessmentInline) inlined.push(assessmentInline);
   }
 
   // Aggregate unresolved follow-ups and known limitations across slices
@@ -1435,14 +2153,15 @@ export async function buildValidateMilestonePrompt(
 
   // Inline root GSD files
   if (inlineLevel !== "minimal") {
-    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
+    const requirementsInline = await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
     if (requirementsInline) inlined.push(requirementsInline);
     const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
     if (decisionsInline) inlined.push(decisionsInline);
     const projectInline = await inlineProjectFromDb(base);
     if (projectInline) inlined.push(projectInline);
   }
-  const knowledgeInline = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
+  // Scoped + budgeted — see issue #4719
+  const knowledgeInline = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
   if (knowledgeInline) inlined.push(knowledgeInline);
   // Inline milestone context file
   const contextPath = resolveMilestoneFile(base, mid, "CONTEXT");
@@ -1455,6 +2174,16 @@ export async function buildValidateMilestonePrompt(
   const validationOutputPath = join(base, `${relMilestonePath(base, mid)}/${mid}-VALIDATION.md`);
   const roadmapOutputPath = `${relMilestonePath(base, mid)}/${mid}-ROADMAP.md`;
 
+  // Every milestone validation turn owns MV01–MV04 unconditionally: the
+  // registry is the source of truth for which gates the validator must
+  // address, and the block below is what the template renders so the
+  // assistant can never accidentally skip one.
+  const mvGates = getGatesForTurn("validate-milestone");
+  const gatesToEvaluate = renderGatesToCloseBlock(mvGates, {
+    pending: new Set(mvGates.map((g) => g.id)),
+    allowOmit: false,
+  });
+
   return loadPrompt("validate-milestone", {
     workingDirectory: base,
     milestoneId: mid,
@@ -1463,11 +2192,13 @@ export async function buildValidateMilestonePrompt(
     inlinedContext,
     validationPath: validationOutputPath,
     remediationRound: String(remediationRound),
+    gatesToEvaluate,
     skillActivation: buildSkillActivationBlock({
       base,
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext],
+      unitType: "validate-milestone",
     }),
   });
 }
@@ -1479,9 +2210,13 @@ export async function buildReplanSlicePrompt(
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
   const slicePlanPath = resolveSliceFile(base, mid, sid, "PLAN");
   const slicePlanRel = relSliceFile(base, mid, sid, "PLAN");
+  const sliceContextPath = resolveSliceFile(base, mid, sid, "CONTEXT");
+  const sliceContextRel = relSliceFile(base, mid, sid, "CONTEXT");
 
   const inlined: string[] = [];
   inlined.push(await inlineFile(roadmapPath, roadmapRel, "Milestone Roadmap"));
+  const sliceCtxInline = await inlineFileOptional(sliceContextPath, sliceContextRel, "Slice Context (from discussion)");
+  if (sliceCtxInline) inlined.push(sliceCtxInline);
   inlined.push(await inlineFile(slicePlanPath, slicePlanRel, "Current Slice Plan"));
 
   // Find the blocker task summary — the completed task with blocker_discovered: true
@@ -1524,8 +2259,8 @@ export async function buildReplanSlicePrompt(
         `- **${c.id}**: "${c.text}" — ${c.rationale ?? "no rationale"}`
       ).join("\n");
     }
-  } catch {
-    // Non-fatal — captures module may not be available
+  } catch (err) {
+    logWarning("prompt", `loadReplanCaptures failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   return loadPrompt("replan-slice", {
@@ -1546,6 +2281,7 @@ export async function buildReplanSlicePrompt(
       sliceId: sid,
       sliceTitle: sTitle,
       extraContext: [inlinedContext, captureContext],
+      unitType: "replan-slice",
     }),
   });
 }
@@ -1553,22 +2289,39 @@ export async function buildReplanSlicePrompt(
 export async function buildRunUatPrompt(
   mid: string, sliceId: string, uatPath: string, uatContent: string, base: string,
 ): Promise<string> {
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(resolveSliceFile(base, mid, sliceId, "UAT"), uatPath, `${sliceId} UAT`));
+  // #4782 phase 3: run-uat migrated to compose its inlined context via
+  // the manifest. Behavior-equivalent — resolver dispatches to the same
+  // inline* helpers as the pre-migration builder.
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    switch (key) {
+      case "slice-uat": {
+        // Use the in-memory snapshot the caller already loaded (#4925 review).
+        // Re-reading from disk via inlineFile(p, uatPath, ...) would risk
+        // drift between the inlined body and uatType (computed from
+        // uatContent below) if the file changes mid-dispatch.
+        const trimmed = uatContent.trim();
+        if (!trimmed) {
+          return `### ${sliceId} UAT\nSource: \`${uatPath}\`\n\n_(not found — file does not exist yet)_`;
+        }
+        return `### ${sliceId} UAT\nSource: \`${uatPath}\`\n\n${trimmed}`;
+      }
+      case "slice-summary": {
+        const p = resolveSliceFile(base, mid, sliceId, "SUMMARY");
+        if (!p) return null;
+        const r = relSliceFile(base, mid, sliceId, "SUMMARY");
+        return await inlineFileOptional(p, r, `${sliceId} Summary`);
+      }
+      case "project":
+        return await inlineProjectFromDb(base);
+      default:
+        return null;
+    }
+  };
 
-  const summaryPath = resolveSliceFile(base, mid, sliceId, "SUMMARY");
-  const summaryRel = relSliceFile(base, mid, sliceId, "SUMMARY");
-  if (summaryPath) {
-    const summaryInline = await inlineFileOptional(summaryPath, summaryRel, `${sliceId} Summary`);
-    if (summaryInline) inlined.push(summaryInline);
-  }
+  const composed = await composeInlinedContext("run-uat", resolveArtifact);
+  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${composed}`);
 
-  const projectInline = await inlineProjectFromDb(base);
-  if (projectInline) inlined.push(projectInline);
-
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
-
-  const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "UAT"));
+  const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "ASSESSMENT"));
   const uatType = getUatType(uatContent);
 
   return loadPrompt("run-uat", {
@@ -1584,6 +2337,7 @@ export async function buildRunUatPrompt(
       milestoneId: mid,
       sliceId,
       extraContext: [inlinedContext],
+      unitType: "run-uat",
     }),
   });
 }
@@ -1592,26 +2346,54 @@ export async function buildReassessRoadmapPrompt(
   mid: string, midTitle: string, completedSliceId: string, base: string, level?: InlineLevel,
 ): Promise<string> {
   const inlineLevel = level ?? resolveInlineLevel();
-  const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
-  const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
-  const summaryPath = resolveSliceFile(base, mid, completedSliceId, "SUMMARY");
-  const summaryRel = relSliceFile(base, mid, completedSliceId, "SUMMARY");
 
-  const inlined: string[] = [];
-  inlined.push(await inlineFile(roadmapPath, roadmapRel, "Current Roadmap"));
-  inlined.push(await inlineFile(summaryPath, summaryRel, `${completedSliceId} Summary`));
-  if (inlineLevel !== "minimal") {
-    const projectInline = await inlineProjectFromDb(base);
-    if (projectInline) inlined.push(projectInline);
-    const requirementsInline = await inlineRequirementsFromDb(base, undefined, inlineLevel);
-    if (requirementsInline) inlined.push(requirementsInline);
-    const decisionsInline = await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
-    if (decisionsInline) inlined.push(decisionsInline);
-  }
-  const knowledgeInlineRA = await inlineGsdRootFile(base, "knowledge.md", "Project Knowledge");
-  if (knowledgeInlineRA) inlined.push(knowledgeInlineRA);
+  // #4782 phase 2 pilot: reassess-roadmap is the first unit type to
+  // compose its inlined context through the manifest-driven composer.
+  // The resolver below dispatches artifact keys to the existing inline*
+  // helpers, preserving identical output so the migration is
+  // observable-equivalent. Knowledge stays outside the composer (it's
+  // budget-driven, not manifest-driven) until a later phase formalizes
+  // knowledge/memory policies as composer inputs.
+  const resolveArtifact: ArtifactResolver = async (key) => {
+    switch (key) {
+      case "roadmap": {
+        const p = resolveMilestoneFile(base, mid, "ROADMAP");
+        const r = relMilestoneFile(base, mid, "ROADMAP");
+        return await inlineFile(p, r, "Current Roadmap");
+      }
+      case "slice-context": {
+        const p = resolveSliceFile(base, mid, completedSliceId, "CONTEXT");
+        const r = relSliceFile(base, mid, completedSliceId, "CONTEXT");
+        return await inlineFileOptional(p, r, "Slice Context (from discussion)");
+      }
+      case "slice-summary": {
+        const p = resolveSliceFile(base, mid, completedSliceId, "SUMMARY");
+        const r = relSliceFile(base, mid, completedSliceId, "SUMMARY");
+        return await inlineFile(p, r, `${completedSliceId} Summary`);
+      }
+      case "project":
+        if (inlineLevel === "minimal") return null;
+        return await inlineProjectFromDb(base);
+      case "requirements":
+        if (inlineLevel === "minimal") return null;
+        return await inlineRequirementsFromDb(base, mid, undefined, inlineLevel);
+      case "decisions":
+        if (inlineLevel === "minimal") return null;
+        return await inlineDecisionsFromDb(base, mid, undefined, inlineLevel);
+      default:
+        return null;
+    }
+  };
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const composed = await composeInlinedContext("reassess-roadmap", resolveArtifact);
+  const parts: string[] = [];
+  if (composed) parts.push(composed);
+  // Knowledge block stays outside the composer — budgeted, scoped via
+  // keyword extraction (#4719). Future phase folds it in.
+  const knowledgeInlineRA = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
+  if (knowledgeInlineRA) parts.push(knowledgeInlineRA);
+
+  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${parts.join("\n\n---\n\n")}`);
 
   const assessmentPath = join(base, relSliceFile(base, mid, completedSliceId, "ASSESSMENT"));
 
@@ -1625,8 +2407,8 @@ export async function buildReassessRoadmapPrompt(
         `- **${c.id}**: "${c.text}" — ${c.rationale ?? "deferred during triage"}`
       ).join("\n");
     }
-  } catch {
-    // Non-fatal — captures module may not be available
+  } catch (err) {
+    logWarning("prompt", `loadDeferredCaptures failed: ${err instanceof Error ? err.message : String(err)}`);
   }
 
   const reassessCommitInstruction = "Do not commit — .gsd/ planning docs are managed externally and not tracked in git.";
@@ -1636,7 +2418,7 @@ export async function buildReassessRoadmapPrompt(
     milestoneId: mid,
     milestoneTitle: midTitle,
     completedSliceId,
-    roadmapPath: roadmapRel,
+    roadmapPath: relMilestoneFile(base, mid, "ROADMAP"),
     assessmentPath,
     inlinedContext,
     deferredCaptures,
@@ -1646,6 +2428,7 @@ export async function buildReassessRoadmapPrompt(
       milestoneId: mid,
       milestoneTitle: midTitle,
       extraContext: [inlinedContext, deferredCaptures],
+      unitType: "reassess-roadmap",
     }),
   });
 }
@@ -1655,6 +2438,8 @@ export async function buildReassessRoadmapPrompt(
 export async function buildReactiveExecutePrompt(
   mid: string, midTitle: string, sid: string, sTitle: string,
   readyTaskIds: string[], base: string,
+  subagentModel?: string,
+  opts?: { sessionContextWindow?: number; modelRegistry?: MinimalModelRegistry },
 ): Promise<string> {
   const { loadSliceTaskIO, deriveTaskGraph, graphMetrics } = await import("./reactive-graph.js");
 
@@ -1696,13 +2481,18 @@ export async function buildReactiveExecutePrompt(
     // Build a full execute-task prompt with dependency-based carry-forward
     const taskPrompt = await buildExecuteTaskPrompt(
       mid, sid, sTitle, tid, tTitle, base,
-      { carryForwardPaths: depPaths },
+      {
+        carryForwardPaths: depPaths,
+        sessionContextWindow: opts?.sessionContextWindow,
+        modelRegistry: opts?.modelRegistry,
+      },
     );
 
+    const modelSuffix = subagentModel ? ` with model: "${subagentModel}"` : "";
     subagentSections.push([
       `### ${tid}: ${tTitle}`,
       "",
-      "Use this as the prompt for a `subagent` call:",
+      `Use this as the prompt for a \`subagent\` call${modelSuffix}:`,
       "",
       "```",
       taskPrompt,
@@ -1727,54 +2517,122 @@ export async function buildReactiveExecutePrompt(
 }
 
 // ─── Gate Evaluation ──────────────────────────────────────────────────────
+//
+// Gate definitions (question, guidance, owner turn) now live in
+// gate-registry.ts so that prompt builders, dispatch rules, state
+// derivation, and tool handlers all consult the same source of truth.
+// See gate-registry.ts for the full ownership map.
 
-const GATE_QUESTIONS: Record<string, { question: string; guidance: string }> = {
-  Q3: {
-    question: "How can this be exploited?",
-    guidance: [
-      "Identify abuse scenarios: parameter tampering, replay attacks, privilege escalation.",
-      "Map data exposure risks: PII, tokens, secrets accessible through this slice.",
-      "Define input trust boundaries: untrusted user input reaching DB, API, or filesystem.",
-      "If none apply, return verdict 'omitted' with rationale explaining why.",
-    ].join("\n"),
-  },
-  Q4: {
-    question: "What existing promises does this break?",
-    guidance: [
-      "List which existing requirements (R001, R003, etc.) are touched by this slice.",
-      "Identify what must be re-tested after shipping.",
-      "Flag decisions that should be revisited given the new scope.",
-      "If no existing requirements are affected, return verdict 'omitted'.",
-    ].join("\n"),
-  },
-};
+/**
+ * Render a "Gates to Close" block for turns like `complete-slice` and
+ * `validate-milestone` that own gates which are closed as a side-effect
+ * of writing artifact sections (not via a dedicated gate-evaluate
+ * subagent loop).
+ *
+ * Returns a plain-text block or an empty string if there are no gates to
+ * close, so callers can drop it straight into a template variable.
+ */
+function renderGatesToCloseBlock(
+  gates: ReadonlyArray<GateDefinition>,
+  opts: { pending: ReadonlySet<string>; allowOmit: boolean },
+): string {
+  const applicable = gates.filter((g) => opts.pending.has(g.id));
+  if (applicable.length === 0) return "";
+
+  const lines: string[] = [];
+  lines.push("## Gates to Close");
+  lines.push("");
+  lines.push(
+    "These quality gates are still pending for this unit. You MUST address every one before calling the closing tool — the handler closes the DB row based on whether the corresponding artifact section is present.",
+  );
+  lines.push("");
+  for (const def of applicable) {
+    lines.push(`### ${def.id} — ${def.promptSection}`);
+    lines.push("");
+    lines.push(`**Question:** ${def.question}`);
+    lines.push("");
+    lines.push(def.guidance);
+    if (opts.allowOmit) {
+      lines.push("");
+      lines.push(
+        `If this gate genuinely does not apply to this unit, leave the **${def.promptSection}** section empty and the handler will record it as \`omitted\`. Otherwise, fill the section with concrete evidence.`,
+      );
+    }
+    lines.push("");
+  }
+  return lines.join("\n").trimEnd();
+}
+
+export async function buildParallelResearchSlicesPrompt(
+  mid: string,
+  midTitle: string,
+  slices: Array<{ id: string; title: string }>,
+  basePath: string,
+  subagentModel?: string,
+): Promise<string> {
+  // Build individual research-slice prompts for each slice
+  const subagentSections: string[] = [];
+  const modelSuffix = subagentModel ? ` with model: "${subagentModel}"` : "";
+  for (const slice of slices) {
+    const slicePrompt = await buildResearchSlicePrompt(mid, midTitle, slice.id, slice.title, basePath);
+    subagentSections.push([
+      `### ${slice.id}: ${slice.title}`,
+      "",
+      `Use this as the prompt for a \`subagent\` call${modelSuffix} (agent: \`gsd-executor\` or the default agent):`,
+      "",
+      "```",
+      slicePrompt,
+      "```",
+    ].join("\n"));
+  }
+
+  return loadPrompt("parallel-research-slices", {
+    mid,
+    midTitle,
+    sliceCount: String(slices.length),
+    sliceList: slices.map((s) => `- **${s.id}**: ${s.title}`).join("\n"),
+    subagentPrompts: subagentSections.join("\n\n---\n\n"),
+  });
+}
 
 export async function buildGateEvaluatePrompt(
   mid: string, midTitle: string, sid: string, sTitle: string,
   base: string,
+  subagentModel?: string,
 ): Promise<string> {
-  const pending = getPendingGates(mid, sid, "slice");
+  // Pull only the gates this turn actually owns (Q3/Q4). Filter via the
+  // registry so that scope:"slice" gates owned by other turns (Q8) can't
+  // leak into this prompt and can't block dispatch via silent skip.
+  const pending = getPendingGatesForTurn(mid, sid, "gate-evaluate");
+
+  // Fails loudly if the pending list contains a gate id the registry
+  // doesn't own for this turn. Missing owned gates is allowed here —
+  // `gate-evaluate` is dispatched whenever *any* of its owned gates are
+  // pending, not only when all of them are.
+  assertGateCoverage(pending, "gate-evaluate", { requireAll: false });
 
   // Load the slice plan for context
   const planFile = resolveSliceFile(base, mid, sid, "PLAN");
   const planContent = planFile ? (await loadFile(planFile)) ?? "(plan file empty)" : "(plan file not found)";
 
-  // Build per-gate subagent prompts
+  // Build per-gate subagent prompts from the pending rows. Because the
+  // registry has already validated every row, `getGateDefinition` cannot
+  // return undefined here.
+  const pendingIds = new Set(pending.map((g) => g.gate_id));
+  const gateDefs = getGatesForTurn("gate-evaluate").filter((def) => pendingIds.has(def.id));
+
   const subagentSections: string[] = [];
   const gateListLines: string[] = [];
 
-  for (const gate of pending) {
-    const meta = GATE_QUESTIONS[gate.gate_id];
-    if (!meta) continue;
-
-    gateListLines.push(`- **${gate.gate_id}**: ${meta.question}`);
+  for (const def of gateDefs) {
+    gateListLines.push(`- **${def.id}**: ${def.question}`);
 
     const subPrompt = [
-      `You are evaluating quality gate **${gate.gate_id}** for slice ${sid} (${sTitle}).`,
+      `You are evaluating quality gate **${def.id}** for slice ${sid} (${sTitle}).`,
       "",
-      `## Question: ${meta.question}`,
+      `## Question: ${def.question}`,
       "",
-      meta.guidance,
+      def.guidance,
       "",
       "## Slice Plan",
       "",
@@ -1786,16 +2644,17 @@ export async function buildGateEvaluatePrompt(
       `Call the \`gsd_save_gate_result\` tool with:`,
       `- \`milestoneId\`: "${mid}"`,
       `- \`sliceId\`: "${sid}"`,
-      `- \`gateId\`: "${gate.gate_id}"`,
+      `- \`gateId\`: "${def.id}"`,
       "- `verdict`: \"pass\" (no concerns), \"flag\" (concerns found), or \"omitted\" (not applicable)",
       "- `rationale`: one-sentence justification",
       "- `findings`: detailed markdown findings (or empty if omitted)",
     ].join("\n");
 
+    const modelSuffix = subagentModel ? ` with model: "${subagentModel}"` : "";
     subagentSections.push([
-      `### ${gate.gate_id}: ${meta.question}`,
+      `### ${def.id}: ${def.question}`,
       "",
-      "Use this as the prompt for a `subagent` call:",
+      `Use this as the prompt for a \`subagent\` call${modelSuffix}:`,
       "",
       "```",
       subPrompt,
@@ -1842,7 +2701,9 @@ export async function buildRewriteDocsPrompt(
               .filter(t => t.status !== "complete" && t.status !== "done")
               .map(t => ({ id: t.id }));
           }
-        } catch { /* fall through */ }
+        } catch (err) {
+          logWarning("prompt", `buildRewriteDocsPrompt DB task lookup failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
 
         if (!incompleteTasks) {
           // DB unavailable — no task data to inline

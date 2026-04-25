@@ -56,18 +56,35 @@ export class GsdSessionTreeProvider implements vscode.TreeDataProvider<SessionIt
 
 			const items: SessionItem[] = [];
 			for (const file of files) {
-				// Filename format: <unixTimestampMs>_<sessionId>.jsonl
-				const match = file.match(/^(\d+)_(.+)\.jsonl$/);
-				if (!match) {
+				const sessionFile = path.join(sessionDir, file);
+
+				// Try two filename formats:
+				// 1. ISO timestamp: 2026-03-23T17-49-05-784Z_<sessionId>.jsonl
+				// 2. Unix timestamp: <unixTimestampMs>_<sessionId>.jsonl
+				const isoMatch = file.match(/^(\d{4}-\d{2}-\d{2}T[\d-]+Z)_(.+)\.jsonl$/);
+				const unixMatch = file.match(/^(\d{10,})_(.+)\.jsonl$/);
+
+				let timestamp: Date;
+				let sessionId: string;
+
+				if (isoMatch) {
+					// Convert ISO-like format (dashes instead of colons) back to parseable ISO
+					const isoStr = isoMatch[1].replace(/(\d{4}-\d{2}-\d{2}T\d{2})-(\d{2})-(\d{2})-(\d+)Z/, "$1:$2:$3.$4Z");
+					timestamp = new Date(isoStr);
+					sessionId = isoMatch[2];
+				} else if (unixMatch) {
+					timestamp = new Date(parseInt(unixMatch[1], 10));
+					sessionId = unixMatch[2];
+				} else {
 					continue;
 				}
-				const ts = parseInt(match[1], 10);
-				const sessionId = match[2];
-				const sessionFile = path.join(sessionDir, file);
+
+				if (isNaN(timestamp.getTime())) continue;
+
 				items.push({
-					label: formatDate(new Date(ts)),
+					label: formatDate(timestamp),
 					sessionFile,
-					timestamp: new Date(ts),
+					timestamp,
 					sessionId,
 					isCurrent: sessionFile === state.sessionFile,
 				});

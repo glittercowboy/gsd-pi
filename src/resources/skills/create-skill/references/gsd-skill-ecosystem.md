@@ -5,13 +5,13 @@ GSD-specific skill ecosystem details: directory conventions, discovery mechanics
 <skill_directories>
 GSD supports two skill directories, checked in order:
 
-**User-scope (global):** `~/.gsd/agent/skills/`
+**User-scope (global):** `~/.agents/skills/`
 - Available in every GSD session regardless of working directory
-- Installed by default or by the user
+- Installed via [skills.sh](https://skills.sh) or manually
 
-**Project-scope (local):** `.pi/agent/skills/`
+**Project-scope (local):** `.agents/skills/`
 - Available only when GSD runs inside the project directory
-- The project-local directory uses `.pi` (inherited from the pi base), **not** `.gsd`
+- Committable to version control so team members share the same skill set
 - Ideal for project-specific workflows, deploy scripts, or conventions
 
 Skills in both directories follow the same SKILL.md format and router pattern conventions.

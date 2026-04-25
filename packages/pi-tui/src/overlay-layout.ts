@@ -6,7 +6,7 @@
  */
 
 import type { OverlayAnchor, OverlayOptions, SizeValue } from "./tui.js";
-import { extractSegments, sliceByColumn, sliceWithWidth, truncateToWidth, visibleWidth } from "./utils.js";
+import { applyBackgroundToLine, extractSegments, sliceByColumn, sliceWithWidth, truncateToWidth, visibleWidth } from "./utils.js";
 import { isImageLine } from "./terminal-image.js";
 import { CURSOR_MARKER } from "./tui.js";
 
@@ -323,6 +323,18 @@ export function compositeOverlays(
 	}
 
 	const viewportStart = Math.max(0, workingHeight - termHeight);
+
+	// Apply backdrop dimming if any visible overlay requests it.
+	// Uses dim + gray foreground so text fades without painting empty lines.
+	const hasBackdrop = visibleEntries.some((e) => e.options?.backdrop);
+	if (hasBackdrop) {
+		const dimFn = (text: string) => `\x1b[2m\x1b[38;5;240m${text}\x1b[39m\x1b[22m`;
+		for (let i = viewportStart; i < result.length; i++) {
+			if (!isImageLine(result[i]) && result[i].length > 0) {
+				result[i] = applyBackgroundToLine(result[i], termWidth, dimFn);
+			}
+		}
+	}
 
 	// Composite each overlay
 	for (const { overlayLines, row, col, w } of rendered) {

@@ -102,6 +102,8 @@ A stale lock (PID is dead) means the previous auto-mode session crashed mid-unit
 
 A unit dispatched more than once (`type/id` appears multiple times) indicates a stuck loop — the unit completed but artifact verification failed.
 
+{{dedupSection}}
+
 ## Investigation Protocol
 
 1. **Start with the pre-parsed forensic report** above. The anomaly section contains automated findings — treat these as leads, not conclusions.
@@ -113,6 +115,8 @@ A unit dispatched more than once (`type/id` appears multiple times) indicates a 
 4. **Form hypotheses** about which module and code path is responsible. Use the source map to identify candidate files.
 
 5. **Read the actual GSD source code** at `{{gsdSourceDir}}` to confirm or deny each hypothesis. Do not guess what code does — read it.
+
+   **DB inspection:** If you need to check DB state as part of investigation, use `gsd_milestone_status` — never run `sqlite3 .gsd/gsd.db` or `node -e require('better-sqlite3')` directly. The engine holds a WAL write lock; direct access will either fail or return stale data.
 
 6. **Trace the code path** from the entry point (usually `auto-loop.ts` dispatch or `auto-dispatch.ts`) through to the failure point. Follow function calls across files.
 
@@ -132,8 +136,6 @@ Explain your findings:
 - **Why it happened** — root cause traced to specific code in GSD source, with `file:line` references
 - **Code snippet** — the problematic code and what it should do instead
 - **Recovery** — what the user can do right now to get unstuck
-
-{{dedupSection}}
 
 Then **offer GitHub issue creation**: "Would you like me to create a GitHub issue for this on gsd-build/gsd-2?"
 

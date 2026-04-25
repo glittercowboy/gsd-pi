@@ -115,8 +115,8 @@ export function stripAnsi(s: string): string {
 const PROMPT_MARKERS = [
   /^❯\s*/,     // Pi default primary prompt
   /^›\s*/,     // Pi alternate prompt
-  /^>\s+/,     // Simple > prompt (some themes)
-  /^\$\s+/,    // Shell prompt fallback
+  /^>(\s+|$)/,  // Simple > prompt (some themes) — bare ">" or "> text"
+  /^\$(\s+|$)/, // Shell prompt fallback — bare "$" or "$ text"
 ]
 
 /**
@@ -304,6 +304,15 @@ export class PtyChatParser {
    */
   private _completionEmitted = false
 
+  /**
+   * True when the parser has seen a prompt boundary and is waiting for user
+   * input.  The next non-system, non-prompt, non-TUI content line after the
+   * prompt is classified as role="user" instead of "assistant".
+   * Reset to false once that user line arrives (or when a new assistant
+   * message explicitly starts via a different signal).
+   */
+  private _awaitingInput = false
+
   constructor(source = "default") {
     this._source = source
   }
@@ -327,6 +336,15 @@ export class PtyChatParser {
   /** Return a shallow copy of the current message list */
   getMessages(): ChatMessage[] {
     return [...this._messages]
+  }
+
+  /**
+   * Returns true when the parser has detected a prompt boundary and is
+   * waiting for user input.  Chat UIs can use this to show an "awaiting
+   * input" indicator so the session does not appear stuck.
+   */
+  isAwaitingInput(): boolean {
+    return this._awaitingInput
   }
 
   /**
@@ -373,6 +391,7 @@ export class PtyChatParser {
     this._lastHeaderText = ""
     this._lastInputAt = 0
     this._completionEmitted = false
+    this._awaitingInput = false
     if (this._completionTimer) {
       clearTimeout(this._completionTimer)
       this._completionTimer = null
@@ -489,6 +508,11 @@ export class PtyChatParser {
       if (userText.length > 0) {
         const msg = this._startMessage("user", userText)
         this._completeMessage(msg) // user lines are typically single-line
+        this._awaitingInput = false
+      } else {
+        // Bare prompt with no inline user text — mark as awaiting input
+        // so the next content line is classified as user input.
+        this._awaitingInput = true
       }
       return
     }
@@ -531,6 +555,21 @@ export class PtyChatParser {
     // Capture it so we can use it as the TuiPrompt.label when options arrive.
     if (this._looksLikeQuestionHeader(line)) {
       this._lastHeaderText = trimmed
+    }
+
+    // ── Awaiting input → classify as user ──────────────────────────────────
+    // After a bare prompt line (e.g. "❯ \n"), the next content line is
+    // the user's typed input echoed back by the PTY (without prompt prefix).
+    if (this._awaitingInput) {
+      this._awaitingInput = false
+      const msg = this._startMessage("user", trimmed)
+      this._completeMessage(msg)
+      console.debug(
+        "[pty-chat-parser] user input detected (post-prompt echo) id=%s source=%s",
+        msg.id,
+        this._source,
+      )
+      return
     }
 
     // ── Regular content line → assistant ────────────────────────────────────

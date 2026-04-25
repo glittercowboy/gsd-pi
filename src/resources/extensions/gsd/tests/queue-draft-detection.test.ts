@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 
 import { deriveState } from "../state.js";
 import { buildExistingMilestonesContext } from "../guided-flow.js";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 describe('queue-draft-detection', () => {
   test('draft and context milestone detection', async () => {
@@ -68,7 +69,7 @@ describe('queue-draft-detection', () => {
 
       // both files: CONTEXT.md wins, no draft label
       const m003Idx = context.indexOf("M003:");
-      const m003Section = context.slice(m003Idx, m003Idx + 500);
+      const m003Section = extractSourceRegion(context, "M003:");
       assert.ok(
         m003Section.includes("**Context:**"),
         "M003 (both files) should use 'Context:' label (CONTEXT.md wins)",
@@ -84,7 +85,7 @@ describe('queue-draft-detection', () => {
 
       // neither file: no context section
       const m004Idx = context.indexOf("M004:");
-      const m004Section = context.slice(m004Idx, m004Idx + 500);
+      const m004Section = extractSourceRegion(context, "M004:");
       assert.ok(
         !m004Section.includes("**Context:**"),
         "M004 (neither file) should not have Context: label",

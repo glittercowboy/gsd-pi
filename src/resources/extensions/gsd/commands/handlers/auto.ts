@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { enableDebug } from "../../debug-logger.js";
-import { getAutoDashboardData, isAutoActive, isAutoPaused, pauseAuto, startAuto, stopAuto, stopAutoRemote } from "../../auto.js";
+import { getAutoDashboardData, isAutoActive, isAutoPaused, pauseAuto, startAutoDetached, stopAuto, stopAutoRemote } from "../../auto.js";
 import { handleRate } from "../../commands-rate.js";
 import { guardRemoteSession, projectRoot } from "../context.js";
 import { findMilestoneIds } from "../../milestone-id-utils.js";
@@ -42,26 +42,6 @@ export function parseMilestoneTarget(input: string): { milestoneId: string | nul
   return { milestoneId: match[1], rest };
 }
 
-/**
- * Set GSD_MILESTONE_LOCK to target a specific milestone, then run `fn`.
- * Clears the env var when `fn` resolves or rejects, so the lock does not
- * leak into subsequent commands in the same process.
- */
-async function withMilestoneLock(milestoneId: string, fn: () => Promise<void>): Promise<void> {
-  const previous = process.env.GSD_MILESTONE_LOCK;
-  process.env.GSD_MILESTONE_LOCK = milestoneId;
-  try {
-    await fn();
-  } finally {
-    // Restore previous value (undefined → delete, else restore).
-    if (previous === undefined) {
-      delete process.env.GSD_MILESTONE_LOCK;
-    } else {
-      process.env.GSD_MILESTONE_LOCK = previous;
-    }
-  }
-}
-
 export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<boolean> {
   if (trimmed === "next" || trimmed.startsWith("next ")) {
     if (trimmed.includes("--dry-run")) {
@@ -84,13 +64,10 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
       }
     }
 
-    if (milestoneId) {
-      await withMilestoneLock(milestoneId, () =>
-        startAuto(ctx, pi, projectRoot(), verboseMode, { step: true }),
-      );
-    } else {
-      await startAuto(ctx, pi, projectRoot(), verboseMode, { step: true });
-    }
+    startAutoDetached(ctx, pi, projectRoot(), verboseMode, {
+      step: true,
+      milestoneLock: milestoneId,
+    });
     return true;
   }
 
@@ -128,13 +105,11 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
       const { showHeadlessMilestoneCreation } = await import("../../guided-flow.js");
       await showHeadlessMilestoneCreation(ctx, pi, projectRoot(), seedContent);
     } else if (milestoneId) {
-      // Target a specific milestone — use GSD_MILESTONE_LOCK so state
-      // derivation only sees this milestone (#2521).
-      await withMilestoneLock(milestoneId, () =>
-        startAuto(ctx, pi, projectRoot(), verboseMode),
-      );
+      startAutoDetached(ctx, pi, projectRoot(), verboseMode, {
+        milestoneLock: milestoneId,
+      });
     } else {
-      await startAuto(ctx, pi, projectRoot(), verboseMode);
+      startAutoDetached(ctx, pi, projectRoot(), verboseMode);
     }
     return true;
   }
@@ -175,10 +150,9 @@ export async function handleAutoCommand(trimmed: string, ctx: ExtensionCommandCo
 
   if (trimmed === "") {
     if (!(await guardRemoteSession(ctx, pi))) return true;
-    await startAuto(ctx, pi, projectRoot(), false, { step: true });
+    startAutoDetached(ctx, pi, projectRoot(), false, { step: true });
     return true;
   }
 
   return false;
 }
-

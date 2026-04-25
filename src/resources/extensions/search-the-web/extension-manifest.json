@@ -8,6 +8,6 @@
   "provides": {
     "tools": ["search-the-web", "fetch_page", "search_and_read", "web_search"],
     "commands": ["search-provider"],
-    "hooks": ["model_select", "before_provider_request"]
+    "hooks": ["session_start", "model_select", "before_provider_request"]
   }
 }

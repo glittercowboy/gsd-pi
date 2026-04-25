@@ -24,6 +24,7 @@ import {
   saveDecisionToDb,
   updateRequirementInDb,
   saveArtifactToDb,
+  extractDeferredSliceRef,
 } from '../db-writer.ts';
 import type { Decision, Requirement } from '../types.ts';
 
@@ -359,6 +360,47 @@ describe('db-writer', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // Parallel save race condition regression (#3326, #3339, #3459)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  test('parallel saveDecisionToDb calls produce unique IDs', async () => {
+    const tmpDir = makeTmpDir();
+    const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+    openDatabase(dbPath);
+
+    try {
+      // Fire 5 saves concurrently — before the fix, all would get D001
+      const results = await Promise.all([
+        saveDecisionToDb({ scope: 'a', decision: 'd1', choice: 'c1', rationale: 'r1' }, tmpDir),
+        saveDecisionToDb({ scope: 'b', decision: 'd2', choice: 'c2', rationale: 'r2' }, tmpDir),
+        saveDecisionToDb({ scope: 'c', decision: 'd3', choice: 'c3', rationale: 'r3' }, tmpDir),
+        saveDecisionToDb({ scope: 'd', decision: 'd4', choice: 'c4', rationale: 'r4' }, tmpDir),
+        saveDecisionToDb({ scope: 'e', decision: 'd5', choice: 'c5', rationale: 'r5' }, tmpDir),
+      ]);
+
+      const ids = results.map((r) => r.id);
+      const uniqueIds = new Set(ids);
+
+      // All 5 IDs must be unique
+      assert.equal(uniqueIds.size, 5, `Expected 5 unique IDs, got ${uniqueIds.size}: ${ids.join(', ')}`);
+
+      // IDs should be D001-D005 (order may vary due to concurrency)
+      for (const id of ids) {
+        assert.match(id, /^D\d{3}$/, `ID ${id} should match D### pattern`);
+      }
+
+      // Verify all 5 exist in DB
+      for (const id of ids) {
+        const row = getDecisionById(id);
+        assert.ok(row, `Decision ${id} should exist in DB`);
+      }
+    } finally {
+      closeDatabase();
+      cleanupDir(tmpDir);
+    }
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // updateRequirementInDb Tests
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -416,23 +458,83 @@ describe('db-writer', () => {
     }
   });
 
-  test('updateRequirementInDb — not found', async () => {
+  test('updateRequirementInDb — upserts when not found (#2919)', async () => {
     const tmpDir = makeTmpDir();
     const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
     openDatabase(dbPath);
 
     try {
-      let threw = false;
-      try {
-        await updateRequirementInDb('R999', { status: 'validated' }, tmpDir);
-      } catch (err) {
-        threw = true;
-        assert.ok(
-          (err as Error).message.includes('R999'),
-          'error message mentions the missing ID',
-        );
-      }
-      assert.ok(threw, 'throws when requirement not found');
+      // Previously threw; now upserts a skeleton requirement with the provided updates
+      await updateRequirementInDb('R999', { status: 'validated' }, tmpDir);
+      const created = getRequirementById('R999');
+      assert.ok(created !== null, 'R999 should be created by upsert');
+      assert.deepStrictEqual(created!.status, 'validated', 'Upserted requirement should have validated status');
+      assert.deepStrictEqual(created!.id, 'R999', 'Upserted requirement should keep the provided ID');
+    } finally {
+      closeDatabase();
+      cleanupDir(tmpDir);
+    }
+  });
+
+  test('updateRequirementInDb — seeds from REQUIREMENTS.md when DB empty (#3346)', async () => {
+    const tmpDir = makeTmpDir();
+    const dbPath = path.join(tmpDir, '.gsd', 'gsd.db');
+    openDatabase(dbPath);
+
+    try {
+      // Write a REQUIREMENTS.md with real content (simulating discussion phase output)
+      const reqContent = [
+        '# Requirements',
+        '',
+        '## Active',
+        '',
+        '### R005 — User authentication',
+        '- Class: functional',
+        '- Why: Users need secure access',
+        '- Source: user-research',
+        '- Primary owner: M001/S02',
+        '',
+        '### R007 — API rate limiting',
+        '- Class: non-functional',
+        '- Why: Prevent abuse',
+        '- Source: architecture',
+        '- Primary owner: M001/S03',
+        '',
+        '## Validated',
+        '',
+        '### R001 — Database schema',
+        '- Class: functional',
+        '- Why: Foundation for storage',
+        '- Source: design',
+        '- Validation: S01 verified',
+      ].join('\n');
+      fs.writeFileSync(path.join(tmpDir, '.gsd', 'REQUIREMENTS.md'), reqContent);
+
+      // DB is empty — no requirements seeded. Update R005 to "validated".
+      // Before #3346 fix: this would create a skeleton with empty fields.
+      // After fix: this seeds all 3 requirements from REQUIREMENTS.md first.
+      await updateRequirementInDb('R005', {
+        status: 'validated',
+        validation: 'S02 — auth flow verified',
+      }, tmpDir);
+
+      // R005 should have the update AND the original content from markdown
+      const r005 = getRequirementById('R005');
+      assert.ok(r005, 'R005 should exist');
+      assert.equal(r005!.status, 'validated', 'status should be updated');
+      assert.equal(r005!.validation, 'S02 — auth flow verified', 'validation should be updated');
+      assert.equal(r005!.class, 'functional', 'class should be preserved from REQUIREMENTS.md');
+      assert.ok(r005!.description?.includes('authentication') || r005!.full_content?.includes('authentication'),
+        'original content should be preserved');
+
+      // R007 and R001 should also be seeded (not just the one being updated)
+      const r007 = getRequirementById('R007');
+      assert.ok(r007, 'R007 should be seeded from REQUIREMENTS.md');
+      assert.equal(r007!.status, 'active', 'R007 status should be active');
+
+      const r001 = getRequirementById('R001');
+      assert.ok(r001, 'R001 should be seeded from REQUIREMENTS.md');
+      assert.equal(r001!.status, 'validated', 'R001 status should be validated (from section heading)');
     } finally {
       closeDatabase();
       cleanupDir(tmpDir);
@@ -657,5 +759,73 @@ describe('db-writer', () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  extractDeferredSliceRef
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe('extractDeferredSliceRef', () => {
+    const fields = (scope: string, choice: string, decision: string) => ({
+      scope,
+      choice,
+      decision,
+    });
+
+    test('detects deferral in scope with M###/S## pattern in choice', () => {
+      const result = extractDeferredSliceRef(
+        fields('deferral of low-priority work', 'Move M001/S03 to backlog', ''),
+      );
+      assert.deepStrictEqual(result, { milestoneId: 'M001', sliceId: 'S03' });
+    });
+
+    test('detects deferral in choice field', () => {
+      const result = extractDeferredSliceRef(
+        fields('slice prioritization', 'defer M002/S01 until next sprint', ''),
+      );
+      assert.deepStrictEqual(result, { milestoneId: 'M002', sliceId: 'S01' });
+    });
+
+    test('detects deferral in decision field', () => {
+      const result = extractDeferredSliceRef(
+        fields('resource constraints', '', 'deferred M010/S12 pending review'),
+      );
+      assert.deepStrictEqual(result, { milestoneId: 'M010', sliceId: 'S12' });
+    });
+
+    test('returns null when no M###/S## pattern is present', () => {
+      const result = extractDeferredSliceRef(
+        fields('deferral of work', 'will revisit later', 'deferred indefinitely'),
+      );
+      assert.strictEqual(result, null);
+    });
+
+    test('recognises "deferring" variant', () => {
+      const result = extractDeferredSliceRef(
+        fields('deferring this slice', 'M005/S02 can wait', ''),
+      );
+      assert.deepStrictEqual(result, { milestoneId: 'M005', sliceId: 'S02' });
+    });
+
+    test('recognises "defers" variant', () => {
+      const result = extractDeferredSliceRef(
+        fields('team defers slice', 'M100/S10 not urgent', ''),
+      );
+      assert.deepStrictEqual(result, { milestoneId: 'M100', sliceId: 'S10' });
+    });
+
+    test('returns first M###/S## match when multiple patterns exist', () => {
+      const result = extractDeferredSliceRef(
+        fields('', 'defer M003/S01 and M003/S02', ''),
+      );
+      assert.deepStrictEqual(result, { milestoneId: 'M003', sliceId: 'S01' });
+    });
+
+    test('returns null when no deferral keyword is present', () => {
+      const result = extractDeferredSliceRef(
+        fields('approved work', 'M001/S01 is ready', 'proceed with M001/S01'),
+      );
+      assert.strictEqual(result, null);
+    });
+  });
 
 });

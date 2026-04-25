@@ -133,6 +133,19 @@ test("parseRoadmapSlices: table with glyph completion markers (#2841)", () => {
   assert.equal(slices[3]?.done, true);
 });
 
+test("parseRoadmapSlices: table with heavy check mark U+2714 (#2940)", () => {
+  const tableContent = [
+    "# M003: Heavy Check", "", "## Slices", "",
+    "| Slice | Title | Risk | Status |", "|---|---|---|---|",
+    "| S01 | First | Low | \u2714 |",
+    "| S02 | Second | High | Pending |", "",
+  ].join("\n");
+  const slices = parseRoadmapSlices(tableContent);
+  assert.equal(slices.length, 2);
+  assert.equal(slices[0]?.done, true, "U+2714 heavy check mark should mark slice as done");
+  assert.equal(slices[1]?.done, false);
+});
+
 test("parseRoadmapSlices: table with dependencies column (#1736)", () => {
   const tableContent = [
     "# M004: Deps", "", "## Slices", "",
@@ -295,4 +308,157 @@ Do the second thing.
   assert.equal(slices.length, 2, "should fall through to prose parser");
   assert.equal(slices[0]?.id, "S01");
   assert.equal(slices[1]?.id, "S02");
+});
+
+// ── Regression tests for #2567 ─────────────────────────────────────────────
+// Prose H3 parser fails on common LLM-generated patterns: numbered prefixes,
+// parenthetical numbering, bracketed IDs, and indented headings.
+
+test("parseRoadmapSlices: numbered H3 headers under ## Slices (#2567)", () => {
+  const numberedContent = `# M002: My Milestone
+
+**Vision:** Ship the product.
+
+## Slices
+
+### 1. S01: Setup Environment
+Set up the dev environment and tooling.
+
+### 2. S02: Build Core
+Implement the core logic.
+**Depends on:** S01
+
+### 3. S03: Polish UI
+Final polish and theming.
+**Depends on:** S01, S02
+`;
+  const slices = parseRoadmapSlices(numberedContent);
+  assert.equal(slices.length, 3, "should parse 3 slices from numbered H3 headers");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup Environment");
+  assert.equal(slices[1]?.id, "S02");
+  assert.deepEqual(slices[1]?.depends, ["S01"]);
+  assert.equal(slices[2]?.id, "S03");
+  assert.deepEqual(slices[2]?.depends, ["S01", "S02"]);
+});
+
+test("parseRoadmapSlices: parenthetical-numbered H3 headers (#2567)", () => {
+  const parenContent = `# M002: Milestone
+
+**Vision:** Ship.
+
+## Slices
+
+### (1) S01: Setup
+Setup work.
+
+### (2) S02: Build
+Build work.
+**Depends on:** S01
+`;
+  const slices = parseRoadmapSlices(parenContent);
+  assert.equal(slices.length, 2, "should parse slices with parenthetical numbering");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup");
+  assert.equal(slices[1]?.id, "S02");
+  assert.deepEqual(slices[1]?.depends, ["S01"]);
+});
+
+test("parseRoadmapSlices: bracketed slice IDs in H3 headers (#2567)", () => {
+  const bracketContent = `# M002: Milestone
+
+**Vision:** Ship.
+
+## Slices
+
+### [S01] Setup Environment
+Setup work.
+
+### [S02] Build Core
+Build work.
+**Depends on:** S01
+`;
+  const slices = parseRoadmapSlices(bracketContent);
+  assert.equal(slices.length, 2, "should parse slices with bracketed IDs");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup Environment");
+  assert.equal(slices[1]?.id, "S02");
+  assert.deepEqual(slices[1]?.depends, ["S01"]);
+});
+
+test("parseRoadmapSlices: indented H3 headers under ## Slices (#2567)", () => {
+  const indentedContent = `# M002: Milestone
+
+**Vision:** Ship.
+
+## Slices
+
+  ### S01: Setup
+  Setup work.
+
+  ### S02: Build
+  Build work.
+`;
+  const slices = parseRoadmapSlices(indentedContent);
+  assert.equal(slices.length, 2, "should parse slices from indented H3 headers");
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.title, "Setup");
+  assert.equal(slices[1]?.id, "S02");
+  assert.equal(slices[1]?.title, "Build");
+});
+
+// ── Regression tests for #1884: ✅ (U+2705) completion marker ──────────────
+
+test("parseRoadmapSlices: prose headers with ✅ suffix detected as done (#1884)", () => {
+  const proseContent = `# M013: Prose Roadmap
+
+### S01: Plan Limits & Billing Foundation ✅
+All tasks done.
+
+### S02: Usage Tracking
+Not done yet.
+
+### S03: Notification System ✅
+Also done.
+`;
+  const slices = parseRoadmapSlices(proseContent);
+  assert.equal(slices.length, 3);
+  assert.equal(slices[0]?.id, "S01");
+  assert.equal(slices[0]?.done, true, "S01 with trailing ✅ should be done");
+  assert.equal(slices[0]?.title, "Plan Limits & Billing Foundation");
+  assert.equal(slices[1]?.done, false);
+  assert.equal(slices[2]?.done, true, "S03 with trailing ✅ should be done");
+  assert.equal(slices[2]?.title, "Notification System");
+});
+
+test("parseRoadmapSlices: prose headers with ✅ prefix before title detected as done (#1884)", () => {
+  const proseContent = `# M014: Prose
+
+## ✅ S01: Done Slice
+Complete.
+
+## S02: Pending Slice
+Not done.
+`;
+  const slices = parseRoadmapSlices(proseContent);
+  assert.equal(slices.length, 2);
+  assert.equal(slices[0]?.done, true, "prefix ✅ should mark as done");
+  assert.equal(slices[0]?.title, "Done Slice");
+  assert.equal(slices[1]?.done, false);
+});
+
+test("parseRoadmapSlices: prose headers with ✅ after separator detected as done (#1884)", () => {
+  const proseContent = `# M015: Prose
+
+## S01: ✅ First Feature
+Done.
+
+## S02: Second Feature
+Not done.
+`;
+  const slices = parseRoadmapSlices(proseContent);
+  assert.equal(slices.length, 2);
+  assert.equal(slices[0]?.done, true, "✅ after colon should mark as done");
+  assert.equal(slices[0]?.title, "First Feature");
+  assert.equal(slices[1]?.done, false);
 });

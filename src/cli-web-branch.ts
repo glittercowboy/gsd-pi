@@ -5,10 +5,11 @@ import { getProjectSessionsDir } from './project-sessions.js'
 import { launchWebMode, stopWebMode, type WebModeLaunchStatus, type WebModeStopOptions, type WebModeStopResult } from './web-mode.js'
 
 export interface CliFlags {
-  mode?: 'text' | 'json' | 'rpc'
+  mode?: 'text' | 'json' | 'rpc' | 'mcp'
   print?: boolean
   continue?: boolean
   noSession?: boolean
+  worktree?: boolean | string
   model?: string
   listModels?: string | true
   extensions: string[]
@@ -24,8 +25,9 @@ export interface CliFlags {
   webPort?: number
   /** Additional allowed origins for CORS: `--allowed-origins http://192.168.1.10:8080` */
   webAllowedOrigins?: string[]
-  help?: boolean
-  version?: boolean
+
+  /** Set by `gsd sessions` when the user picks a specific session to resume */
+  _selectedSessionPath?: string
 }
 
 type WritableLike = Pick<typeof process.stderr, 'write'>
@@ -47,13 +49,20 @@ export function parseCliArgs(argv: string[]): CliFlags {
     const arg = args[i]
     if (arg === '--mode' && i + 1 < args.length) {
       const mode = args[++i]
-      if (mode === 'text' || mode === 'json' || mode === 'rpc') flags.mode = mode
+      if (mode === 'text' || mode === 'json' || mode === 'rpc' || mode === 'mcp') flags.mode = mode
     } else if (arg === '--print' || arg === '-p') {
       flags.print = true
     } else if (arg === '--continue' || arg === '-c') {
       flags.continue = true
     } else if (arg === '--no-session') {
       flags.noSession = true
+    } else if (arg === '--worktree' || arg === '-w') {
+      // -w with no value → auto-generate name; -w <name> → use that name
+      if (i + 1 < args.length && !args[i + 1].startsWith('-')) {
+        flags.worktree = args[++i]
+      } else {
+        flags.worktree = true
+      }
     } else if (arg === '--web') {
       flags.web = true
       // Peek at next arg — if it looks like a path (not another flag), capture it
@@ -81,15 +90,15 @@ export function parseCliArgs(argv: string[]): CliFlags {
       flags.tools = args[++i].split(',')
     } else if (arg === '--list-models') {
       flags.listModels = (i + 1 < args.length && !args[i + 1].startsWith('-')) ? args[++i] : true
-    } else if (arg === '--version' || arg === '-v') {
-      flags.version = true
-    } else if (arg === '--help' || arg === '-h') {
-      flags.help = true
     } else if (!arg.startsWith('--') && !arg.startsWith('-')) {
       flags.messages.push(arg)
     }
   }
   return flags
+}
+
+export function buildHeadlessAutoArgs(flags: Pick<CliFlags, 'messages' | 'model'>): string[] {
+  return flags.model ? ['--model', flags.model, ...flags.messages] : [...flags.messages]
 }
 
 export { getProjectSessionsDir } from './project-sessions.js'

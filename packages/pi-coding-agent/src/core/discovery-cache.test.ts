@@ -8,6 +8,12 @@ import { ModelDiscoveryCache } from "./discovery-cache.js";
 let testDir: string;
 let cachePath: string;
 
+function markEntryStale(cache: ModelDiscoveryCache, provider: string): void {
+	const entry = cache.get(provider);
+	assert.ok(entry, `expected cache entry for ${provider}`);
+	entry.fetchedAt = Date.now() - entry.ttlMs - 1;
+}
+
 beforeEach(() => {
 	testDir = join(tmpdir(), `discovery-cache-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(testDir, { recursive: true });
@@ -92,12 +98,7 @@ describe("ModelDiscoveryCache — staleness", () => {
 	it("entries with expired TTL are stale", () => {
 		const cache = new ModelDiscoveryCache(cachePath);
 		cache.set("openai", [{ id: "gpt-4o" }], 1); // 1ms TTL
-
-		// Wait for TTL to expire
-		const start = Date.now();
-		while (Date.now() - start < 5) {
-			// busy wait
-		}
+		markEntryStale(cache, "openai");
 
 		assert.equal(cache.isStale("openai"), true);
 	});
@@ -110,12 +111,7 @@ describe("ModelDiscoveryCache — getAll", () => {
 		const cache = new ModelDiscoveryCache(cachePath);
 		cache.set("openai", [{ id: "gpt-4o" }]);
 		cache.set("stale", [{ id: "old" }], 1);
-
-		// Wait for stale TTL
-		const start = Date.now();
-		while (Date.now() - start < 5) {
-			// busy wait
-		}
+		markEntryStale(cache, "stale");
 
 		const all = cache.getAll();
 		assert.ok(all.has("openai"));
@@ -126,12 +122,7 @@ describe("ModelDiscoveryCache — getAll", () => {
 		const cache = new ModelDiscoveryCache(cachePath);
 		cache.set("openai", [{ id: "gpt-4o" }]);
 		cache.set("stale", [{ id: "old" }], 1);
-
-		// Wait for stale TTL
-		const start = Date.now();
-		while (Date.now() - start < 5) {
-			// busy wait
-		}
+		markEntryStale(cache, "stale");
 
 		const all = cache.getAll(true);
 		assert.ok(all.has("openai"));
