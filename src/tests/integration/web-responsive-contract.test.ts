@@ -50,14 +50,59 @@ async function gotoPackagedHost(page: Page, launch: RuntimeLaunchResult): Promis
   // "Authentication Required" branch — which is itself responsive but
   // is not what these tests cover.
   const target = launch.authToken ? `${launch.url}/#token=${launch.authToken}` : launch.url
-  await page.goto(target, { waitUntil: "domcontentloaded", timeout: 30_000 })
+
+  // Capture browser console + page errors so a failed selector wait
+  // can surface why the shell didn't mount instead of just timing out.
+  const consoleEntries: string[] = []
+  page.on("console", (msg) => {
+    consoleEntries.push(`[${msg.type()}] ${msg.text()}`)
+  })
+  const pageErrors: string[] = []
+  page.on("pageerror", (err) => {
+    pageErrors.push(err.stack ?? err.message)
+  })
+
+  // `load` (not `domcontentloaded`) — the shell is loaded via
+  // `next/dynamic({ ssr: false })` so the lazy chunk fetch happens
+  // after the initial HTML; `load` waits for those chunks.
+  await page.goto(target, { waitUntil: "load", timeout: 30_000 })
+
   // Wait for the lazy-loaded shell to mount. The header testid
   // `mobile-nav-toggle` exists in the DOM (visible or not) at every
-  // viewport once the shell has hydrated.
-  await page.waitForSelector('[data-testid="mobile-nav-toggle"]', {
-    state: "attached",
-    timeout: 30_000,
-  })
+  // viewport once the shell has hydrated. AppShell's only early-exit
+  // is the `bootStatus === "unauthenticated"` branch (no testid) —
+  // hitting it means the auth token from the URL fragment didn't
+  // reach `/api/boot`.
+  try {
+    await page.waitForSelector('[data-testid="mobile-nav-toggle"]', {
+      state: "attached",
+      timeout: 30_000,
+    })
+  } catch (error) {
+    // Diagnostic dump — without this, all we see in CI is a generic
+    // selector timeout. Surfaces (a) which top-level state the shell
+    // settled in, (b) any console errors, (c) a slice of body HTML.
+    const diag = await page.evaluate(() => {
+      const body = document.body
+      return {
+        url: window.location.href,
+        hash: window.location.hash,
+        hasOnboardingGate: Boolean(document.querySelector('[data-testid="onboarding-gate"]')),
+        hasAuthRequiredHeading: Array.from(document.querySelectorAll("h1")).some(
+          (h) => h.textContent?.includes("Authentication Required"),
+        ),
+        bodyHtml: body ? body.innerHTML.slice(0, 2_000) : "<no body>",
+      }
+    })
+    throw new Error(
+      `mobile-nav-toggle never attached. url=${diag.url} hash=${JSON.stringify(diag.hash)} ` +
+        `onboardingGate=${diag.hasOnboardingGate} authRequired=${diag.hasAuthRequiredHeading}\n` +
+        `body[0..2000]:\n${diag.bodyHtml}\n` +
+        `pageErrors:\n${pageErrors.join("\n") || "(none)"}\n` +
+        `console:\n${consoleEntries.slice(-50).join("\n") || "(none)"}\n` +
+        `original: ${(error as Error).message}`,
+    )
+  }
 }
 
 async function setViewport(page: Page, vp: { width: number; height: number }): Promise<void> {
