@@ -55,7 +55,7 @@ export function makeUnitExecutionKey(unitType: unknown, unitId: unknown, started
   if (typeof unitType !== "string" || !unitType) return null;
   if (typeof unitId !== "string" || !unitId) return null;
   if (typeof startedAt !== "number" || !Number.isFinite(startedAt)) return null;
-  return `${unitType}:${unitId}:${startedAt}`;
+  return JSON.stringify([unitType, unitId, startedAt]);
 }
 
 export function extractAsyncBashJobId(resultPayload: unknown): string | null {
@@ -89,7 +89,7 @@ export function extractAsyncJobResultJobIdFromUserMessage(msg: unknown): string 
   return text.match(ASYNC_JOB_DONE_RE)?.[1] ?? null;
 }
 
-export function filterIgnoredAsyncJobMessages(messages: unknown, ignoredAsyncJobIds: Set<string>): unknown {
+export function filterIgnoredAsyncJobMessages(messages: unknown, ignoredAsyncJobIds: ReadonlySet<string>): unknown {
   if (!Array.isArray(messages) || !(ignoredAsyncJobIds instanceof Set) || ignoredAsyncJobIds.size === 0) {
     return messages;
   }

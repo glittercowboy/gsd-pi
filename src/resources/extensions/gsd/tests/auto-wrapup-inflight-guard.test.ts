@@ -181,6 +181,18 @@ describe("#4365: tool_execution_start hook must pass toolName to markToolStart",
 });
 
 describe("#4670: stale async jobs must be tracked, filtered, and truncated", () => {
+  test("startAuto rebinds the shared async job event bus after session reset", () => {
+    const startAutoSection = autoSrc.slice(
+      autoSrc.indexOf("export async function startAuto("),
+      autoSrc.indexOf("export { describeNextUnit }"),
+    );
+    assert.ok(startAutoSection.length > 0, "Could not locate startAuto function");
+    assert.ok(
+      startAutoSection.includes("setAsyncJobEventBus(pi.events)"),
+      "startAuto must rebind the shared async job event bus on each start/resume attempt",
+    );
+  });
+
   test("registerHooks wires async job tracking and shared event bus", () => {
     assert.ok(
       registerHooksSrc.includes("setAsyncJobEventBus(pi.events)"),
