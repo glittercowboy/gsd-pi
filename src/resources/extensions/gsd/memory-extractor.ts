@@ -6,7 +6,7 @@
 
 import { readFileSync, statSync } from 'node:fs';
 import type { ExtensionContext } from '@gsd/pi-coding-agent';
-import type { Api, AssistantMessage, Model } from '@gsd/pi-ai';
+import type { Api, AssistantMessage, Message, Model } from '@gsd/pi-ai';
 import {
   getActiveMemories,
   isUnitProcessed,
@@ -100,12 +100,17 @@ export function buildMemoryLLMCall(ctx: ExtensionContext): LLMCallFn | null {
     // Expose on the returned fn so tests can await resolution deterministically
     // (avoids arbitrary setTimeout polling for an internal microtask).
     const llmCall = async (system: string, user: string): Promise<string> => {
-      const { completeSimple } = await import('@gsd/pi-ai');
+      const completeSimpleFn = _completeSimpleOverride
+        ?? (await import('@gsd/pi-ai')).completeSimple;
       const resolvedApiKey = await resolvedKeyPromise;
-      const result: AssistantMessage = await completeSimple(selectedModel, {
+      const result: AssistantMessage = await completeSimpleFn(selectedModel, {
         systemPrompt: system,
         messages: [{ role: 'user', content: [{ type: 'text', text: user }], timestamp: Date.now() }],
-      }, buildMemoryCallOptions(resolvedApiKey));
+      }, {
+        maxTokens: 2048,
+        temperature: 0,
+        ...(resolvedApiKey ? { apiKey: resolvedApiKey } : {}),
+      });
 
       // Extract text from response
       const textParts = result.content
@@ -128,21 +133,37 @@ export async function resolveMemoryExtractionApiKey(
 ): Promise<string | undefined> {
   try {
     return await ctx.modelRegistry.getApiKey(model);
-  } catch {
+  } catch (err) {
+    // Distinguish "no credentials configured" (registry returns undefined — fine)
+    // from "lookup failed" (registry threw — operator needs visibility).
+    // Surface the lookup failure so an expired OAuth token doesn't masquerade
+    // as a missing-key error from the downstream completion call.
+    const detail = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[memory-extractor] modelRegistry.getApiKey failed for ${model.id}: ${detail}. ` +
+      `Memory extraction will proceed without an explicit key; re-authenticate if this is an OAuth model.`,
+    );
     return undefined;
   }
 }
 
-export function buildMemoryCallOptions(apiKey?: string): {
-  maxTokens: number;
-  temperature: number;
-  apiKey?: string;
-} {
-  return {
-    maxTokens: 2048,
-    temperature: 0,
-    ...(apiKey ? { apiKey } : {}),
-  };
+// ─── Test Seam ──────────────────────────────────────────────────────────────
+//
+// node:test in this repo runs without --experimental-test-module-mocks, so we
+// expose a narrow override for `completeSimple` that integration tests can
+// install to assert the OAuth glue (resolved apiKey reaching completeSimple).
+// Production code paths never set this override.
+
+type CompleteSimpleFn = (
+  model: Model<Api>,
+  params: { systemPrompt: string; messages: Message[] },
+  options: { maxTokens: number; temperature: number; apiKey?: string },
+) => Promise<AssistantMessage>;
+
+let _completeSimpleOverride: CompleteSimpleFn | null = null;
+
+export function _setCompleteSimpleForTests(fn: CompleteSimpleFn | null): void {
+  _completeSimpleOverride = fn;
 }
 
 // ─── Extraction Prompts ─────────────────────────────────────────────────────

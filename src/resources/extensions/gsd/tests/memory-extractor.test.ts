@@ -1,11 +1,11 @@
 import {
-  buildMemoryCallOptions,
   buildMemoryLLMCall,
   extractMemoriesFromUnit,
   extractTranscriptFromActivity,
   parseMemoryResponse,
   resolveMemoryExtractionApiKey,
   _resetExtractionState,
+  _setCompleteSimpleForTests,
 } from '../memory-extractor.ts';
 import {
   openDatabase,
@@ -288,19 +288,7 @@ test('memory-extractor: buildMemoryLLMCall prefers haiku model', async () => {
     'should resolve API key for haiku model, not sonnet');
 });
 
-test('memory-extractor: buildMemoryCallOptions includes resolved api key when present', () => {
-  assert.deepStrictEqual(buildMemoryCallOptions('oauth-token'), {
-    maxTokens: 2048,
-    temperature: 0,
-    apiKey: 'oauth-token',
-  });
-  assert.deepStrictEqual(buildMemoryCallOptions(undefined), {
-    maxTokens: 2048,
-    temperature: 0,
-  });
-});
-
-test('memory-extractor: resolveMemoryExtractionApiKey uses modelRegistry credentials and swallows lookup failures', async () => {
+test('memory-extractor: resolveMemoryExtractionApiKey uses modelRegistry credentials and logs lookup failures', async () => {
   const model = {
     provider: 'anthropic',
     id: 'claude-haiku-4-5',
@@ -316,14 +304,104 @@ test('memory-extractor: resolveMemoryExtractionApiKey uses modelRegistry credent
   } as any, model);
   assert.equal(ok, 'oauth-token');
 
-  const failed = await resolveMemoryExtractionApiKey({
-    modelRegistry: {
-      getApiKey: async () => {
-        throw new Error('lookup failed');
+  // Lookup failures must be surfaced via console.warn so an expired OAuth
+  // token isn't silently masked as a missing-key error downstream.
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (msg: unknown) => { warnings.push(String(msg)); };
+  try {
+    const failed = await resolveMemoryExtractionApiKey({
+      modelRegistry: {
+        getApiKey: async () => {
+          throw new Error('lookup failed');
+        },
       },
+    } as any, model);
+    assert.equal(failed, undefined, 'falls back to undefined so the outer flow can continue');
+    assert.ok(
+      warnings.some((w) => w.includes('modelRegistry.getApiKey failed') && w.includes('lookup failed')),
+      'must log a diagnostic warning when the registry throws',
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test('memory-extractor: buildMemoryLLMCall passes resolved OAuth token to completeSimple', async () => {
+  const OAUTH_TOKEN = 'sk-ant-oat-end-to-end-test-token';
+  let receivedOptions: any = null;
+
+  const fakeModel = {
+    id: 'claude-haiku-test',
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    cost: { input: 0.25, output: 1.25 },
+  };
+
+  const ctx = {
+    modelRegistry: {
+      getAvailable: () => [fakeModel],
+      getApiKey: async () => OAUTH_TOKEN,
     },
-  } as any, model);
-  assert.equal(failed, undefined);
+  } as any;
+
+  _setCompleteSimpleForTests(async (_model, _params, options) => {
+    receivedOptions = options;
+    return {
+      role: 'assistant',
+      content: [{ type: 'text', text: '[]' }],
+      timestamp: Date.now(),
+    } as any;
+  });
+
+  try {
+    const llmCallFn = buildMemoryLLMCall(ctx);
+    assert.ok(llmCallFn !== null, 'should return a function');
+    const result = await llmCallFn!('system', 'user');
+    assert.equal(result, '[]');
+    assert.ok(receivedOptions, 'completeSimple must be invoked');
+    assert.equal(receivedOptions!.apiKey, OAUTH_TOKEN,
+      'completeSimple must receive the OAuth token resolved via modelRegistry');
+    assert.equal(receivedOptions!.maxTokens, 2048);
+    assert.equal(receivedOptions!.temperature, 0);
+  } finally {
+    _setCompleteSimpleForTests(null);
+  }
+});
+
+test('memory-extractor: buildMemoryLLMCall omits apiKey when registry has no credentials', async () => {
+  let receivedOptions: any = null;
+  const fakeModel = {
+    id: 'claude-haiku-test',
+    provider: 'anthropic',
+    api: 'anthropic-messages',
+    cost: { input: 0.25, output: 1.25 },
+  };
+  const ctx = {
+    modelRegistry: {
+      getAvailable: () => [fakeModel],
+      getApiKey: async () => undefined,
+    },
+  } as any;
+
+  _setCompleteSimpleForTests(async (_model, _params, options) => {
+    receivedOptions = options;
+    return {
+      role: 'assistant',
+      content: [{ type: 'text', text: '[]' }],
+      timestamp: Date.now(),
+    } as any;
+  });
+
+  try {
+    const llmCallFn = buildMemoryLLMCall(ctx);
+    await llmCallFn!('s', 'u');
+    assert.ok(receivedOptions, 'completeSimple must be invoked');
+    assert.equal('apiKey' in receivedOptions!, false,
+      'apiKey must be omitted entirely when no credentials resolved (env-var fallback path)');
+  } finally {
+    _setCompleteSimpleForTests(null);
+  }
 });
 
 test('memory-extractor: extractMemoriesFromUnit processes wrapped activity-log entries end to end', async () => {
