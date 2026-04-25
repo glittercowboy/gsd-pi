@@ -98,6 +98,14 @@ jobs:
           else
             npm publish --tag dev
           fi
+          echo "Verifying gsd-pi@${VERSION} is reachable on npm..."
+          for i in 1 2 3 4 5; do
+            npm view "gsd-pi@${VERSION}" version 2>/dev/null && echo "Confirmed: gsd-pi@${VERSION} is live." && exit 0
+            echo "Attempt $i: not yet visible — waiting 10s..."
+            sleep 10
+          done
+          echo "::error::Publish step succeeded but gsd-pi@${VERSION} is not reachable on npm after 50s. Check NPM_TOKEN permissions and registry config."
+          exit 1
 
   dev-verify:
     name: Dev Verify (installed package)
@@ -144,6 +152,6 @@ jobs:
         env:
           DEV_VERSION: ${{ needs.dev-publish.outputs.dev-version }}
         run: |
-          echo "::error::Post-publish verification failed for gsd-pi@${DEV_VERSION}. The @dev tag still points at this version on npm."
-          echo "::error::Recommended actions: (1) investigate the failing step above, (2) deprecate the broken version with 'npm deprecate gsd-pi@${DEV_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Dev Publish."
+          echo "::error::Post-publish verification failed for gsd-pi@${DEV_VERSION}."
+          echo "::error::Recommended actions: (1) investigate the failing step above, (2) if the version exists on npm, deprecate it with 'npm deprecate gsd-pi@${DEV_VERSION} \"broken build; see Actions run\"', (3) cut a fix and re-run Dev Publish."
           exit 1
