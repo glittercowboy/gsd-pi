@@ -19,7 +19,7 @@ It checks:
 
 ### Auto mode loops on the same unit
 
-**Symptoms:** The same unit (e.g., `research-slice` or `plan-slice`) dispatches repeatedly until hitting the dispatch limit.
+**Symptoms:** The same unit (e.g., `research-slice` or `plan-slice`) dispatches repeatedly, then auto mode pauses with an "Artifact still missing..." error after 3 artifact verification retries.
 
 **Causes:**
 - Stale cache after a crash — the in-memory file listing doesn't reflect new artifacts
@@ -29,7 +29,7 @@ It checks:
 
 ### Auto mode stops with "Loop detected"
 
-**Cause:** A unit failed to produce its expected artifact twice in a row.
+**Cause:** The sliding-window detector found a repeated dispatch pattern that did not recover after the diagnostic retry. Missing expected artifacts usually surface through the bounded 3-attempt artifact verification retry path instead.
 
 **Fix:** Check the task plan for clarity. If the plan is ambiguous, refine it manually, then `/gsd auto` to resume.
 
