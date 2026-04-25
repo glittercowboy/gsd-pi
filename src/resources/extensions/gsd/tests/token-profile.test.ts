@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -127,7 +128,13 @@ test("profile: balanced profile skips research, reassess, and slice research (AD
 
 test("profile: quality profile skips research, slice research, and reassess (ADR-003)", () => {
   const qualityIdx = preferencesSrc.indexOf('case "quality":');
-  const qualityBlock = preferencesSrc.slice(qualityIdx, qualityIdx + 300);
+  // preferencesSrc is concatenated from multiple modules — bound the region
+  // with the next case marker so the assertion stays tightly scoped.
+  const qualityBlock = extractSourceRegion(
+    preferencesSrc,
+    'case "quality":',
+    'case "burn-max":',
+  );
   assert.ok(qualityBlock.includes("skip_research: true"), "quality should skip research");
   assert.ok(qualityBlock.includes("skip_slice_research: true"), "quality should skip slice research");
   assert.ok(qualityBlock.includes("skip_reassess: true"), "quality should skip reassess");

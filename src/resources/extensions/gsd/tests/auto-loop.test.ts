@@ -1,7 +1,5 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 
 import {
   resolveAgentEnd,
@@ -10,12 +8,14 @@ import {
   autoLoop,
   detectStuck,
   _resetPendingResolve,
+  _hasPendingResolveForTest,
   _setActiveSession,
   isSessionSwitchInFlight,
   type UnitResult,
   type AgentEndEvent,
   type LoopDeps,
 } from "../auto-loop.js";
+import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -379,6 +379,7 @@ test("runUnit cancels before dispatch when provider is not request-ready (#4555)
     /Provider anthropic is not request-ready/,
   );
   assert.equal(pi.calls.length, 0, "sendMessage must not be called when provider is not ready");
+  assert.equal(_hasPendingResolveForTest(), false, "provider cancellation must clear the pending resolver");
 });
 
 test("runUnit cancels before dispatch using currentUnitModel provider when set (#4555)", async () => {
@@ -554,65 +555,15 @@ test("auto-loop.ts exports autoLoop, runUnit, resolveAgentEnd", async () => {
   );
 });
 
-test("auto/loop.ts contains a while keyword", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "loop.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    src.includes("while"),
-    "auto/loop.ts should contain a while keyword (loop or placeholder)",
-  );
-});
-
-test("auto/resolve.ts one-shot pattern: _currentResolve is nulled before calling resolver", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "resolve.ts"),
-    "utf-8",
-  );
-  // The one-shot pattern requires: save ref, null the variable, then call
-  const resolveBlock = src.slice(
-    src.indexOf("export function resolveAgentEnd"),
-    src.indexOf("export function resolveAgentEnd") + 600,
-  );
-  const nullIdx = resolveBlock.indexOf("_currentResolve = null");
-  const callIdx = resolveBlock.indexOf("r({");
-  assert.ok(nullIdx > 0, "should null _currentResolve in resolveAgentEnd");
-  assert.ok(callIdx > 0, "should call resolver in resolveAgentEnd");
-  assert.ok(
-    nullIdx < callIdx,
-    "_currentResolve should be nulled before calling the resolver (one-shot)",
-  );
-});
-
-test("auto/phases.ts: selectAndApplyModel called exactly once and before updateProgressWidget (#2907)", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "phases.ts"),
-    "utf-8",
-  );
-  // Extract the runUnitPhase function body
-  const fnStart = src.indexOf("export async function runUnitPhase");
-  assert.ok(fnStart > 0, "runUnitPhase should exist in phases.ts");
-  const fnBody = src.slice(fnStart, fnStart + 16000);
-
-  // selectAndApplyModel must appear exactly once
-  const allOccurrences = [...fnBody.matchAll(/selectAndApplyModel\(/g)];
-  assert.equal(
-    allOccurrences.length,
-    1,
-    `selectAndApplyModel should be called exactly once in runUnitPhase, found ${allOccurrences.length} calls`,
-  );
-
-  // selectAndApplyModel must appear BEFORE updateProgressWidget
-  const modelIdx = fnBody.indexOf("selectAndApplyModel(");
-  const widgetIdx = fnBody.indexOf("updateProgressWidget(");
-  assert.ok(modelIdx > 0, "selectAndApplyModel should exist in runUnitPhase");
-  assert.ok(widgetIdx > 0, "updateProgressWidget should exist in runUnitPhase");
-  assert.ok(
-    modelIdx < widgetIdx,
-    "selectAndApplyModel must be called BEFORE updateProgressWidget (#2899/#2907)",
-  );
-});
+// NOTE: the "while keyword", "one-shot null-before-resolve", and
+// "selectAndApplyModel before updateProgressWidget" source-grep tests
+// previously here were deleted as tautological (readFileSync + substring
+// match). The one-shot pattern is already covered behaviourally by the
+// "double resolveAgentEnd only resolves once" test above, which drives the
+// real resolveAgentEnd/runUnit flow and asserts on the observable promise
+// outcome. The phases.ts ordering contract is tracked via a follow-up
+// issue proposing extraction of a pure `dispatchOrder` helper (per the
+// #4832/PR #4859 precedent) so it can be tested behaviourally.
 
 // ─── autoLoop tests (T02) ─────────────────────────────────────────────────
 
@@ -846,6 +797,45 @@ test("autoLoop exits on terminal complete state", async (t) => {
   assert.ok(
     !deps.callLog.includes("resolveDispatch"),
     "should not dispatch when complete",
+  );
+});
+
+test("autoLoop pauses when provider readiness cancels before dispatch", async () => {
+  _resetPendingResolve();
+
+  const notifications: Array<{ message: string; level?: string }> = [];
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.ui.notify = (message: string, level?: string) => {
+    notifications.push({ message, level });
+  };
+  ctx.model = { provider: "anthropic", id: "claude-opus-4-6" };
+  ctx.modelRegistry = {
+    getProviderAuthMode: () => "api-key",
+    isProviderRequestReady: () => false,
+  };
+
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+  const deps = makeMockDeps({
+    selectAndApplyModel: async () => ({
+      routing: null,
+      appliedModel: { provider: "anthropic", id: "claude-opus-4-6" },
+    }),
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  assert.equal(pi.calls.length, 0, "provider readiness cancellation must not dispatch a message");
+  assert.ok(deps.callLog.includes("pauseAuto"), "provider readiness cancellation should pause auto-mode");
+  assert.ok(!deps.callLog.includes("stopAuto"), "provider readiness cancellation should not hard-stop auto-mode");
+  assert.ok(
+    !deps.callLog.includes("postUnitPreVerification"),
+    "post-unit verification must not run after pre-dispatch provider cancellation",
+  );
+  assert.ok(
+    notifications.some(n => /Provider anthropic is not request-ready/.test(n.message)),
+    "provider pause should notify with the readiness failure",
   );
 });
 
@@ -1410,210 +1400,18 @@ test("autoLoop exits when no active milestone found", async (t) => {
   );
 });
 
-test("autoLoop exports LoopDeps type", async () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "loop-deps.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    src.includes("export interface LoopDeps"),
-    "auto/loop-deps.ts should export LoopDeps interface",
-  );
-});
-
-test("autoLoop signature accepts deps parameter", async () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "loop.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    src.includes("deps: LoopDeps"),
-    "autoLoop should accept a deps: LoopDeps parameter",
-  );
-});
-
-test("autoLoop contains while (s.active) loop", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "loop.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    src.includes("while (s.active)"),
-    "autoLoop should contain a while (s.active) loop",
-  );
-});
-
-// ── T03: End-to-end wiring structural assertions ─────────────────────────────
-
-test("auto-loop.ts barrel re-exports autoLoop, runUnit, and resolveAgentEnd", () => {
-  const barrel = readFileSync(
-    resolve(import.meta.dirname, "..", "auto-loop.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    barrel.includes("autoLoop"),
-    "barrel must re-export autoLoop",
-  );
-  assert.ok(
-    barrel.includes("runUnit"),
-    "barrel must re-export runUnit",
-  );
-  assert.ok(
-    barrel.includes("resolveAgentEnd"),
-    "barrel must re-export resolveAgentEnd",
-  );
-  // Verify the actual function declarations exist in the submodules
-  const loopSrc = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "loop.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    loopSrc.includes("export async function autoLoop"),
-    "auto/loop.ts must define autoLoop",
-  );
-  const runUnitSrc = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "run-unit.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    runUnitSrc.includes("export async function runUnit"),
-    "auto/run-unit.ts must define runUnit",
-  );
-  const resolveSrc = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "resolve.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    resolveSrc.includes("export function resolveAgentEnd"),
-    "auto/resolve.ts must define resolveAgentEnd",
-  );
-});
-
-test("auto.ts startAuto dispatches through the UOK kernel wrapper with explicit kernel and legacy paths", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto.ts"),
-    "utf-8",
-  );
-  // Find the startAuto function body
-  const fnIdx = src.indexOf("export async function startAuto");
-  assert.ok(fnIdx > -1, "startAuto must exist in auto.ts");
-  const fnEnd = src.indexOf("\n// ─── ", fnIdx + 100);
-  const fnBlock =
-    fnEnd > -1 ? src.slice(fnIdx, fnEnd) : src.slice(fnIdx, fnIdx + 5000);
-  assert.ok(
-    fnBlock.includes("runAutoLoopWithUok("),
-    "startAuto must dispatch through runAutoLoopWithUok()",
-  );
-  assert.ok(
-    fnBlock.includes("runKernelLoop: runUokKernelLoop"),
-    "startAuto must wire the explicit UOK kernel loop path",
-  );
-  assert.ok(
-    fnBlock.includes("runLegacyLoop: runLegacyAutoLoop"),
-    "startAuto must preserve explicit legacy fallback dispatch",
-  );
-});
-
-test("startAuto calls selfHealRuntimeRecords before autoLoop (#1727)", { skip: "selfHealRuntimeRecords moved to crash-recovery pipeline in v3" }, () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto.ts"),
-    "utf-8",
-  );
-  const fnIdx = src.indexOf("export async function startAuto");
-  assert.ok(fnIdx > -1, "startAuto must exist in auto.ts");
-  const fnEnd = src.indexOf("\n// ─── ", fnIdx + 100);
-  const fnBlock =
-    fnEnd > -1 ? src.slice(fnIdx, fnEnd) : src.slice(fnIdx, fnIdx + 5000);
-
-  // Both autoLoop call sites must be preceded by selfHealRuntimeRecords
-  const healIdx = fnBlock.indexOf("selfHealRuntimeRecords");
-  const loopIdx = fnBlock.indexOf("autoLoop(");
-  assert.ok(healIdx > -1, "startAuto must call selfHealRuntimeRecords");
-  assert.ok(healIdx < loopIdx, "selfHealRuntimeRecords must be called before autoLoop");
-
-  // Verify the second autoLoop call site also has selfHeal before it (if present)
-  const secondLoopIdx = fnBlock.indexOf("autoLoop(", loopIdx + 1);
-  const secondHealIdx = fnBlock.indexOf("selfHealRuntimeRecords", healIdx + 1);
-  assert.ok(
-    secondLoopIdx === -1 || (secondHealIdx > -1 && secondHealIdx < secondLoopIdx),
-    "if a second autoLoop call exists, it must also be preceded by selfHealRuntimeRecords",
-  );
-});
-
-test("startAuto guards against concurrent invocation (#2923)", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto.ts"),
-    "utf-8",
-  );
-  const fnIdx = src.indexOf("export async function startAuto");
-  assert.ok(fnIdx > -1, "startAuto must exist in auto.ts");
-  // The guard must appear before any other logic in the function body
-  const fnBody = src.slice(fnIdx, fnIdx + 500);
-  const activeGuard = fnBody.indexOf("if (s.active)");
-  assert.ok(activeGuard > -1, "startAuto must check s.active to prevent concurrent auto-loops");
-  const returnIdx = fnBody.indexOf("return;", activeGuard);
-  assert.ok(
-    returnIdx > -1 && returnIdx < activeGuard + 120,
-    "s.active guard must early-return to prevent a second concurrent loop",
-  );
-});
-
-test("agent_end handler calls resolveAgentEnd (not the legacy auto.ts path)", () => {
-  const hooksSrc = readFileSync(
-    resolve(import.meta.dirname, "..", "bootstrap", "register-hooks.ts"),
-    "utf-8",
-  );
-  // Verify the agent_end hook is registered
-  const handlerIdx = hooksSrc.indexOf('pi.on("agent_end"');
-  assert.ok(handlerIdx > -1, "register-hooks.ts must have an agent_end handler");
-
-  const recoverySrc = readFileSync(
-    resolve(import.meta.dirname, "..", "bootstrap", "agent-end-recovery.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    recoverySrc.includes("resolveAgentEnd(event)"),
-    "agent_end success path must call resolveAgentEnd(event) instead of legacy wrappers",
-  );
-  assert.ok(
-    recoverySrc.includes("isSessionSwitchInFlight()"),
-    "agent_end handler must ignore session-switch agent_end events from cmdCtx.newSession()",
-  );
-});
-
-test("auto-verification.ts runPostUnitVerification does not take dispatchNextUnit callback", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto-verification.ts"),
-    "utf-8",
-  );
-  const fnIdx = src.indexOf("export async function runPostUnitVerification");
-  assert.ok(fnIdx > -1, "runPostUnitVerification must exist");
-  const sigEnd = src.indexOf("): Promise<VerificationResult>", fnIdx);
-  const signature = src.slice(fnIdx, sigEnd);
-  assert.ok(
-    !signature.includes("dispatchNextUnit"),
-    "runPostUnitVerification must not take a dispatchNextUnit callback parameter",
-  );
-  assert.ok(
-    !signature.includes("startDispatchGapWatchdog"),
-    "runPostUnitVerification must not take a startDispatchGapWatchdog callback parameter",
-  );
-});
-
-test("auto-timeout-recovery.ts calls resolveAgentEnd instead of dispatchNextUnit", () => {
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto-timeout-recovery.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    !src.includes("await dispatchNextUnit"),
-    "auto-timeout-recovery.ts must not call dispatchNextUnit",
-  );
-  assert.ok(
-    src.includes("resolveAgentEnd("),
-    "auto-timeout-recovery.ts must call resolveAgentEnd to re-iterate the loop on timeout recovery",
-  );
-});
+// NOTE: The T03 "wiring structural assertions" block (barrel re-exports,
+// LoopDeps-interface-declared, while-loop keyword, UOK kernel wrapper,
+// selfHeal ordering, s.active concurrent guard, agent_end handler call
+// shape, runPostUnitVerification signature, auto-timeout-recovery call
+// shape) was a pure source-grep chain — readFileSync + includes/indexOf —
+// so it asserted on code shape rather than runtime behaviour. The symbols
+// named in those assertions are ALREADY imported at the top of this file;
+// if the production barrel drops any of them, this file fails to import
+// and every test here fails cold. That import-time check is the real
+// behavioural contract. The ordering/signature contracts (UOK dispatch,
+// concurrent guard, agent_end wiring) are tracked as follow-up issues for
+// pure-helper extraction per the #4832/PR #4859 precedent.
 
 // ── Stuck counter tests ──────────────────────────────────────────────────────
 
@@ -1912,26 +1710,10 @@ test("detectStuck: truncates long error strings", () => {
   assert.ok(result!.reason.length < 300, "reason should be truncated");
 });
 
-test("stuck detection: logs debug output with stuck-detected phase", () => {
-  // Structural test: verify auto/phases.ts contains
-  // stuck-detected and stuck-counter-reset debug log phases, plus detectStuck
-  const src = readFileSync(
-    resolve(import.meta.dirname, "..", "auto", "phases.ts"),
-    "utf-8",
-  );
-  assert.ok(
-    src.includes('"stuck-detected"'),
-    "auto/phases.ts must log phase: 'stuck-detected' when stuck detection fires",
-  );
-  assert.ok(
-    src.includes('"stuck-counter-reset"'),
-    "auto/phases.ts must log phase: 'stuck-counter-reset' when recovery resets on new unit",
-  );
-  assert.ok(
-    src.includes("detectStuck"),
-    "auto/phases.ts must use detectStuck for sliding window analysis",
-  );
-});
+// NOTE: the "stuck-detected" / "stuck-counter-reset" debug-log grep was
+// removed — that string test never exercised the detector. detectStuck
+// itself is tested behaviourally above against the real implementation
+// imported from auto-loop.js.
 
 // ── Lifecycle test (S05/T02) ─────────────────────────────────────────────────
 
@@ -2577,4 +2359,72 @@ test("autoLoop warns but proceeds for greenfield project (no project files) (#18
     greenfieldWarning,
     "should warn about greenfield project (no project files)",
   );
+});
+
+// ─── #4850: pre-send model-policy block is non-retryable ────────────────────
+test("autoLoop classifies ModelPolicyDispatchBlockedError as blocked, not a retryable error", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  const notifications: Array<{ message: string; level?: string }> = [];
+  ctx.ui.notify = (m: string, l?: string) => { notifications.push({ message: m, level: l }); };
+
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+
+  const journalEvents: Array<{ eventType: string; data?: any }> = [];
+  let pauseAutoCalls = 0;
+  let stopAutoCalls = 0;
+  // Capture onTurnResult to assert blocked-unit identity is propagated to
+  // the uokObserver. Without the fix, observedUnitType/Id are unset because
+  // the throw happens inside dispatch before the success-path assignments
+  // at loop.ts:453/631/647 (#4959 / CodeRabbit Minor).
+  const turnResults: Array<{ unitType?: string; unitId?: string; status: string }> = [];
+
+  const deps = makeMockDeps({
+    selectAndApplyModel: async () => {
+      throw new ModelPolicyDispatchBlockedError(
+        "research-slice",
+        "M001/S01",
+        [{ provider: "openai", modelId: "gpt-4o", reason: "tool policy denied (web_search) for openai-completions" }],
+      );
+    },
+    pauseAuto: async () => { pauseAutoCalls++; },
+    stopAuto: async () => { stopAutoCalls++; },
+    emitJournalEvent: (entry: any) => { journalEvents.push(entry); },
+    uokObserver: {
+      onTurnStart: () => {},
+      onPhaseResult: () => {},
+      onTurnResult: (res: any) => { turnResults.push({ unitType: res.unitType, unitId: res.unitId, status: res.status }); },
+    } as any,
+  });
+
+  await autoLoop(ctx, pi, s, deps);
+
+  // The unit-end event with status: "blocked" must be emitted.
+  const unitEnd = journalEvents.find(
+    e => e.eventType === "unit-end" && e.data?.status === "blocked",
+  );
+  assert.ok(unitEnd, "should emit unit-end with status=blocked");
+  assert.equal(unitEnd!.data.reason, "model-policy-dispatch-blocked");
+
+  // Loop must pause for manual attention, NOT retry until 3-strike hard stop.
+  assert.equal(pauseAutoCalls, 1, "should pause once on policy block");
+  assert.equal(stopAutoCalls, 0, "should NOT call stopAuto — pre-send block is not a retryable iteration error");
+
+  // The notification should surface the per-model deny reason from the typed error.
+  const blockedNotice = notifications.find(
+    n => n.message.includes("model-policy denied dispatch")
+      && n.message.includes("tool policy denied (web_search)"),
+  );
+  assert.ok(blockedNotice, "user-facing notification should name the policy block + deny reason");
+
+  // Blocked-unit identity must reach uokObserver.onTurnResult — the typed
+  // error already carries it, the loop must thread it into observedUnitType/Id
+  // before finishTurn is called (#4959 / CodeRabbit Minor).
+  const pausedTurn = turnResults.find(r => r.status === "paused");
+  assert.ok(pausedTurn, "uokObserver should observe a paused turn for the blocked unit");
+  assert.equal(pausedTurn!.unitType, "research-slice", "onTurnResult must receive the blocked unitType from the typed error");
+  assert.equal(pausedTurn!.unitId, "M001/S01", "onTurnResult must receive the blocked unitId from the typed error");
 });

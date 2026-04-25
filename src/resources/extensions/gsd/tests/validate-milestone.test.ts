@@ -41,6 +41,12 @@ function writeRoadmap(base: string, mid: string, content: string): void {
   writeFileSync(join(dir, `${mid}-ROADMAP.md`), content);
 }
 
+function writeContext(base: string, mid: string, content = "# M001 Context\n\nValidated context."): void {
+  const dir = join(base, ".gsd", "milestones", mid);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${mid}-CONTEXT.md`), content);
+}
+
 function writeMilestoneSummary(base: string, mid: string, content: string): void {
   const dir = join(base, ".gsd", "milestones", mid);
   mkdirSync(dir, { recursive: true });
@@ -265,6 +271,7 @@ Test
     assert.match(prompt, /S01 Summary/i, "prompt should inline non-skipped slice summaries");
     assert.doesNotMatch(prompt, /### S02 Summary/i, "prompt should not inline skipped slice summaries");
     assert.doesNotMatch(prompt, /not found — file does not exist yet/i, "prompt should not emit skipped-slice missing-file placeholders");
+    assert.doesNotMatch(prompt, /S02-SUMMARY\.md/, "skipped slice must not appear in on-demand path list (#4780)");
   } finally {
     cleanup(base);
   }
@@ -328,6 +335,7 @@ test("dispatch rule matches validating-milestone phase", async () => {
   const base = makeTmpBase();
   try {
     // Set up minimal milestone structure for the prompt builder
+    writeContext(base, "M001");
     writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
     writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDone."); // Guard requires slice summaries (#1368)
 
@@ -364,6 +372,7 @@ test("dispatch rule skips when skip_milestone_validation preference is set", asy
 
   const base = makeTmpBase();
   try {
+    writeContext(base, "M001");
     writeRoadmap(base, "M001", ALL_DONE_ROADMAP);
     writeSliceSummary(base, "M001", "S01", "# S01 Summary\nDone."); // Guard requires slice summaries (#1368)
 
@@ -402,6 +411,7 @@ test("dispatch rule fails closed for failure-path SUMMARY when DB milestone is n
   try {
     openTestDb(base);
     insertMilestone({ id: "M001", title: "Test", status: "active" });
+    writeContext(base, "M001");
     writeMilestoneSummary(base, "M001", "# Milestone Summary\nverification FAILED — not complete.");
 
     const ctx: DispatchContext = {
@@ -439,6 +449,7 @@ test("dispatch rule reconciles DB for successful stale SUMMARY (#4658)", async (
   try {
     openTestDb(base);
     insertMilestone({ id: "M001", title: "Test", status: "active" });
+    writeContext(base, "M001");
     writeMilestoneSummary(
       base,
       "M001",
@@ -487,6 +498,7 @@ test("dispatch rule fails closed for ambiguous stale SUMMARY (#4658)", async () 
   try {
     openTestDb(base);
     insertMilestone({ id: "M001", title: "Test", status: "active" });
+    writeContext(base, "M001");
     writeMilestoneSummary(base, "M001", "# M001 Summary\nSome notes without completion metadata.");
 
     const ctx: DispatchContext = {

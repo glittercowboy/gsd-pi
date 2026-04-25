@@ -13,7 +13,11 @@ import {
   openDatabase,
 } from "../gsd-db.ts";
 import type { GSDState, Phase } from "../types.ts";
-import { ensurePlanV2Graph } from "../uok/plan-v2.ts";
+import {
+  ensurePlanV2Graph,
+  hasFinalizedMilestoneContext,
+  isMissingFinalizedContextResult,
+} from "../uok/plan-v2.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const gsdDir = join(__dirname, "..");
@@ -88,13 +92,24 @@ test.afterEach(() => {
   tempDirs.clear();
 });
 
-test("guided flow enforces plan-v2 gate before execution-oriented dispatch", () => {
+test("guided flow keeps plan-v2 fail-closed handling for non-recoverable failures", () => {
   const source = readFileSync(join(gsdDir, "guided-flow.ts"), "utf-8");
   assert.ok(
     source.includes("needsPlanV2Gate") &&
     source.includes("ensurePlanV2Graph") &&
     source.includes("Plan gate failed-closed"),
     "guided flow should fail-closed when plan-v2 graph compilation fails",
+  );
+});
+
+test("guided flow routes recoverable missing finalized context to discuss-milestone", () => {
+  const source = readFileSync(join(gsdDir, "guided-flow.ts"), "utf-8");
+  assert.ok(
+    source.includes('PlanV2GateDecision = "pass" | "recover-missing-context" | "block"') &&
+    source.includes("isMissingFinalizedContextResult(compiled)") &&
+    source.includes('planV2GateDecision === "recover-missing-context"') &&
+    source.includes("buildDiscussMilestonePrompt"),
+    "guided flow should redispatch missing finalized context to discuss-milestone instead of fail-closing",
   );
 });
 
@@ -107,6 +122,7 @@ test("plan-v2 gate fails closed for execution phase when finalized context is mi
   const compiled = ensurePlanV2Graph(basePath, buildState("executing"));
   assert.equal(compiled.ok, false);
   assert.match(compiled.reason ?? "", /CONTEXT\.md/i);
+  assert.equal(isMissingFinalizedContextResult(compiled), true);
 });
 
 test("plan-v2 gate accepts finalized context from project-root fallback", () => {
@@ -123,6 +139,7 @@ test("plan-v2 gate accepts finalized context from project-root fallback", () => 
     const compiled = ensurePlanV2Graph(worktreeBase, buildState("executing"));
     assert.equal(compiled.ok, true);
     assert.equal(compiled.finalizedContextIncluded, true);
+    assert.equal(hasFinalizedMilestoneContext(worktreeBase, MILESTONE_ID), true);
   } finally {
     if (prevProjectRoot === undefined) {
       delete process.env.GSD_PROJECT_ROOT;

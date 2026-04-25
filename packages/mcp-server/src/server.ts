@@ -13,6 +13,7 @@
 
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { spawn } from 'node:child_process';
 import { z } from 'zod';
 import type { SessionManager } from './session-manager.js';
 import { isRemoteConfigured, tryRemoteQuestions } from './remote-questions.js';
@@ -25,7 +26,7 @@ import { buildGraph, writeGraph, writeSnapshot, graphStatus, graphQuery, graphDi
 import { resolveGsdRoot } from './readers/paths.js';
 import { runDoctorLite } from './readers/doctor-lite.js';
 import { registerWorkflowTools, validateProjectDir } from './workflow-tools.js';
-import { applySecrets, checkExistingEnvKeys, detectDestination } from './env-writer.js';
+import { applySecrets, checkExistingEnvKeys, detectDestination, resolveProjectEnvFilePath } from './env-writer.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -37,6 +38,31 @@ const SERVER_VERSION = '2.53.0';
 
 /** User-interaction timeout — generous but bounded so elicitation can't hang indefinitely (#4586). */
 const ELICIT_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Default child-process runner used by secure_env_collect to push secrets
+ * into `vercel env add` / `npx convex env set`. Previously `applySecrets`
+ * was called without an `execFn`, so vercel/convex destinations silently
+ * dropped every collected key. This restores the write path.
+ */
+function defaultExecFn(
+  cmd: string,
+  args: string[],
+): Promise<{ code: number; stderr: string }> {
+  return new Promise((res) => {
+    // stdin: ignore — avoids hanging if the child ever prompts interactively.
+    // stdout: ignore — consumer only cares about stderr + exit code, and an
+    //   un-drained pipe deadlocks once the kernel buffer (~64KB) fills.
+    // stderr: pipe — captured below for error surfacing.
+    const child = spawn(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString('utf8');
+    });
+    child.on('error', (err) => res({ code: 1, stderr: err.message }));
+    child.on('close', (code) => res({ code: code ?? 1, stderr }));
+  });
+}
 
 /**
  * Race a promise against a timeout. Rejects with a typed error on timeout so
@@ -362,6 +388,126 @@ export function formatAskUserQuestionsElicitResult(
 }
 
 // ---------------------------------------------------------------------------
+// secure_env_collect handler (extracted so tests can drive it directly)
+// ---------------------------------------------------------------------------
+
+export type ElicitInputFn = (params: {
+  message: string;
+  requestedSchema: { type: 'object'; properties: Record<string, unknown>; required: string[] };
+}) => Promise<{ action: 'accept' | 'cancel' | 'decline'; content?: Record<string, unknown> }>;
+
+type ToolContent =
+  | { content: Array<{ type: 'text'; text: string }> }
+  | { isError: true; content: Array<{ type: 'text'; text: string }> };
+
+export async function secureEnvCollectHandler(
+  args: Record<string, unknown>,
+  elicitInput: ElicitInputFn,
+): Promise<ToolContent> {
+  const { projectDir, keys, destination, envFilePath, environment } = args as {
+    projectDir: string;
+    keys: Array<{ key: string; hint?: string; guidance?: string[] }>;
+    destination?: 'dotenv' | 'vercel' | 'convex';
+    envFilePath?: string;
+    environment?: 'development' | 'preview' | 'production';
+  };
+
+  try {
+    const resolvedProjectDir = validateProjectDir(projectDir);
+    const resolvedEnvPath = resolveProjectEnvFilePath(resolvedProjectDir, envFilePath ?? '.env');
+
+    // (1) Check which keys already exist
+    const allKeyNames = keys.map((k) => k.key);
+    const existingKeys = await checkExistingEnvKeys(allKeyNames, resolvedEnvPath);
+    const existingSet = new Set(existingKeys);
+    const pendingKeys = keys.filter((k) => !existingSet.has(k.key));
+
+    // If all keys already exist, return immediately
+    if (pendingKeys.length === 0) {
+      const lines = existingKeys.map((k) => `• ${k}: already set`);
+      return textContent(`All ${existingKeys.length} key(s) already set.\n${lines.join('\n')}`);
+    }
+
+    // (2) Build elicitation form — one string field per pending key
+    const properties: Record<string, Record<string, unknown>> = {};
+    const required: string[] = [];
+
+    for (const item of pendingKeys) {
+      const descParts: string[] = [];
+      if (item.hint) descParts.push(`Format: ${item.hint}`);
+      if (item.guidance && item.guidance.length > 0) {
+        descParts.push('How to get this:');
+        item.guidance.forEach((step, i) => descParts.push(`${i + 1}. ${step}`));
+      }
+      descParts.push('Leave empty to skip.');
+
+      properties[item.key] = {
+        type: 'string',
+        title: item.key,
+        description: descParts.join('\n'),
+      };
+      // Don't mark as required — empty string = skip
+    }
+
+    // (3) Elicit input from the MCP client
+    const elicitation = await withElicitTimeout(
+      elicitInput({
+        message: `Enter values for ${pendingKeys.length} environment variable(s). Values are written directly to the project and never shown to the AI.`,
+        requestedSchema: {
+          type: 'object',
+          properties,
+          required,
+        },
+      }),
+      'secure_env_collect',
+    );
+
+    if (elicitation.action !== 'accept' || !elicitation.content) {
+      return textContent('secure_env_collect was cancelled by user.');
+    }
+
+    // (4) Separate provided vs skipped from form response
+    const provided: Array<{ key: string; value: string }> = [];
+    const skipped: string[] = [];
+
+    for (const item of pendingKeys) {
+      const raw = elicitation.content[item.key];
+      const value = typeof raw === 'string' ? raw.trim() : '';
+      if (value.length > 0) {
+        provided.push({ key: item.key, value });
+      } else {
+        skipped.push(item.key);
+      }
+    }
+
+    // (5) Auto-detect destination if not specified
+    const resolvedDestination = destination ?? detectDestination(resolvedProjectDir);
+
+    // (6) Write secrets to destination
+    const { applied, errors } = await applySecrets(provided, resolvedDestination, {
+      envFilePath: resolvedEnvPath,
+      environment,
+      execFn: defaultExecFn,
+    });
+
+    // (7) Build result — NEVER include secret values
+    const lines: string[] = [
+      `destination: ${resolvedDestination}${!destination ? ' (auto-detected)' : ''}${environment ? ` (${environment})` : ''}`,
+    ];
+    for (const k of applied) lines.push(`✓ ${k}: applied`);
+    for (const k of skipped) lines.push(`• ${k}: skipped`);
+    for (const k of existingKeys) lines.push(`• ${k}: already set`);
+    for (const e of errors) lines.push(`✗ ${e}`);
+
+    return errors.length > 0 && applied.length === 0
+      ? errorContent(lines.join('\n'))
+      : textContent(lines.join('\n'));
+  } catch (err) {
+    return errorContent(err instanceof Error ? err.message : String(err));
+  }
+}
+
+// ---------------------------------------------------------------------------
 // createMcpServer
 // ---------------------------------------------------------------------------
 
@@ -371,12 +517,17 @@ export function formatAskUserQuestionsElicitResult(
  * Returns the McpServer instance — call `connect(transport)` to start serving.
  * Uses dynamic imports for the MCP SDK to avoid TS subpath resolution issues.
  */
-export async function createMcpServer(sessionManager: SessionManager): Promise<{
+export async function createMcpServer(
+  sessionManager: SessionManager,
+): Promise<{
   server: McpServerInstance;
 }> {
   // Dynamic import — same workaround as src/mcp-server.ts
   const mcpMod = await import(`${MCP_PKG}/server/mcp.js`);
-  const McpServer = mcpMod.McpServer;
+  const McpServer = mcpMod.McpServer as new (
+    info: { name: string; version: string },
+    opts: { capabilities: Record<string, unknown> },
+  ) => McpServerInstance;
 
   const server: McpServerInstance = new McpServer(
     { name: SERVER_NAME, version: SERVER_VERSION },
@@ -652,108 +803,10 @@ export async function createMcpServer(sessionManager: SessionManager): Promise<{
       envFilePath: z.string().optional().describe('Path to .env file (dotenv only). Defaults to .env in projectDir.'),
       environment: z.enum(['development', 'preview', 'production']).optional().describe('Target environment (vercel/convex only)'),
     },
-    async (args: Record<string, unknown>) => {
-      const { projectDir, keys, destination, envFilePath, environment } = args as {
-        projectDir: string;
-        keys: Array<{ key: string; hint?: string; guidance?: string[] }>;
-        destination?: 'dotenv' | 'vercel' | 'convex';
-        envFilePath?: string;
-        environment?: 'development' | 'preview' | 'production';
-      };
-
-      try {
-        const resolvedProjectDir = validateProjectDir(projectDir);
-        const resolvedEnvPath = resolve(resolvedProjectDir, envFilePath ?? '.env');
-
-        // (1) Check which keys already exist
-        const allKeyNames = keys.map((k) => k.key);
-        const existingKeys = await checkExistingEnvKeys(allKeyNames, resolvedEnvPath);
-        const existingSet = new Set(existingKeys);
-        const pendingKeys = keys.filter((k) => !existingSet.has(k.key));
-
-        // If all keys already exist, return immediately
-        if (pendingKeys.length === 0) {
-          const lines = existingKeys.map((k) => `• ${k}: already set`);
-          return textContent(`All ${existingKeys.length} key(s) already set.\n${lines.join('\n')}`);
-        }
-
-        // (2) Build elicitation form — one string field per pending key
-        const properties: Record<string, Record<string, unknown>> = {};
-        const required: string[] = [];
-
-        for (const item of pendingKeys) {
-          const descParts: string[] = [];
-          if (item.hint) descParts.push(`Format: ${item.hint}`);
-          if (item.guidance && item.guidance.length > 0) {
-            descParts.push('How to get this:');
-            item.guidance.forEach((step, i) => descParts.push(`${i + 1}. ${step}`));
-          }
-          descParts.push('Leave empty to skip.');
-
-          properties[item.key] = {
-            type: 'string',
-            title: item.key,
-            description: descParts.join('\n'),
-          };
-          // Don't mark as required — empty string = skip
-        }
-
-        // (3) Elicit input from the MCP client
-        const elicitation = await withElicitTimeout(
-          server.server.elicitInput({
-            message: `Enter values for ${pendingKeys.length} environment variable(s). Values are written directly to the project and never shown to the AI.`,
-            requestedSchema: {
-              type: 'object',
-              properties,
-              required,
-            },
-          }),
-          'secure_env_collect',
-        );
-
-        if (elicitation.action !== 'accept' || !elicitation.content) {
-          return textContent('secure_env_collect was cancelled by user.');
-        }
-
-        // (4) Separate provided vs skipped from form response
-        const provided: Array<{ key: string; value: string }> = [];
-        const skipped: string[] = [];
-
-        for (const item of pendingKeys) {
-          const raw = elicitation.content[item.key];
-          const value = typeof raw === 'string' ? raw.trim() : '';
-          if (value.length > 0) {
-            provided.push({ key: item.key, value });
-          } else {
-            skipped.push(item.key);
-          }
-        }
-
-        // (5) Auto-detect destination if not specified
-        const resolvedDestination = destination ?? detectDestination(resolvedProjectDir);
-
-        // (6) Write secrets to destination
-        const { applied, errors } = await applySecrets(provided, resolvedDestination, {
-          envFilePath: resolvedEnvPath,
-          environment,
-        });
-
-        // (7) Build result — NEVER include secret values
-        const lines: string[] = [
-          `destination: ${resolvedDestination}${!destination ? ' (auto-detected)' : ''}${environment ? ` (${environment})` : ''}`,
-        ];
-        for (const k of applied) lines.push(`✓ ${k}: applied`);
-        for (const k of skipped) lines.push(`• ${k}: skipped`);
-        for (const k of existingKeys) lines.push(`• ${k}: already set`);
-        for (const e of errors) lines.push(`✗ ${e}`);
-
-        return errors.length > 0 && applied.length === 0
-          ? errorContent(lines.join('\n'))
-          : textContent(lines.join('\n'));
-      } catch (err) {
-        return errorContent(err instanceof Error ? err.message : String(err));
-      }
-    },
+    async (args: Record<string, unknown>) =>
+      secureEnvCollectHandler(args, (params) =>
+        server.server.elicitInput(params as ElicitRequestFormParams),
+      ),
   );
 
   // =======================================================================

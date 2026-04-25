@@ -16,9 +16,17 @@
 // the start of each unit to prevent log bleed between units running in the same
 // Node process.
 
-import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 
+import { withFileLockSync } from "./file-lock.js";
 import { appendNotification } from "./notification-store.js";
 import { buildAuditEnvelope, emitUokAuditEvent } from "./uok/audit.js";
 import { isUnifiedAuditEnabled } from "./uok/audit-toggle.js";
@@ -59,7 +67,8 @@ export type LogComponent =
   | "memory-ingest"     // Memory layer ingestion pipeline
   | "memory-backfill"   // ADR-013: decisions->memories backfill
   | "context-mode"     // Context-mode exec sandbox and compaction snapshot
-  | "preflight";       // Clean-root preflight gate at milestone completion
+  | "preflight"        // Clean-root preflight gate at milestone completion
+  | "postUnit";     // Post-unit processing (abandon detection, overrides)
 
 export interface LogEntry {
   ts: string;
@@ -313,8 +322,18 @@ function _push(
     try {
       const auditDir = join(_auditBasePath, ".gsd");
       mkdirSync(auditDir, { recursive: true });
+      const auditPath = join(auditDir, "audit-log.jsonl");
       const sanitized = _sanitizeForAudit(entry);
-      appendFileSync(join(auditDir, "audit-log.jsonl"), JSON.stringify(sanitized) + "\n", "utf-8");
+      // Ensure file exists so proper-lockfile can acquire a lock against it.
+      if (!existsSync(auditPath)) closeSync(openSync(auditPath, "a"));
+      // onLocked: "skip" — never block error logging on lock contention.
+      withFileLockSync(
+        auditPath,
+        () => {
+          appendFileSync(auditPath, JSON.stringify(sanitized) + "\n", "utf-8");
+        },
+        { onLocked: "skip" },
+      );
     } catch (auditErr) {
       // Best-effort — never let audit write failures bubble up
       _writeStderr(`[gsd:audit] failed to persist log entry: ${(auditErr as Error).message}\n`);

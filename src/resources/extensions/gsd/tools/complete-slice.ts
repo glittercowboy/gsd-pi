@@ -30,6 +30,7 @@ import { checkOwnership, sliceUnitKey } from "../unit-ownership.js";
 import { saveFile, clearParseCache } from "../files.js";
 import { invalidateStateCache } from "../state.js";
 import { renderRoadmapCheckboxes } from "../markdown-renderer.js";
+import { isStaleWrite } from "../auto/turn-epoch.js";
 import { renderAllProjections } from "../workflow-projections.js";
 import { writeManifest } from "../workflow-manifest.js";
 import { appendEvent } from "../workflow-events.js";
@@ -40,6 +41,14 @@ export interface CompleteSliceResult {
   milestoneId: string;
   summaryPath: string;
   uatPath: string;
+  /**
+   * True when this call re-completed an already-closed slice from a turn
+   * superseded by timeout recovery or cancellation. Response is shaped like
+   * success so the orphaned LLM tool call unwinds cleanly without mutating
+   * state.
+   */
+  duplicate?: boolean;
+  stale?: boolean;
 }
 
 /**
@@ -283,6 +292,10 @@ export async function handleCompleteSlice(
 
     const slice = getSlice(params.milestoneId, params.sliceId);
     if (slice && isClosedStatus(slice.status)) {
+      if (isStaleWrite("complete-slice")) {
+        guardError = "__stale_duplicate__";
+        return;
+      }
       guardError = `slice ${params.sliceId} is already complete — use gsd_slice_reopen first if you need to redo it`;
       return;
     }
@@ -306,6 +319,31 @@ export async function handleCompleteSlice(
     insertSlice({ id: params.sliceId, milestoneId: params.milestoneId, title: params.sliceId });
     updateSliceStatus(params.milestoneId, params.sliceId, "complete", completedAt);
   });
+
+  if (guardError === "__stale_duplicate__") {
+    // Stale duplicate from a turn superseded by timeout recovery. Return a
+    // non-mutating success so the orphaned LLM tool call unwinds quietly.
+    const sliceDir = resolveSlicePath(basePath, params.milestoneId, params.sliceId);
+    const staleSummaryPath = sliceDir
+      ? join(sliceDir, `${params.sliceId}-SUMMARY.md`)
+      : join(
+          basePath,
+          ".gsd",
+          "milestones",
+          params.milestoneId,
+          "slices",
+          params.sliceId,
+          `${params.sliceId}-SUMMARY.md`,
+        );
+    return {
+      sliceId: params.sliceId,
+      milestoneId: params.milestoneId,
+      summaryPath: staleSummaryPath,
+      uatPath: staleSummaryPath.replace(/-SUMMARY\.md$/, "-UAT.md"),
+      duplicate: true,
+      stale: true,
+    };
+  }
 
   if (guardError) {
     return { error: guardError };

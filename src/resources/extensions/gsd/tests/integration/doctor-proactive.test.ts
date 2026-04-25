@@ -161,11 +161,27 @@ describe('doctor-proactive', async () => {
     });
 
     test('escalation: no double escalation', () => {
-      // Don't reset — should already be escalated from previous test
+      // Self-contained: drive the escalated state from scratch in this test.
+      // Previously this relied on module-singleton state left over from the
+      // preceding 'escalation: at threshold' test, which silently broke under
+      // filtered/parallel/reordered runs (the fallback `shouldEscalate: false`
+      // path was satisfied by the wrong reason — see #4828).
+      resetProactiveHealing();
+      for (let i = 0; i < 5; i++) {
+        recordHealthSnapshot(0, 0, 0); // older clean snapshots
+      }
+      for (let i = 0; i < 5; i++) {
+        recordHealthSnapshot(2, 1, 0); // recent error snapshots → degrading trend
+      }
+      // First check: trigger escalation.
+      const first = checkHealEscalation(2, [{ code: "test", message: "test error", unitId: "M001/S01" }]);
+      assert.deepStrictEqual(first.shouldEscalate, true, "precondition: first call escalates");
+
+      // Second check: same session, must NOT double-escalate.
       recordHealthSnapshot(2, 0, 0);
       const result = checkHealEscalation(2, [{ code: "test", message: "test error", unitId: "M001/S01" }]);
       assert.deepStrictEqual(result.shouldEscalate, false, "no double escalation in same session");
-      assert.ok(result.reason.includes("already escalated"), "reason explains why no escalation");
+      assert.ok(result.reason.includes("already escalated"), `reason must explain no-re-escalation (got: ${result.reason})`);
     });
 
     test('escalation: deferred when improving', () => {

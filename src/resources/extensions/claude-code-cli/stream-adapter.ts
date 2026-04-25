@@ -21,6 +21,10 @@ import type {
 import type { ExtensionUIContext } from "@gsd/pi-coding-agent";
 import { EventStream } from "@gsd/pi-ai";
 import { execSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { PartialMessageBuilder, ZERO_USAGE, mapUsage } from "./partial-builder.js";
 import { buildWorkflowMcpServers } from "../gsd/workflow-mcp.js";
 import { showInterviewRound, type Question, type RoundResult } from "../shared/tui.js";
@@ -178,34 +182,88 @@ export function getResultErrorMessage(result: SDKResultMessage): string {
 // Claude binary resolution
 // ---------------------------------------------------------------------------
 
-/** Cached result of the `which`/`where claude` lookup so the shell is only spawned once per process. */
+/** Cached result of the Claude executable/script resolution so lookup runs once per process. */
 let cachedClaudePath: string | null = null;
+const requireFromHere = createRequire(import.meta.url);
 
 /** Return the shell command used to locate the `claude` binary on the given platform. */
 export function getClaudeLookupCommand(platform: NodeJS.Platform = process.platform): string {
 	return platform === "win32" ? "where claude" : "which claude";
 }
 
-/** Extract the first line of `which`/`where` output as the resolved binary path. */
-export function parseClaudeLookupOutput(output: Buffer | string): string {
-	return output
+/**
+ * Pick the most suitable path from `which`/`where` output.
+ *
+ * On Windows, `where claude` can return shim entries first (for example
+ * `...\\npm\\claude` / `...\\npm\\claude.cmd`) that the Claude Agent SDK treats
+ * as a native executable path and then fails to spawn. Prefer a native
+ * `.exe` candidate when present.
+ */
+export function parseClaudeLookupOutput(output: Buffer | string, platform: NodeJS.Platform = process.platform): string {
+	const lines = output
 		.toString()
-		.trim()
-		.split(/\r?\n/)[0] ?? "";
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean);
+
+	if (lines.length === 0) return "";
+	if (platform !== "win32") return lines[0] ?? "";
+
+	const exeCandidate = lines.find((line) => /\.exe$/i.test(line));
+	if (exeCandidate) return exeCandidate;
+
+	const cmdCandidate = lines.find((line) => /\.cmd$/i.test(line));
+	if (cmdCandidate) return cmdCandidate;
+
+	return lines[0] ?? "";
+}
+
+/** Resolve the SDK-bundled cli.js path if available. */
+export function resolveBundledClaudeCliPath(): string | null {
+	try {
+		const sdkEntry = requireFromHere.resolve("@anthropic-ai/claude-agent-sdk");
+		const cliPath = join(dirname(sdkEntry), "cli.js");
+		return existsSync(cliPath) ? cliPath : null;
+	} catch {
+		return null;
+	}
 }
 
 /**
- * Resolve the path to the system-installed `claude` binary.
- * The SDK defaults to a bundled cli.js which doesn't exist when
- * installed as a library — we need to point it at the real CLI.
+ * Normalize a discovered path for Claude Agent SDK consumption.
+ *
+ * On Windows, the SDK treats non-`.js` paths as native binaries. NPM shims
+ * like `claude`/`claude.cmd` are not native binaries and can fail with
+ * `ENOENT`/`EINVAL` in that mode. When no `.exe` is available, prefer the
+ * SDK-bundled `cli.js` so the SDK runs via Node.
  */
+export function normalizeClaudePathForSdk(
+	resolvedPath: string,
+	platform: NodeJS.Platform = process.platform,
+	bundledCliPath: string | null = resolveBundledClaudeCliPath(),
+): string {
+	if (platform !== "win32") return resolvedPath;
+	if (/\.exe$/i.test(resolvedPath)) return resolvedPath;
+	if (bundledCliPath) return bundledCliPath;
+	return resolvedPath;
+}
+
+/** Resolve the path passed to `pathToClaudeCodeExecutable`. */
 function getClaudePath(): string {
 	if (cachedClaudePath) return cachedClaudePath;
+
+	const fallback = process.platform === "win32"
+		? (resolveBundledClaudeCliPath() ?? "claude.cmd")
+		: "claude";
+
 	try {
-		cachedClaudePath = parseClaudeLookupOutput(execSync(getClaudeLookupCommand(), { timeout: 5_000, stdio: "pipe" }));
+		const lookupOutput = execSync(getClaudeLookupCommand(), { timeout: 5_000, stdio: "pipe" });
+		const parsed = parseClaudeLookupOutput(lookupOutput, process.platform);
+		cachedClaudePath = normalizeClaudePathForSdk(parsed || fallback, process.platform);
 	} catch {
-		cachedClaudePath = "claude"; // fall back to PATH resolution
+		cachedClaudePath = fallback;
 	}
+
 	return cachedClaudePath;
 }
 
@@ -632,6 +690,439 @@ async function promptTextInputElicitation(
 	return { action: "accept", content };
 }
 
+// ---------------------------------------------------------------------------
+// canUseTool handler
+// ---------------------------------------------------------------------------
+
+/** Options passed by the SDK to the canUseTool callback. */
+interface CanUseToolOptions {
+	signal: AbortSignal;
+	suggestions?: Array<Record<string, unknown>>;
+	blockedPath?: string;
+	decisionReason?: string;
+	title?: string;
+	displayName?: string;
+	description?: string;
+	toolUseID: string;
+	agentID?: string;
+}
+
+/** Result returned by the canUseTool callback to the SDK. */
+type CanUseToolPermissionResult =
+	| { behavior: "allow"; updatedInput?: Record<string, unknown>; updatedPermissions?: Array<Record<string, unknown>>; toolUseID?: string }
+	| { behavior: "deny"; message: string; interrupt?: boolean; toolUseID?: string };
+
+/**
+ * Known CLI tools where the subcommand verb changes the risk profile.
+ * Value = number of subcommand tokens (beyond the executable) to capture
+ * in the "Always Allow" permission pattern.
+ *
+ * `git push` and `git log` are very different → depth 1 → `Bash(git push:*)`
+ * `gh pr create` and `gh pr list` differ at depth 2 → `Bash(gh pr create:*)`
+ * `ping` is always safe → not listed → `Bash(ping:*)`
+ */
+const SUBCOMMAND_DEPTH: Record<string, number> = {
+	git: 1,
+	gh: 2,
+	npm: 1,
+	npx: 1,
+	yarn: 1,
+	pnpm: 1,
+	docker: 1,
+	kubectl: 1,
+	aws: 2,
+	az: 2,
+	gcloud: 2,
+	cargo: 1,
+	pip: 1,
+	pip3: 1,
+	brew: 1,
+	terraform: 1,
+	helm: 1,
+	dotnet: 1,
+};
+
+/** Command wrappers to skip when extracting the base executable. */
+const CMD_PASSTHROUGH = new Set(["sudo", "env", "command"]);
+
+/**
+ * Build a smart permission pattern for Bash "Always Allow".
+ *
+ * Simple commands → `Bash(ping:*)` (any args are fine)
+ * Subcommand-sensitive CLIs → `Bash(git push:*)` (verb is captured, args wildcarded)
+ */
+export function buildBashPermissionPattern(command: string): string {
+	// When the command is a chain like "cd /foo && gh pr list", extract the
+	// last segment — `cd` is just setup, the meaningful operation is what follows.
+	const segments = command.split(/\s*(?:&&|\|\||;)\s*/);
+	// Skip leading `cd` (directory setup) and trailing error suppressors
+	// like `|| true`, `|| :`, `|| echo ...`.  The meaningful command is
+	// the first segment that is *neither* of those.
+	const SETUP_RE = /^\s*cd\s/;
+	const SUPPRESSOR_RE = /^\s*(?:true|:|echo\b)/;
+	let meaningful: string | undefined;
+	if (segments.length > 1) {
+		// Strip suppressors, then strip cd prefixes; take the *last* remaining
+		// segment — that's the meaningful command.
+		const trimmed = segments.filter(s => !SUPPRESSOR_RE.test(s));
+		const core = trimmed.filter(s => !SETUP_RE.test(s));
+		meaningful = core.length > 0 ? core[core.length - 1] : trimmed[trimmed.length - 1];
+	}
+	meaningful = meaningful || segments[0] || command;
+	const rawTokens = meaningful.trim().split(/\s+/);
+
+	// Skip sudo/env wrappers and leading VAR=val assignments
+	let idx = 0;
+	while (idx < rawTokens.length) {
+		if (CMD_PASSTHROUGH.has(rawTokens[idx])) { idx++; continue; }
+		if (/^[A-Za-z_]\w*=/.test(rawTokens[idx])) { idx++; continue; }
+		break;
+	}
+	const tokens = rawTokens.slice(idx).filter(Boolean);
+	if (tokens.length === 0) return "Bash(*)";
+
+	// Strip path and .exe from executable name
+	const base = tokens[0].replace(/^.*[\\/]/, "").replace(/\.exe$/i, "");
+	const depth = SUBCOMMAND_DEPTH[base];
+
+	if (depth !== undefined) {
+		// Capture base + N subcommand tokens: "gh pr list" → Bash(gh pr list:*)
+		const significant = [base, ...tokens.slice(1, 1 + depth)].join(" ");
+		return `Bash(${significant}:*)`;
+	}
+
+	// Simple command — any args are fine: "ping" → Bash(ping:*)
+	return `Bash(${base}:*)`;
+}
+
+/**
+ * Build the list of granularity options presented after a user chooses
+ * "Always Allow" for a Bash command.
+ *
+ * Rather than assuming the user wants the default smart pattern, the UI
+ * shows every meaningful prefix so the user explicitly picks the scope:
+ *
+ *   "gh pr list --limit 5" → [
+ *     "Bash(gh:*)",         // allow any gh command
+ *     "Bash(gh pr:*)",      // allow any gh pr subcommand
+ *     "Bash(gh pr list:*)", // allow just this verb
+ *   ]
+ *
+ * Flags (tokens starting with `-`) terminate the subcommand chain — they
+ * are call-site arguments, not stable verbs. Subcommand depth is capped
+ * at 3 to keep the menu short (max 4 options).
+ *
+ * Returns a single-entry list when there is no meaningful subcommand to
+ * choose from (e.g. `ls -la`). Callers can skip the second dialog in
+ * that case.
+ */
+export function buildBashPermissionPatternOptions(command: string): string[] {
+	const segments = command.split(/\s*(?:&&|\|\||;)\s*/);
+	const SETUP_RE = /^\s*cd\s/;
+	const SUPPRESSOR_RE = /^\s*(?:true|:|echo\b)/;
+	let meaningful: string | undefined;
+	if (segments.length > 1) {
+		const trimmed = segments.filter(s => !SUPPRESSOR_RE.test(s));
+		const core = trimmed.filter(s => !SETUP_RE.test(s));
+		meaningful = core.length > 0 ? core[core.length - 1] : trimmed[trimmed.length - 1];
+	}
+	meaningful = meaningful || segments[0] || command;
+	const rawTokens = meaningful.trim().split(/\s+/);
+
+	let idx = 0;
+	while (idx < rawTokens.length) {
+		if (CMD_PASSTHROUGH.has(rawTokens[idx])) { idx++; continue; }
+		if (/^[A-Za-z_]\w*=/.test(rawTokens[idx])) { idx++; continue; }
+		break;
+	}
+	const tokens = rawTokens.slice(idx).filter(Boolean);
+	if (tokens.length === 0) return ["Bash(*)"];
+
+	const base = tokens[0].replace(/^.*[\\/]/, "").replace(/\.exe$/i, "");
+
+	// Collect up to 3 subcommand tokens, stopping at the first flag.
+	const subTokens: string[] = [];
+	for (let i = 1; i < tokens.length; i++) {
+		const t = tokens[i];
+		if (t.startsWith("-")) break;
+		subTokens.push(t);
+		if (subTokens.length >= 3) break;
+	}
+
+	const patterns: string[] = [`Bash(${base}:*)`];
+	for (let i = 1; i <= subTokens.length; i++) {
+		patterns.push(`Bash(${[base, ...subTokens.slice(0, i)].join(" ")}:*)`);
+	}
+	return patterns;
+}
+
+/**
+ * Read Bash allow-rule patterns from project and user settings files.
+ *
+ * Returns the ruleContent portion (e.g. `"gh pr list:*"`) for each
+ * `Bash(...)` entry found in `permissions.allow`.
+ */
+function readBashAllowRulesFromSettings(): string[] {
+	const rules: string[] = [];
+	const paths = [
+		join(process.cwd(), ".claude", "settings.local.json"),
+		join(process.cwd(), ".claude", "settings.json"),
+	];
+	try {
+		paths.push(join(homedir(), ".claude", "settings.json"));
+	} catch {
+		// homedir() can throw on some platforms
+	}
+	for (const settingsPath of paths) {
+		try {
+			if (!existsSync(settingsPath)) continue;
+			const raw = JSON.parse(readFileSync(settingsPath, "utf8"));
+			const allow = raw?.permissions?.allow;
+			if (!Array.isArray(allow)) continue;
+			for (const entry of allow) {
+				if (typeof entry !== "string") continue;
+				const m = /^Bash\((.+)\)$/.exec(entry);
+				if (m) rules.push(m[1]);
+			}
+		} catch {
+			// Ignore malformed settings files
+		}
+	}
+	return rules;
+}
+
+/**
+ * Check if a Bash compound command matches saved allow rules after
+ * extracting the meaningful segment.
+ *
+ * The SDK's built-in matcher refuses to match prefix rules against
+ * compound commands (e.g. `cd /path && gh pr list`). Claude Code
+ * routinely prepends `cd <cwd> &&` to commands, causing saved rules
+ * to never match on re-invocation. This function strips safe leading
+ * segments (only `cd` commands) and checks the remaining operation
+ * against saved rules.
+ *
+ * For compound commands, returns true only when all leading segments
+ * are `cd` commands and the final segment matches a saved rule.
+ * For simple (single-segment) commands, checks directly against saved
+ * rules — this covers the case where a rule was added mid-session and
+ * the SDK's in-memory cache is stale.
+ */
+export function bashCommandMatchesSavedRules(command: string): boolean {
+	const segments = command.split(/\s*(?:&&|\|\||;)\s*/).filter(Boolean);
+	if (segments.length === 0) return false;
+
+	let meaningful: string;
+	if (segments.length === 1) {
+		meaningful = segments[0].trim();
+	} else {
+		// Strip trailing error suppressors (|| true, || :, || echo ...)
+		// and leading cd segments.  The first remaining segment is the
+		// meaningful command.  All other non-cd, non-suppressor segments
+		// must be absent — otherwise we can't safely auto-approve.
+		const SETUP_RE = /^cd\s/;
+		const SUPPRESSOR_RE = /^\s*(?:true|:|echo\b)/;
+		const trimmed = segments.filter(s => !SUPPRESSOR_RE.test(s.trim()));
+		const core = trimmed.filter(s => !SETUP_RE.test(s.trim()));
+		if (core.length !== 1) return false; // ambiguous — multiple real commands
+		meaningful = core[0].trim();
+	}
+	if (!meaningful) return false;
+
+	const rules = readBashAllowRulesFromSettings();
+	if (rules.length === 0) return false;
+
+	for (const rule of rules) {
+		const prefixMatch = /^(.+):\*$/.exec(rule);
+		if (prefixMatch) {
+			const prefix = prefixMatch[1];
+			if (meaningful === prefix || meaningful.startsWith(prefix + " ")) {
+				return true;
+			}
+			continue;
+		}
+		// Exact match
+		if (meaningful === rule) return true;
+	}
+
+	return false;
+}
+
+/** Format the tool input into a human-readable summary for the permission prompt. */
+function formatToolInput(toolName: string, input: Record<string, unknown>): string {
+	// Bash — show the command
+	if (input.command && typeof input.command === "string") {
+		const cmd = input.command.length > 300 ? input.command.slice(0, 300) + "…" : input.command;
+		return cmd;
+	}
+	// File-oriented tools — show path
+	if (input.file_path && typeof input.file_path === "string") {
+		return `${toolName}: ${input.file_path}`;
+	}
+	// Generic fallback — compact JSON, truncated
+	const json = JSON.stringify(input);
+	if (json.length <= 200) return json;
+	return json.slice(0, 200) + "…";
+}
+
+/**
+ * Create a canUseTool handler that routes SDK permission requests through the
+ * extension UI's select dialog, or auto-approves when no UI is available.
+ *
+ * Presents three options:
+ * - **Allow** — approve this one invocation
+ * - **Always Allow** — approve and pass `suggestions` back as `updatedPermissions`
+ *   so the SDK remembers the choice for the rest of the session
+ * - **Deny** — reject the invocation
+ *
+ * Follows the same pattern as {@link createClaudeCodeElicitationHandler}:
+ * takes an optional UI context and returns the callback or undefined.
+ *
+ * When UI is unavailable (headless / auto-mode sub-agents), returns a handler
+ * that always approves — replacing the old GSD_AUTO_MODE → bypassPermissions
+ * workaround.
+ */
+export function createClaudeCodeCanUseToolHandler(
+	ui: ExtensionUIContext | undefined,
+): ((toolName: string, input: Record<string, unknown>, options: CanUseToolOptions) => Promise<CanUseToolPermissionResult>) | undefined {
+	if (!ui) return undefined;
+
+	return async (toolName, _input, options) => {
+		// Abort early if the signal is already fired
+		if (options.signal.aborted) {
+			return { behavior: "deny", message: "Aborted", toolUseID: options.toolUseID };
+		}
+
+		// For Bash compound commands (e.g. "cd /path && gh pr list"),
+		// check if the meaningful operation matches a saved allow rule.
+		// The SDK's built-in matcher rejects prefix rules for compound
+		// commands, but cd-prefixed commands are routine and the actual
+		// operation is already approved.
+		if (toolName === "Bash" && typeof _input.command === "string") {
+			if (bashCommandMatchesSavedRules(_input.command)) {
+				return { behavior: "allow", updatedInput: _input, toolUseID: options.toolUseID };
+			}
+		}
+
+		const inputSummary = formatToolInput(toolName, _input);
+		const title = options.title || `Allow Claude Code to use: ${toolName}?`;
+		const body = [
+			options.description,
+			inputSummary,
+		].filter(Boolean).join("\n");
+
+		// The 2nd menu (level picker) lets the user choose the exact pattern,
+		// so the 1st menu just shows "Always Allow" without a command suffix.
+		const alwaysAllowLabel = "Always Allow";
+
+		try {
+			const choice = await ui.select(
+				`${title}\n${body}`,
+				["Allow", alwaysAllowLabel, "Deny"],
+				{ signal: options.signal },
+			);
+
+			if (options.signal.aborted) {
+				return { behavior: "deny", message: "Aborted", toolUseID: options.toolUseID };
+			}
+
+			if (choice === alwaysAllowLabel) {
+				// Pass the SDK's own suggestions back as updatedPermissions so
+				// it knows how to persist them (PermissionUpdate[] shape).
+				// For Bash, patch the ruleContent with the user-chosen
+				// granularity pattern (e.g. "gh", "gh pr", "gh pr list") so
+				// the saved rule matches the scope the user actually wants.
+				let perms = options.suggestions;
+				let notifyLabel: string | undefined;
+				if (toolName === "Bash" && typeof _input.command === "string") {
+					// Present every meaningful prefix so the user picks the
+					// scope explicitly rather than getting a blanket match.
+					const patternOptions = buildBashPermissionPatternOptions(_input.command);
+					let chosenPattern: string;
+					if (patternOptions.length <= 1) {
+						// No subcommand choice to make (e.g. "ls -la") — use
+						// the single available pattern directly.
+						chosenPattern = patternOptions[0] ?? buildBashPermissionPattern(_input.command);
+					} else {
+						const levelChoiceRaw = await ui.select(
+							"Save permission at which level?",
+							patternOptions,
+							{ signal: options.signal },
+						);
+						if (options.signal.aborted) {
+							return { behavior: "deny", message: "Aborted", toolUseID: options.toolUseID };
+						}
+						const levelChoice = Array.isArray(levelChoiceRaw) ? levelChoiceRaw[0] : levelChoiceRaw;
+						if (!levelChoice || !patternOptions.includes(levelChoice)) {
+							// User dismissed the level picker — cancel the
+							// tool use. Falling back to a one-time allow
+							// here would leave the spawned agent running
+							// with no clear signal that the user bailed.
+							return {
+								behavior: "deny",
+								message: "User cancelled permission selection",
+								toolUseID: options.toolUseID,
+							};
+						}
+						chosenPattern = levelChoice;
+					}
+					notifyLabel = chosenPattern;
+					// Extract the ruleContent portion from "Bash(gh pr list:*)" → "gh pr list:*"
+					const ruleContent = chosenPattern.replace(/^Bash\(/, "").replace(/\)$/, "");
+					if (perms && Array.isArray(perms) && perms.length > 0) {
+						// Clone suggestions and patch ruleContent on any Bash addRules entry
+						perms = perms.map((s: any) => {
+							if (s.type === "addRules" && Array.isArray(s.rules)) {
+								return {
+									...s,
+									rules: s.rules.map((r: any) =>
+										r.toolName === "Bash" ? { ...r, ruleContent } : r,
+									),
+								};
+							}
+							return s;
+						});
+					} else {
+						// No suggestions from SDK — build a proper PermissionUpdate
+						perms = [{
+							type: "addRules",
+							rules: [{ toolName: "Bash", ruleContent }],
+							behavior: "allow",
+							destination: "localSettings",
+						}];
+					}
+				}
+				// Notify with the resolved pattern (label already previewed it)
+				if (notifyLabel) {
+					ui.notify(`Saved: ${notifyLabel}`, "info");
+				}
+				return {
+					behavior: "allow",
+					updatedInput: _input,
+					toolUseID: options.toolUseID,
+					...(perms ? { updatedPermissions: perms } : {}),
+				};
+			}
+
+			if (choice === "Allow") {
+				return {
+					behavior: "allow",
+					updatedInput: _input,
+					toolUseID: options.toolUseID,
+				};
+			}
+
+			return { behavior: "deny", message: "User denied", toolUseID: options.toolUseID };
+		} catch {
+			return { behavior: "deny", message: "Aborted", toolUseID: options.toolUseID };
+		}
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Elicitation handler
+// ---------------------------------------------------------------------------
+
 /** Create an SDK elicitation handler that routes requests through the extension UI dialogs, or undefined if no UI is available. */
 export function createClaudeCodeElicitationHandler(
 	ui: ExtensionUIContext | undefined,
@@ -723,7 +1214,7 @@ export async function resolveClaudePermissionMode(
 		);
 		return "bypassPermissions";
 	}
-	return "acceptEdits";
+	return "bypassPermissions";
 }
 
 // NOTE: These helpers intentionally mirror @gsd/pi-ai anthropic-shared
@@ -783,21 +1274,25 @@ export function buildSdkOptions(
 ): Record<string, unknown> {
 	const { reasoning, ...sdkExtraOptions } = extraOptions;
 	const mcpServers = buildWorkflowMcpServers();
-	const permissionMode = overrides?.permissionMode ?? "acceptEdits";
-	const disallowedTools = ["AskUserQuestion"];
-	// Pre-authorize the safe built-ins and every registered workflow MCP
-	// server's tools. `acceptEdits` mode (the interactive default) only
-	// auto-approves file edits — Read/Glob/Grep, basic shell inspection, and
-	// every `mcp__gsd-workflow__*` call still surface as "This command
-	// requires approval" and block GSD actions (#4099).
+	const permissionMode = overrides?.permissionMode ?? "bypassPermissions";
+	// Globally unblock all tools. Users reported that the `acceptEdits` default
+	// plus a narrow allowlist silently declined most Bash/Agent/WebFetch calls
+	// when `extensionUIContext` wasn't threaded through. Default to
+	// bypassPermissions and an empty disallow list so every tool — including
+	// `AskUserQuestion` and every `mcp__*` workflow tool — is auto-approved.
+	// Opt back into gated mode with GSD_CLAUDE_CODE_PERMISSION_MODE=acceptEdits.
+	const disallowedTools: string[] = [];
 	const allowedTools = [
 		"Read",
 		"Write",
 		"Edit",
 		"Glob",
 		"Grep",
-		"Bash(ls:*)",
-		"Bash(pwd)",
+		"Bash",
+		"Agent",
+		"WebFetch",
+		"WebSearch",
+		"AskUserQuestion",
 		...(mcpServers ? Object.keys(mcpServers).map((serverName) => `mcp__${serverName}__*`) : []),
 	];
 	const supportsAdaptive = modelSupportsAdaptiveThinking(modelId);
@@ -1131,18 +1626,26 @@ async function pumpSdkMessages(
 		const prompt = buildPromptFromContext(context);
 		const queryPrompt = buildSdkQueryPrompt(context, prompt);
 		const permissionMode = await resolveClaudePermissionMode();
+		const uiContext = (options as ClaudeCodeStreamOptions | undefined)?.extensionUIContext;
+		const canUseToolHandler = createClaudeCodeCanUseToolHandler(uiContext);
+		// When no UI is available (headless / auto-mode), auto-approve all
+		// tool requests. This replaces the old bypassPermissions workaround.
+		const canUseToolFallback = canUseToolHandler
+			?? (async (_toolName: string, _input: Record<string, unknown>, opts: CanUseToolOptions): Promise<CanUseToolPermissionResult> =>
+				({ behavior: "allow", toolUseID: opts.toolUseID }));
 		const sdkOpts = buildSdkOptions(
 			modelId,
 			prompt,
 			{ permissionMode },
-			typeof (options as ClaudeCodeStreamOptions | undefined)?.extensionUIContext === "object"
-				? {
-						reasoning: options?.reasoning,
-						onElicitation: createClaudeCodeElicitationHandler(
-							(options as ClaudeCodeStreamOptions | undefined)?.extensionUIContext,
-						),
-					}
-				: { reasoning: options?.reasoning },
+			{
+				reasoning: options?.reasoning,
+				canUseTool: canUseToolFallback,
+				...(uiContext
+					? {
+							onElicitation: createClaudeCodeElicitationHandler(uiContext),
+						}
+					: {}),
+			},
 		);
 
 		const queryResult = sdk.query({

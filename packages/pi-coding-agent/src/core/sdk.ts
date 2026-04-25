@@ -31,6 +31,13 @@ export class CredentialCooldownError extends Error {
 		this.retryAfterMs = retryAfterMs;
 	}
 }
+
+export function canRestoreSessionModel(
+	modelRegistry: Pick<ModelRegistry, "isProviderRequestReady">,
+	model: Model<any>,
+): boolean {
+	return modelRegistry.isProviderRequestReady(model.provider);
+}
 import { Agent, type AgentMessage, type ThinkingLevel } from "@gsd/pi-agent-core";
 import type { Message, Model } from "@gsd/pi-ai";
 import { getAgentDir, getDocsPath } from "../config.js";
@@ -262,9 +269,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	// If session has data, try to restore model from it
 	if (!model && hasExistingSession && existingSession.model) {
 		const restoredModel = modelRegistry.find(existingSession.model.provider, existingSession.model.modelId);
-		if (restoredModel && (await modelRegistry.getApiKey(restoredModel))) {
-			model = restoredModel;
-		}
+			if (restoredModel && canRestoreSessionModel(modelRegistry, restoredModel)) {
+				model = restoredModel;
+			}
 		if (!model) {
 			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
 		}

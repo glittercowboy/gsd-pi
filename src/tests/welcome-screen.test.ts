@@ -43,10 +43,20 @@ test('renders version', () => {
   assert.ok(out.includes('Get Shit Done'), 'brand name missing')
 })
 
-test('renders GSD project state or fallback hint', () => {
+test('renders GSD project state or fallback hint', (t) => {
   // Model/provider intentionally removed from the welcome screen — they live
   // in the persistent footer. Without .gsd/STATE.md present the welcome
   // should surface the "No active GSD project" fallback instead.
+  // chdir into an empty tmp dir so the fallback path is actually exercised
+  // regardless of what the repo we're running from has in .gsd/.
+  const tmp = mkdtempSync(join(tmpdir(), 'gsd-welcome-fallback-'))
+  const origCwd = process.cwd()
+  process.chdir(tmp)
+  t.after(() => {
+    process.chdir(origCwd)
+    rmSync(tmp, { recursive: true, force: true })
+  })
+
   const out = strip(capture({ version: '1.0.0', modelName: 'claude-opus-4-6', provider: 'Anthropic' }))
   assert.ok(
     out.includes('No active GSD project') || /Active\s+M\d+/.test(out),

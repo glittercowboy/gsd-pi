@@ -127,17 +127,27 @@ function readManagedResourceManifest(agentDir: string): ManagedResourceManifest 
 }
 
 /**
- * Computes a lightweight content fingerprint of the bundled resources directory.
+ * Computes a content fingerprint of a resources directory (defaults to the
+ * bundled resourcesDir).
  *
- * Walks all files under resourcesDir and hashes their relative paths + sizes.
- * This catches same-version content changes (npm link dev workflow, hotfixes
- * within a release) without the cost of reading every file's contents.
+ * Walks all files under `rootDir` and hashes `${relativePath}:${sha256(contents)}`
+ * for each one. Using the file *contents* — not size — is what distinguishes
+ * this from the earlier implementation and closes #4787: a same-size edit
+ * (e.g. swapping one word for another word of the same byte length) produces
+ * a different file hash, bumps the aggregate fingerprint, and therefore
+ * triggers a full resync in `initResources`. The old path+size approach
+ * silently cached stale prompts across upgrades.
  *
- * ~1ms for a typical resources tree (~100 files) — just stat calls, no reads.
+ * Cost is ~1-2ms for a typical resources tree (~100 small .md files) —
+ * still negligible at startup. Files are streamed via `readFileSync` but
+ * bundled prompts are tiny so this is fine.
+ *
+ * Exported for unit tests and for callers that want to check a different
+ * directory (e.g. pre-install verification).
  */
-function computeResourceFingerprint(): string {
+export function computeResourceFingerprint(rootDir: string = resourcesDir): string {
   const entries: string[] = []
-  collectFileEntries(resourcesDir, resourcesDir, entries)
+  collectFileEntries(rootDir, rootDir, entries)
   entries.sort()
   return createHash('sha256').update(entries.join('\n')).digest('hex').slice(0, 16)
 }
@@ -150,8 +160,16 @@ function collectFileEntries(dir: string, root: string, out: string[]): void {
       collectFileEntries(fullPath, root, out)
     } else {
       const rel = relative(root, fullPath)
-      const size = statSync(fullPath).size
-      out.push(`${rel}:${size}`)
+      // Hash the file contents — see function doc for #4787 rationale.
+      let contentHash: string
+      try {
+        contentHash = createHash('sha256').update(readFileSync(fullPath)).digest('hex')
+      } catch {
+        // Unreadable file — fall back to a stable marker so the entry still
+        // contributes to the aggregate hash and future reads will re-hash.
+        contentHash = 'unreadable'
+      }
+      out.push(`${rel}:${contentHash}`)
     }
   }
 }
@@ -219,7 +237,7 @@ function makeTreeWritable(dirPath: string): void {
  * 3. Copies source into destination.
  * 4. Makes the result writable for the next upgrade cycle.
  */
-function syncResourceDir(srcDir: string, destDir: string): void {
+export function syncResourceDir(srcDir: string, destDir: string): void {
   makeTreeWritable(destDir)
   if (existsSync(srcDir)) {
     pruneStaleSiblingFiles(srcDir, destDir)
@@ -319,7 +337,7 @@ function ensureNodeModulesSymlink(agentDir: string): void {
 }
 
 /** Check if any @gsd* scopes exist in internal but not in hoisted node_modules */
-function hasMissingWorkspaceScopes(hoisted: string, internal: string): boolean {
+export function hasMissingWorkspaceScopes(hoisted: string, internal: string): boolean {
   if (!existsSync(internal)) return false
   try {
     for (const entry of readdirSync(internal, { withFileTypes: true })) {
@@ -360,7 +378,7 @@ function reconcileSymlink(link: string, target: string): void {
  * hoisted root (external deps) and internal root (@gsd/* workspace packages).
  * Used for pnpm global installs where @gsd/* isn't hoisted.
  */
-function reconcileMergedNodeModules(
+export function reconcileMergedNodeModules(
   agentNodeModules: string,
   hoisted: string,
   internal: string,
@@ -421,7 +439,7 @@ function reconcileMergedNodeModules(
 }
 
 /** Build a cache fingerprint from packageRoot + sorted entry names of both directories */
-function mergedFingerprint(hoisted: string, internal: string): string {
+export function mergedFingerprint(hoisted: string, internal: string): string {
   try {
     const h = readdirSync(hoisted).sort().join(',')
     const i = readdirSync(internal).sort().join(',')

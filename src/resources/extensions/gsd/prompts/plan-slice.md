@@ -20,9 +20,22 @@ Pay particular attention to **Forward Intelligence** sections — they contain h
 
 You have full tool access. Before decomposing, explore the relevant code to ground your plan in reality.
 
-### Verify Roadmap Assumptions
+### Verify Roadmap Assumptions (JIT Reassessment — ADR-003 §4)
 
-Check prior slice summaries (inlined above as dependency summaries, if present). If prior slices discovered constraints, changed approaches, or flagged fragility, adjust your plan accordingly. The roadmap description may be stale — verify it against the current codebase state.
+Before planning this slice, verify that the roadmap's assumptions still hold given prior slice summaries. Check inlined dependency summaries (below) for discovered constraints, changed approaches, or flagged fragility.
+
+**If the remaining roadmap needs adjustment, modify it before proceeding:**
+
+- If a downstream slice's title/demo/dependencies are now wrong, call `gsd_reassess_roadmap` with the corrected `sliceChanges.modified` entry.
+- If new work surfaced that deserves its own slice, add it via `sliceChanges.added`.
+- If a downstream slice is now redundant or out of scope, remove it via `sliceChanges.removed`.
+- **Bias strongly toward "roadmap is fine."** Most slice completions produce no structural change. Only adjust when there is concrete evidence a downstream slice is wrong — not speculative concern. Over-reassessment is costlier than a later mid-slice replan.
+
+Completed slices are immutable: never modify or remove a slice whose status is complete.
+
+Then proceed with planning this slice against the (possibly updated) roadmap.
+
+The roadmap description may be stale — verify it against the current codebase state.
 
 ### Explore Slice Scope
 

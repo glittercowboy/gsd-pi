@@ -84,6 +84,8 @@ const ALLOWED_FILES: Record<string, string> = {
   // `claude-code` when multiple transports serve the same model).
   "src/resources/extensions/gsd/auto-model-selection.ts":
     "canonical-provider tiebreakers (ADR-012)",
+  "src/provider-migrations.ts":
+    "transport-specific default-provider migration target (ADR-012)",
 
 };
 

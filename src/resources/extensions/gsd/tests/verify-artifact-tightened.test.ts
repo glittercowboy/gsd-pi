@@ -1,89 +1,153 @@
 /**
- * Regression test for #3607 — tighten verifyExpectedArtifact legacy branch
+ * Regression test for #3607 — tighten verifyExpectedArtifact legacy branch.
  *
  * The legacy (pre-migration) fallback in verifyExpectedArtifact previously
  * accepted either a heading match (### T01 --) or a checked checkbox as proof
  * that gsd_complete_task ran. A heading alone does not prove completion —
  * it could result from a rogue write.
  *
- * The fix removes the hdRe heading regex and requires only a checked checkbox
- * (cbRe) in the legacy branch, ensuring that only actual tool-completed tasks
- * are treated as verified.
+ * These tests exercise verifyExpectedArtifact directly for execute-task units
+ * when the DB is unavailable (legacy branch). Only a checked checkbox in the
+ * slice plan counts as evidence of completion; a bare heading or an unchecked
+ * checkbox must not pass.
  */
 
-import { describe, it } from 'node:test'
-import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
-const src = readFileSync(
-  resolve(process.cwd(), 'src', 'resources', 'extensions', 'gsd', 'auto-recovery.ts'),
-  'utf-8',
-)
+import { verifyExpectedArtifact } from "../auto-recovery.ts";
+import { closeDatabase, isDbAvailable } from "../gsd-db.ts";
 
-describe('verifyExpectedArtifact legacy branch tightened (#3607)', () => {
-  it('legacy branch does NOT define hdRe heading regex', () => {
-    // Find the legacy fallback section
-    const legacyIdx = src.indexOf('LEGACY: Pre-migration fallback')
-    assert.ok(legacyIdx !== -1, 'LEGACY comment must exist')
+/** Scaffold .gsd/milestones/M001/slices/S01/ with tasks/ and a T01-SUMMARY.md. */
+function scaffoldProject(t: { after: (fn: () => void) => void }): {
+  base: string;
+  planPath: string;
+} {
+  const base = mkdtempSync(join(tmpdir(), "gsd-verify-artifact-"));
+  t.after(() => {
+    closeDatabase();
+    rmSync(base, { recursive: true, force: true });
+  });
 
-    // Check the code within a reasonable window after the LEGACY comment
-    const legacyBlock = src.slice(legacyIdx, legacyIdx + 600)
+  const sliceDir = join(base, ".gsd", "milestones", "M001", "slices", "S01");
+  mkdirSync(join(sliceDir, "tasks"), { recursive: true });
+  // Summary file must exist so verifyExpectedArtifact reaches the legacy branch
+  writeFileSync(join(sliceDir, "tasks", "T01-SUMMARY.md"), "# T01 summary\n");
+  return { base, planPath: join(sliceDir, "S01-PLAN.md") };
+}
 
-    assert.ok(
-      !legacyBlock.includes('hdRe'),
-      'hdRe heading regex must NOT exist in legacy branch — heading alone is not proof of completion',
-    )
-  })
+test("#3607: execute-task legacy branch — checked checkbox [x] passes verification", (t) => {
+  closeDatabase();
+  assert.equal(isDbAvailable(), false, "DB must be closed to hit legacy branch");
 
-  it('legacy branch requires checked checkbox via cbRe', () => {
-    const legacyIdx = src.indexOf('LEGACY: Pre-migration fallback')
-    assert.ok(legacyIdx !== -1)
+  const { base, planPath } = scaffoldProject(t);
+  writeFileSync(
+    planPath,
+    [
+      "# S01 plan",
+      "",
+      "- [x] **T01: Implement feature**",
+      "",
+    ].join("\n"),
+  );
 
-    const legacyBlock = src.slice(legacyIdx, legacyIdx + 600)
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
+    true,
+    "checked checkbox [x] is accepted as completion evidence",
+  );
+});
 
-    assert.ok(
-      legacyBlock.includes('cbRe'),
-      'cbRe checked-checkbox regex must exist in legacy branch',
-    )
+test("#3607: execute-task legacy branch — checked checkbox [X] (uppercase) also passes", (t) => {
+  closeDatabase();
+  const { base, planPath } = scaffoldProject(t);
+  writeFileSync(
+    planPath,
+    [
+      "# S01 plan",
+      "",
+      "- [X] **T01: Implement feature**",
+    ].join("\n"),
+  );
 
-    // cbRe must match checked checkboxes [x] or [X]
-    assert.ok(
-      legacyBlock.includes('[xX]'),
-      'cbRe must match both [x] and [X] checkbox variants',
-    )
-  })
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
+    true,
+    "uppercase [X] checkbox is accepted",
+  );
+});
 
-  it('legacy branch returns false when no plan file exists', () => {
-    const legacyIdx = src.indexOf('LEGACY: Pre-migration fallback')
-    assert.ok(legacyIdx !== -1)
+test("#3607: execute-task legacy branch — unchecked checkbox [ ] is rejected", (t) => {
+  closeDatabase();
+  const { base, planPath } = scaffoldProject(t);
+  writeFileSync(
+    planPath,
+    [
+      "# S01 plan",
+      "",
+      "- [ ] **T01: Implement feature**",
+    ].join("\n"),
+  );
 
-    const legacyBlock = src.slice(legacyIdx, legacyIdx + 1000)
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
+    false,
+    "unchecked checkbox [ ] must not pass verification (#3607)",
+  );
+});
 
-    // The else branch: no plan file means cannot verify
-    assert.ok(
-      legacyBlock.includes('no plan file'),
-      'missing plan file must be handled with return false',
-    )
-  })
+test("#3607: execute-task legacy branch — bare heading ### T01 is no longer sufficient", (t) => {
+  closeDatabase();
+  const { base, planPath } = scaffoldProject(t);
+  // Old buggy behaviour would pass on a heading alone. This must now fail.
+  writeFileSync(
+    planPath,
+    [
+      "# S01 plan",
+      "",
+      "### T01 -- Implement feature",
+      "",
+      "Some description here, but no checkbox.",
+    ].join("\n"),
+  );
 
-  it('DB available but task not found returns false', () => {
-    const legacyIdx = src.indexOf('LEGACY: Pre-migration fallback')
-    assert.ok(legacyIdx !== -1)
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
+    false,
+    "heading alone must not pass verification after #3607 fix",
+  );
+});
 
-    const legacyBlock = src.slice(legacyIdx, legacyIdx + 1000)
+test("#3607: execute-task legacy branch — missing plan file returns false", (t) => {
+  closeDatabase();
+  const { base } = scaffoldProject(t);
+  // Do not create S01-PLAN.md at all.
 
-    assert.ok(
-      legacyBlock.includes('DB available but task row not found'),
-      'must handle case where DB is available but task row is missing',
-    )
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
+    false,
+    "missing plan file must cause verification to return false",
+  );
+});
 
-    // The comment should be followed by a return false
-    const commentIdx = legacyBlock.indexOf('DB available but task row not found')
-    const afterComment = legacyBlock.slice(commentIdx, commentIdx + 200)
-    assert.ok(
-      afterComment.includes('return false'),
-      'missing task row when DB available must return false',
-    )
-  })
-})
+test("#3607: execute-task legacy branch — wrong task id in checkbox does not match", (t) => {
+  closeDatabase();
+  const { base, planPath } = scaffoldProject(t);
+  writeFileSync(
+    planPath,
+    [
+      "# S01 plan",
+      "",
+      "- [x] **T02: Some other task**",
+    ].join("\n"),
+  );
+
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
+    false,
+    "checkbox for a different task id must not count as T01 completion",
+  );
+});

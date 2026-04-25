@@ -11,6 +11,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const src = readFileSync(
   resolve(process.cwd(), 'src', 'resources', 'extensions', 'gsd', 'tools', 'complete-slice.ts'),
@@ -59,7 +60,7 @@ describe('complete-slice verification gate (#3580)', () => {
     const gateIdx = src.indexOf('BLOCKED_SIGNALS.test(')
     assert.ok(gateIdx !== -1)
 
-    const afterGate = src.slice(gateIdx, gateIdx + 500)
+    const afterGate = extractSourceRegion(src, 'BLOCKED_SIGNALS.test(')
     assert.ok(
       afterGate.includes('return { error:'),
       'blocked signal detection must return an error',

@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SESSION_TS_PATH = join(__dirname, "..", "auto", "session.ts");
@@ -52,7 +53,7 @@ test("SidecarItem type is exported from session.ts", () => {
 test("SidecarItem has required kind field with hook/triage/quick-task union", () => {
   const source = getSessionTsSource();
   const ifaceIdx = source.indexOf("export interface SidecarItem");
-  const ifaceBlock = source.slice(ifaceIdx, ifaceIdx + 500);
+  const ifaceBlock = extractSourceRegion(source, "export interface SidecarItem");
   assert.ok(
     ifaceBlock.includes('"hook"') && ifaceBlock.includes('"triage"') && ifaceBlock.includes('"quick-task"'),
     "SidecarItem.kind must be a union of 'hook' | 'triage' | 'quick-task'",
@@ -77,7 +78,7 @@ test("AutoSession resets sidecarQueue in reset()", () => {
   const source = getSessionTsSource();
   const resetIdx = source.indexOf("reset(): void");
   assert.ok(resetIdx > -1, "AutoSession must have a reset() method");
-  const resetBlock = source.slice(resetIdx, resetIdx + 3000);
+  const resetBlock = extractSourceRegion(source, "reset(): void");
   assert.ok(
     resetBlock.includes("sidecarQueue"),
     "reset() must clear sidecarQueue",

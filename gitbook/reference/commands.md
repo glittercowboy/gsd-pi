@@ -23,7 +23,7 @@
 | `/gsd debug --diagnose` | Inspect malformed artifacts and session health (`--diagnose [<slug> | <issue text>]`) |
 | `/gsd dispatch` | Dispatch a specific phase directly |
 | `/gsd history` | View execution history (supports `--cost`, `--phase`, `--model` filters) |
-| `/gsd forensics` | Full debugger for auto-mode failures |
+| `/gsd forensics` | Full debugger for auto-mode failures (includes worktree lifecycle telemetry) |
 | `/gsd cleanup` | Clean up state files and stale worktrees |
 | `/gsd visualize` | Open workflow visualizer |
 | `/gsd export --html` | Generate HTML report for current milestone |

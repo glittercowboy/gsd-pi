@@ -43,6 +43,25 @@ import {
   validateFetchedContent,
 } from "../../workflow-install.js";
 
+/**
+ * Refuses interactive commands that mutate durable .gsd/ planning state while
+ * auto-mode holds the worktree. Returns true if the command was blocked and
+ * the caller should return immediately; false if it is safe to proceed.
+ *
+ * Auto-mode's squash merge performs a pre-merge dirty-tree check; concurrent
+ * writes by interactive commands between that check and the merge itself
+ * cause __dirty_working_tree__ failures (#4704).
+ */
+function requireNotAutoActive(commandName: string, ctx: ExtensionCommandContext): boolean {
+  if (!isAutoActive()) return false;
+  ctx.ui.notify(
+    `${commandName} cannot run while auto-mode is active.\n` +
+    `Stop auto-mode first with /gsd stop, then run ${commandName}.`,
+    "error",
+  );
+  return true;
+}
+
 // ─── Custom Workflow Subcommands ─────────────────────────────────────────
 
 const RESERVED_SUBCOMMANDS = new Set([
@@ -473,12 +492,14 @@ async function handleCustomWorkflow(
 export async function handleWorkflowCommand(trimmed: string, ctx: ExtensionCommandContext, pi: ExtensionAPI): Promise<boolean> {
   // ── /gsd do — natural language routing (must be early to route to other commands) ──
   if (trimmed === "do" || trimmed.startsWith("do ")) {
+    if (requireNotAutoActive("/gsd do", ctx)) return true;
     const { handleDo } = await import("../../commands-do.js");
     await handleDo(trimmed.replace(/^do\s*/, "").trim(), ctx, pi);
     return true;
   }
   // ── Backlog management ──
   if (trimmed === "backlog" || trimmed.startsWith("backlog ")) {
+    if (requireNotAutoActive("/gsd backlog", ctx)) return true;
     const { handleBacklog } = await import("../../commands-backlog.js");
     await handleBacklog(trimmed.replace(/^backlog\s*/, "").trim(), ctx, pi);
     return true;
@@ -490,26 +511,22 @@ export async function handleWorkflowCommand(trimmed: string, ctx: ExtensionComma
   }
 
   if (trimmed === "queue") {
+    if (requireNotAutoActive("/gsd queue", ctx)) return true;
     await showQueue(ctx, pi, projectRoot());
     return true;
   }
   if (trimmed === "discuss") {
+    if (requireNotAutoActive("/gsd discuss", ctx)) return true;
     await showDiscuss(ctx, pi, projectRoot());
     return true;
   }
   if (trimmed === "quick" || trimmed.startsWith("quick ")) {
-    if (isAutoActive()) {
-      ctx.ui.notify(
-        "/gsd quick cannot run while auto-mode is active.\n" +
-        "Stop auto-mode first with /gsd stop, then run /gsd quick.",
-        "error",
-      );
-      return true;
-    }
+    if (requireNotAutoActive("/gsd quick", ctx)) return true;
     await handleQuick(trimmed.replace(/^quick\s*/, "").trim(), ctx, pi);
     return true;
   }
   if (trimmed === "new-milestone") {
+    if (requireNotAutoActive("/gsd new-milestone", ctx)) return true;
     const basePath = projectRoot();
     const headlessContextPath = join(gsdRoot(basePath), "runtime", "headless-context.md");
     if (existsSync(headlessContextPath)) {
@@ -531,6 +548,7 @@ export async function handleWorkflowCommand(trimmed: string, ctx: ExtensionComma
     return true;
   }
   if (trimmed === "park" || trimmed.startsWith("park ")) {
+    if (requireNotAutoActive("/gsd park", ctx)) return true;
     const basePath = projectRoot();
     const arg = trimmed.replace(/^park\s*/, "").trim();
     let targetId = arg;
@@ -556,6 +574,7 @@ export async function handleWorkflowCommand(trimmed: string, ctx: ExtensionComma
     return true;
   }
   if (trimmed === "unpark" || trimmed.startsWith("unpark ")) {
+    if (requireNotAutoActive("/gsd unpark", ctx)) return true;
     const basePath = projectRoot();
     const arg = trimmed.replace(/^unpark\s*/, "").trim();
     let targetId = arg;

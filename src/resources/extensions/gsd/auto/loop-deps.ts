@@ -18,7 +18,7 @@ import type {
 } from "../auto-verification.js";
 import type { DispatchAction, DispatchContext } from "../auto-dispatch.js";
 import type { WorktreeResolver } from "../worktree-resolver.js";
-import type { CmuxLogLevel } from "../../cmux/index.js";
+import type { CmuxLogLevel } from "../../shared/cmux-events.js";
 import type { JournalEntry } from "../journal.js";
 import type { MergeReconcileResult } from "../auto-recovery.js";
 import type { UokTurnObserver } from "../uok/contracts.js";

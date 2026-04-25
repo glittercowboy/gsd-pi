@@ -6,6 +6,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **gsd**: worktree lifespan + divergence telemetry via journal events (#4764). New event types `worktree-created`, `worktree-merged`, `worktree-orphaned`, `auto-exit`, `canonical-root-redirect`, `slice-merged`, `milestone-resquash`. New `summarizeWorktreeTelemetry` aggregator returns counts, orphan breakdown, merge durations, conflict counts, exit reasons, and producer-side "exits with unmerged work" metric.
+- **gsd**: `/gsd forensics` surfaces worktree telemetry — new Worktree Telemetry section in reports; new anomalies `worktree-orphan` and `worktree-unmerged-exit` (#4764).
+- **gsd**: opt-in slice-cadence worktree collapse (#4765). New `git.collapse_cadence: "milestone" | "slice"` preference (default `milestone`). When set to `slice`, each validated slice is squash-merged to main immediately, shrinking the orphan window from milestone-size to slice-size. Optional `git.milestone_resquash: true` (default when cadence=slice) collapses per-slice commits into one milestone commit at milestone completion.
+- **gsd**: worktree-aware `resolveCanonicalMilestoneRoot` helper (#4761) — validators and cross-session readers now route through it so a live worktree for a milestone is preferred over stale project-root state.
+
+### Fixed
+- **gsd**: milestone validation silently read stale project-root state when a live worktree held the real work (#4761). `handleValidateMilestone` now routes through `resolveCanonicalMilestoneRoot` so validation sees the canonical scope regardless of caller cwd.
+- **gsd**: bootstrap orphan audit no longer skips in-progress milestones (#4762). When `milestone/<MID>` has commits ahead of main and the DB still reads `in_progress` (auto-mode interrupted before completion), the audit now emits a warning with the commit count and worktree location so the user knows where to resume.
+
 ## [2.77.0] - 2026-04-21
 
 ### Added

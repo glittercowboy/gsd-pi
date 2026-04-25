@@ -26,6 +26,9 @@ import {
   isDbAvailable,
   getMilestone,
   getMilestoneSlices,
+  closeDatabase,
+  openDatabase,
+  getDbPath,
 } from "./gsd-db.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { execFileSync } from "node:child_process";
@@ -1668,22 +1671,51 @@ export function mergeMilestoneToMain(
   const milestonesDir = join(gsdRoot(originalBasePath_), "milestones");
   const shelterDir = join(gsdRoot(originalBasePath_), ".milestone-shelter");
   const shelteredDirs: string[] = [];
+  let shelterRestored = false;
 
   // Helper: restore sheltered milestone directories (#2505).
   // Called on both success and error paths to ensure queued CONTEXT files
-  // are never permanently lost.
+  // are never permanently lost. Idempotent — the error path may fire after
+  // the success path has already restored and removed the shelter dir; a
+  // second call is a no-op instead of logging a misleading "shelter restore
+  // failed: ENOENT" error for shelter sources that were cleaned up legitimately.
   const restoreShelter = (): void => {
+    if (shelterRestored) return;
+    shelterRestored = true;
     if (shelteredDirs.length === 0) return;
+    let restoreFailed = false;
     for (const dirName of shelteredDirs) {
+      const src = join(shelterDir, dirName);
+      // If the shelter source is missing the restore cannot proceed for this
+      // entry. Distinguish "legitimately missing" (shelter dir removed by a
+      // prior successful restore or never copied) from a surprising ENOENT
+      // inside an otherwise-populated shelter.
+      if (!existsSync(src)) {
+        logWarning(
+          "worktree",
+          `shelter source missing for ${dirName}; skipping restore (shelter already cleaned or entry never staged)`,
+        );
+        continue;
+      }
       try {
         mkdirSync(milestonesDir, { recursive: true });
-        cpSync(join(shelterDir, dirName), join(milestonesDir, dirName), { recursive: true, force: true });
+        cpSync(src, join(milestonesDir, dirName), { recursive: true, force: true });
       } catch (err) { /* best-effort */
-        logError("worktree", `shelter restore failed: ${err instanceof Error ? err.message : String(err)}`);
+        restoreFailed = true;
+        logError("worktree", `shelter restore failed (${dirName}): ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    try { rmSync(shelterDir, { recursive: true, force: true }); } catch (err) { /* best-effort */
-      logWarning("worktree", `shelter cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+    // Preserve the shelter if any per-entry restore failed — it is the only
+    // surviving copy of the queued milestone dirs (sources were deleted during
+    // shelter). Deleting it here would permanently lose those files (#2505).
+    if (restoreFailed) {
+      logWarning("worktree", `shelter retained at ${shelterDir} — manual recovery required for unrestored entries`);
+      return;
+    }
+    if (existsSync(shelterDir)) {
+      try { rmSync(shelterDir, { recursive: true, force: true }); } catch (err) { /* best-effort */
+        logWarning("worktree", `shelter cleanup failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   };
 
@@ -1720,6 +1752,21 @@ export function mergeMilestoneToMain(
   //     entries (e.g. a gitignored `.gsd` symlink under ADR-002) (#4573).
   //     Queued CONTEXT files under `.gsd/milestones/*` are already sheltered
   //     in step 7 above, so they won't be swept into the stash.
+  // On Windows, SQLite holds mandatory file locks on the gsd.db WAL/SHM
+  // sidecars while the connection is open. `git stash --include-untracked`
+  // walks those files and fails with EBUSY (#4704). Close the DB before
+  // stashing so Windows releases the handles; reopen after. No-op on
+  // POSIX, where advisory locks don't block git.
+  const needsDbCycle = process.platform === "win32" && isDbAvailable();
+  const dbPathToReopen = needsDbCycle ? getDbPath() : null;
+  if (needsDbCycle) {
+    try {
+      closeDatabase();
+    } catch (err) {
+      logWarning("worktree", `pre-stash db close failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
   let stashed = false;
   try {
     const status = execFileSync("git", ["status", "--porcelain"], {
@@ -1739,6 +1786,14 @@ export function mergeMilestoneToMain(
     // Stash failure is non-fatal — proceed without stash and let the merge
     // report the dirty tree if it fails.
     logWarning("worktree", `git stash failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  if (needsDbCycle && dbPathToReopen) {
+    try {
+      openDatabase(dbPathToReopen);
+    } catch (err) {
+      logWarning("worktree", `post-stash db reopen failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   // 7b. Clean up stale merge state before attempting squash merge (#2912).

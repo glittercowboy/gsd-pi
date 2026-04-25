@@ -7,12 +7,16 @@ import { isDbAvailable, getMilestoneSlices, getSliceTasks, type SliceRow } from 
 import type { UokGraphNode } from "./contracts.js";
 
 const PLAN_V2_CLARIFY_ROUND_LIMIT = 3;
-const EXECUTION_ENTRY_PHASES: ReadonlySet<Phase> = new Set([
+export const EXECUTION_ENTRY_PHASES: ReadonlySet<Phase> = new Set([
   "executing",
   "summarizing",
   "validating-milestone",
   "completing-milestone",
 ]);
+
+export function isExecutionEntryPhase(phase: Phase): boolean {
+  return EXECUTION_ENTRY_PHASES.has(phase);
+}
 
 export interface PlanV2CompileResult {
   ok: boolean;
@@ -61,6 +65,14 @@ function hasMilestoneFileContent(
   return false;
 }
 
+export function hasFinalizedMilestoneContext(basePath: string, milestoneId: string): boolean {
+  return hasMilestoneFileContent(basePath, milestoneId, "CONTEXT");
+}
+
+export function isMissingFinalizedContextResult(result: PlanV2CompileResult): boolean {
+  return !result.ok && result.finalizedContextIncluded === false;
+}
+
 function countSliceResearchArtifacts(basePath: string, milestoneId: string, slices: SliceRow[]): number {
   let count = 0;
   for (const slice of slices) {
@@ -69,10 +81,6 @@ function countSliceResearchArtifacts(basePath: string, milestoneId: string, slic
     }
   }
   return count;
-}
-
-function isExecutionEntryPhase(phase: Phase): boolean {
-  return EXECUTION_ENTRY_PHASES.has(phase);
 }
 
 export function compileUnitGraphFromState(basePath: string, state: GSDState): PlanV2CompileResult {

@@ -13,6 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RECOVERY_PATH = join(__dirname, "..", "bootstrap", "agent-end-recovery.ts");
@@ -30,7 +31,7 @@ test("agent-end-recovery.ts does not pause on aborted messages with empty conten
   assert.ok(abortIdx > -1, "abort handler must exist in agent-end-recovery.ts");
 
   // Extract the region around the abort handler (enough to see the guard logic)
-  const abortRegion = source.slice(Math.max(0, abortIdx - 200), abortIdx + 600);
+  const abortRegion = extractSourceRegion(source, 'stopReason === "aborted"', { fromIdx: abortIdx });
 
   // Must check for empty content before pausing
   assert.ok(
@@ -48,7 +49,7 @@ test("agent-end-recovery.ts routes empty-content aborted messages to resolveAgen
   assert.ok(abortIdx > -1, "abort handler must exist");
 
   // Get the full abort handling block (from the if to the next stopReason check or success path)
-  const afterAbort = source.slice(abortIdx, abortIdx + 800);
+  const afterAbort = extractSourceRegion(source, 'stopReason === "aborted"');
 
   // The abort block must have a code path that calls resolveAgentEnd (for empty-content case)
   assert.ok(
@@ -63,7 +64,7 @@ test("agent-end-recovery.ts checks for errorMessage presence in abort handler (#
   const abortIdx = source.indexOf('stopReason === "aborted"');
   assert.ok(abortIdx > -1, "abort handler must exist");
 
-  const abortRegion = source.slice(abortIdx, abortIdx + 600);
+  const abortRegion = extractSourceRegion(source, 'stopReason === "aborted"');
 
   // Fatal aborts should have error context (errorMessage field).
   // The handler should check for this to distinguish fatal from non-fatal aborts.

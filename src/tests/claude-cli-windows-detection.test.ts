@@ -28,6 +28,9 @@ import { join } from "node:path";
 const WINDOWS_CLAUDE_SELECTOR =
 	/process\.platform\s*===\s*['"]win32['"]\s*\?\s*['"]claude\.cmd['"]\s*:\s*['"]claude['"]/;
 
+const WINDOWS_CMD_SHELL_GUARD =
+	/shell\s*:\s*process\.platform\s*===\s*['"]win32['"]/;
+
 /**
  * Verifies the onboarding-level readiness check (`claude-cli-check.ts`)
  * carries the `process.platform === 'win32' ? 'claude.cmd' : 'claude'`
@@ -44,6 +47,12 @@ function verifyCliCheckSelector(): void {
 		source,
 		WINDOWS_CLAUDE_SELECTOR,
 		"claude-cli-check.ts must implement process.platform === 'win32' ? 'claude.cmd' : 'claude'",
+	);
+
+	assert.match(
+		source,
+		WINDOWS_CMD_SHELL_GUARD,
+		"claude-cli-check.ts must pass shell: process.platform === 'win32' when spawning claude.cmd",
 	);
 }
 
@@ -69,6 +78,12 @@ function verifyReadinessSelector(): void {
 		source,
 		WINDOWS_CLAUDE_SELECTOR,
 		"readiness.ts must implement process.platform === 'win32' ? 'claude.cmd' : 'claude'",
+	);
+
+	assert.match(
+		source,
+		WINDOWS_CMD_SHELL_GUARD,
+		"readiness.ts must pass shell: process.platform === 'win32' when spawning claude.cmd",
 	);
 }
 

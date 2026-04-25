@@ -7,6 +7,6 @@
     "checkJs": false,
     "rootDir": "."
   },
-  "include": ["src/resources/extensions"],
+  "include": ["src/resources/extensions", "extensions"],
   "exclude": []
 }

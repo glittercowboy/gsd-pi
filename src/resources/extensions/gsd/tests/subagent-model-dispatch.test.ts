@@ -15,6 +15,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { validatePreferences } from "../preferences-validation.ts";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const promptsSrc = readFileSync(join(__dirname, "..", "auto-prompts.ts"), "utf-8");
@@ -59,7 +60,7 @@ test("reactive_execution: subagent_model rejects empty string", () => {
 test("buildReactiveExecutePrompt: accepts subagentModel parameter", () => {
   const fnStart = promptsSrc.indexOf("export async function buildReactiveExecutePrompt");
   assert.ok(fnStart !== -1, "buildReactiveExecutePrompt should be exported");
-  const signature = promptsSrc.slice(fnStart, fnStart + 300);
+  const signature = extractSourceRegion(promptsSrc, "export async function buildReactiveExecutePrompt", { fromIdx: fnStart });
   assert.ok(
     signature.includes("subagentModel"),
     "buildReactiveExecutePrompt should accept a subagentModel parameter",
@@ -69,7 +70,7 @@ test("buildReactiveExecutePrompt: accepts subagentModel parameter", () => {
 test("buildParallelResearchSlicesPrompt: accepts subagentModel parameter", () => {
   const fnStart = promptsSrc.indexOf("export async function buildParallelResearchSlicesPrompt");
   assert.ok(fnStart !== -1, "buildParallelResearchSlicesPrompt should be exported");
-  const signature = promptsSrc.slice(fnStart, fnStart + 300);
+  const signature = extractSourceRegion(promptsSrc, "export async function buildParallelResearchSlicesPrompt", { fromIdx: fnStart });
   assert.ok(
     signature.includes("subagentModel"),
     "buildParallelResearchSlicesPrompt should accept a subagentModel parameter",
@@ -79,7 +80,7 @@ test("buildParallelResearchSlicesPrompt: accepts subagentModel parameter", () =>
 test("buildGateEvaluatePrompt: accepts subagentModel parameter", () => {
   const fnStart = promptsSrc.indexOf("export async function buildGateEvaluatePrompt");
   assert.ok(fnStart !== -1, "buildGateEvaluatePrompt should be exported");
-  const signature = promptsSrc.slice(fnStart, fnStart + 300);
+  const signature = extractSourceRegion(promptsSrc, "export async function buildGateEvaluatePrompt", { fromIdx: fnStart });
   assert.ok(
     signature.includes("subagentModel"),
     "buildGateEvaluatePrompt should accept a subagentModel parameter",
@@ -129,7 +130,7 @@ test("auto-dispatch: passes model to buildReactiveExecutePrompt", () => {
   // Find the reactive-execute dispatch rule
   const ruleStart = dispatchSrc.indexOf("reactive-execute (parallel dispatch)");
   assert.ok(ruleStart !== -1, "reactive-execute dispatch rule should exist");
-  const ruleBlock = dispatchSrc.slice(ruleStart, ruleStart + 1000);
+  const ruleBlock = extractSourceRegion(dispatchSrc, "reactive-execute (parallel dispatch)", { fromIdx: ruleStart });
   assert.ok(
     ruleBlock.includes("subagent_model") || ruleBlock.includes("subagentModel"),
     "reactive-execute rule should resolve and pass the subagent model",
@@ -140,7 +141,7 @@ test("auto-dispatch: passes model to buildParallelResearchSlicesPrompt", () => {
   const callIdx = dispatchSrc.indexOf("buildParallelResearchSlicesPrompt(");
   assert.ok(callIdx !== -1, "buildParallelResearchSlicesPrompt call should exist");
   // The call site should pass a model argument (not just 4 args)
-  const callSite = dispatchSrc.slice(callIdx, callIdx + 300);
+  const callSite = extractSourceRegion(dispatchSrc, "buildParallelResearchSlicesPrompt(", { fromIdx: callIdx });
   assert.ok(
     callSite.includes("subagentModel") || callSite.includes("resolveModelWithFallbacksForUnit"),
     "buildParallelResearchSlicesPrompt call should include model argument",
@@ -150,7 +151,7 @@ test("auto-dispatch: passes model to buildParallelResearchSlicesPrompt", () => {
 test("auto-dispatch: passes model to buildGateEvaluatePrompt", () => {
   const callIdx = dispatchSrc.indexOf("buildGateEvaluatePrompt(");
   assert.ok(callIdx !== -1, "buildGateEvaluatePrompt call should exist");
-  const callSite = dispatchSrc.slice(callIdx, callIdx + 300);
+  const callSite = extractSourceRegion(dispatchSrc, "buildGateEvaluatePrompt(", { fromIdx: callIdx });
   assert.ok(
     callSite.includes("subagentModel") || callSite.includes("resolveModelWithFallbacksForUnit"),
     "buildGateEvaluatePrompt call should include model argument",

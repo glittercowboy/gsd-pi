@@ -142,9 +142,9 @@ test("Rule 3: A-A-A-A triggers Rule 2 not Rule 3", () => {
 
 test("Rule 4: same ENOENT path in two entries triggers stuck", () => {
   const result = detectStuck([
-    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.gsd/agent/skills/debug-like-expert/SKILL.md'" },
+    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.agents/skills/debug-like-expert/SKILL.md'" },
     { key: "B" },
-    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.gsd/agent/skills/debug-like-expert/SKILL.md'" },
+    { key: "A", error: "ENOENT: no such file or directory, access '/home/user/.agents/skills/debug-like-expert/SKILL.md'" },
   ]);
   assert.notEqual(result, null);
   assert.equal(result!.stuck, true);

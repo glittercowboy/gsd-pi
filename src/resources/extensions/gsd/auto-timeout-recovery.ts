@@ -18,7 +18,7 @@ import {
 } from "./auto-recovery.js";
 import { existsSync } from "node:fs";
 
-import { resolveAgentEnd } from "./auto-loop.js";
+import { bumpAndResolveSynthetic } from "./auto/resolve.js";
 
 export interface RecoveryContext {
   basePath: string;
@@ -35,6 +35,13 @@ export async function recoverTimedOutUnit(
   reason: "idle" | "hard",
   rctx: RecoveryContext,
 ): Promise<"recovered" | "paused"> {
+  // Note on turn epoch: the bump is intentionally NOT unconditional at
+  // function entry. Two branches below (the "steering retry" paths) keep
+  // the same LLM turn alive and let it try again — they must NOT bump,
+  // otherwise the retry's legitimate writes get marked stale and drop.
+  // Each advance branch calls `bumpAndResolveSynthetic` to bump+resolve
+  // atomically. Search for that helper to find all supersede sites.
+
   const { basePath, verbose, currentUnitStartedAt, unitRecoveryCount } = rctx;
 
   const runtime = readUnitRuntimeRecord(basePath, unitType, unitId);
@@ -74,7 +81,7 @@ export async function recoverTimedOutUnit(
         "info",
       );
       unitRecoveryCount.delete(recoveryKey);
-      resolveAgentEnd({ messages: [], _synthetic: "timeout-recovery" } as any);
+      bumpAndResolveSynthetic(`timeout-recovery:${reason}:${unitType}/${unitId}`);
       return "recovered";
     }
 
@@ -145,7 +152,7 @@ export async function recoverTimedOutUnit(
         "warning",
       );
       unitRecoveryCount.delete(recoveryKey);
-      resolveAgentEnd({ messages: [], _synthetic: "timeout-recovery" } as any);
+      bumpAndResolveSynthetic(`timeout-recovery:${reason}:${unitType}/${unitId}`);
       return "recovered";
     }
 
@@ -179,7 +186,7 @@ export async function recoverTimedOutUnit(
       "info",
     );
     unitRecoveryCount.delete(recoveryKey);
-    resolveAgentEnd({ messages: [], _synthetic: "timeout-recovery" } as any);
+    bumpAndResolveSynthetic(`timeout-recovery:${reason}:${unitType}/${unitId}`);
     return "recovered";
   }
 
@@ -265,7 +272,7 @@ export async function recoverTimedOutUnit(
       "warning",
     );
     unitRecoveryCount.delete(recoveryKey);
-    resolveAgentEnd({ messages: [], _synthetic: "timeout-recovery" } as any);
+    bumpAndResolveSynthetic(`timeout-recovery:${reason}:${unitType}/${unitId}`);
     return "recovered";
   }
 

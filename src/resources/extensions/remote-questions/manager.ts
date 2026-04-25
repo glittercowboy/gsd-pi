@@ -15,33 +15,65 @@ import { sanitizeError } from "../shared/sanitize.js";
 const COMMAND_POLLING_INTERVAL_MS = 5000;
 
 /**
+ * Minimal adapter surface used by startCommandPolling. Just enough for
+ * the polling loop to invoke without pulling in the full
+ * TelegramAdapter in tests.
+ */
+export interface PollingAdapter {
+  pollAndHandleCommands: (basePath: string) => Promise<number>;
+}
+
+/**
+ * Optional dependency-injection seam for `startCommandPolling`. Production
+ * callers pass nothing; tests stub the config resolver, adapter
+ * constructor, and timer functions to exercise the real function
+ * without hitting the filesystem / env / real intervals. See #4806.
+ */
+export interface CommandPollingDeps {
+  resolveConfig?: () => ResolvedConfig | null;
+  createAdapter?: (config: ResolvedConfig, basePath: string) => PollingAdapter;
+  setIntervalFn?: typeof setInterval;
+  clearIntervalFn?: typeof clearInterval;
+}
+
+/**
  * Start background polling for incoming slash commands on the configured
  * remote channel. Only Telegram supports command polling — other channels
  * are no-ops that return an inert cleanup function immediately.
  *
  * @param basePath - Project root, forwarded to command handlers (e.g. /status).
  * @param intervalMs - Polling interval in milliseconds (default 5 s).
+ * @param deps - Test-only overrides. Omit in production.
  * @returns A cleanup function that stops the polling interval.
  */
 export function startCommandPolling(
   basePath: string,
   intervalMs = COMMAND_POLLING_INTERVAL_MS,
+  deps: CommandPollingDeps = {},
 ): () => void {
-  const config = resolveRemoteConfig();
+  const resolveConfig = deps.resolveConfig ?? resolveRemoteConfig;
+  const createAdapter =
+    deps.createAdapter ??
+    ((c: ResolvedConfig, b: string): PollingAdapter =>
+      new TelegramAdapter(c.token, c.channelId, b));
+  const setIntervalFn = deps.setIntervalFn ?? setInterval;
+  const clearIntervalFn = deps.clearIntervalFn ?? clearInterval;
+
+  const config = resolveConfig();
   if (!config || config.channel !== "telegram") {
     // Non-Telegram channels have no command polling support — return a no-op cleanup.
     return () => {};
   }
 
-  const adapter = new TelegramAdapter(config.token, config.channelId, basePath);
+  const adapter = createAdapter(config, basePath);
 
-  const timer = setInterval(() => {
+  const timer = setIntervalFn(() => {
     void adapter.pollAndHandleCommands(basePath).catch(() => {
       // Non-fatal: network hiccup or rate-limit — best-effort polling
     });
   }, intervalMs);
 
-  return () => clearInterval(timer);
+  return () => clearIntervalFn(timer);
 }
 
 interface ToolResult {

@@ -1,73 +1,109 @@
 /**
  * worktree-health-monorepo.test.ts — #2347
  *
- * The worktree health check in auto/phases.ts falsely rejects monorepos
- * where package.json (or other project markers) is in a parent directory.
- * This test verifies that the health check walks parent directories.
+ * The worktree health check previously rejected monorepos where the
+ * project markers (package.json, Cargo.toml, etc.) live in a parent
+ * directory rather than in the worktree's own checkout. The fix extracts
+ * the parent-walk into `hasProjectFileInAncestor` in detection.ts; these
+ * tests exercise that helper directly over a synthetic filesystem.
+ *
+ * Assertions cover:
+ *   - a parent directory with a project marker is detected
+ *   - the walk stops at a `.git` boundary so ancestors above the repo root
+ *     (e.g. $HOME) cannot cause false positives
+ *   - returns false when no ancestor has a marker
+ *   - works for nested worktree layouts (monorepo/worktree/...)
  */
 
-import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { createTestContext } from "./test-helpers.ts";
+import { tmpdir } from "node:os";
 
-const { assertTrue, report } = createTestContext();
+import { hasProjectFileInAncestor } from "../detection.ts";
 
-const srcPath = join(import.meta.dirname, "..", "auto", "phases.ts");
-const src = readFileSync(srcPath, "utf-8");
+function makeTempRoot(t: { after: (fn: () => void) => void }): string {
+  const dir = mkdtempSync(join(tmpdir(), "gsd-monorepo-health-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  return dir;
+}
 
-console.log("\n=== #2347: Worktree health check supports monorepos ===");
+test("#2347: parent directory containing package.json is detected", (t) => {
+  const root = makeTempRoot(t);
+  const worktree = join(root, "packages", "app");
+  mkdirSync(worktree, { recursive: true });
+  writeFileSync(join(root, "package.json"), "{}");
 
-// ── Test 1: The health check region exists ──────────────────────────────
+  assert.equal(
+    hasProjectFileInAncestor(worktree),
+    true,
+    "monorepo package.json in parent should be detected",
+  );
+});
 
-const healthCheckIdx = src.indexOf("Worktree health check");
-assertTrue(healthCheckIdx > 0, "auto/phases.ts has worktree health check section");
+test("#2347: parent with Cargo.toml is detected (not just JS ecosystems)", (t) => {
+  const root = makeTempRoot(t);
+  const worktree = join(root, "crates", "foo");
+  mkdirSync(worktree, { recursive: true });
+  writeFileSync(join(root, "Cargo.toml"), "[workspace]\n");
 
-const healthCheckRegion = src.slice(healthCheckIdx, healthCheckIdx + 2000);
+  assert.equal(hasProjectFileInAncestor(worktree), true);
+});
 
-// ── Test 2: The check walks parent directories for project markers ──────
+test("#2347: walk stops at .git boundary (no false positive from grandparent)", (t) => {
+  const root = makeTempRoot(t);
+  // Layout:
+  //   root/package.json       ← must NOT trigger (above .git)
+  //   root/repo/.git          ← repo boundary
+  //   root/repo/worktree/     ← start dir (no markers)
+  writeFileSync(join(root, "package.json"), "{}");
+  const repo = join(root, "repo");
+  mkdirSync(join(repo, ".git"), { recursive: true });
+  const worktree = join(repo, "worktree");
+  mkdirSync(worktree, { recursive: true });
 
-// The fix should check parent directories for project files, not just s.basePath.
-// Look for patterns like: walking up directories, dirname, parent, or a helper
-// function that checks ancestors.
-const checksParentDirs =
-  healthCheckRegion.includes("dirname") ||
-  healthCheckRegion.includes("parent") ||
-  healthCheckRegion.includes("ancestor") ||
-  healthCheckRegion.includes("walk") ||
-  // Or a helper function that's called with the base path
-  /hasProjectFileInAncestor|findProjectRoot|checkParent/i.test(healthCheckRegion);
+  assert.equal(
+    hasProjectFileInAncestor(worktree),
+    false,
+    "grandparent package.json above the .git boundary must be ignored",
+  );
+});
 
-assertTrue(
-  checksParentDirs,
-  "Health check should walk parent directories for project markers (monorepo support) (#2347)",
-);
+test("#2347: returns false when no ancestor has a marker", (t) => {
+  const root = makeTempRoot(t);
+  const worktree = join(root, "empty", "nested", "deep");
+  mkdirSync(worktree, { recursive: true });
 
-// ── Test 3: The parent walk stops at a .git boundary ──────────────────
+  assert.equal(hasProjectFileInAncestor(worktree), false);
+});
 
-// The parent directory walk must not escape the git repository root.
-// Without this guard, ancestor directories like ~ or /usr/local that
-// happen to contain package.json would cause false positive health checks.
-const hasGitBoundary = healthCheckRegion.includes('.git') &&
-  (healthCheckRegion.includes('break') || healthCheckRegion.includes('stop'));
+test("#2347: detects marker in immediate parent of the worktree", (t) => {
+  const root = makeTempRoot(t);
+  const parent = join(root, "monorepo");
+  const worktree = join(parent, "svc");
+  mkdirSync(worktree, { recursive: true });
+  writeFileSync(join(parent, "go.mod"), "module x\n");
 
-assertTrue(
-  hasGitBoundary,
-  "Parent directory walk must stop at .git repository boundary to prevent false positives",
-);
+  assert.equal(hasProjectFileInAncestor(worktree), true);
+});
 
-// ── Test 4: The greenfield warning should only trigger when no parent has markers ─
+test("#2347: existsFn injection allows deterministic testing without real FS", () => {
+  // Simulate a layout: /a/b/c (start) → /a/b has pyproject.toml; nothing has .git.
+  const existsFn = (p: string) =>
+    p === "/a/b/pyproject.toml";
 
-// The original code was:
-//   const hasProjectFile = PROJECT_FILES.some((f) => deps.existsSync(join(s.basePath, f)));
-// The fix should check parents too, so the greenfield warning only fires
-// when NO ancestor directory has project markers either.
-const hasParentCheck = healthCheckRegion.includes("parent") ||
-  healthCheckRegion.includes("dirname") ||
-  /ancestor|walk.*up/i.test(healthCheckRegion);
+  assert.equal(hasProjectFileInAncestor("/a/b/c", existsFn), true);
+});
 
-assertTrue(
-  hasParentCheck,
-  "Greenfield check should consider parent directories before warning (#2347)",
-);
+test("#2347: existsFn injection — .git stops the walk before a marker ancestor", () => {
+  // /a has package.json, but /a/b has .git — walk from /a/b/c must stop at /a/b.
+  const existsFn = (p: string) =>
+    p === "/a/package.json" || p === "/a/b/.git";
 
-report();
+  assert.equal(
+    hasProjectFileInAncestor("/a/b/c", existsFn),
+    false,
+    "walk must stop at the .git boundary before reaching /a/package.json",
+  );
+});

@@ -180,7 +180,7 @@ function openRawDb(path: string): unknown {
   return new Database(path);
 }
 
-const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 22;
 
 function indexExists(db: DbAdapter, name: string): boolean {
   return !!db.prepare(

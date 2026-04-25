@@ -9,7 +9,11 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import type { AutoSession } from "./session.js";
 import { NEW_SESSION_TIMEOUT_MS } from "./session.js";
 import type { UnitResult } from "./types.js";
-import { _setCurrentResolve, _setSessionSwitchInFlight } from "./resolve.js";
+import { _clearCurrentResolve, _setCurrentResolve, _setSessionSwitchInFlight } from "./resolve.js";
+import {
+  getCurrentTurnGeneration,
+  runWithTurnGeneration,
+} from "./turn-epoch.js";
 import { debugLog } from "../debug-logger.js";
 import { logWarning, logError } from "../workflow-logger.js";
 import { resolveAutoSupervisorConfig } from "../preferences.js";
@@ -144,6 +148,7 @@ export async function runUnit(
       }
 
       if (!ready) {
+        _clearCurrentResolve();
         return {
           status: "cancelled",
           errorContext: {
@@ -155,6 +160,13 @@ export async function runUnit(
       }
     }
   }
+
+  // ── Capture turn generation for stale-write detection ──
+  // Any write site reached via the sendMessage → tool-call → await chain
+  // below sees this generation via AsyncLocalStorage. If a timeout recovery
+  // or cancellation bumps the generation while this turn is in flight, those
+  // writes see themselves as stale and self-drop.
+  const capturedTurnGen = getCurrentTurnGeneration();
 
   // ── Send the prompt ──
   debugLog("runUnit", { phase: "send-message", unitType, unitId });
@@ -179,7 +191,9 @@ export async function runUnit(
       resolve({ status: "cancelled", errorContext: { message: "Unit hard timeout — supervision may have failed", category: "timeout", isTransient: true } });
     }, UNIT_HARD_TIMEOUT_MS);
   });
-  const result = await Promise.race([unitPromise, timeoutResult]);
+  const result = await runWithTurnGeneration(capturedTurnGen, () =>
+    Promise.race([unitPromise, timeoutResult]),
+  );
   if (unitTimeoutHandle) clearTimeout(unitTimeoutHandle);
   debugLog("runUnit", {
     phase: "agent-end-received",

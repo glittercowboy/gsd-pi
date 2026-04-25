@@ -10,7 +10,11 @@ Your working directory is `{{workingDirectory}}`. All file reads, writes, and sh
 
 All slices are done. You are closing out the milestone — verifying that the assembled work actually delivers the promised outcome, writing the milestone summary, and updating project state. The milestone summary is the final record. After you finish, the system merges the worktree back to the integration branch. If there are queued milestones, the next one starts its own research → plan → execute cycle from a clean slate — the milestone summary is how it learns what was already built.
 
-All relevant context has been preloaded below — the roadmap, all slice summaries, requirements, decisions, and project context are inlined. Start working immediately without re-reading these files.
+Preloaded context below — the roadmap, compact slice-summary excerpts, requirements, decisions, and project context. **Slice summaries are excerpts, not full files.** They include frontmatter fields, section heads (deviations, known limitations, follow-ups), and short narrative only. When drafting LEARNINGS, the Decision Re-evaluation table, or cross-slice narrative, Read the full slice SUMMARY.md files listed under "On-demand Slice Summaries" — do that selectively as needed, not preemptively.
+
+Start with what the excerpts give you. Read full files when the section heads signal richer context you need.
+
+**On-demand Read ordering:** Complete all slice SUMMARY Reads you need for cross-slice synthesis, the Decision Re-evaluation table, and LEARNINGS **before** calling `gsd_complete_milestone` (step 10). Once that tool runs, the milestone is marked complete in the DB — running out of tool budget between step 10 and the LEARNINGS write (step 12) leaves the milestone committed without its LEARNINGS artifact.
 
 {{inlinedContext}}
 

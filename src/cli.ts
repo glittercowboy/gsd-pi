@@ -23,7 +23,9 @@ import { checkForUpdates } from './update-check.js'
 import { printHelp, printSubcommandHelp } from './help-text.js'
 import { applySecurityOverrides } from './security-overrides.js'
 import { validateConfiguredModel } from './startup-model-validation.js'
+import { migrateAnthropicDefaultToClaudeCode } from './provider-migrations.js'
 import {
+  buildHeadlessAutoArgs,
   parseCliArgs,
   runWebCliBranch,
   migrateLegacyFlatSessions,
@@ -95,6 +97,18 @@ function printExtensionErrors(errors: ReadonlyArray<{ error: string }>): void {
     const isConflict = err.error.includes('supersedes') || err.error.includes('conflicts with')
     const prefix = isConflict ? 'Extension conflict' : 'Extension load error'
     process.stderr.write(`[gsd] ${prefix}: ${err.error}\n`)
+  }
+}
+
+/**
+ * Print extension load warnings (non-fatal, e.g. missing declared deps from
+ * the topological sort). Complements printExtensionErrors — fatal errors go
+ * there, advisory warnings go here.
+ */
+function printExtensionWarnings(warnings: ReadonlyArray<{ message: string }> | undefined): void {
+  if (!warnings) return
+  for (const w of warnings) {
+    process.stderr.write(`[gsd] Extension warning: ${w.message}\n`)
   }
 }
 
@@ -397,11 +411,19 @@ async function runHeadlessFromAuto(headlessArgs: string[]): Promise<never> {
   process.exit(0)
 }
 
+function flushPendingProviderRegistrations(resourceLoader: DefaultResourceLoader, modelRegistry: ModelRegistry): void {
+  const { runtime } = resourceLoader.getExtensions()
+  for (const { name, config } of runtime.pendingProviderRegistrations) {
+    modelRegistry.registerProvider(name, config)
+  }
+  runtime.pendingProviderRegistrations = []
+}
+
 // `gsd auto [args...]` — shorthand for `gsd headless auto [args...]` (#2732)
 // Without this, `gsd auto` falls through to the interactive TUI which hangs
 // when stdin/stdout are piped (non-TTY environments).
 if (cliFlags.messages[0] === 'auto') {
-  await runHeadlessFromAuto(cliFlags.messages)
+  await runHeadlessFromAuto(buildHeadlessAutoArgs(cliFlags))
 }
 
 // Pi's tool bootstrap can mis-detect already-installed fd/rg on some systems
@@ -551,6 +573,13 @@ if (isPrintMode) {
   })
   await resourceLoader.reload()
   markStartup('resourceLoader.reload')
+  flushPendingProviderRegistrations(resourceLoader, modelRegistry)
+  migrateAnthropicDefaultToClaudeCode({
+    authStorage,
+    isClaudeCodeReady: modelRegistry.isProviderRequestReady('claude-code'),
+    settingsManager,
+    modelRegistry,
+  })
 
   const { session, extensionsResult, modelFallbackMessage } = await createAgentSession({
     authStorage,
@@ -568,6 +597,7 @@ if (isPrintMode) {
   validateConfiguredModel(modelRegistry, settingsManager)
   await reapplyValidatedModelOnFallback(session, modelRegistry, settingsManager, modelFallbackMessage)
   printExtensionErrors(extensionsResult.errors)
+  printExtensionWarnings(extensionsResult.warnings)
 
   // Apply --model override if specified
   if (cliFlags.model) {
@@ -706,6 +736,13 @@ const resourceLoadPromise = resourceLoader.reload()
 // Then await the resource promise before creating the agent session.
 await resourceLoadPromise
 markStartup('resourceLoader.reload')
+flushPendingProviderRegistrations(resourceLoader, modelRegistry)
+migrateAnthropicDefaultToClaudeCode({
+  authStorage,
+  isClaudeCodeReady: modelRegistry.isProviderRequestReady('claude-code'),
+  settingsManager,
+  modelRegistry,
+})
 
 const { session, extensionsResult, modelFallbackMessage: interactiveFallbackMsg } = await createAgentSession({
   authStorage,
@@ -723,6 +760,7 @@ markStartup('createAgentSession')
 validateConfiguredModel(modelRegistry, settingsManager)
 await reapplyValidatedModelOnFallback(session, modelRegistry, settingsManager, interactiveFallbackMsg)
 printExtensionErrors(extensionsResult.errors)
+printExtensionWarnings(extensionsResult.warnings)
 
 // Restore scoped models from settings on startup.
 // The upstream InteractiveMode reads enabledModels from settings when /scoped-models is opened,

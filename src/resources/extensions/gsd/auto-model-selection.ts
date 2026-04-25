@@ -19,6 +19,38 @@ import { logWarning } from "./workflow-logger.js";
 import { resolveUokFlags } from "./uok/flags.js";
 import { applyModelPolicyFilter } from "./uok/model-policy.js";
 import { isModelBlocked } from "./blocked-models.js";
+import { getRequiredWorkflowToolsForAutoUnit } from "./workflow-mcp.js";
+
+/**
+ * Thrown when the model-policy gate rejects every candidate model for a unit
+ * dispatch (#4959 / #4681 / #4850).  The auto-loop catches this specifically
+ * to classify the unit as `blocked` rather than counting it as a retryable
+ * iteration error — pre-send policy denial is a configuration problem, not a
+ * transient runtime failure, so retrying just burns the consecutive-error
+ * budget toward a hard stop.
+ */
+export class ModelPolicyDispatchBlockedError extends Error {
+  readonly unitType: string;
+  readonly unitId: string;
+  readonly reasons: ReadonlyArray<{ provider: string; modelId: string; reason: string }>;
+  constructor(
+    unitType: string,
+    unitId: string,
+    reasons: ReadonlyArray<{ provider: string; modelId: string; reason: string }>,
+  ) {
+    const summary = reasons.length === 0
+      ? "no candidate models"
+      : reasons
+          .slice(0, 4)
+          .map((r) => `${r.provider}/${r.modelId} (${r.reason})`)
+          .join("; ");
+    super(`Model policy denied dispatch for ${unitType}/${unitId} before prompt send. Rejected: ${summary}`);
+    this.name = "ModelPolicyDispatchBlockedError";
+    this.unitType = unitType;
+    this.unitId = unitId;
+    this.reasons = reasons;
+  }
+}
 
 export interface ModelSelectionResult {
   /** Routing metadata for metrics recording */
@@ -31,6 +63,51 @@ export interface PreferredModelConfig {
   primary: string;
   fallbacks: string[];
   source: "explicit" | "synthesized";
+}
+
+// Baseline active-tool set per-`pi` instance, captured the first time
+// `selectAndApplyModel` runs against that instance during an auto session
+// and re-applied before each subsequent dispatch.  WeakMap so that test
+// fakes / disposed sessions are garbage-collected normally.  See
+// #4959 / #4681 cross-unit poisoning notes at the call site below.
+//
+// LIFECYCLE: the baseline is tied to a single auto session, NOT to the
+// lifetime of the `pi` instance (which can outlive many auto runs and have
+// the user mutate tools between them).  `clearToolBaseline` MUST be called
+// at auto start AND auto stop so that a second `/gsd auto` run on the same
+// `pi` does not silently restore a stale snapshot from the prior run and
+// undo any tool changes the user made between sessions.
+const TOOL_BASELINE = new WeakMap<object, string[]>();
+
+/**
+ * Drop the captured tool baseline for `pi` so the next `selectAndApplyModel`
+ * call re-captures from the live active set.  Wired into `startAuto` and
+ * `stopAuto` in `auto.ts` to bound the baseline to a single auto session.
+ *
+ * Safe to call when no baseline is recorded (no-op).
+ */
+export function clearToolBaseline(pi: ExtensionAPI | object): void {
+  TOOL_BASELINE.delete(pi as unknown as object);
+}
+
+function restoreToolBaseline(pi: ExtensionAPI): void {
+  const key = pi as unknown as object;
+  const baseline = TOOL_BASELINE.get(key);
+  if (baseline === undefined) {
+    // First call: capture the canonical pre-dispatch tool set.  At auto-mode
+    // start the active set has not yet been narrowed for any provider.
+    // Guarded against test fakes that omit getActiveTools — record an empty
+    // baseline so subsequent calls don't keep re-probing.
+    const initial = typeof pi.getActiveTools === "function" ? pi.getActiveTools() : [];
+    TOOL_BASELINE.set(key, [...initial]);
+    return;
+  }
+  // Restore baseline before the next unit reads getActiveTools / applies
+  // post-selection adjustToolSet.  Older fakes that omit setActiveTools are
+  // tolerated — the test asserts call order on real fakes.
+  if (typeof pi.setActiveTools === "function") {
+    pi.setActiveTools([...baseline]);
+  }
 }
 
 function reapplyThinkingLevel(
@@ -129,6 +206,21 @@ export async function selectAndApplyModel(
   let routing: { tier: string; modelDowngraded: boolean } | null = null;
   let appliedModel: Model<Api> | null = null;
 
+  // ── Restore active-tool baseline before policy evaluation (#4959, #4681, #4850) ──
+  // Per-unit narrowing at the bottom of this function (line ~417) calls
+  // `pi.setActiveTools(finalToolNames)` and monotonically narrows the active
+  // set across units.  Without restoration, a previously-dispatched unit on a
+  // narrow-API provider (e.g. openai-completions) leaves the active set
+  // missing tools that the next unit's selected model fully supports, but
+  // `pi.getActiveTools()` snapshot-as-hard-gate (the old behaviour) blocked
+  // dispatch with "tool policy denied" anyway.
+  //
+  // The baseline is captured once per `pi` instance via a WeakMap and
+  // re-applied here so each unit starts from a clean slate.  Soft adaptation
+  // (adjustToolSet at the bottom of this function) still trims for the
+  // selected model.
+  restoreToolBaseline(pi);
+
   if (modelConfig) {
     const availableModels = ctx.modelRegistry.getAvailable();
     const modelPolicyTraceId = `model:${ctx.sessionManager.getSessionId()}:${Date.now()}`;
@@ -160,7 +252,16 @@ export async function selectAndApplyModel(
       ? extractTaskMetadata(unitId, basePath)
       : undefined;
 
+    let policyDenyReasons: Array<{ provider: string; modelId: string; reason: string }> = [];
     if (uokFlags.modelPolicy) {
+      // Use the workflow-spec required-tool subset for the unit type rather
+      // than the live `pi.getActiveTools()` snapshot (#4959).  The active set
+      // is poisoned by per-unit narrowing for narrow-API providers — using it
+      // as a hard gate promotes soft adaptation (adjustToolSet at line ~417)
+      // into a layering violation that throws before dispatch.  The smaller
+      // workflow-required subset reflects what the unit actually needs; soft
+      // adaptation post-selection still trims provider-incompatible tools.
+      const requiredTools = getRequiredWorkflowToolsForAutoUnit(unitType);
       const policy = applyModelPolicyFilter(
         availableModels,
         {
@@ -171,15 +272,18 @@ export async function selectAndApplyModel(
           taskMetadata: taskMetadataForPolicy,
           currentProvider: ctx.model?.provider,
           allowCrossProvider: routingConfig.cross_provider !== false,
-          requiredTools: pi.getActiveTools(),
+          requiredTools,
         },
       );
       routingEligibleModels = policy.eligible;
       policyAllowedModelKeys = new Set(
         policy.eligible.map((m) => `${m.provider.toLowerCase()}/${m.id.toLowerCase()}`),
       );
+      policyDenyReasons = policy.decisions
+        .filter((d) => !d.allowed)
+        .map((d) => ({ provider: d.provider, modelId: d.modelId, reason: d.reason }));
       if (routingEligibleModels.length === 0) {
-        throw new Error(`Model policy denied all candidate models for ${unitType}/${unitId}`);
+        throw new ModelPolicyDispatchBlockedError(unitType, unitId, policyDenyReasons);
       }
     }
 
@@ -443,7 +547,7 @@ export async function selectAndApplyModel(
     }
 
     if (uokFlags.modelPolicy && policyAllowedModelKeys && !attemptedPolicyEligible) {
-      throw new Error(`Model policy denied dispatch for ${unitType}/${unitId} before prompt send`);
+      throw new ModelPolicyDispatchBlockedError(unitType, unitId, policyDenyReasons);
     }
   } else if (autoModeStartModel) {
     // No model preference for this unit type — re-apply the model captured

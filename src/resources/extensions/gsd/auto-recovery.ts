@@ -17,7 +17,6 @@ import { isDbAvailable, getTask, getSlice, getSliceTasks, getPendingGates, updat
 import { isValidationTerminal } from "./state.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning, logError } from "./workflow-logger.js";
-import { splitFrontmatter, parseFrontmatterMap } from "./files.js";
 import { isClosedStatus } from "./status-guards.js";
 import {
   nativeConflictFiles,
@@ -52,35 +51,14 @@ import {
   resolveExpectedArtifactPath,
   diagnoseExpectedArtifact,
 } from "./auto-artifact-paths.js";
+import { classifyMilestoneSummaryContent } from "./milestone-summary-classifier.js";
 
 // Re-export so existing consumers of auto-recovery.ts keep working.
 export { resolveExpectedArtifactPath, diagnoseExpectedArtifact };
-
-export type MilestoneSummaryOutcome = "success" | "failure" | "unknown";
-
-/**
- * Classify milestone summary content for recovery/dispatch decisions.
- * - success: canonical completion summary (frontmatter status is closed)
- * - failure: explicit blocker/failure markers
- * - unknown: ambiguous content
- */
-export function classifyMilestoneSummaryContent(content: string): MilestoneSummaryOutcome {
-  const [fmLines] = splitFrontmatter(content);
-  const fm = fmLines ? parseFrontmatterMap(fmLines) : null;
-  const rawStatus = typeof fm?.status === "string" ? fm.status.trim().toLowerCase() : "";
-  if (rawStatus) {
-    if (isClosedStatus(rawStatus)) return "success";
-    if (["active", "pending", "blocked", "failed", "incomplete"].includes(rawStatus)) return "failure";
-  }
-
-  const failureSignal =
-    /(?:^|\n)\s*#\s*BLOCKER\b/i.test(content)
-    || /auto-mode recovery failed/i.test(content)
-    || /verification\s+failed/i.test(content)
-    || /\bnot complete\b/i.test(content);
-  if (failureSignal) return "failure";
-  return "unknown";
-}
+export {
+  classifyMilestoneSummaryContent,
+  type MilestoneSummaryOutcome,
+} from "./milestone-summary-classifier.js";
 
 // ─── Artifact Resolution & Verification ───────────────────────────────────────
 

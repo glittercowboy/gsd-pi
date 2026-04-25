@@ -2,8 +2,8 @@
  * Service Tier — gating, status formatting, icon resolution, and
  * the /gsd fast command handler.
  *
- * Service tiers (priority/flex) are an OpenAI feature that only applies
- * to gpt-5.4 variants. This module centralizes the model-gating logic
+ * Service tiers (priority/flex) are an OpenAI feature that currently only
+ * applies to gpt-5.4 variants in GSD. This module centralizes the model-gating logic
  * so that icons, preferences, and the before_provider_request hook all
  * use a single source of truth.
  */
@@ -34,6 +34,9 @@ const SERVICE_TIER_SCOPE_NOTE = "Only affects gpt-5.4 models, regardless of prov
  * The authoritative source of truth is `model.capabilities.supportsServiceTier`
  * (set via CAPABILITY_PATCHES in packages/pi-ai/src/models.ts). When callers
  * have access to the full Model object, prefer reading capabilities directly.
+ *
+ * GPT-5.5 is intentionally excluded until we verify its provider payload
+ * contract instead of assuming `service_tier` support.
  *
  * See: https://github.com/gsd-build/gsd-2/issues/2546
  */

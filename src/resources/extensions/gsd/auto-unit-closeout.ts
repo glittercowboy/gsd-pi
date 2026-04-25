@@ -45,9 +45,20 @@ export async function closeoutUnit(
       const { buildMemoryLLMCall, extractMemoriesFromUnit } = await import('./memory-extractor.js');
       const llmCallFn = buildMemoryLLMCall(ctx);
       if (llmCallFn) {
-        extractMemoriesFromUnit(activityFile, unitType, unitId, llmCallFn).catch((err) => {
-          logWarning("engine", `memory extraction failed for ${unitType}/${unitId}: ${(err as Error).message}`);
-        });
+        // Awaited: a fire-and-forget here lets memory-extractor writes land in
+        // .gsd/ after closeoutUnit returns but before the milestone merge
+        // runs, which made the working tree appear dirty to `git merge
+        // --squash` (root cause class of #4704). Completion latency is now
+        // bounded by the extractor's LLM call, which is the acceptable price
+        // for not racing the merge boundary.
+        try {
+          await extractMemoriesFromUnit(activityFile, unitType, unitId, llmCallFn);
+        } catch (err) {
+          logWarning(
+            "engine",
+            `memory extraction failed for ${unitType}/${unitId}: ${(err as Error).message}`,
+          );
+        }
       }
     } catch (err) { /* non-fatal */
       logWarning("engine", `operation failed: ${err instanceof Error ? err.message : String(err)}`);

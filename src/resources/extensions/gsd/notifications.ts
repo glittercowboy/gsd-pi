@@ -4,7 +4,6 @@
 import { execFileSync } from "node:child_process";
 import type { NotificationPreferences } from "./types.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
-import { CmuxClient, emitOsc777Notification, resolveCmuxConfig } from "../cmux/index.js";
 import { sendRemoteNotification } from "../remote-questions/notify.js";
 
 export type NotifyLevel = "info" | "success" | "warning" | "error";
@@ -39,20 +38,33 @@ export function sendDesktopNotification(
 
   if (!shouldSendDesktopNotification(kind, loaded?.notifications)) return;
 
-  const cmux = resolveCmuxConfig(loaded);
-  if (cmux.notifications) {
-    const delivered = CmuxClient.fromPreferences(loaded).notify(title, message);
-    if (delivered) return;
-    emitOsc777Notification(title, message);
-  }
+  // cmux delivery and desktop delivery are independent — if cmux import or
+  // delivery fails, we must still attempt the native desktop notification.
+  const runCmux = async () => {
+    try {
+      const { CmuxClient, emitOsc777Notification, resolveCmuxConfig } = await import("../cmux/index.js");
+      const cmux = resolveCmuxConfig(loaded);
+      if (cmux.notifications) {
+        const delivered = CmuxClient.fromPreferences(loaded).notify(title, message);
+        if (delivered) return true;
+        emitOsc777Notification(title, message);
+      }
+    } catch {
+      // cmux unavailable — fall through to desktop notification
+    }
+    return false;
+  };
 
-  try {
-    const command = buildDesktopNotificationCommand(process.platform, title, message, level);
-    if (!command) return;
-    execFileSync(command.file, command.args, { timeout: 3000, stdio: "ignore" });
-  } catch {
-    // Non-fatal — desktop notifications are best-effort
-  }
+  void runCmux().then((deliveredByCmux) => {
+    if (deliveredByCmux) return;
+    try {
+      const command = buildDesktopNotificationCommand(process.platform, title, message, level);
+      if (!command) return;
+      execFileSync(command.file, command.args, { timeout: 3000, stdio: "ignore" });
+    } catch {
+      // Non-fatal — desktop notifications are best-effort
+    }
+  }).catch(() => {});
 }
 
 export function shouldSendDesktopNotification(

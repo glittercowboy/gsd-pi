@@ -109,6 +109,7 @@ export const MODEL_CAPABILITY_TIER: Record<string, ComplexityTier> = {
   "gpt-5.2-codex": "heavy",
   "gpt-5.3-codex": "heavy",
   "gpt-5.4": "heavy",
+  "gpt-5.5": "heavy",
   "o1": "heavy",
   "o3": "heavy",
   "o4-mini": "heavy",
@@ -144,6 +145,7 @@ const MODEL_COST_PER_1K_INPUT: Record<string, number> = {
   "gpt-5.3-codex": 0.005,
   "gpt-5.3-codex-spark": 0.0003,
   "gpt-5.4": 0.005,
+  "gpt-5.5": 0.005,
   "o4-mini": 0.005,
   "o4-mini-deep-research": 0.005,
   "gemini-2.0-flash": 0.0001,
@@ -187,6 +189,10 @@ export const MODEL_CAPABILITY_PROFILES: Record<string, ModelCapabilities> = {
   "gpt-5.3-codex":                { coding: 94, debugging: 91, research: 74, reasoning: 89, speed: 50, longContext: 80, instruction: 89 },
   "gpt-5.3-codex-spark":          { coding: 68, debugging: 58, research: 42, reasoning: 52, speed: 90, longContext: 50, instruction: 74 },
   "gpt-5.4":                      { coding: 95, debugging: 92, research: 88, reasoning: 94, speed: 42, longContext: 88, instruction: 92 },
+  // GPT-5.5 scores are relative to the existing gpt-5.4 profile and backed by
+  // OpenAI's 2026-04-23 published eval deltas across coding, tool use, and long context.
+  // Source: https://openai.com/index/introducing-gpt-5-5/
+  "gpt-5.5":                      { coding: 96, debugging: 93, research: 89, reasoning: 95, speed: 42, longContext: 90, instruction: 93 },
 
   // ── OpenAI o-series (reasoning-first) ──────────────────────────────────────
   "o1":                           { coding: 78, debugging: 82, research: 78, reasoning: 90, speed: 20, longContext: 65, instruction: 82 },

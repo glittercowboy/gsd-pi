@@ -1,93 +1,91 @@
 /**
  * Regression tests for the optional sharp dependency in capture.ts.
  *
- * Verifies two things:
- *   1. Static: the lazy-load pattern is structurally correct in the source.
- *   2. Behavioral: constrainScreenshot returns the raw buffer unchanged when
- *      sharp is unavailable, rather than throwing.
+ * Behaviour:
+ *   - constrainScreenshot must fall back to returning the raw buffer
+ *     unchanged when sharp is unavailable, rather than throwing.
+ *   - When sharp IS available, oversized screenshots get resized.
+ *
+ * No source-grep. The test drives the real constrainScreenshot function
+ * after seeding the module-private `_sharp` cache via the test-only
+ * `__setSharpForTesting` export.
  */
 
-const { describe, it } = require("node:test");
+const { describe, it, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
-const { readFileSync } = require("node:fs");
-const { join } = require("node:path");
+const jiti = require("jiti")(__filename, { interopDefault: true, debug: false });
 
-// ---------------------------------------------------------------------------
-// 1. Static analysis — verify the lazy-load pattern is present in source
-// ---------------------------------------------------------------------------
+const { constrainScreenshot, __setSharpForTesting } = jiti("../capture.ts");
 
-describe("capture.ts — sharp optional lazy-load (static)", () => {
-	const source = readFileSync(
-		join(process.cwd(), "src/resources/extensions/browser-tools/capture.ts"),
-		"utf-8",
-	);
-
-	it("does not have a top-level static sharp import", () => {
-		assert.ok(
-			!source.includes('import sharp from "sharp"'),
-			'capture.ts must not contain a top-level `import sharp from "sharp"` — sharp must be loaded lazily',
-		);
+describe("constrainScreenshot — sharp unavailable (null)", () => {
+	afterEach(() => {
+		// Clear the test override so later tests don't inherit a null sharp.
+		__setSharpForTesting(undefined);
 	});
 
-	it("defines a getSharp lazy-loader function", () => {
-		assert.ok(
-			source.includes("async function getSharp()"),
-			"capture.ts must define an async getSharp() lazy-loader",
-		);
-	});
-
-	it("guards constrainScreenshot with a null-sharp early return", () => {
-		assert.ok(
-			source.includes("if (!sharp) return buffer"),
-			"constrainScreenshot must return the raw buffer early when sharp is null",
-		);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// 2. Behavioral — constrainScreenshot passes through buffer when sharp is null
-// ---------------------------------------------------------------------------
-
-describe("capture.ts — constrainScreenshot with sharp unavailable", () => {
 	it("returns the raw buffer unchanged when sharp is null", async () => {
-		// Simulate what getSharp() returns on platforms without sharp by
-		// directly calling constrainScreenshot through a module whose _sharp
-		// cache has been pre-seeded to null via the module-level variable reset.
-		//
-		// Because jiti caches modules across the test suite we use a fresh
-		// require-cache trick: load capture.ts source manually and evaluate the
-		// constrainScreenshot function with a stub getSharp that always returns null.
-		const captureSource = readFileSync(
-			join(process.cwd(), "src/resources/extensions/browser-tools/capture.ts"),
-			"utf-8",
-		);
+		__setSharpForTesting(null);
 
-		// Verify the guard line is reachable (structural check already done above).
-		// For the behavioral test we use the actual constrainScreenshot imported
-		// via jiti — but we force getSharp() to return null by calling the function
-		// with a very small buffer where sharp IS available. Separately we test the
-		// null path by crafting a minimal wrapper.
-		//
-		// The simplest verifiable behaviour: if the guard `if (!sharp) return buffer`
-		// is present, passing a Buffer through a version of constrainScreenshot where
-		// _sharp=null must return that exact buffer. We verify this by extracting and
-		// running a minimal inline version of the guard logic.
+		const rawBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); // PNG magic bytes
+		const result = await constrainScreenshot(null, rawBuffer, "image/png", 80);
 
-		const rawBuffer = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // fake PNG header
-
-		// Inline the guard as it appears in capture.ts so the test is coupled to
-		// the actual contract, not an arbitrary helper.
-		async function constrainScreenshotWithNullSharp(buffer) {
-			const sharp = null; // simulates getSharp() returning null
-			if (!sharp) return buffer;
-			// (remainder of constrainScreenshot would run here with a real sharp)
-		}
-
-		const result = await constrainScreenshotWithNullSharp(rawBuffer);
 		assert.strictEqual(
 			result,
 			rawBuffer,
 			"constrainScreenshot must return the exact same buffer instance when sharp is null",
 		);
+	});
+
+	it("returns the raw buffer unchanged for JPEG input when sharp is null", async () => {
+		__setSharpForTesting(null);
+
+		const rawBuffer = Buffer.from([0xff, 0xd8, 0xff, 0xe0]); // JPEG magic bytes
+		const result = await constrainScreenshot(null, rawBuffer, "image/jpeg", 80);
+
+		assert.strictEqual(result, rawBuffer);
+	});
+});
+
+describe("constrainScreenshot — sharp available", () => {
+	afterEach(() => {
+		__setSharpForTesting(undefined);
+	});
+
+	it("passes through a small image unchanged (below cap)", async () => {
+		const sharp = require("sharp");
+		const small = await sharp({
+			create: {
+				width: 400,
+				height: 300,
+				channels: 3,
+				background: { r: 128, g: 128, b: 128 },
+			},
+		})
+			.jpeg({ quality: 80 })
+			.toBuffer();
+
+		const result = await constrainScreenshot(null, small, "image/jpeg", 80);
+		const meta = await sharp(result).metadata();
+		assert.equal(meta.width, 400, "small images must not be resized");
+		assert.equal(meta.height, 300);
+	});
+
+	it("resizes an oversized image to within 1568px", async () => {
+		const sharp = require("sharp");
+		const big = await sharp({
+			create: {
+				width: 3000,
+				height: 2000,
+				channels: 3,
+				background: { r: 128, g: 128, b: 128 },
+			},
+		})
+			.jpeg({ quality: 80 })
+			.toBuffer();
+
+		const result = await constrainScreenshot(null, big, "image/jpeg", 80);
+		const meta = await sharp(result).metadata();
+		assert.ok(meta.width <= 1568, `width ${meta.width} must be <= 1568`);
+		assert.ok(meta.height <= 1568, `height ${meta.height} must be <= 1568`);
 	});
 });

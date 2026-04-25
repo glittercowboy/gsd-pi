@@ -7,6 +7,7 @@ import {
   maybeHandleEmptyIntentTurn,
   resetEmptyTurnCounter,
 } from "../guided-flow.js";
+import { clearPathCache } from "../paths.js";
 import { getAutoDashboardData, getAutoModeStartModel, isAutoActive, pauseAuto, setCurrentDispatchedModelId } from "../auto.js";
 import { getNextFallbackModel, resolveModelWithFallbacksForUnit } from "../preferences.js";
 import { pauseAutoForProviderError } from "../provider-error-pause.js";
@@ -25,7 +26,15 @@ import { blockModel, isModelBlocked } from "../blocked-models.js";
 
 const retryState = createRetryState();
 const MAX_NETWORK_RETRIES = 2;
-const MAX_TRANSIENT_AUTO_RESUMES = 8;
+/**
+ * Cap on auto-resume attempts for sustained transient-provider errors.
+ *
+ * Exported so tests assert against the shared constant instead of
+ * regex-scraping the source literal (see #4837). Raising this value to
+ * handle longer provider overloads should update the single constant; the
+ * test in provider-errors.test.ts consumes it directly.
+ */
+export const MAX_TRANSIENT_AUTO_RESUMES = 8;
 
 /**
  * Reset the module-level retry state so a resumed auto-session starts fresh.
@@ -76,6 +85,16 @@ export async function handleAgentEnd(
   event: { messages: any[] },
   ctx: ExtensionContext,
 ): Promise<void> {
+  // #4648 — Invalidate the directory-listing cache before any artifact-existence
+  // checks. The LLM may have written milestone files (CONTEXT.md, ROADMAP.md,
+  // PROJECT.md, REQUIREMENTS.md) via tool calls during the turn that just
+  // ended. `paths.ts` caches readdir() results without a TTL, so without this
+  // flush, `resolveMilestoneFile` returns the pre-write listing and the guards
+  // below (`checkAutoStartAfterDiscuss` and `maybeHandleReadyPhraseWithoutFiles`)
+  // falsely report files as missing — producing a spurious "ready signal
+  // rejected" loop even though the files are on disk.
+  clearPathCache();
+
   if (checkAutoStartAfterDiscuss()) {
     clearDiscussionFlowState();
     return;

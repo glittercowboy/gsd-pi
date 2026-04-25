@@ -180,6 +180,11 @@ test("detectWorkflowMcpLaunchConfig resolves the bundled server relative to the 
 test("workflow MCP launch config reaches mutation tools over stdio", async () => {
   const projectRoot = mkdtempSync(join(tmpdir(), "gsd-workflow-transport-"));
   mkdirSync(join(projectRoot, ".gsd"), { recursive: true });
+  // Isolate the spawned MCP server from the developer's real ~/.gsd so it
+  // can't pick up a configured Discord/Slack/Telegram channel from global
+  // PREFERENCES.md and route ask_user_questions through a remote adapter
+  // instead of MCP elicitation.
+  const isolatedGsdHome = mkdtempSync(join(tmpdir(), "gsd-workflow-home-"));
 
   const launch = detectWorkflowMcpLaunchConfig(projectRoot, {});
   assert.ok(launch, "expected a workflow MCP launch config");
@@ -219,7 +224,14 @@ test("workflow MCP launch config reaches mutation tools over stdio", async () =>
   const transport = new StdioClientTransport({
     command: launch.command,
     args: launch.args,
-    env: { ...process.env, ...launch.env } as Record<string, string>,
+    env: {
+      ...process.env,
+      ...launch.env,
+      GSD_HOME: isolatedGsdHome,
+      DISCORD_BOT_TOKEN: "",
+      SLACK_BOT_TOKEN: "",
+      TELEGRAM_BOT_TOKEN: "",
+    } as Record<string, string>,
     cwd: launch.cwd,
     stderr: "pipe",
   });
@@ -345,12 +357,14 @@ test("workflow MCP launch config reaches mutation tools over stdio", async () =>
   } finally {
     await client.close().catch(() => {});
     rmSync(projectRoot, { recursive: true, force: true });
+    rmSync(isolatedGsdHome, { recursive: true, force: true });
   }
 });
 
 test("workflow MCP ask_user_questions uses stdio elicitation round-trip", async () => {
   const projectRoot = mkdtempSync(join(tmpdir(), "gsd-workflow-elicit-"));
   mkdirSync(join(projectRoot, ".gsd"), { recursive: true });
+  const isolatedGsdHome = mkdtempSync(join(tmpdir(), "gsd-workflow-home-"));
 
   const launch = detectWorkflowMcpLaunchConfig(projectRoot, {});
   assert.ok(launch, "expected a workflow MCP launch config");
@@ -381,7 +395,14 @@ test("workflow MCP ask_user_questions uses stdio elicitation round-trip", async 
   const transport = new StdioClientTransport({
     command: launch.command,
     args: launch.args,
-    env: { ...process.env, ...launch.env } as Record<string, string>,
+    env: {
+      ...process.env,
+      ...launch.env,
+      GSD_HOME: isolatedGsdHome,
+      DISCORD_BOT_TOKEN: "",
+      SLACK_BOT_TOKEN: "",
+      TELEGRAM_BOT_TOKEN: "",
+    } as Record<string, string>,
     cwd: launch.cwd,
     stderr: "pipe",
   });
@@ -432,6 +453,8 @@ test("workflow MCP ask_user_questions uses stdio elicitation round-trip", async 
     );
   } finally {
     await client.close();
+    rmSync(projectRoot, { recursive: true, force: true });
+    rmSync(isolatedGsdHome, { recursive: true, force: true });
   }
 });
 

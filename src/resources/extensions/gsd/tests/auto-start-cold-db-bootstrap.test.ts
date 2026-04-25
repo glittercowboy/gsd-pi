@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { createTestContext } from "./test-helpers.ts";
+import {createTestContext, extractSourceRegion } from "./test-helpers.ts";
 
 const { assertTrue, report } = createTestContext();
 
@@ -13,7 +13,7 @@ console.log("\n=== #2841: cold DB opened before initial deriveState ===");
 const helperIdx = src.indexOf("async function openProjectDbIfPresent");
 assertTrue(helperIdx >= 0, "auto-start.ts defines a helper for pre-derive DB open (#2841)");
 
-const helperRegion = helperIdx >= 0 ? src.slice(helperIdx, helperIdx + 500) : "";
+const helperRegion = helperIdx >= 0 ? extractSourceRegion(src, "async function openProjectDbIfPresent") : "";
 assertTrue(
   helperRegion.includes("resolveProjectRootDbPath(basePath)"),
   "pre-derive DB helper resolves the project-root DB path (#2841)",

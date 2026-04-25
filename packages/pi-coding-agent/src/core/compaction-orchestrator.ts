@@ -333,8 +333,9 @@ export class CompactionOrchestrator {
 						type: "auto_compaction_end",
 						result: undefined,
 						aborted: true,
-						willRetry: false,
+						willRetry,
 					});
+					this._scheduleAutoCompactionFollowup(willRetry);
 					return;
 				}
 
@@ -392,22 +393,7 @@ export class CompactionOrchestrator {
 
 			const result: CompactionResult = { summary, firstKeptEntryId, tokensBefore, details };
 			this._deps.emit({ type: "auto_compaction_end", result, aborted: false, willRetry });
-
-			if (willRetry) {
-				const messages = this._deps.agent.state.messages;
-				const lastMsg = messages[messages.length - 1];
-				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
-					this._deps.agent.replaceMessages(messages.slice(0, -1));
-				}
-
-				setTimeout(() => {
-					this._deps.agent.continue().catch(() => {});
-				}, 100);
-			} else if (this._deps.agent.hasQueuedMessages()) {
-				setTimeout(() => {
-					this._deps.agent.continue().catch(() => {});
-				}, 100);
-			}
+			this._scheduleAutoCompactionFollowup(willRetry);
 		} catch (error) {
 			// Distinguish the "no usable summary" failure (issue #4665) so the UI
 			// can surface a clearer message than a generic compaction failure.
@@ -428,6 +414,27 @@ export class CompactionOrchestrator {
 			});
 		} finally {
 			this._autoCompactionAbortController = undefined;
+		}
+	}
+
+	private _scheduleAutoCompactionFollowup(willRetry: boolean): void {
+		if (willRetry) {
+			const messages = this._deps.agent.state.messages;
+			const lastMsg = messages[messages.length - 1];
+			if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
+				this._deps.agent.replaceMessages(messages.slice(0, -1));
+			}
+
+			setTimeout(() => {
+				this._deps.agent.continue().catch(() => {});
+			}, 100);
+			return;
+		}
+
+		if (this._deps.agent.hasQueuedMessages()) {
+			setTimeout(() => {
+				this._deps.agent.continue().catch(() => {});
+			}, 100);
 		}
 	}
 }

@@ -1,0 +1,12 @@
+{
+  "id": "google-search",
+  "name": "Google Search",
+  "version": "1.0.0",
+  "description": "Web search via Google with AI-synthesized answers and source citations",
+  "tier": "bundled",
+  "requires": { "platform": ">=2.29.0" },
+  "provides": {
+    "tools": ["google_search"],
+    "hooks": ["session_start"]
+  }
+}

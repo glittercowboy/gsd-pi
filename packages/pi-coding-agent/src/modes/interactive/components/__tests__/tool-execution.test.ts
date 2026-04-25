@@ -14,12 +14,13 @@ function renderTool(
 		isError: boolean;
 		details?: Record<string, unknown>;
 	},
+	toolDefinition?: { label?: string },
 ): string {
 	const component = new ToolExecutionComponent(
 		toolName,
 		args,
 		{},
-		undefined,
+		toolDefinition as any,
 		{ requestRender() {} } as any,
 	);
 	component.setExpanded(true);
@@ -35,12 +36,13 @@ function renderToolCollapsed(
 		isError: boolean;
 		details?: Record<string, unknown>;
 	},
+	toolDefinition?: { label?: string },
 ): string {
 	const component = new ToolExecutionComponent(
 		toolName,
 		args,
 		{},
-		undefined,
+		toolDefinition as any,
 		{ requestRender() {} } as any,
 	);
 	if (result) component.updateResult(result);
@@ -110,11 +112,55 @@ describe("ToolExecutionComponent", () => {
 			{ count: 3, enabled: true, label: "hello" },
 		);
 
-		assert.match(rendered, /some_unknown_tool/);
+		assert.match(rendered, /Some Unknown Tool/);
 		assert.match(rendered, /count=3/);
 		assert.match(rendered, /enabled=true/);
 		assert.match(rendered, /label="hello"/);
 		assert.doesNotMatch(rendered, /^\{$/m);
+	});
+
+	test("frame header prefers toolDefinition.label over raw tool name", () => {
+		const rendered = renderToolCollapsed(
+			"gsd_slice_complete",
+			{ sliceId: "S03" },
+			undefined,
+			{ label: "Complete Slice" },
+		);
+
+		assert.match(rendered, /Tool Complete Slice/);
+		assert.doesNotMatch(rendered, /gsd_slice_complete/);
+	});
+
+	test("frame header strips gsd_ prefix and title-cases when no label is registered", () => {
+		const rendered = renderToolCollapsed("gsd_requirement_update", { id: "R005" });
+
+		assert.match(rendered, /Tool Requirement Update/);
+		assert.doesNotMatch(rendered, /gsd_requirement_update/);
+	});
+
+	test("formatCompactArgs truncates long string values inline instead of dumping JSON", () => {
+		const longPath = "/Users/alice/.gsd/projects/4dce7b775013/worktrees/slice-S03-some-long-path-that-exceeds-limit";
+		const rendered = renderToolCollapsed("gsd_slice_complete", {
+			sliceId: "S03",
+			milestoneId: "M001",
+			worktree: longPath,
+		});
+
+		assert.match(rendered, /sliceId="S03"/);
+		assert.match(rendered, /milestoneId="M001"/);
+		assert.match(rendered, /worktree=".*…"/);
+		assert.doesNotMatch(rendered, /"sliceId":\s*"S03"/);
+	});
+
+	test("formatCompactArgs shows full string values when expanded", () => {
+		const longPath = "/Users/alice/.gsd/projects/4dce7b775013/worktrees/slice-S03-some-long-path-that-exceeds-limit";
+		const rendered = renderTool("gsd_slice_complete", {
+			sliceId: "S03",
+			worktree: longPath,
+		});
+
+		assert.match(rendered, new RegExp(longPath.replace(/\//g, "\\/")));
+		assert.doesNotMatch(rendered, /…/);
 	});
 
 	test("generic fallback truncates long output when collapsed", () => {

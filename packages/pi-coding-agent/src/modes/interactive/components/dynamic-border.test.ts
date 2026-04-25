@@ -37,26 +37,32 @@ describe("DynamicBorder spinner", () => {
 		border.stopSpinner();
 	});
 
-	it("triggers standalone render when no external render occurred recently", async () => {
-		const border = new DynamicBorder((s) => s);
-		const tui = makeTUI();
+	it("triggers standalone render when no external render occurred recently", () => {
+		mock.timers.enable({ apis: ["setInterval"], now: 0 });
+		try {
+			const border = new DynamicBorder((s) => s);
+			const tui = makeTUI();
 
-		// Set lastExternalRender to a time well in the past
-		const anyBorder = border as any;
-		anyBorder.lastExternalRender = 0;
+			// Set lastExternalRender to a time well in the past
+			const anyBorder = border as any;
+			anyBorder.lastExternalRender = 0;
 
-		border.startSpinner(tui as any, (s) => s);
-		const initialCount = tui.renderCount;
+			border.startSpinner(tui as any, (s) => s);
+			const initialCount = tui.renderCount;
 
-		// Wait for one spinner tick (200ms interval + buffer)
-		await new Promise((r) => setTimeout(r, 250));
+			// Advance exactly one spinner interval (200ms). With mocked timers
+			// this is deterministic — no flake under CI load.
+			mock.timers.tick(200);
 
-		assert.ok(
-			tui.renderCount > initialCount,
-			"spinner should trigger requestRender when no recent external render",
-		);
+			assert.ok(
+				tui.renderCount > initialCount,
+				"spinner should trigger requestRender after one 200ms interval when no recent external render",
+			);
 
-		border.stopSpinner();
+			border.stopSpinner();
+		} finally {
+			mock.timers.reset();
+		}
 	});
 
 	it("updates lastExternalRender on each render() call", () => {

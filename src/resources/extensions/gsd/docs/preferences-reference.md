@@ -159,7 +159,7 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
 
 - `phases`: fine-grained control over which phases run. Usually set by `token_profile`, but can be overridden. Keys:
   - `skip_research`: boolean — skip milestone-level research. Default: `false`.
-  - `reassess_after_slice`: boolean — run roadmap reassessment after each completed slice. Default: `true`.
+  - `reassess_after_slice`: boolean — run a dedicated roadmap-reassessment unit after each completed slice. Default: `false` (per ADR-003 §4). The plan-slice agent for the next slice performs JIT reassessment via a prompt preamble at zero additional token cost; a dedicated reassess session is opt-in. Set to `true` (e.g. via the `burn-max` profile) if you want the explicit session.
   - `skip_reassess`: boolean — force-disable roadmap reassessment even if `reassess_after_slice` is enabled. Default: `false`.
   - `skip_slice_research`: boolean — skip per-slice research. Default: `false`.
 

@@ -48,6 +48,7 @@ A small set of call sites legitimately keys on `provider`. These are **not** gat
 - **Per-transport doctor checks** (`doctor-providers.ts`). Each transport verifies different things (OAuth vs key vs ADC).
 - **Fallback-source targeting** (`retry-handler.ts` — "only fall back *from* plain `anthropic` *to* `claude-code`"). The rule is transport-specific by design.
 - **Model-registry canonical-provider tiebreakers** (`auto-model-selection.ts`). Same canonical model may appear under multiple transports; plain `anthropic` is the tiebreaker.
+- **Default-provider migrations** (`provider-migrations.ts`). Moving persisted settings from the `anthropic` transport to the `claude-code` transport is intentionally provider-id specific.
 - **Display labels / onboarding copy** (`onboarding.ts`). Surface-only, no behavior impact.
 
 These sites are enumerated in the allowlist at `src/tests/provider-equality-allowlist.test.ts`.

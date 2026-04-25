@@ -37,6 +37,7 @@ import {
   nativeWorktreePrune,
   nativeWorktreeRemove,
 } from "./native-git-bridge.js";
+import { emitCanonicalRootRedirect } from "./worktree-telemetry.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
@@ -130,6 +131,58 @@ export function isInsideWorktreesDir(basePath: string, targetPath: string): bool
   // The resolved path must start with the worktrees dir followed by a separator,
   // not merely be a prefix match (e.g. ".gsd/worktrees-extra" must not match).
   return resolved === wtDir || resolved.startsWith(wtDir + sep);
+}
+
+/**
+ * Return the canonical path from which a milestone's artifacts should be read.
+ *
+ * If a live git worktree exists for this milestone at `.gsd/worktrees/<MID>/`
+ * (directory present AND a `.git` file indicating a registered worktree),
+ * returns that worktree path. Otherwise returns `basePath` unchanged.
+ *
+ * Readers that cross the session/worktree boundary (validators, the bootstrap
+ * audit, cross-session state queries) should route through this helper so they
+ * don't silently read stale project-root state while live work sits in the
+ * worktree. Writers and tools whose contract is "operate on the path I was
+ * given" should NOT use this helper — they preserve the legacy behavior.
+ *
+ * A stale worktree directory (no `.git` file) is treated as absent. The
+ * createWorktree() path already cleans these up, but readers must not trust
+ * them in the window before cleanup runs.
+ *
+ * Fixes #4761. Used by the #4762 audit for the pre-completion orphan case.
+ */
+export function resolveCanonicalMilestoneRoot(
+  basePath: string,
+  milestoneId: string,
+): string {
+  if (!milestoneId || /[\/\\]|\.\./.test(milestoneId)) return basePath;
+
+  const wtPath = worktreePath(basePath, milestoneId);
+  if (!existsSync(wtPath)) return basePath;
+
+  // A registered git worktree has a .git *file* (not directory) containing
+  // "gitdir: <path>". A standalone .git directory indicates a copied repo
+  // or nested standalone repo — not a worktree registered with this project —
+  // and must not be treated as the canonical root.
+  const gitPath = join(wtPath, ".git");
+  if (!existsSync(gitPath)) return basePath;
+  try {
+    const stat = lstatSync(gitPath);
+    if (!stat.isFile()) return basePath;
+  } catch {
+    return basePath;
+  }
+
+  // #4764 — record the redirect so we can measure how often the #4761 fix
+  // would have mattered. Best-effort; emit is silent on any failure.
+  try {
+    emitCanonicalRootRedirect(basePath, milestoneId, wtPath);
+  } catch (err) {
+    logWarning("worktree", `canonical-root-redirect telemetry failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  return wtPath;
 }
 
 // ─── Core Operations ───────────────────────────────────────────────────────
@@ -559,6 +612,7 @@ const SKIP_PATHS = [
   ".gsd/worktrees/",
   ".gsd/runtime/",
   ".gsd/activity/",
+  ".gsd/audit/",
   ".gsd/forensics/",
   ".gsd/parallel/",
   ".gsd/journal/",

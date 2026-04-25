@@ -93,7 +93,19 @@ async function main() {
   // Also compile web/lib/ — some tests import from ../../web/lib/
   const webLibFiles = await collectFiles(join(ROOT, 'web', 'lib'));
 
-  const entryPoints = [...srcFiles, ...packageFiles, ...webLibFiles];
+  // Compile extracted extension workspace packages (extensions/*/) — tests in
+  // src/tests/ import from ../../extensions/<name>/index.ts.
+  const extensionsDir = join(ROOT, 'extensions');
+  const extEntries = existsSync(extensionsDir)
+    ? await readdir(extensionsDir, { withFileTypes: true })
+    : [];
+  const extensionFiles = [];
+  for (const entry of extEntries) {
+    if (!entry.isDirectory()) continue;
+    extensionFiles.push(...await collectFiles(join(extensionsDir, entry.name)));
+  }
+
+  const entryPoints = [...srcFiles, ...packageFiles, ...webLibFiles, ...extensionFiles];
   console.log(`Compiling ${entryPoints.length} files to dist-test/...`);
 
   // bundle:false transforms TypeScript but keeps import specifiers verbatim.
@@ -128,6 +140,19 @@ async function main() {
     const pkgJsonPath = join(packagesDir, entry.name, 'package.json');
     if (existsSync(pkgJsonPath)) {
       await cp(pkgJsonPath, join(ROOT, 'dist-test', 'packages', entry.name, 'package.json'), { force: true });
+    }
+  }
+
+  // Copy extensions/*/ assets + package.json so tests in dist-test/src/tests/
+  // can resolve ../../extensions/<name>/index.js after the .ts→.js rewrite.
+  for (const entry of extEntries) {
+    if (!entry.isDirectory()) continue;
+    const extSrc = join(extensionsDir, entry.name);
+    const extDist = join(ROOT, 'dist-test', 'extensions', entry.name);
+    await copyAssets(extSrc, extDist);
+    const extPkgJson = join(extSrc, 'package.json');
+    if (existsSync(extPkgJson)) {
+      await cp(extPkgJson, join(extDist, 'package.json'), { force: true });
     }
   }
 

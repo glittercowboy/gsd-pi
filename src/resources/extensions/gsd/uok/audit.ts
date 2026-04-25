@@ -1,7 +1,9 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { isStaleWrite } from "../auto/turn-epoch.js";
+import { withFileLockSync } from "../file-lock.js";
 import { gsdRoot } from "../paths.js";
 import { isDbAvailable, insertAuditEvent } from "../gsd-db.js";
 import type { AuditEventEnvelope } from "./contracts.js";
@@ -35,9 +37,25 @@ export function buildAuditEnvelope(args: {
 }
 
 export function emitUokAuditEvent(basePath: string, event: AuditEventEnvelope): void {
+  // Drop writes from a turn superseded by timeout recovery / cancellation.
+  if (isStaleWrite("uok-audit")) return;
   try {
     ensureAuditDir(basePath);
-    appendFileSync(auditLogPath(basePath), `${JSON.stringify(event)}\n`, "utf-8");
+    const path = auditLogPath(basePath);
+    // proper-lockfile requires the target file to exist before locking.
+    // Touch it via open(O_APPEND|O_CREAT) so the first writer wins the race
+    // atomically at the kernel level.
+    if (!existsSync(path)) closeSync(openSync(path, "a"));
+    // onLocked: "skip" — audit writes are best-effort; under heavy contention
+    // POSIX O_APPEND atomicity still protects small line writes, so skipping
+    // the lock rather than stalling orchestration is the correct tradeoff.
+    withFileLockSync(
+      path,
+      () => {
+        appendFileSync(path, `${JSON.stringify(event)}\n`, "utf-8");
+      },
+      { onLocked: "skip" },
+    );
   } catch {
     // Best-effort: audit writes must never break orchestration.
   }

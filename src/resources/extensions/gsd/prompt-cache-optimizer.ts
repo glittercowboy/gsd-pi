@@ -55,6 +55,10 @@ const SEMI_STATIC_LABELS = new Set([
   "prior-summaries",
   "project-context",
   "overrides",
+  // KNOWLEDGE is milestone-scoped (stable within a session), so it belongs
+  // in the cacheable prefix. See issue #4719.
+  "knowledge",
+  "project-knowledge",
 ]);
 
 /** Labels that change per-task */

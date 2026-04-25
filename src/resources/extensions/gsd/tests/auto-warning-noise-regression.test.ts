@@ -27,6 +27,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { buildFlatRateContext } from "../auto-model-selection.ts";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 // ─── Bug 2: this-binding regression ─────────────────────────────────────
 
@@ -69,7 +70,7 @@ test("isSamePath short-circuits ENOENT before logging a warning", () => {
   assert.ok(fnIdx !== -1, "isSamePath function exists");
 
   // Grab the function body (enough to cover the catch block).
-  const fnBody = src.slice(fnIdx, fnIdx + 600);
+  const fnBody = extractSourceRegion(src, "function isSamePath", { fromIdx: fnIdx });
 
   const catchIdx = fnBody.indexOf("catch");
   assert.ok(catchIdx !== -1, "isSamePath has a catch block");
@@ -103,7 +104,7 @@ test("checkAutoStartAfterDiscuss guards DISCUSSION-MANIFEST.json unlink with exi
 
   // Everything from the comment to a short distance below should contain
   // the existsSync guard before the unlinkSync call.
-  const block = src.slice(cleanupIdx, cleanupIdx + 400);
+  const block = extractSourceRegion(src, "remove discussion manifest after auto-start", { fromIdx: cleanupIdx });
 
   const existsIdx = block.indexOf("existsSync(manifestPath)");
   const unlinkIdx = block.indexOf("unlinkSync(manifestPath)");

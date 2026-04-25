@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { extractSourceRegion } from "./test-helpers.ts";
 
 test("copyPlanningArtifacts skips when source and destination .gsd resolve to the same path", () => {
   const srcPath = join(import.meta.dirname, "..", "auto-worktree.ts");
@@ -10,7 +11,7 @@ test("copyPlanningArtifacts skips when source and destination .gsd resolve to th
   const fnIdx = src.indexOf("function copyPlanningArtifacts");
   assert.ok(fnIdx !== -1, "copyPlanningArtifacts function exists");
 
-  const fnBody = src.slice(fnIdx, fnIdx + 2400);
+  const fnBody = extractSourceRegion(src, "function copyPlanningArtifacts");
 
   const guardIdx = fnBody.indexOf("if (isSamePath(srcGsd, dstGsd)) return;");
   const copyIdx = fnBody.indexOf("safeCopyRecursive(join(srcGsd, \"milestones\")");

@@ -33,7 +33,11 @@ function execClaudeCheck(args: string[]): Buffer {
   let lastError: unknown
   for (const command of CLAUDE_COMMAND_CANDIDATES) {
     try {
-      return execFileSync(command, args, { timeout: 5_000, stdio: 'pipe' })
+      return execFileSync(command, args, {
+        timeout: 5_000,
+        stdio: 'pipe',
+        shell: process.platform === 'win32',
+      })
     } catch (error) {
       lastError = error
       const code = (error as NodeJS.ErrnoException | undefined)?.code
