@@ -667,6 +667,39 @@ describe("checkCrossTaskSignatures", () => {
     }
   });
 
+  test("checks .mts and .cts key files with the shared code-extension set", () => {
+    tempDir = join(tmpdir(), `post-exec-test-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    mkdirSync(join(tempDir, "src"), { recursive: true });
+    writeFileSync(
+      join(tempDir, "src", "utils.mts"),
+      "export function serialize(value: string): string { return value; }"
+    );
+    writeFileSync(
+      join(tempDir, "src", "api.cts"),
+      "export function serialize(value: number): string { return String(value); }"
+    );
+
+    try {
+      const priorTask = createTask({
+        id: "T01",
+        key_files: ["src/utils.mts"],
+      });
+      const currentTask = createTask({
+        id: "T02",
+        key_files: ["src/api.cts"],
+      });
+
+      const results = checkCrossTaskSignatures(currentTask, [priorTask], tempDir);
+      assert.equal(results.length, 1);
+      assert.equal(results[0].category, "signature");
+      assert.equal(results[0].target, "serialize");
+      assert.ok(results[0].message.includes("parameters"));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("handles multiple prior tasks", () => {
     tempDir = join(tmpdir(), `post-exec-test-${Date.now()}`);
     mkdirSync(tempDir, { recursive: true });
@@ -769,6 +802,28 @@ describe("checkPatternConsistency", () => {
       assert.equal(asyncResults[0].category, "pattern");
       assert.equal(asyncResults[0].passed, true); // Warning only
       assert.equal(asyncResults[0].blocking, false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("checks .mts key files for pattern consistency", () => {
+    tempDir = join(tmpdir(), `post-exec-test-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    writeFileSync(
+      join(tempDir, "api.mts"),
+      `async function getData(): Promise<string> {
+        const result = await fetch('/api');
+        return result.text().then(t => t.toUpperCase());
+      }`
+    );
+
+    try {
+      const task = createTask({ id: "T01", key_files: ["api.mts"] });
+      const results = checkPatternConsistency(task, [], tempDir);
+      const asyncResults = results.filter((r) => r.message.includes("async"));
+      assert.equal(asyncResults.length, 1);
+      assert.equal(asyncResults[0].category, "pattern");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }

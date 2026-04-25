@@ -62,6 +62,10 @@ const SEALED_NON_CODE_EXTENSIONS = new Set([
   ".wasm",
 ]);
 
+function isCodeFile(file: string): boolean {
+  return CODE_EXTENSIONS.includes(extname(file).toLowerCase());
+}
+
 // ─── Result Types ────────────────────────────────────────────────────────────
 
 export interface PostExecutionCheckJSON {
@@ -236,10 +240,7 @@ export function checkImportResolution(
   const results: PostExecutionCheckJSON[] = [];
 
   // Get files from key_files
-  const filesToCheck = taskRow.key_files.filter((f) => {
-    const ext = extname(f).toLowerCase();
-    return CODE_EXTENSIONS.includes(ext);
-  });
+  const filesToCheck = taskRow.key_files.filter(isCodeFile);
 
   for (const file of filesToCheck) {
     const absolutePath = resolve(basePath, file);
@@ -371,8 +372,7 @@ export function checkCrossTaskSignatures(
 
   for (const task of priorTasks) {
     for (const file of task.key_files) {
-      const ext = extname(file);
-      if (![".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].includes(ext)) continue;
+      if (!isCodeFile(file)) continue;
 
       const absolutePath = resolve(basePath, file);
       if (!existsSync(absolutePath)) continue;
@@ -394,8 +394,7 @@ export function checkCrossTaskSignatures(
   // Extract function calls/references from current task's key_files
   // and check they match prior definitions
   for (const file of taskRow.key_files) {
-    const ext = extname(file);
-    if (![".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].includes(ext)) continue;
+    if (!isCodeFile(file)) continue;
 
     const absolutePath = resolve(basePath, file);
     if (!existsSync(absolutePath)) continue;
@@ -458,8 +457,7 @@ export function checkPatternConsistency(
   const results: PostExecutionCheckJSON[] = [];
 
   for (const file of taskRow.key_files) {
-    const ext = extname(file);
-    if (![".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"].includes(ext)) continue;
+    if (!isCodeFile(file)) continue;
 
     const absolutePath = resolve(basePath, file);
     if (!existsSync(absolutePath)) continue;
