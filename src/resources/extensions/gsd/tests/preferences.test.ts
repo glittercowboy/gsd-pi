@@ -236,6 +236,20 @@ test("valid values pass through correctly", () => {
   assert.equal(p3.auto_supervisor?.model, "claude-opus-4-6");
 });
 
+test("min_request_interval_ms floors decimals and rejects timer overflow values", () => {
+  const valid = validatePreferences({ min_request_interval_ms: 1000.9 });
+  assert.equal(valid.errors.length, 0);
+  assert.equal(valid.preferences.min_request_interval_ms, 1000);
+
+  const max = validatePreferences({ min_request_interval_ms: 2_147_483_647 });
+  assert.equal(max.errors.length, 0);
+  assert.equal(max.preferences.min_request_interval_ms, 2_147_483_647);
+
+  const tooHigh = validatePreferences({ min_request_interval_ms: 2_147_483_648 });
+  assert.ok(tooHigh.errors.some(e => e.includes("min_request_interval_ms must be a non-negative number <= 2147483647")));
+  assert.equal(tooHigh.preferences.min_request_interval_ms, undefined);
+});
+
 test("mixed valid/invalid/unknown keys handled correctly", () => {
   const { preferences, errors, warnings } = validatePreferences({
     uat_dispatch: true, totally_made_up: "value", budget_ceiling: "garbage",

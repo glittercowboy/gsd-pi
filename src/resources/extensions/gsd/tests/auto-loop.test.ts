@@ -26,6 +26,24 @@ function makeEvent(
   return { messages };
 }
 
+async function drainMicrotasks(turns = 20): Promise<void> {
+  for (let i = 0; i < turns; i++) {
+    await Promise.resolve();
+  }
+}
+
+async function waitForMicrotasks(
+  condition: () => boolean,
+  label: string,
+  turns = 500,
+): Promise<void> {
+  for (let i = 0; i < turns; i++) {
+    if (condition()) return;
+    await Promise.resolve();
+  }
+  assert.fail(`Timed out waiting for ${label}`);
+}
+
 /**
  * Build a minimal mock AutoSession with controllable newSession behavior.
  */
@@ -2366,131 +2384,155 @@ test("autoLoop warns but proceeds for greenfield project (no project files) (#18
 
 test("autoLoop enforces min_request_interval_ms delay between LLM dispatches (#2996)", async () => {
   _resetPendingResolve();
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: 1_000 });
 
-  const ctx = makeMockCtx();
-  ctx.ui.setStatus = () => {};
-  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
-  const pi = makeMockPi();
-  const originalSendMessage = pi.sendMessage;
-  const dispatchTimestamps: number[] = [];
-  pi.sendMessage = (...args: unknown[]) => {
-    dispatchTimestamps.push(Date.now());
-    return originalSendMessage(...args);
-  };
+  try {
+    const ctx = makeMockCtx();
+    ctx.ui.setStatus = () => {};
+    ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+    const pi = makeMockPi();
+    const originalSendMessage = pi.sendMessage;
+    const dispatchTimestamps: number[] = [];
+    pi.sendMessage = (...args: unknown[]) => {
+      dispatchTimestamps.push(Date.now());
+      return originalSendMessage(...args);
+    };
 
-  let iterCount = 0;
+    let iterCount = 0;
 
-  const s = makeLoopSession();
+    const s = makeLoopSession();
 
-  const deps = makeMockDeps({
-    loadEffectiveGSDPreferences: () => ({
-      preferences: { min_request_interval_ms: 300 },
-    }),
-    deriveState: async () => {
-      iterCount++;
-      deps.callLog.push("deriveState");
-      return {
-        phase: "executing",
-        activeMilestone: { id: "M001", title: "Test", status: "active" },
-        activeSlice: { id: "S01", title: "Slice" },
-        activeTask: { id: "T01" },
-        registry: [{ id: "M001", status: "active" }],
-        blockers: [],
-      } as any;
-    },
-    postUnitPostVerification: async () => {
-      deps.callLog.push("postUnitPostVerification");
-      if (iterCount >= 2) {
-        s.active = false;
-      }
-      return "continue" as const;
-    },
-  });
+    const deps = makeMockDeps({
+      loadEffectiveGSDPreferences: () => ({
+        preferences: { min_request_interval_ms: 300 },
+      }),
+      deriveState: async () => {
+        iterCount++;
+        deps.callLog.push("deriveState");
+        return {
+          phase: "executing",
+          activeMilestone: { id: "M001", title: "Test", status: "active" },
+          activeSlice: { id: "S01", title: "Slice" },
+          activeTask: { id: "T01" },
+          registry: [{ id: "M001", status: "active" }],
+          blockers: [],
+        } as any;
+      },
+      postUnitPostVerification: async () => {
+        deps.callLog.push("postUnitPostVerification");
+        if (iterCount >= 2) {
+          s.active = false;
+        }
+        return "continue" as const;
+      },
+    });
 
-  const loopPromise = autoLoop(ctx, pi, s, deps);
+    const loopPromise = autoLoop(ctx, pi, s, deps);
 
-  await new Promise((r) => setTimeout(r, 100));
-  resolveAgentEnd(makeEvent());
-  await new Promise((r) => setTimeout(r, 500));
-  resolveAgentEnd(makeEvent());
+    await waitForMicrotasks(() => dispatchTimestamps.length === 1, "first dispatch");
+    resolveAgentEnd(makeEvent());
+    await waitForMicrotasks(
+      () => deps.callLog.filter((entry) => entry === "resolveDispatch").length >= 2,
+      "second dispatch planning",
+    );
 
-  await loopPromise;
+    await drainMicrotasks(100);
+    mock.timers.tick(299);
+    await drainMicrotasks(100);
+    assert.equal(dispatchTimestamps.length, 1, "second dispatch should wait for the configured interval");
 
-  assert.ok(iterCount >= 2, `expected at least 2 iterations, got ${iterCount}`);
-  assert.ok(dispatchTimestamps.length >= 2, `expected at least 2 dispatches, got ${dispatchTimestamps.length}`);
+    mock.timers.tick(1);
+    await waitForMicrotasks(() => dispatchTimestamps.length === 2, "second dispatch");
+    resolveAgentEnd(makeEvent());
 
-  assert.ok(
-    (s as any).lastRequestTimestamp > 0,
-    "lastRequestTimestamp should be set after iterations",
-  );
+    await loopPromise;
 
-  const gap = dispatchTimestamps[1]! - dispatchTimestamps[0]!;
-  assert.ok(
-    gap >= 250,
-    `gap between dispatches should be >= 250ms (got ${gap}ms) due to min_request_interval_ms=300`,
-  );
+    assert.ok(iterCount >= 2, `expected at least 2 iterations, got ${iterCount}`);
+    assert.ok(dispatchTimestamps.length >= 2, `expected at least 2 dispatches, got ${dispatchTimestamps.length}`);
+
+    assert.equal(
+      (s as any).lastRequestTimestamp,
+      dispatchTimestamps[1],
+      "lastRequestTimestamp should record the actual dispatch time",
+    );
+
+    const gap = dispatchTimestamps[1]! - dispatchTimestamps[0]!;
+    assert.equal(
+      gap,
+      300,
+      `gap between dispatches should match min_request_interval_ms=300 (got ${gap}ms)`,
+    );
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test("autoLoop skips rate-limit delay when min_request_interval_ms is 0 (default)", async () => {
   _resetPendingResolve();
+  mock.timers.enable({ apis: ["Date", "setTimeout"], now: 2_000 });
 
-  const ctx = makeMockCtx();
-  ctx.ui.setStatus = () => {};
-  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
-  const pi = makeMockPi();
-  const originalSendMessage = pi.sendMessage;
-  const dispatchTimestamps: number[] = [];
-  pi.sendMessage = (...args: unknown[]) => {
-    dispatchTimestamps.push(Date.now());
-    return originalSendMessage(...args);
-  };
+  try {
+    const ctx = makeMockCtx();
+    ctx.ui.setStatus = () => {};
+    ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+    const pi = makeMockPi();
+    const originalSendMessage = pi.sendMessage;
+    const dispatchTimestamps: number[] = [];
+    pi.sendMessage = (...args: unknown[]) => {
+      dispatchTimestamps.push(Date.now());
+      return originalSendMessage(...args);
+    };
 
-  let iterCount = 0;
+    let iterCount = 0;
 
-  const s = makeLoopSession();
+    const s = makeLoopSession();
 
-  const deps = makeMockDeps({
-    loadEffectiveGSDPreferences: () => ({
-      preferences: {},
-    }),
-    deriveState: async () => {
-      iterCount++;
-      deps.callLog.push("deriveState");
-      return {
-        phase: "executing",
-        activeMilestone: { id: "M001", title: "Test", status: "active" },
-        activeSlice: { id: "S01", title: "Slice" },
-        activeTask: { id: "T01" },
-        registry: [{ id: "M001", status: "active" }],
-        blockers: [],
-      } as any;
-    },
-    postUnitPostVerification: async () => {
-      deps.callLog.push("postUnitPostVerification");
-      if (iterCount >= 3) {
-        s.active = false;
-      }
-      return "continue" as const;
-    },
-  });
+    const deps = makeMockDeps({
+      loadEffectiveGSDPreferences: () => ({
+        preferences: {},
+      }),
+      deriveState: async () => {
+        iterCount++;
+        deps.callLog.push("deriveState");
+        return {
+          phase: "executing",
+          activeMilestone: { id: "M001", title: "Test", status: "active" },
+          activeSlice: { id: "S01", title: "Slice" },
+          activeTask: { id: "T01" },
+          registry: [{ id: "M001", status: "active" }],
+          blockers: [],
+        } as any;
+      },
+      postUnitPostVerification: async () => {
+        deps.callLog.push("postUnitPostVerification");
+        if (iterCount >= 3) {
+          s.active = false;
+        }
+        return "continue" as const;
+      },
+    });
 
-  const loopPromise = autoLoop(ctx, pi, s, deps);
+    const loopPromise = autoLoop(ctx, pi, s, deps);
 
-  for (let i = 0; i < 3; i++) {
-    await new Promise((r) => setTimeout(r, 50));
-    resolveAgentEnd(makeEvent());
+    for (let i = 1; i <= 3; i++) {
+      await waitForMicrotasks(() => dispatchTimestamps.length === i, `dispatch ${i}`);
+      resolveAgentEnd(makeEvent());
+    }
+
+    await loopPromise;
+
+    assert.ok(iterCount >= 3, `expected at least 3 iterations, got ${iterCount}`);
+    assert.ok(dispatchTimestamps.length >= 3, `expected at least 3 dispatches, got ${dispatchTimestamps.length}`);
+
+    const gap = dispatchTimestamps[2]! - dispatchTimestamps[1]!;
+    assert.equal(
+      gap,
+      0,
+      `gap should be 0ms under mocked time without rate limiting (got ${gap}ms)`,
+    );
+  } finally {
+    mock.timers.reset();
   }
-
-  await loopPromise;
-
-  assert.ok(iterCount >= 3, `expected at least 3 iterations, got ${iterCount}`);
-  assert.ok(dispatchTimestamps.length >= 3, `expected at least 3 dispatches, got ${dispatchTimestamps.length}`);
-
-  const gap = dispatchTimestamps[2]! - dispatchTimestamps[1]!;
-  assert.ok(
-    gap < 150,
-    `gap should be < 150ms without rate limiting (got ${gap}ms)`,
-  );
 });
 
 // ─── #4850: pre-send model-policy block is non-retryable ────────────────────

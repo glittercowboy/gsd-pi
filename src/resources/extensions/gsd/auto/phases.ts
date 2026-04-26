@@ -1342,7 +1342,7 @@ export async function runUnitPhase(
   iterData: IterationData,
   loopState: LoopState,
   sidecarItem?: SidecarItem,
-): Promise<PhaseResult<{ unitStartedAt: number }>> {
+): Promise<PhaseResult<{ unitStartedAt?: number; requestDispatchedAt?: number }>> {
   const { ctx, pi, s, deps, prefs } = ic;
   const { unitType, unitId, prompt, state, mid } = iterData;
 
@@ -1860,7 +1860,7 @@ export async function runUnitPhase(
         );
         // Fall through to next iteration where dispatch will re-derive
         // and re-dispatch this unit.
-        return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt } };
+        return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt, requestDispatchedAt: unitResult.requestDispatchedAt } };
       }
     }
   }
@@ -1924,7 +1924,7 @@ export async function runUnitPhase(
     s.checkpointSha = null;
   }
 
-  return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt } };
+  return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt, requestDispatchedAt: unitResult.requestDispatchedAt } };
 }
 
 // ─── runFinalize ──────────────────────────────────────────────────────────────

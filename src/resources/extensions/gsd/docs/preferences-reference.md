@@ -126,7 +126,7 @@ Setting `prefer_skills: []` does **not** disable skill discovery — it just mea
   - `idle_timeout_minutes`: minutes of inactivity before the supervisor intervenes (default: 10).
   - `hard_timeout_minutes`: minutes before the supervisor forces termination (default: 30).
 
-- `min_request_interval_ms`: number — minimum milliseconds between auto-mode LLM request dispatches. Use this to proactively slow auto-mode on rate-limited providers and reduce 429 errors. Set to `0` to disable. Default: `0` (disabled).
+- `min_request_interval_ms`: integer milliseconds — minimum milliseconds between auto-mode LLM request dispatches. Non-integer values are rounded down (for example, `1000.9` becomes `1000`). Use this to proactively slow auto-mode on rate-limited providers and reduce 429 errors. Set to `0` to disable. Default: `0` (disabled).
 
 - `git`: configures GSD's git behavior. All fields are optional — omit any to use defaults. Keys:
   - `auto_push`: boolean — automatically push commits to the remote after committing. Default: `false`.

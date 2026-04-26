@@ -1533,11 +1533,7 @@ async function configureAdvanced(ctx: ExtensionCommandContext, prefs: Record<str
   if (minRequestInterval === "clear") {
     delete prefs.min_request_interval_ms;
   } else if (minRequestInterval !== undefined) {
-    if (minRequestInterval >= 0) {
-      prefs.min_request_interval_ms = minRequestInterval;
-    } else {
-      ctx.ui.notify("Minimum request interval must be 0 or greater. Keeping previous value.", "warning");
-    }
+    prefs.min_request_interval_ms = minRequestInterval;
   }
 
   const widget = await promptEnum(ctx, "Auto-mode widget display", prefs.widget_mode, ["full", "small", "min", "off"], "full");

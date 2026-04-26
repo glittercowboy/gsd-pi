@@ -171,6 +171,7 @@ export async function runUnit(
   // ── Send the prompt ──
   debugLog("runUnit", { phase: "send-message", unitType, unitId });
 
+  const requestDispatchedAt = Date.now();
   pi.sendMessage(
     { customType: "gsd-auto", content: prompt, display: s.verbose },
     { triggerTurn: true },
@@ -201,6 +202,7 @@ export async function runUnit(
     unitId,
     status: result.status,
   });
+  const finalResult: UnitResult = { ...result, requestDispatchedAt };
 
   // Discard trailing follow-up messages (e.g. async_job_result notifications)
   // from the completed unit. Without this, queued follow-ups trigger wasteful
@@ -216,5 +218,5 @@ export async function runUnit(
     logWarning("engine", "clearQueue failed after unit completion", { error: String(e) });
   }
 
-  return result;
+  return finalResult;
 }

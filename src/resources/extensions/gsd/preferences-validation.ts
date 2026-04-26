@@ -1127,11 +1127,12 @@ export function validatePreferences(preferences: GSDPreferences): {
     if (
       typeof preferences.min_request_interval_ms === "number" &&
       Number.isFinite(preferences.min_request_interval_ms) &&
-      preferences.min_request_interval_ms >= 0
+      preferences.min_request_interval_ms >= 0 &&
+      preferences.min_request_interval_ms <= 2_147_483_647
     ) {
       validated.min_request_interval_ms = Math.floor(preferences.min_request_interval_ms);
     } else {
-      errors.push("min_request_interval_ms must be a non-negative number");
+      errors.push("min_request_interval_ms must be a non-negative number <= 2147483647");
     }
   }
 
