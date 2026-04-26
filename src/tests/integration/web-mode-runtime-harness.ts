@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawn } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
 import type { Page, Request, Response } from "playwright"
@@ -140,15 +140,78 @@ function runNpmScript(args: string[], label: string): void {
   }
 }
 
+/**
+ * Cross-process build mutex. node:test runs each *.test.ts in its own
+ * worker process, so multiple integration tests calling
+ * `ensureRuntimeArtifacts()` race each other into `npm run build:web-host`
+ * and `npm run build:pi`. Next.js refuses concurrent `next build`
+ * invocations ("Another next build process is already running"), and
+ * concurrent npm workspace builds clobber each other's dist/ output.
+ *
+ * `mkdirSync` is atomic on POSIX (EEXIST when the directory already
+ * exists), so we use it as a sync, cross-process mutex. After acquiring
+ * the lock we re-check the artifact's existsSync — the previous holder
+ * may have just produced it, in which case we no-op and release.
+ */
+function withBuildLock(lockName: string, fn: () => void): void {
+  const lockRoot = join(projectRoot, ".test-build-locks")
+  mkdirSync(lockRoot, { recursive: true })
+  const lockDir = join(lockRoot, lockName)
+  const start = Date.now()
+  const timeoutMs = 10 * 60 * 1000 // builds can be slow on CI
+  while (true) {
+    try {
+      mkdirSync(lockDir)
+      break
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code !== "EEXIST") throw err
+      if (Date.now() - start > timeoutMs) {
+        throw new Error(`Timed out waiting for ${lockName} build lock at ${lockDir}`)
+      }
+      // Sync poll: block this process until the lock holder releases.
+      // Other test files in other processes are doing the same thing.
+      try {
+        execFileSync("sleep", ["1"], { stdio: "ignore" })
+      } catch {
+        // sleep unavailable (Windows); fall back to busy-wait
+        const until = Date.now() + 1000
+        while (Date.now() < until) {
+          /* spin */
+        }
+      }
+    }
+  }
+  try {
+    fn()
+  } finally {
+    try {
+      rmSync(lockDir, { recursive: true, force: true })
+    } catch {
+      // best-effort release
+    }
+  }
+}
+
 export function ensureRuntimeArtifacts(): void {
   if (runtimeArtifactsReady) return
 
   if (!existsSync(builtAgentEntryPath)) {
-    runNpmScript(["run", "build:pi"], "npm run build:pi")
+    withBuildLock("build-pi", () => {
+      // Re-check inside the lock — another process may have built it
+      // while we were waiting.
+      if (!existsSync(builtAgentEntryPath)) {
+        runNpmScript(["run", "build:pi"], "npm run build:pi")
+      }
+    })
   }
 
   if (!existsSync(packagedWebHostPath)) {
-    runNpmScript(["run", "build:web-host"], "npm run build:web-host")
+    withBuildLock("build-web-host", () => {
+      if (!existsSync(packagedWebHostPath)) {
+        runNpmScript(["run", "build:web-host"], "npm run build:web-host")
+      }
+    })
   }
 
   runtimeArtifactsReady = true

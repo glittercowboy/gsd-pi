@@ -2,6 +2,9 @@
 # ── Compiled test output ──
 dist-test/
 
+# ── Cross-process build lock dirs (web-mode-runtime-harness) ──
+.test-build-locks/
+
 # ── Compiled output in src/ (should only contain .ts source) ──
 src/**/*.js
 src/**/*.js.map
