@@ -76,6 +76,20 @@ function isPathInside(child: string, parent: string): boolean {
   return !rel.startsWith("..");
 }
 
+const ALLOWED_ESCAPE_PATHS: readonly string[] = (() => {
+  const allowed: string[] = [];
+  for (const candidate of [tmpdir(), process.env.TMPDIR]) {
+    if (!candidate) continue;
+    try {
+      const dir = canonicalize(candidate);
+      if (!allowed.includes(dir)) allowed.push(dir);
+    } catch {
+      /* best effort */
+    }
+  }
+  return allowed;
+})();
+
 /**
  * Returns true if `filePath` is within the session perimeter rooted at
  * `basePath`, OR within one of the always-allowed escape hatches (tmpdir,
@@ -96,23 +110,7 @@ export function isWithinPerimeter(filePath: string, basePath: string): boolean {
 
   if (isPathInside(target, base)) return true;
 
-  // Escape hatches: system temp dir and $TMPDIR (may differ from tmpdir() on
-  // macOS where tmpdir() returns a /var/folders path while $TMPDIR may be
-  // set elsewhere).
-  const allowed: string[] = [];
-  try {
-    allowed.push(canonicalize(tmpdir()));
-  } catch {
-    /* best effort */
-  }
-  if (process.env.TMPDIR) {
-    try {
-      allowed.push(canonicalize(process.env.TMPDIR));
-    } catch {
-      /* best effort */
-    }
-  }
-  for (const dir of allowed) {
+  for (const dir of ALLOWED_ESCAPE_PATHS) {
     if (isPathInside(target, dir)) return true;
   }
 

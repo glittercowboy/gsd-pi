@@ -74,14 +74,14 @@ const CATASTROPHIC_PATTERNS: readonly CatastrophicPattern[] = [
     label: "rm -rf of critical filesystem root",
   },
   // Disk wipes via dd targeting block devices (Linux: /dev/sd*, /dev/nvme*,
-  // /dev/hd*; macOS: /dev/disk*, /dev/rdisk*).
+  // /dev/hd*, /dev/dm-*, /dev/loop*; macOS: /dev/disk*, /dev/rdisk*).
   {
-    pattern: /\bdd\b[^\n]*\bof=\/dev\/(?:sd[a-z]|nvme\d|hd[a-z]|r?disk\d)/i,
+    pattern: /\bdd\b[^\n]*\bof=\/dev\/(?:sd[a-z]|nvme\d|hd[a-z]|dm-?\d+|loop\d+|r?disk\d)/i,
     label: "dd to raw block device",
   },
   // Filesystem creation on a block device (mkfs.ext4, mkfs.xfs, mke2fs, etc.).
   {
-    pattern: /\bmk(?:fs(?:\.[a-z0-9]+)?|e2fs)\b[^\n]*\/dev\/(?:sd[a-z]|nvme\d|hd[a-z]|r?disk\d)/i,
+    pattern: /\bmk(?:fs(?:\.[a-z0-9]+)?|e2fs)\b[^\n]*\/dev\/(?:sd[a-z]|nvme\d|hd[a-z]|dm-?\d+|loop\d+|r?disk\d)/i,
     label: "mkfs on raw block device",
   },
   // Fork bomb — the classic `:(){ :|:& };:` shape, with whitespace tolerance.

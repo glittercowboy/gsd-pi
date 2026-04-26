@@ -79,6 +79,9 @@ test("classifyCatastrophic blocks dd to raw block devices", () => {
     "sudo dd if=/dev/random of=/dev/sdb1",
     "dd if=foo.img of=/dev/disk2",
     "dd if=foo.img of=/dev/rdisk2",
+    "dd if=/dev/zero of=/dev/dm-0 bs=1M",
+    "dd if=image.iso of=/dev/dm1",
+    "dd if=image.iso of=/dev/loop0",
   ]) {
     assert.equal(classifyCatastrophic(cmd).block, true, cmd);
   }
@@ -99,6 +102,9 @@ test("classifyCatastrophic blocks mkfs on raw devices", () => {
     "mkfs /dev/nvme0n1",
     "mke2fs /dev/sdb",
     "sudo mkfs.xfs /dev/sdc1",
+    "mkfs.ext4 /dev/dm-0",
+    "mkfs.xfs /dev/dm1",
+    "mke2fs /dev/loop0",
   ]) {
     assert.equal(classifyCatastrophic(cmd).block, true, cmd);
   }
