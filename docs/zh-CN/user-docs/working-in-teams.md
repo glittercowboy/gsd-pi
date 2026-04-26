@@ -84,6 +84,37 @@ git:
    ```
 5. 提交修改
 
+## 计划评审工作流
+
+对于会把规划产物纳入 git 跟踪的团队（也就是设置了 `mode: team`，并且没有把 `.gsd/milestones/` 加入 gitignore），可以使用双 PR 流程，在开始写代码之前先完成计划审批：
+
+1. **Plan PR**：开发者在 `main` 上运行 `/gsd discuss`，它会把规划产物写入 `.gsd/milestones/<MID>/`（如 `<MID>-CONTEXT.md` 和 `<MID>-ROADMAP.md`），并更新顶层的 `.gsd/REQUIREMENTS.md` 与 `.gsd/DECISIONS.md`。开发者提交这些文档，然后发起一个纯文档 PR。
+2. **Review**：团队直接在 GitHub 中审查 scope、风险、slice 拆分和完成定义。这时还没有代码需要审，只评审计划。
+3. **Code PR**：计划 PR 合并后，开发者拉取最新 `main` 并运行 `/gsd auto`。GSD 会创建 worktree，并基于已批准的计划执行，最终形成第二个包含实际实现的 PR。
+
+`/gsd discuss` 不会自动提交，开发者可以自行决定何时、以什么方式提交这些规划产物。
+
+### Reviewer 应重点看什么
+
+- **`<MID>-CONTEXT.md`**：scope 是否定义清楚？约束和非目标是否明确？
+- **`<MID>-ROADMAP.md`**：slice 拆分是否合理？顺序是否符合依赖关系？
+- **`.gsd/DECISIONS.md`**：架构选择是否有充分理由？
+
+### 执行期间的引导
+
+如果开发者在自动模式 worktree 内运行 `/gsd steer`，这些调整会保留在该 worktree 本地，并写入 worktree 中的 `.gsd/OVERRIDES.md`，不会去修改 `main` 上已经批准的计划文档。这些变化会随着实现代码一起出现在 code PR 的 diff 中。如果在 worktree 外运行 `/gsd steer`，则会修改当前所在 checkout 的内容。
+
+### 自动化 gate
+
+如果团队希望每个 slice 开始前都强制有一次讨论检查点，而不只是 milestone 级别，可以在偏好中加入 `require_slice_discussion: true`：
+
+```yaml
+phases:
+  require_slice_discussion: true
+```
+
+这样一来，当某个 slice 缺少自己的 slice `CONTEXT` 文件时，自动模式会暂停，并要求开发者先对该 slice 执行 `/gsd discuss`，之后才能继续。
+
 ## 并行开发
 
 多个开发者可以同时对不同 milestones 运行自动模式。每个开发者都会：

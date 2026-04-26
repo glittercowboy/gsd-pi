@@ -432,3 +432,27 @@ osascript -e 'display notification "test" with title "GSD"'
 ```bash
 terminal-notifier -title "GSD" -message "working!" -sound Glass
 ```
+
+### Telegram 通知没有送达
+
+**症状：** 自动模式正在运行，Telegram 也已经配置为远程频道，但 milestone 完成、预算预警以及其他信息型通知没有出现在 Telegram 聊天中。
+
+**可能原因与修复方式：**
+
+- **没有设置 `notifications.enabled`**：确认偏好中除了 `remote_questions` 配置外，还显式设置了 `notifications.enabled: true`。信息型通知要求这两个配置同时存在。
+- **Bot token 错误或已过期**：先运行 `/gsd remote status` 确认配置已保存，再运行 `/gsd remote telegram` 重新走一遍配置流程并重新校验 token。
+- **Bot 不在目标聊天中**：bot 必须已经被加入目标群聊，或者你配置的 chat ID 必须对应一个和 bot 的私聊。可以直接在 Telegram 里给 bot 发送 `/help`，确认它是否可达。
+- **`channel_id` 错误**：检查 `~/.gsd/PREFERENCES.md` 中的 chat ID 是否和你期待接收通知的聊天一致。对于群聊，这个 ID 通常是负数（例如 `-1001234567890`）。
+- **网络或防火墙问题**：运行 GSD 的机器必须能访问 `api.telegram.org`。可通过 `curl https://api.telegram.org` 测试连通性。
+
+### Telegram 命令没有响应
+
+**症状：** 在 Telegram 中向 bot 发送 `/status`、`/pause` 等命令后，没有任何回复。
+
+**可能原因与修复方式：**
+
+- **自动模式没有在运行**：后台轮询只会在自动模式活动期间启用。先用 `/gsd auto` 启动自动模式，再重试命令。
+- **聊天窗口不对**：命令只会从 `remote_questions.channel_id` 配置对应的聊天中被处理。确认你是在正确的聊天里发送。
+- **Bot token 不匹配**：环境变量 `TELEGRAM_BOT_TOKEN` 或 `~/.gsd/PREFERENCES.md` 中的 token，可能和你当前正在对话的 bot 不是同一个。运行 `/gsd remote status` 确认实际生效的是哪个 bot token。
+- **轮询尚未启动**：如果 GSD 已经在运行之后你才新增 Telegram 配置，需要重启一次自动模式（先 `/gsd stop`，再 `/gsd auto`），让轮询带着新配置启动。
+- **先发送 `/help`**：如果 bot 对 `/help` 有响应，说明轮询正常。如果某个特定命令比如 `/pause` 没有响应，优先检查拼写问题，因为命令区分大小写。

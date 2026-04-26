@@ -31,6 +31,7 @@
 | `/gsd export --html --all` | 一次性为所有 milestones 生成回顾报告 |
 | `/gsd update` | 在会话内更新到最新版本 |
 | `/gsd knowledge` | 添加持久化项目知识（规则、模式或经验） |
+| `/gsd extract-learnings <MID>` | 从已完成 milestone 中提取结构化 Decisions、Lessons、Patterns 和 Surprises；写入 `<MID>-LEARNINGS.md` 审计轨迹，把 Patterns 与 Lessons 追加到 `.gsd/KNOWLEDGE.md`，并通过 DECISIONS 数据库持久化 Decisions。milestone 完成时也会自动执行。 |
 | `/gsd fast` | 为支持的模型切换 service tier（优先级 API 路由） |
 | `/gsd rate` | 评价上一个单元所用模型层级（over / ok / under），帮助改进自适应路由 |
 | `/gsd changelog` | 查看分类后的发行说明 |
@@ -93,16 +94,51 @@
 | `/gsd templates` | 列出可用 workflow templates |
 | `/gsd templates info <name>` | 查看某个 template 的详细信息 |
 
-## 自定义 Workflows（v2.42）
+## 自定义 Workflows
+
+统一插件系统下，所有 workflow 无论是内置的、用户自己写的，还是远程安装的，都会通过 `/gsd workflow <name>` 被发现，并声明以下四种执行模式之一：
+
+| 模式 | 作用 |
+|------|------|
+| `oneshot` | 只运行 prompt，无状态、无分支。适合 review、triage、changelog 生成。 |
+| `yaml-step` | 完整引擎，带 `GRAPH.yaml`、迭代执行和 shell verification。适合扇出式批量工作。 |
+| `markdown-phase` | 多阶段模式，带 `STATE.json` 和 phase-approval gate。适合 release、performance audit。 |
+| `auto-milestone` | 接入完整的 `/gsd auto` 流水线。保留给 `full-project`。 |
+
+### 发现顺序（project > global > bundled）
+
+1. `.gsd/workflows/<name>.{yaml,md}`：项目本地，随仓库提交
+2. `~/.gsd/workflows/<name>.{yaml,md}`：全局私有，仅当前机器可见
+3. Bundled：随 GSD 内置发布（可用 `/gsd workflow` 查看完整列表）
+
+旧版 `.gsd/workflow-defs/` 下的 YAML definitions 仍会继续被识别，以保持向后兼容。
+
+### 命令
 
 | 命令 | 说明 |
 |------|------|
-| `/gsd workflow new` | 创建一个新的 workflow definition（通过 skill） |
-| `/gsd workflow run <name>` | 创建一个 run 并启动自动模式 |
-| `/gsd workflow list` | 列出 workflow runs |
-| `/gsd workflow validate <name>` | 校验一个 workflow YAML definition |
-| `/gsd workflow pause` | 暂停自定义 workflow 的自动模式 |
+| `/gsd workflow` | 按模式分组列出所有可发现插件 |
+| `/gsd workflow <name> [args]` | 直接运行某个插件（按优先级链解析来源） |
+| `/gsd workflow info <name>` | 查看插件元数据：来源、模式、阶段、路径 |
+| `/gsd workflow new` | 创建一个新的 workflow definition（通过 `create-workflow` skill） |
+| `/gsd workflow install <source>` | 从 `https://...`、`gist:<id>` 或 `gh:owner/repo/path[@ref]` 安装插件 |
+| `/gsd workflow uninstall <name>` | 卸载已安装插件及其 provenance 记录 |
+| `/gsd workflow run <name> [k=v]` | 显式 YAML 运行形式（对于 yaml-step 插件，等价于 `/gsd workflow <name>`） |
+| `/gsd workflow list` | 列出 YAML workflow runs（历史） |
+| `/gsd workflow validate <name>` | 校验一个 YAML definition |
+| `/gsd workflow pause` | 暂停自定义 workflow 自动模式 |
 | `/gsd workflow resume` | 恢复已暂停的自定义 workflow 自动模式 |
+
+### 内置插件
+
+- **Phased（`markdown-phase`）**：`bugfix`、`small-feature`、`spike`、`hotfix`、`refactor`、`security-audit`、`dep-upgrade`、`release`、`api-breaking-change`、`performance-audit`、`observability-setup`、`ci-bootstrap`
+- **Oneshot**：`pr-review`、`changelog-gen`、`issue-triage`、`pr-triage`、`onboarding-check`、`dead-code`、`accessibility-audit`
+- **YAML engine（`yaml-step`）**：`test-backfill`、`docs-sync`、`rename-symbol`、`env-audit`
+- **Auto-milestone**：`full-project`（通过 `/gsd start full-project` 或 `/gsd auto` 进入）
+
+### 编写自定义插件
+
+运行 `/gsd workflow new <name>`，通过 `create-workflow` skill 生成脚手架。插件就是普通的 YAML（`.yaml`）或 markdown（`.md`）文件。内置示例可参考 `src/resources/extensions/gsd/workflow-templates/`。
 
 ## 扩展
 
@@ -138,6 +174,22 @@
 | 命令 | 说明 |
 |------|------|
 | `/worktree`（`/wt`） | Git worktree 生命周期管理：create、switch、merge、remove |
+
+## Telegram 命令
+
+以下命令是直接发在 **Telegram 聊天窗口** 里的，目标是已配置好的 GSD bot，它们不是 GSD CLI 命令。Telegram 命令轮询会在自动模式运行期间大约每 5 秒执行一次。每条响应都会带上项目名前缀（例如 `📁 MyProject`）。
+
+| 命令 | 说明 |
+|------|------|
+| `/status` | 当前 milestone、活跃单元和当前会话成本 |
+| `/progress` | roadmap 概览，展示已完成和未完成的 milestones |
+| `/budget` | 当前会话的 token 使用量和成本 |
+| `/pause` | 在当前单元完成后暂停自动模式 |
+| `/resume` | 清除暂停指令并继续自动模式 |
+| `/log [n]` | 最近 `n` 条活动日志（默认 5） |
+| `/help` | 列出所有可用 Telegram 命令 |
+
+**要求：** 必须把 Telegram 配置为远程频道（`remote_questions.channel: telegram`）。这些命令只会在自动模式运行期间被处理。具体设置和细节见 [远程提问 - Telegram 命令](./remote-questions.md#telegram-命令)。
 
 ## 会话管理
 

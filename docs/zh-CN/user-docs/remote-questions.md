@@ -1,6 +1,6 @@
 # 远程提问
 
-在无头自动模式下运行时，远程提问允许 GSD 通过 Slack、Discord 或 Telegram 请求用户输入。当 GSD 遇到需要人工判断的决策点时，它会把问题发到你配置好的频道，并轮询等待响应。
+在无头自动模式下运行时，远程提问允许 GSD 通过 Slack、Discord 或 Telegram 请求用户输入，并发送信息型通知。当 GSD 遇到需要人工判断的决策点时，它会把问题发到你配置好的频道，并轮询等待响应。milestone 完成、阻塞、预算预警以及其他状态事件，也会被发送到同一个频道。
 
 ## 设置
 
@@ -109,6 +109,50 @@ remote_questions:
 
 如果在 `timeout_minutes` 内没有收到响应，提示会超时，GSD 将带着超时结果继续执行。LLM 会根据当前上下文处理超时，通常是做一个保守默认选择，或者暂停自动模式。
 
+## 信息型通知
+
+除了交互式提问之外，GSD 还会把自动模式中的关键事件作为信息型通知发送到你的远程频道。这些通知不需要回复，会与桌面通知同时投递。
+
+会远程发送的事件包括：
+
+| 事件 | 说明 |
+|------|------|
+| Milestone complete | 某个 milestone 已成功完成 |
+| All milestones done | 整个 roadmap 已全部完成 |
+| Blocker encountered | 自动模式因无法解决的问题而停止 |
+| Budget alert | 花费正在接近，或已经到达配置的预算上限 |
+| Budget ceiling reached | 因超过 `budget_ceiling`，自动模式已暂停 |
+
+只要偏好中设置了 `notifications.enabled: true`，并且已经配置远程频道，这些信息型通知就会被发送。接收交互式提问的同一个频道也会接收这些状态事件，不需要额外配置。
+
+## Telegram 命令
+
+当 Telegram 被配置为远程频道时，GSD 会在自动模式运行期间启动后台轮询（大约每 5 秒一次）。这样你就可以直接在 Telegram 聊天里向 bot 发送命令，并获得实时项目状态反馈。
+
+> **注意：** 后台命令轮询仅支持 Telegram。Slack 和 Discord 采用 webhook 模型，不支持从聊天窗口向 GSD 发送入站命令。
+
+### 可用命令
+
+所有命令响应都会带上项目名前缀（例如 `📁 MyProject`），这样在同时运行多个项目时也能区分来源。
+
+| 命令 | 说明 | 示例响应 |
+|------|------|----------|
+| `/status` | 当前 milestone、活跃单元和当前会话成本 | `📁 MyProject — M001: Auth System · Executing S02/T03 · $1.24` |
+| `/progress` | roadmap 概览，展示已完成和未完成的 milestones | `📁 MyProject — ✅ M001 Auth · 🔄 M002 Dashboard (active) · ⏳ M003 API` |
+| `/budget` | 当前会话的 token 使用量和成本 | `📁 MyProject — Session: $2.18 · 142k tokens · ceiling: $50.00` |
+| `/pause` | 在当前单元完成后暂停自动模式 | `📁 MyProject — Pause directive set. Auto-mode will stop after current unit.` |
+| `/resume` | 清除暂停指令并继续自动模式 | `📁 MyProject — Pause directive cleared. Auto-mode will continue.` |
+| `/log [n]` | 最近 `n` 条活动日志（默认 5） | `📁 MyProject — [10:42] Completed T02 · [10:38] Started T02 · ...` |
+| `/help` | 列出所有可用命令 | `📁 MyProject — Available commands: /status /progress ...` |
+
+### 后台轮询如何工作
+
+当自动模式运行时，GSD 会大约每 5 秒轮询一次 Telegram Bot API，拉取发给 bot 的新消息。收到命令后，GSD 会处理该命令，并在同一个聊天中回复。
+
+轮询只会在自动模式运行期间启用。当自动模式停止时（无论正常结束，还是通过 `/pause` 暂停），轮询也会一起停止。下一次执行 `/gsd auto` 时，轮询会自动恢复。
+
+`/pause` 会设置一个停止指令，GSD 会在每个单元边界检查它，因此当前单元总会先完成，然后自动模式才会停下。`/resume` 会清除该指令，让自动模式在无需终端交互的情况下继续运行。
+
 ## 命令
 
 | 命令 | 说明 |
@@ -116,6 +160,7 @@ remote_questions:
 | `/gsd remote` | 显示远程提问菜单和当前状态 |
 | `/gsd remote slack` | 配置 Slack 集成 |
 | `/gsd remote discord` | 配置 Discord 集成 |
+| `/gsd remote telegram` | 配置 Telegram 集成 |
 | `/gsd remote status` | 显示当前配置和最近一次提示状态 |
 | `/gsd remote disconnect` | 移除远程提问配置 |
 
@@ -133,6 +178,10 @@ remote_questions:
 | 服务器 / 频道选择器 | ✅（交互式） | ✅（交互式 + 手动兜底） |
 | Token 验证 | ✅ | ✅ |
 | 配置阶段测试消息 | ✅ | ✅ |
+| 信息型通知 | ✅ | ✅ |
+| 后台命令轮询 | ❌ | ❌ |
+
+Telegram 还支持以上全部能力，并额外提供后台命令轮询（`/status`、`/pause`、`/resume` 等）。
 
 ## 故障排查
 
@@ -159,3 +208,11 @@ remote_questions:
 - **Slack**：9-12 位大写字母数字字符（例如 `C0123456789`）
 - **Discord**：17-20 位纯数字 snowflake ID（例如 `1234567890123456789`）
 - 在 Discord 中开启 Developer Mode（Settings → Advanced）后可以复制频道 ID
+
+### Telegram 命令没有响应
+
+- 确认自动模式当前正在运行，后台轮询只会在自动模式活动期间启用
+- 确认 `~/.gsd/PREFERENCES.md` 中的 bot token 与 [@BotFather](https://t.me/BotFather) 提供的 token 一致
+- 确认配置中的 `chat_id`（或 `channel_id`）和你发送命令的聊天一致，bot 只会在其配置的聊天中响应
+- 先发送 `/help`；如果 bot 有回复，说明轮询正常，问题可能只出在某个具体命令
+- 在终端执行 `/gsd remote status`，确认 Telegram 配置已经被正确保存

@@ -48,7 +48,23 @@ dynamic_routing:
   cross_provider: true            # 可跨 provider 选择 model（默认：true）
   hooks: true                     # 是否对 post-unit hooks 也应用路由（默认：true）
   capability_routing: true        # 在 tier 内启用 capability scoring（默认：true）
+  allow_flat_rate_providers: false # 是否允许对包月 / 平价 provider 启用路由（默认：false）
 ```
+
+### `allow_flat_rate_providers`
+
+默认情况下，当当前 provider 是平价 / 包月型（例如 `claude-code`、GitHub Copilot、用户自行声明的 subscription proxy，或 `externalCli` providers）时，动态路由会被抑制，因为单次请求成本相同，降级通常只会降低质量，而不会带来计费优势。
+
+把它设为 `true`，可以让 router 在同一个包月订阅内继续做按任务选择。例如，你可能想在同一个订阅里让 research 用 haiku，架构任务用 opus：
+
+```yaml
+dynamic_routing:
+  enabled: true
+  allow_flat_rate_providers: true
+  cross_provider: false           # 推荐：把路由限制在当前订阅内部
+```
+
+启用这个标志时，通常也建议保持 `cross_provider: false`，除非你使用的每个包月 provider 都暴露了完整 tier 的模型；否则 router 可能会尝试跳到一个你并未真正配置好的 provider。
 
 ### `tier_models`
 
