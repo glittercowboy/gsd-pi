@@ -9,6 +9,7 @@
 
 import type { ExtensionContext } from "@gsd/pi-coding-agent";
 import { parseUnitId } from "./unit-id.js";
+import { MILESTONE_ID_RE } from "./milestone-ids.js";
 import { appendEvent } from "./workflow-events.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { clearParseCache } from "./files.js";
@@ -310,6 +311,8 @@ function commitMatchesMilestone(message: string, milestoneId: string, files: rea
 }
 
 function commitMessageMentionsMilestone(message: string, milestoneId: string): boolean {
+  if (!MILESTONE_ID_RE.test(milestoneId)) return false;
+
   const escapedMilestone = milestoneId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`\\b${escapedMilestone}\\b`).test(message);
 }
