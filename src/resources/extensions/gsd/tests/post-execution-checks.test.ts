@@ -290,6 +290,100 @@ describe("resolveImportPath", () => {
     assert.ok(result.resolvedPath?.endsWith("types.ts"));
   });
 
+  test("resolves dotted-stem TypeScript import without extension", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-dotted-stem-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src", "lib"), { recursive: true });
+    writeFileSync(join(dir, "src", "lib", "test-helpers.test-utils.ts"), "export {};");
+    writeFileSync(join(dir, "src", "Button.stories.tsx"), "export {};");
+    writeFileSync(join(dir, "src", "main.ts"), "");
+
+    const helperResult = resolveImportPath(
+      "./lib/test-helpers.test-utils",
+      "src/main.ts",
+      dir
+    );
+    assert.ok(helperResult.exists, "dotted helper stem should resolve");
+    assert.ok(helperResult.resolvedPath?.endsWith("test-helpers.test-utils.ts"));
+
+    const storiesResult = resolveImportPath("./Button.stories", "src/main.ts", dir);
+    assert.ok(storiesResult.exists, "dotted stories stem should resolve");
+    assert.ok(storiesResult.resolvedPath?.endsWith("Button.stories.tsx"));
+  });
+
+  test("resolves test and spec dotted stems without treating the suffix as sealed", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-dotted-spec-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "Widget.test.ts"), "export {};");
+    writeFileSync(join(dir, "src", "Widget.spec.ts"), "export {};");
+    writeFileSync(join(dir, "src", "main.ts"), "");
+
+    const testResult = resolveImportPath("./Widget.test", "src/main.ts", dir);
+    assert.ok(testResult.exists, "dotted .test stem should resolve");
+    assert.ok(testResult.resolvedPath?.endsWith("Widget.test.ts"));
+
+    const specResult = resolveImportPath("./Widget.spec", "src/main.ts", dir);
+    assert.ok(specResult.exists, "dotted .spec stem should resolve");
+    assert.ok(specResult.resolvedPath?.endsWith("Widget.spec.ts"));
+  });
+
+  test("resolves explicit TypeScript declaration and module extensions", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-ts-exts-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "types.d.ts"), "export interface Types {}");
+    writeFileSync(join(dir, "src", "runtime.mts"), "export {};");
+    writeFileSync(join(dir, "src", "runtime.cts"), "export {};");
+    writeFileSync(join(dir, "src", "main.ts"), "");
+
+    const declarationResult = resolveImportPath("./types.d.ts", "src/main.ts", dir);
+    assert.ok(declarationResult.exists, "explicit .d.ts import should resolve directly");
+    assert.ok(declarationResult.resolvedPath?.endsWith("types.d.ts"));
+
+    const mtsResult = resolveImportPath("./runtime.mts", "src/main.ts", dir);
+    assert.ok(mtsResult.exists, "explicit .mts import should resolve directly");
+    assert.ok(mtsResult.resolvedPath?.endsWith("runtime.mts"));
+
+    const ctsResult = resolveImportPath("./runtime.cts", "src/main.ts", dir);
+    assert.ok(ctsResult.exists, "explicit .cts import should resolve directly");
+    assert.ok(ctsResult.resolvedPath?.endsWith("runtime.cts"));
+  });
+
+  test("resolves JavaScript module imports to TypeScript module siblings", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-ts-module-exts-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "esm.mts"), "export {};");
+    writeFileSync(join(dir, "src", "common.cts"), "export {};");
+    writeFileSync(join(dir, "src", "main.ts"), "");
+
+    const esmResult = resolveImportPath("./esm.mjs", "src/main.ts", dir);
+    assert.ok(esmResult.exists, ".mjs import should resolve to .mts sibling");
+    assert.ok(esmResult.resolvedPath?.endsWith("esm.mts"));
+
+    const commonResult = resolveImportPath("./common.cjs", "src/main.ts", dir);
+    assert.ok(commonResult.exists, ".cjs import should resolve to .cts sibling");
+    assert.ok(commonResult.resolvedPath?.endsWith("common.cts"));
+  });
+
+  test("missing explicit TypeScript and asset extensions do not match code shadows", (t) => {
+    const dir = mkdtempSync(join(tmpdir(), "post-exec-test-sealed-exts-"));
+    t.after(() => rmSync(dir, { recursive: true, force: true }));
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "src", "missing.mts.ts"), "export {};");
+    writeFileSync(join(dir, "src", "missing.CSS.ts"), "export {};");
+    writeFileSync(join(dir, "src", "main.ts"), "");
+
+    const mtsResult = resolveImportPath("./missing.mts", "src/main.ts", dir);
+    assert.ok(!mtsResult.exists, "missing explicit .mts import should stay missing");
+    assert.equal(mtsResult.resolvedPath, null);
+
+    const cssResult = resolveImportPath("./missing.CSS", "src/main.ts", dir);
+    assert.ok(!cssResult.exists, "missing asset import should be case-insensitively sealed");
+    assert.equal(cssResult.resolvedPath, null);
+  });
+
   // Non-code explicit extensions must not fall through to code-extension
   // shadows: a missing ./missing.css must stay unresolved even if a stray
   // ./missing.css.ts happens to exist.
@@ -573,6 +667,39 @@ describe("checkCrossTaskSignatures", () => {
     }
   });
 
+  test("checks .mts and .cts key files with the shared code-extension set", () => {
+    tempDir = join(tmpdir(), `post-exec-test-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    mkdirSync(join(tempDir, "src"), { recursive: true });
+    writeFileSync(
+      join(tempDir, "src", "utils.mts"),
+      "export function serialize(value: string): string { return value; }"
+    );
+    writeFileSync(
+      join(tempDir, "src", "api.cts"),
+      "export function serialize(value: number): string { return String(value); }"
+    );
+
+    try {
+      const priorTask = createTask({
+        id: "T01",
+        key_files: ["src/utils.mts"],
+      });
+      const currentTask = createTask({
+        id: "T02",
+        key_files: ["src/api.cts"],
+      });
+
+      const results = checkCrossTaskSignatures(currentTask, [priorTask], tempDir);
+      assert.equal(results.length, 1);
+      assert.equal(results[0].category, "signature");
+      assert.equal(results[0].target, "serialize");
+      assert.ok(results[0].message.includes("parameters"));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("handles multiple prior tasks", () => {
     tempDir = join(tmpdir(), `post-exec-test-${Date.now()}`);
     mkdirSync(tempDir, { recursive: true });
@@ -675,6 +802,28 @@ describe("checkPatternConsistency", () => {
       assert.equal(asyncResults[0].category, "pattern");
       assert.equal(asyncResults[0].passed, true); // Warning only
       assert.equal(asyncResults[0].blocking, false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("checks .mts key files for pattern consistency", () => {
+    tempDir = join(tmpdir(), `post-exec-test-${Date.now()}`);
+    mkdirSync(tempDir, { recursive: true });
+    writeFileSync(
+      join(tempDir, "api.mts"),
+      `async function getData(): Promise<string> {
+        const result = await fetch('/api');
+        return result.text().then(t => t.toUpperCase());
+      }`
+    );
+
+    try {
+      const task = createTask({ id: "T01", key_files: ["api.mts"] });
+      const results = checkPatternConsistency(task, [], tempDir);
+      const asyncResults = results.filter((r) => r.message.includes("async"));
+      assert.equal(asyncResults.length, 1);
+      assert.equal(asyncResults[0].category, "pattern");
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
