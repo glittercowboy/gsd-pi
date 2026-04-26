@@ -61,6 +61,7 @@ type XmlParameterBlock = {
 };
 
 const xmlParameterBlockPattern = /<parameter\s+name="([^"]+)"\s*>([\s\S]*?)<\/parameter>/g;
+const xmlParameterOpenPattern = /<parameter\s+name="([^"]+)"\s*>/g;
 
 function parseXmlParameterValue(raw: string): unknown {
 	const trimmed = raw.trim();
@@ -73,11 +74,31 @@ function parseXmlParameterValue(raw: string): unknown {
 }
 
 function extractXmlParameterBlocks(text: string): XmlParameterBlock[] {
-	const blocks: XmlParameterBlock[] = [];
+	const strictBlocks: XmlParameterBlock[] = [];
+	let hasNestedParameterOpening = false;
 	for (const match of text.matchAll(xmlParameterBlockPattern)) {
-		blocks.push({
+		const rawValue = match[2] ?? "";
+		hasNestedParameterOpening ||= rawValue.includes("<parameter");
+		strictBlocks.push({
 			name: match[1],
-			value: parseXmlParameterValue(match[2] ?? ""),
+			value: parseXmlParameterValue(rawValue),
+		});
+	}
+	if (strictBlocks.length > 0 && !hasNestedParameterOpening) return strictBlocks;
+
+	const blocks: XmlParameterBlock[] = [];
+	const openings = [...text.matchAll(xmlParameterOpenPattern)];
+	for (let i = 0; i < openings.length; i++) {
+		const current = openings[i];
+		const next = openings[i + 1];
+		if (current.index === undefined) continue;
+
+		const start = current.index + current[0].length;
+		const end = next?.index ?? text.length;
+		const rawValue = text.slice(start, end).replace(/\s*<\/parameter>\s*$/, "");
+		blocks.push({
+			name: current[1],
+			value: parseXmlParameterValue(rawValue),
 		});
 	}
 	return blocks;
