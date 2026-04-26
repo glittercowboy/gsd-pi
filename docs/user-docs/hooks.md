@@ -90,6 +90,30 @@ that apply depend on the hook:
 Any non-JSON stdout is ignored (your command can still print progress). A
 non-zero exit code counts as a block for `blocking: true` hooks (the default).
 
+## Built-in safety blocks
+
+GSD also installs built-in `tool_call` safety checks. These checks are always
+active and do not need a `settings.json` hook.
+
+Bash commands that match a tight catastrophic-command denylist are blocked
+before they run. This includes commands such as recursive deletes of critical
+filesystem roots, raw disk writes or formats, fork bombs, host shutdown or
+reboot commands, recursive permission changes on critical roots, and force
+pushes to protected integration branches.
+
+GSD also blocks file writes that clearly escape the current session perimeter.
+`write` and `edit` tool calls may target relative paths, absolute paths inside
+the current project tree, or files under the system temp directory (`/tmp` or
+`$TMPDIR`). Absolute paths outside those areas are blocked. For bash commands,
+GSD scans common write shapes such as redirects, `tee`, `cp`, `mv`, `install`,
+`sed -i`, `dd of=`, and `rm` when they target absolute paths outside the
+perimeter.
+
+These guards are operator safety tripwires, not an adversarial sandbox. If a
+blocked action is genuinely intentional, run it manually outside the agent. If
+the agent only needs scratch space, rewrite the command to use the project tree
+or the system temp directory.
+
 ## Project-scoped hooks (trust model)
 
 Hooks declared in `.pi/settings.json` (project-local) **are not executed

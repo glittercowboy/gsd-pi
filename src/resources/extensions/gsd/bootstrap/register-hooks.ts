@@ -26,7 +26,8 @@ import { saveActivityLog } from "../activity-log.js";
 import { resetAskUserQuestionsCache } from "../../ask-user-questions.js";
 import { recordToolCall as safetyRecordToolCall, recordToolResult as safetyRecordToolResult, saveEvidenceToDisk } from "../safety/evidence-collector.js";
 import { parseUnitId } from "../unit-id.js";
-import { classifyCommand } from "../safety/destructive-guard.js";
+import { classifyCatastrophic, classifyCommand } from "../safety/destructive-guard.js";
+import { classifyBashPath, classifyFilePath } from "../safety/path-guard.js";
 import { logWarning as safetyLogWarning } from "../workflow-logger.js";
 import { installNotifyInterceptor } from "./notify-interceptor.js";
 import { initNotificationStore } from "../notification-store.js";
@@ -359,6 +360,18 @@ export function registerHooks(
       if (queueGuard.block) return queueGuard;
     }
 
+    // ── Catastrophic command hard-block ─────────────────────────────────
+    // Tight denylist of irreversible host-damaging commands (rm -rf /, dd to
+    // /dev/sd*, fork bombs, force-push to main, etc.). Runs unconditionally
+    // — not gated on auto-mode — because the consequences are catastrophic
+    // regardless of who is driving.
+    if (isToolCallEventType("bash", event)) {
+      const catastrophic = classifyCatastrophic(event.input.command);
+      if (catastrophic.block) {
+        return { block: true, reason: catastrophic.reason };
+      }
+    }
+
     // ── Planning-unit tools-policy enforcement (#4934): runtime half ─────
     // The active auto-mode unit's manifest declares a ToolsPolicy. For
     // planning/docs/read-only modes, deny writes outside .gsd/ (or the
@@ -406,6 +419,29 @@ export function registerHooks(
     if (isToolCallEventType("bash", event)) {
       if (isBashWriteToStateFile(event.input.command)) {
         return { block: true, reason: BLOCKED_WRITE_ERROR };
+      }
+    }
+
+    // ── Filesystem perimeter guard ──────────────────────────────────────
+    // Block Write/Edit to absolute paths outside the session base directory
+    // (with allowlist for tmp dirs). For bash, only flag clearly out-of-tree
+    // absolute redirect/cp/mv/rm targets — relative paths stay allowed.
+    if (isToolCallEventType("write", event)) {
+      const perimeter = classifyFilePath(event.input.path, discussionBasePath);
+      if (perimeter.block) {
+        return { block: true, reason: perimeter.reason };
+      }
+    }
+    if (isToolCallEventType("edit", event)) {
+      const perimeter = classifyFilePath(event.input.path, discussionBasePath);
+      if (perimeter.block) {
+        return { block: true, reason: perimeter.reason };
+      }
+    }
+    if (isToolCallEventType("bash", event)) {
+      const perimeter = classifyBashPath(event.input.command, discussionBasePath);
+      if (perimeter.block) {
+        return { block: true, reason: perimeter.reason };
       }
     }
 
