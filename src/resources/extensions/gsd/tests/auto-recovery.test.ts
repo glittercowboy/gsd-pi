@@ -731,6 +731,39 @@ test("hasImplementationArtifacts uses milestone path history instead of rolling 
   }
 });
 
+test("hasImplementationArtifacts finds implementation commits when .gsd/ is gitignored (#5033)", () => {
+  const base = makeGitBase();
+  try {
+    // Simulate external/untracked .gsd/ via .git/info/exclude — milestone
+    // planning artifacts never enter git, but real implementation files do.
+    writeFileSync(join(base, ".git", "info", "exclude"), ".gsd/\n");
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
+    writeFileSync(
+      join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-SUMMARY.md"),
+      "# Summary",
+    );
+
+    mkdirSync(join(base, "benchmarks", "M001"), { recursive: true });
+    writeFileSync(join(base, "benchmarks", "M001", "manifest.yaml"), "cases: []\n");
+
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync(
+      "git",
+      ["commit", "-m", "feat: materialize M001 evidence\n\nGSD-Task: S01/T01"],
+      { cwd: base, stdio: "ignore" },
+    );
+
+    const result = hasImplementationArtifacts(base, "M001");
+    assert.equal(
+      result,
+      "present",
+      "milestone-tagged commit binding must work when .gsd/ is gitignored",
+    );
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("hasImplementationArtifacts returns true on non-git directory (fail-open)", () => {
   const base = join(tmpdir(), `gsd-test-nogit-${randomUUID()}`);
   mkdirSync(base, { recursive: true });
