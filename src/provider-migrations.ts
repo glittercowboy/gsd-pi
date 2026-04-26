@@ -2,7 +2,7 @@ import type { AuthStorage } from "@gsd/pi-coding-agent"
 
 type AnthropicMigrationDeps = {
   authStorage: Pick<AuthStorage, "getCredentialsForProvider">
-  isClaudeCodeReady: boolean
+  isClaudeCodeReady: boolean | (() => boolean)
   defaultProvider: string | undefined
   env?: NodeJS.ProcessEnv
 }
@@ -14,7 +14,7 @@ type MigrationModel = {
 
 type AnthropicDefaultMigrationDeps = {
   authStorage: Pick<AuthStorage, "getCredentialsForProvider">
-  isClaudeCodeReady: boolean
+  isClaudeCodeReady: boolean | (() => boolean)
   settingsManager: {
     getDefaultProvider(): string | undefined
     getDefaultModel(): string | undefined
@@ -45,11 +45,15 @@ export function shouldMigrateAnthropicToClaudeCode({
   defaultProvider,
   env = process.env,
 }: AnthropicMigrationDeps): boolean {
-  if (!isClaudeCodeReady || defaultProvider !== "anthropic") {
+  if (defaultProvider !== "anthropic") {
     return false
   }
 
-  return !hasDirectAnthropicApiKey(authStorage, env)
+  if (hasDirectAnthropicApiKey(authStorage, env)) {
+    return false
+  }
+
+  return typeof isClaudeCodeReady === "function" ? isClaudeCodeReady() : isClaudeCodeReady
 }
 
 export function migrateAnthropicDefaultToClaudeCode({

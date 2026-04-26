@@ -1,9 +1,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { loadRegistry } from "../workflow-templates.js";
-import { resolveProjectRoot } from "../worktree.js";
 
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
 
@@ -346,6 +345,77 @@ function getExtensionCompletions(prefix: string, action: string) {
   }
 }
 
+function normalizePathForCompare(path: string): string {
+  return path.replaceAll("\\", "/").replace(/\/+$/, "");
+}
+
+function findWorktreeSegment(normalizedPath: string): { gsdIdx: number; afterWorktrees: number } | null {
+  const directMarker = "/.gsd/worktrees/";
+  const directIdx = normalizedPath.indexOf(directMarker);
+  if (directIdx !== -1) {
+    return { gsdIdx: directIdx, afterWorktrees: directIdx + directMarker.length };
+  }
+
+  const symlinkMatch = normalizedPath.match(/\/\.gsd\/projects\/[a-f0-9]+\/worktrees\//);
+  if (symlinkMatch?.index !== undefined) {
+    return { gsdIdx: symlinkMatch.index, afterWorktrees: symlinkMatch.index + symlinkMatch[0].length };
+  }
+
+  return null;
+}
+
+function resolveProjectRootFromGitFile(worktreePath: string): string | null {
+  try {
+    let dir = worktreePath;
+    for (let i = 0; i < 30; i++) {
+      const gitPath = join(dir, ".git");
+      if (existsSync(gitPath)) {
+        const content = readFileSync(gitPath, "utf8").trim();
+        if (content.startsWith("gitdir: ")) {
+          const gitDir = resolve(dir, content.slice(8));
+          const dotGitDir = resolve(gitDir, "..", "..");
+          if (dotGitDir.endsWith(".git") || dotGitDir.endsWith(".git/") || dotGitDir.endsWith(".git\\")) {
+            return resolve(dotGitDir, "..");
+          }
+          const commonDirPath = join(gitDir, "commondir");
+          if (existsSync(commonDirPath)) {
+            const commonDir = readFileSync(commonDirPath, "utf8").trim();
+            return resolve(resolve(gitDir, commonDir), "..");
+          }
+        }
+        break;
+      }
+      const parent = resolve(dir, "..");
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // Completion must stay best-effort.
+  }
+  return null;
+}
+
+function resolveProjectRootForCompletion(basePath: string): string {
+  if (process.env.GSD_PROJECT_ROOT) return process.env.GSD_PROJECT_ROOT;
+
+  const normalizedPath = normalizePathForCompare(basePath);
+  const segment = findWorktreeSegment(normalizedPath);
+  if (!segment) return basePath;
+
+  const separator = basePath.includes("\\") ? "\\" : "/";
+  const gsdMarker = `${separator}.gsd${separator}`;
+  const gsdIdx = basePath.indexOf(gsdMarker);
+  const candidate = gsdIdx !== -1 ? basePath.slice(0, gsdIdx) : basePath.slice(0, segment.gsdIdx);
+
+  const normalizedGsdHome = normalizePathForCompare(gsdHome);
+  const candidateGsdPath = normalizePathForCompare(join(candidate, ".gsd"));
+  if (candidateGsdPath === normalizedGsdHome || candidateGsdPath.startsWith(`${normalizedGsdHome}/`)) {
+    return resolveProjectRootFromGitFile(basePath) ?? basePath;
+  }
+
+  return candidate;
+}
+
 export function getGsdArgumentCompletions(prefix: string) {
   const hasTrailingSpace = prefix.endsWith(" ");
   const parts = prefix.trim().split(/\s+/);
@@ -406,7 +476,7 @@ export function getGsdArgumentCompletions(prefix: string) {
   // Workflow definition-name completion for `workflow run <name>` and `workflow validate <name>`
   if (command === "workflow" && (subcommand === "run" || subcommand === "validate") && parts.length <= 3) {
     try {
-      const defsDir = join(resolveProjectRoot(process.cwd()), ".gsd", "workflow-defs");
+      const defsDir = join(resolveProjectRootForCompletion(process.cwd()), ".gsd", "workflow-defs");
       if (existsSync(defsDir)) {
         return readdirSync(defsDir)
           .filter((f) => f.endsWith(".yaml") && f.startsWith(third))
@@ -443,7 +513,7 @@ export function getGsdArgumentCompletions(prefix: string) {
       } catch { /* ignore */ }
     };
     try {
-      const base = resolveProjectRoot(process.cwd());
+      const base = resolveProjectRootForCompletion(process.cwd());
       scanDir(join(base, ".gsd", "workflows"), "project");
       scanDir(join(base, ".gsd", "workflow-defs"), "project-legacy");
       scanDir(join(gsdHome, "workflows"), "global");

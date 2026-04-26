@@ -7,14 +7,13 @@
  * Templates live at prompts/ relative to this module's directory.
  * They use {{variableName}} syntax for substitution.
  *
- * All templates are eagerly loaded into cache at module init via warmCache().
- * This prevents a running session from being invalidated when another `gsd`
- * launch overwrites ~/.gsd/agent/ with newer templates via initResources().
- * Without eager caching, the in-memory extension code (which knows variable
- * set A) can read a newer template from disk (which expects variable set B),
- * causing a "template declares {{X}} but no value was provided" crash
- * mid-session — especially for late-loading templates like complete-milestone
- * that aren't read until the end of a long auto-mode run.
+ * Templates are snapshotted shortly after module init via warmCache().
+ * This keeps import/extension-registration fast while still preventing a
+ * running session from being invalidated when another `gsd` launch overwrites
+ * ~/.gsd/agent/ with newer templates via initResources(). Without caching, the
+ * in-memory extension code (which knows variable set A) can read a newer
+ * template from disk (which expects variable set B), causing a
+ * "template declares {{X}} but no value was provided" crash mid-session.
  */
 
 import { readFileSync, readdirSync, existsSync } from "node:fs";
@@ -82,8 +81,8 @@ export function getTemplatesDir(): string {
   return templatesDir;
 }
 
-// Cache all templates eagerly at module load — a running session uses the
-// template versions that were on disk at startup, immune to later overwrites.
+// Cache all templates from a startup snapshot — a running session uses the
+// template versions that were on disk near startup, immune to later overwrites.
 const templateCache = new Map<string, string>();
 
 /**
@@ -124,8 +123,23 @@ function warmCache(): void {
   }
 }
 
-// Snapshot all templates at module load time
-warmCache();
+let warmCacheScheduled = false;
+
+function scheduleWarmCache(): void {
+  if (warmCacheScheduled) return;
+  warmCacheScheduled = true;
+
+  const run = () => {
+    warmCache();
+  };
+
+  const timer = setTimeout(run, 1000);
+  timer.unref?.();
+}
+
+// Snapshot the full prompt/template tree after import so extension startup only
+// pays for prompts that are actually needed immediately.
+scheduleWarmCache();
 
 /**
  * Load a prompt template and substitute variables.

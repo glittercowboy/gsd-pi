@@ -6,12 +6,6 @@
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 
-import { executeGsdExec } from "../tools/exec-tool.js";
-import { executeExecSearch } from "../tools/exec-search-tool.js";
-import { executeResume } from "../tools/resume-tool.js";
-import { loadEffectiveGSDPreferences } from "../preferences.js";
-import { logWarning } from "../workflow-logger.js";
-
 export function registerExecTools(pi: ExtensionAPI): void {
   pi.registerTool({
     name: "gsd_exec",
@@ -46,7 +40,12 @@ export function registerExecTools(pi: ExtensionAPI): void {
       ),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-      let prefs: Awaited<ReturnType<typeof loadEffectiveGSDPreferences>> | null = null;
+      const [{ executeGsdExec }, { loadEffectiveGSDPreferences }, { logWarning }] = await Promise.all([
+        import("../tools/exec-tool.js"),
+        import("../preferences.js"),
+        import("../workflow-logger.js"),
+      ]);
+      let prefs: ReturnType<typeof loadEffectiveGSDPreferences> | null = null;
       try {
         prefs = loadEffectiveGSDPreferences();
       } catch (err) {
@@ -81,6 +80,7 @@ export function registerExecTools(pi: ExtensionAPI): void {
       limit: Type.Optional(Type.Number({ description: "Max results (default 20, cap 200)", minimum: 1, maximum: 200 })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const { executeExecSearch } = await import("../tools/exec-search-tool.js");
       return executeExecSearch(params as Parameters<typeof executeExecSearch>[0], {
         baseDir: process.cwd(),
       });
@@ -101,6 +101,7 @@ export function registerExecTools(pi: ExtensionAPI): void {
     ],
     parameters: Type.Object({}),
     async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+      const { executeResume } = await import("../tools/resume-tool.js");
       return executeResume(params as Parameters<typeof executeResume>[0], {
         baseDir: process.cwd(),
       });

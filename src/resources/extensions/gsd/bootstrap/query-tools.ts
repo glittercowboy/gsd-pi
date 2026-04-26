@@ -3,8 +3,6 @@
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { ensureDbOpen } from "./dynamic-tools.js";
-import { executeMilestoneStatus } from "../tools/workflow-tool-executors.js";
-import { checkpointDatabase } from "../gsd-db.js";
 
 export function registerQueryTools(pi: ExtensionAPI): void {
   pi.registerTool({
@@ -29,6 +27,7 @@ export function registerQueryTools(pi: ExtensionAPI): void {
           details: { operation: "milestone_status", error: "db_unavailable" },
         };
       }
+      const { executeMilestoneStatus } = await import("../tools/workflow-tool-executors.js");
       return executeMilestoneStatus(params);
     },
   });
@@ -55,6 +54,7 @@ export function registerQueryTools(pi: ExtensionAPI): void {
           details: { operation: "checkpoint_db", error: "db_unavailable" },
         };
       }
+      const { checkpointDatabase } = await import("../gsd-db.js");
       checkpointDatabase();
       return {
         content: [{ type: "text", text: "WAL checkpoint complete. gsd.db is now up to date and safe to stage with git add." }],

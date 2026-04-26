@@ -89,7 +89,7 @@ test("buildResourceLoader excludes duplicate top-level pi extensions when bundle
   writeFileSync(join(piExtensionsDir, "custom-extension.ts"), "export {};\n");
 
   const { buildResourceLoader } = await import("../resource-loader.ts");
-  const loader = buildResourceLoader(fakeAgentDir) as { additionalExtensionPaths?: string[] };
+  const loader = await buildResourceLoader(fakeAgentDir) as { additionalExtensionPaths?: string[] };
   const additionalExtensionPaths = loader.additionalExtensionPaths ?? [];
 
   assert.equal(
@@ -101,6 +101,32 @@ test("buildResourceLoader excludes duplicate top-level pi extensions when bundle
     additionalExtensionPaths.some((entryPath) => entryPath.endsWith("custom-extension.ts")),
     true,
     "non-duplicate pi extensions should still load",
+  );
+});
+
+test("buildResourceLoader includes caller-provided additional extension paths", async (t) => {
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-resource-loader-cli-"));
+  const fakeAgentDir = join(tmp, ".gsd", "agent");
+  const cliExtensionPath = join(tmp, "cli-extension.ts");
+  const restoreHomeEnv = overrideHomeEnv(tmp);
+
+  t.after(() => {
+    restoreHomeEnv();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  writeFileSync(cliExtensionPath, "export {};\n");
+
+  const { buildResourceLoader } = await import("../resource-loader.ts");
+  const loader = await buildResourceLoader(fakeAgentDir, {
+    additionalExtensionPaths: [cliExtensionPath],
+  }) as { additionalExtensionPaths?: string[] };
+  const additionalExtensionPaths = loader.additionalExtensionPaths ?? [];
+
+  assert.equal(
+    additionalExtensionPaths.includes(cliExtensionPath),
+    true,
+    "caller-provided extension paths should be threaded into the resource loader",
   );
 });
 

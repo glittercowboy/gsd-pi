@@ -23,19 +23,19 @@ describe("quick task turn_end cleanup (#2668)", () => {
     "utf-8",
   );
 
-  it("register-hooks.ts imports cleanupQuickBranch from quick.ts", () => {
+  it("register-hooks.ts loads cleanupQuickBranch from quick.ts", () => {
     assert.ok(
       hooksSource.includes("cleanupQuickBranch"),
       "register-hooks.ts must reference cleanupQuickBranch",
     );
 
-    // Verify it's imported (not just mentioned in a comment)
-    const importMatch = hooksSource.match(
-      /import\s*\{[^}]*cleanupQuickBranch[^}]*\}\s*from\s*["'][^"']*quick/,
-    );
+    // Verify it is loaded from quick.ts (static or lazy), not just mentioned in a comment.
+    const importMatch =
+      hooksSource.match(/import\s*\{[^}]*cleanupQuickBranch[^}]*\}\s*from\s*["'][^"']*quick/) ||
+      hooksSource.match(/const\s+\{\s*cleanupQuickBranch\s*\}\s*=\s*await\s+import\(["'][^"']*quick\.js["']\)/);
     assert.ok(
       importMatch,
-      "cleanupQuickBranch must be imported from quick module",
+      "cleanupQuickBranch must be loaded from quick module",
     );
   });
 

@@ -1,17 +1,13 @@
 "use client"
 
 import Image from "next/image"
+import dynamic from "next/dynamic"
 import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react"
 import { Menu, X } from "lucide-react"
 import { Sidebar, MilestoneExplorer, CollapsedMilestoneSidebar } from "@/components/gsd/sidebar"
 import { ShellTerminal } from "@/components/gsd/shell-terminal"
 import { Dashboard } from "@/components/gsd/dashboard"
-import { Roadmap } from "@/components/gsd/roadmap"
-import { FilesView } from "@/components/gsd/files-view"
-import { ActivityView } from "@/components/gsd/activity-view"
-import { VisualizerView } from "@/components/gsd/visualizer-view"
 import { StatusBar } from "@/components/gsd/status-bar"
-import { DualTerminal } from "@/components/gsd/dual-terminal"
 import { FocusedPanel } from "@/components/gsd/focused-panel"
 import { OnboardingGate } from "@/components/gsd/onboarding-gate"
 import { CommandSurface } from "@/components/gsd/command-surface"
@@ -29,7 +25,6 @@ import {
   useGSDWorkspaceState,
   useGSDWorkspaceActions,
 } from "@/lib/gsd-workspace-store"
-import { ChatMode } from "@/components/gsd/chat-mode"
 import { ScopeBadge } from "@/components/gsd/scope-badge"
 import { Badge } from "@/components/ui/badge"
 import { ProjectsPanel, ProjectSelectionGate } from "@/components/gsd/projects-view"
@@ -37,6 +32,37 @@ import { UpdateBanner } from "@/components/gsd/update-banner"
 import { getAuthToken } from "@/lib/auth"
 
 const KNOWN_VIEWS = new Set(["dashboard", "power", "chat", "roadmap", "files", "activity", "visualize"])
+
+const ViewLoading = () => (
+  <div className="h-full w-full p-4">
+    <Skeleton className="h-full w-full" />
+  </div>
+)
+
+const Roadmap = dynamic(() => import("@/components/gsd/roadmap").then((mod) => mod.Roadmap), {
+  loading: ViewLoading,
+  ssr: false,
+})
+const FilesView = dynamic(() => import("@/components/gsd/files-view").then((mod) => mod.FilesView), {
+  loading: ViewLoading,
+  ssr: false,
+})
+const ActivityView = dynamic(() => import("@/components/gsd/activity-view").then((mod) => mod.ActivityView), {
+  loading: ViewLoading,
+  ssr: false,
+})
+const VisualizerView = dynamic(() => import("@/components/gsd/visualizer-view").then((mod) => mod.VisualizerView), {
+  loading: ViewLoading,
+  ssr: false,
+})
+const DualTerminal = dynamic(() => import("@/components/gsd/dual-terminal").then((mod) => mod.DualTerminal), {
+  loading: ViewLoading,
+  ssr: false,
+})
+const ChatMode = dynamic(() => import("@/components/gsd/chat-mode").then((mod) => mod.ChatMode), {
+  loading: ViewLoading,
+  ssr: false,
+})
 
 function viewStorageKey(projectCwd: string): string {
   return `gsd-active-view:${projectCwd}`
@@ -482,7 +508,9 @@ function WorkspaceChrome() {
                 className="overflow-hidden"
                 style={{ height: isTerminalExpanded ? terminalHeight : 0, transition: terminalDragActive ? "none" : "height 200ms" }}
               >
-                <ShellTerminal className="h-full" projectCwd={workspace.boot?.project.cwd} />
+                {isTerminalExpanded && (
+                  <ShellTerminal className="h-full" projectCwd={workspace.boot?.project.cwd} />
+                )}
               </div>
             </div>
           )}

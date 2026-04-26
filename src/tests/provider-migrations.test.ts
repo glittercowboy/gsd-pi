@@ -65,15 +65,37 @@ test("shouldMigrateAnthropicToClaudeCode allows OAuth-only anthropic users", () 
 })
 
 test("shouldMigrateAnthropicToClaudeCode stays off for other providers", () => {
+  let checkedClaudeCode = false
   assert.equal(
     shouldMigrateAnthropicToClaudeCode({
       authStorage: makeAuthStorage([{ type: "oauth" }]) as any,
-      isClaudeCodeReady: true,
+      isClaudeCodeReady: () => {
+        checkedClaudeCode = true
+        return true
+      },
       defaultProvider: "openai",
       env: {} as NodeJS.ProcessEnv,
     }),
     false,
   )
+  assert.equal(checkedClaudeCode, false)
+})
+
+test("shouldMigrateAnthropicToClaudeCode skips Claude probe for direct-key users", () => {
+  let checkedClaudeCode = false
+  assert.equal(
+    shouldMigrateAnthropicToClaudeCode({
+      authStorage: makeAuthStorage([{ type: "api_key", key: "sk-ant-test" }]) as any,
+      isClaudeCodeReady: () => {
+        checkedClaudeCode = true
+        return true
+      },
+      defaultProvider: "anthropic",
+      env: {} as NodeJS.ProcessEnv,
+    }),
+    false,
+  )
+  assert.equal(checkedClaudeCode, false)
 })
 
 test("migrateAnthropicDefaultToClaudeCode switches to matching claude-code model", () => {

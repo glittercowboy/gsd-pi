@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, chmodSync, readdirSync } from "node:fs";
 import { createWriteStream } from "node:fs";
 import { arch as osArch } from "node:os";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 import { Readable } from "node:stream";
 import { finished } from "node:stream/promises";
 import extractZip from "extract-zip";
@@ -11,11 +11,14 @@ import {
   GSD_RTK_DISABLED_ENV,
   GSD_RTK_PATH_ENV,
   RTK_TELEMETRY_DISABLED_ENV,
+  applyRtkProcessEnv,
+  buildRtkEnv,
   getManagedRtkDir,
   getPathValue,
   getRtkBinaryName,
   isTruthy,
   isRtkEnabled,
+  prependPathEntry,
   resolveSystemRtkPath,
 } from "./rtk-shared.js";
 
@@ -25,9 +28,12 @@ export {
   GSD_RTK_DISABLED_ENV,
   GSD_RTK_PATH_ENV,
   RTK_TELEMETRY_DISABLED_ENV,
+  applyRtkProcessEnv,
+  buildRtkEnv,
   getManagedRtkDir,
   getRtkBinaryName,
   isRtkEnabled,
+  prependPathEntry,
 };
 
 const RTK_REPO = "rtk-ai/rtk";
@@ -56,26 +62,6 @@ export function getManagedRtkPath(
   targetDir: string = getManagedRtkDir(),
 ): string {
   return join(targetDir, getRtkBinaryName(platform));
-}
-
-export function prependPathEntry(env: NodeJS.ProcessEnv, entry: string): NodeJS.ProcessEnv {
-  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? (process.platform === "win32" ? "Path" : "PATH");
-  const currentPath = env[pathKey] ?? "";
-  const parts = currentPath.split(delimiter).filter(Boolean);
-  if (!parts.includes(entry)) {
-    env[pathKey] = [entry, currentPath].filter(Boolean).join(delimiter);
-  }
-  return env;
-}
-
-export function applyRtkProcessEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  prependPathEntry(env, getManagedRtkDir(env));
-  env[RTK_TELEMETRY_DISABLED_ENV] = "1";
-  return env;
-}
-
-export function buildRtkEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return applyRtkProcessEnv({ ...env });
 }
 
 export function resolveRtkAssetName(

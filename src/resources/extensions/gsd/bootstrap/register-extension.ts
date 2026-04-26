@@ -3,9 +3,8 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@gsd/pi-coding-agent";
 
 import { registerExitCommand } from "../exit-command.js";
-import { registerWorktreeCommand } from "../worktree-command.js";
+import { registerLazyWorktreeCommands } from "../worktree-command-bootstrap.js";
 import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-extension-api.js";
-import { loadEcosystemExtensions } from "../ecosystem/loader.js";
 import { registerDbTools } from "./db-tools.js";
 import { registerDynamicTools } from "./dynamic-tools.js";
 import { registerExecTools } from "./exec-tools.js";
@@ -71,7 +70,7 @@ function installEpipeGuard(): void {
 export function registerGsdExtension(pi: ExtensionAPI): void {
   // Note: registerGSDCommand is called by index.ts before this function,
   // so we intentionally skip it here to avoid double-registration.
-  registerWorktreeCommand(pi);
+  registerLazyWorktreeCommands(pi);
   registerExitCommand(pi);
 
   // Wire the Layer 2 event emitter bridge so deeply-nested GSD code can emit
@@ -116,12 +115,14 @@ export function registerGsdExtension(pi: ExtensionAPI): void {
     ["cmux-events", () => initCmuxEventListeners(pi.events)],
     ["hooks", () => registerHooks(pi, ecosystemHandlers)],
     ["ecosystem", () => {
-      void loadEcosystemExtensions(pi, ecosystemHandlers).catch((err) => {
-        logWarning(
-          "ecosystem",
-          `loader failed: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      });
+      void import("../ecosystem/loader.js")
+        .then(({ loadEcosystemExtensions }) => loadEcosystemExtensions(pi, ecosystemHandlers))
+        .catch((err) => {
+          logWarning(
+            "ecosystem",
+            `loader failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        });
     }],
   ];
 

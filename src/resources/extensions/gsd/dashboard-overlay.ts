@@ -21,7 +21,7 @@ import {
   type UnitMetrics,
 } from "./metrics.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
-import { getActiveWorktreeName } from "./worktree-command.js";
+import { getActiveWorktreeName } from "./worktree-session-state.js";
 import { getWorkerBatches, hasActiveWorkers, type WorkerEntry } from "../subagent/worker-registry.js";
 import { formatDuration, padRight, joinColumns, centerLine, fitColumns, STATUS_GLYPH, STATUS_COLOR } from "../shared/mod.js";
 import { estimateTimeRemaining } from "./auto-dashboard.js";

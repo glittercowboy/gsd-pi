@@ -232,7 +232,6 @@ import { reorderForCaching } from "./prompt-ordering.js";
 // ─── Session State ─────────────────────────────────────────────────────────
 
 import {
-  AutoSession,
   STUB_RECOVERY_THRESHOLD,
   NEW_SESSION_TIMEOUT_MS,
 } from "./auto/session.js";
@@ -250,11 +249,12 @@ export type {
   UnitRouting,
   StartModel,
 } from "./auto/session.js";
+import { autoSession as s } from "./auto-runtime-state.js";
 
 // ── ENCAPSULATION INVARIANT ─────────────────────────────────────────────────
 // ALL mutable auto-mode state lives in the AutoSession class (auto/session.ts).
 // This file must NOT declare module-level `let` or `var` variables for state.
-// The single `s` instance below is the only mutable module-level binding.
+// The single shared `s` instance below is the only mutable AutoSession binding.
 //
 // When adding features or fixing bugs:
 //   - New mutable state → add a property to AutoSession, not a module-level variable
@@ -263,7 +263,6 @@ export type {
 //
 // Tests in auto-session-encapsulation.test.ts enforce this invariant.
 // ─────────────────────────────────────────────────────────────────────────────
-const s = new AutoSession();
 
 /** Throttle STATE.md rebuilds — at most once per 30 seconds */
 const STATE_REBUILD_MIN_INTERVAL_MS = 30_000;

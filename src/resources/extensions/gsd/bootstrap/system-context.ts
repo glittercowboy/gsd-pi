@@ -15,7 +15,7 @@ import { resolveGsdRootFile, resolveSliceFile, resolveSlicePath, resolveTaskFile
 import { ensureCodebaseMapFresh, readCodebaseMap } from "../codebase-generator.js";
 import { hasSkillSnapshot, detectNewSkills, formatSkillsXml } from "../skill-discovery.js";
 import { getActiveAutoWorktreeContext } from "../auto-worktree.js";
-import { getActiveWorktreeName, getWorktreeOriginalCwd } from "../worktree-command.js";
+import { getActiveWorktreeName, getWorktreeOriginalCwd } from "../worktree-session-state.js";
 import { deriveState } from "../state.js";
 import { formatOverridesSection, formatShortcut, loadActiveOverrides, loadFile, parseContinue, parseSummary } from "../files.js";
 import { toPosixPath } from "../../shared/mod.js";

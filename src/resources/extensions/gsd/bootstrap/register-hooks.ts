@@ -5,25 +5,16 @@ import { isToolCallEventType } from "@gsd/pi-coding-agent";
 
 import type { GSDEcosystemBeforeAgentStartHandler } from "../ecosystem/gsd-extension-api.js";
 import { updateSnapshot } from "../ecosystem/gsd-extension-api.js";
-import { getEcosystemReadyPromise } from "../ecosystem/loader.js";
 
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
-import { buildBeforeAgentStartResult } from "./system-context.js";
-import { handleAgentEnd } from "./agent-end-recovery.js";
 import { clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
 import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
-import { cleanupQuickBranch } from "../quick.js";
-import { getDiscussionMilestoneId } from "../guided-flow.js";
-import { loadToolApiKeys } from "../commands-config.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
-import { deriveState } from "../state.js";
-import { getAutoDashboardData, isAutoActive, isAutoPaused, markToolEnd, markToolStart, recordToolInvocationError } from "../auto.js";
+import { getAutoRuntimeSnapshot, isAutoActive, isAutoPaused, markToolEnd, markToolStart, recordToolInvocationError } from "../auto-runtime-state.js";
 
-import { isParallelActive, shutdownParallel } from "../parallel-orchestrator.js";
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
-import { resetAskUserQuestionsCache } from "../../ask-user-questions.js";
 import { recordToolCall as safetyRecordToolCall, recordToolResult as safetyRecordToolResult, saveEvidenceToDisk } from "../safety/evidence-collector.js";
 import { parseUnitId } from "../unit-id.js";
 import { classifyCommand } from "../safety/destructive-guard.js";
@@ -31,11 +22,30 @@ import { logWarning as safetyLogWarning } from "../workflow-logger.js";
 import { installNotifyInterceptor } from "./notify-interceptor.js";
 import { initNotificationStore } from "../notification-store.js";
 import { initNotificationWidget } from "../notification-widget.js";
-import { initHealthWidget } from "../health-widget.js";
 
 // Skip the welcome screen on the very first session_start — cli.ts already
 // printed it before the TUI launched. Only re-print on /clear (subsequent sessions).
 let isFirstSession = true;
+
+async function deriveGsdState(basePath: string) {
+  const { deriveState } = await import("../state.js");
+  return deriveState(basePath);
+}
+
+async function getDiscussionMilestoneIdFor(basePath: string): Promise<string | null> {
+  const { getDiscussionMilestoneId } = await import("../guided-flow.js");
+  return getDiscussionMilestoneId(basePath);
+}
+
+async function loadToolApiKeysForSession(): Promise<void> {
+  const { loadToolApiKeys } = await import("../commands-config.js");
+  loadToolApiKeys();
+}
+
+async function resetAskUserQuestionsTurnCache(): Promise<void> {
+  const { resetAskUserQuestionsCache } = await import("../../ask-user-questions.js");
+  resetAskUserQuestionsCache();
+}
 
 async function syncServiceTierStatus(ctx: ExtensionContext): Promise<void> {
   const { getEffectiveServiceTier, formatServiceTierFooterStatus } = await import("../service-tier.js");
@@ -60,11 +70,12 @@ export function registerHooks(
     installNotifyInterceptor(ctx);
     initNotificationWidget(ctx);
     if (!isAutoActive()) {
+      const { initHealthWidget } = await import("../health-widget.js");
       initHealthWidget(ctx);
     }
     resetWriteGateState();
     resetToolCallLoopGuard();
-    resetAskUserQuestionsCache();
+    await resetAskUserQuestionsTurnCache();
     await syncServiceTierStatus(ctx);
     await applyDisabledModelProviderPolicy(ctx);
     // Skip MCP auto-prep when running inside an auto-worktree (see session_switch below).
@@ -102,7 +113,7 @@ export function registerHooks(
         }
       } catch { /* non-fatal */ }
     }
-    loadToolApiKeys();
+    await loadToolApiKeysForSession();
     if (isAutoActive()) {
       ctx.ui.setWidget("gsd-health", undefined);
     }
@@ -113,7 +124,7 @@ export function registerHooks(
     installNotifyInterceptor(ctx);
     resetWriteGateState();
     resetToolCallLoopGuard();
-    resetAskUserQuestionsCache();
+    await resetAskUserQuestionsTurnCache();
     clearDiscussionFlowState();
     await syncServiceTierStatus(ctx);
     await applyDisabledModelProviderPolicy(ctx);
@@ -126,23 +137,28 @@ export function registerHooks(
       const { prepareWorkflowMcpForProject } = await import("../workflow-mcp-auto-prep.js");
       prepareWorkflowMcpForProject(ctx, process.cwd());
     }
-    loadToolApiKeys();
-    if (isAutoActive()) {
+    await loadToolApiKeysForSession();
+    if (!isAutoActive()) {
+      const { initHealthWidget } = await import("../health-widget.js");
+      initHealthWidget(ctx);
+    } else {
       ctx.ui.setWidget("gsd-health", undefined);
     }
   });
 
   pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
     // Wait for ecosystem loader to finish (no-op after first turn).
+    const { getEcosystemReadyPromise } = await import("../ecosystem/loader.js");
     await getEcosystemReadyPromise();
 
     // GSD's own context injection (existing behavior — unchanged).
+    const { buildBeforeAgentStartResult } = await import("./system-context.js");
     const gsdResult = await buildBeforeAgentStartResult(event, ctx);
 
     // Refresh the snapshot used by ecosystem getPhase()/getActiveUnit().
     // deriveState has its own ~100ms cache so this is cheap on repeat calls.
     try {
-      const state = await deriveState(process.cwd());
+      const state = await deriveGsdState(process.cwd());
       updateSnapshot(state);
     } catch {
       updateSnapshot(null);
@@ -181,7 +197,8 @@ export function registerHooks(
 
   pi.on("agent_end", async (event, ctx: ExtensionContext) => {
     resetToolCallLoopGuard();
-    resetAskUserQuestionsCache();
+    await resetAskUserQuestionsTurnCache();
+    const { handleAgentEnd } = await import("./agent-end-recovery.js");
     await handleAgentEnd(pi, event, ctx);
   });
 
@@ -190,6 +207,7 @@ export function registerHooks(
   // quick-return state is pending, so this is safe to call on every turn.
   pi.on("turn_end", async () => {
     try {
+      const { cleanupQuickBranch } = await import("../quick.js");
       cleanupQuickBranch();
     } catch {
       // Best-effort: don't break the turn lifecycle if cleanup fails.
@@ -206,7 +224,7 @@ export function registerHooks(
     const basePath = process.cwd();
     const { ensureDbOpen } = await import("./dynamic-tools.js");
     await ensureDbOpen();
-    const state = await deriveState(basePath);
+    const state = await deriveGsdState(basePath);
     if (!state.activeMilestone || !state.activeSlice) return;
     // Write checkpoint for ALL phases, not just "executing" — discuss, research,
     // and planning also carry in-memory state (user answers, gate verification)
@@ -268,7 +286,7 @@ export function registerHooks(
       const basePath = process.cwd();
       let activeContext: string | null = null;
       try {
-        const state = await deriveState(basePath);
+        const state = await deriveGsdState(basePath);
         if (state.activeMilestone && state.activeSlice && state.activeTask) {
           activeContext =
             `Active: ${state.activeMilestone.id} / ${state.activeSlice.id} / ${state.activeTask.id}` +
@@ -287,6 +305,7 @@ export function registerHooks(
   });
 
   pi.on("session_shutdown", async (_event, ctx: ExtensionContext) => {
+    const { isParallelActive, shutdownParallel } = await import("../parallel-orchestrator.js");
     if (isParallelActive()) {
       try {
         await shutdownParallel(process.cwd());
@@ -295,7 +314,7 @@ export function registerHooks(
       }
     }
     if (!isAutoActive() && !isAutoPaused()) return;
-    const dash = getAutoDashboardData();
+    const dash = getAutoRuntimeSnapshot();
     if (dash.currentUnit) {
       saveActivityLog(ctx, dash.basePath, dash.currentUnit.type, dash.currentUnit.id);
     }
@@ -324,7 +343,7 @@ export function registerHooks(
     // If ask_user_questions was called with a gate ID but hasn't been confirmed,
     // block all non-read-only tool calls to prevent the model from skipping gates.
     if (getPendingGate()) {
-      const milestoneId = getDiscussionMilestoneId(discussionBasePath);
+      const milestoneId = await getDiscussionMilestoneIdFor(discussionBasePath);
       if (isToolCallEventType("bash", event)) {
         const bashGuard = shouldBlockPendingGateBash(
           event.input.command,
@@ -365,7 +384,7 @@ export function registerHooks(
     // manifest's allowedPathGlobs), bash that isn't read-only, and
     // subagent dispatch. Closes the b23 bug class where a discuss-milestone
     // turn used the host Edit tool to modify user source files.
-    const dash = getAutoDashboardData();
+    const dash = getAutoRuntimeSnapshot();
     const activeUnitType = dash.currentUnit?.type;
     if (activeUnitType) {
       const manifest = resolveManifest(activeUnitType);
@@ -414,7 +433,7 @@ export function registerHooks(
     const result = shouldBlockContextWrite(
       event.toolName,
       event.input.path,
-      getDiscussionMilestoneId(discussionBasePath),
+      await getDiscussionMilestoneIdFor(discussionBasePath),
       isQueuePhaseActive(),
     );
     if (result.block) return result;
@@ -459,7 +478,7 @@ export function registerHooks(
       recordToolInvocationError(event.toolName, errorText);
     }
     if (event.toolName !== "ask_user_questions") return;
-    const milestoneId = getDiscussionMilestoneId(process.cwd());
+    const milestoneId = await getDiscussionMilestoneIdFor(process.cwd());
     const queueActive = isQueuePhaseActive();
 
     const details = event.details as any;
@@ -558,7 +577,7 @@ export function registerHooks(
       safetyRecordToolResult(event.toolCallId, event.toolName, event.result, event.isError);
       // Persist evidence to disk after each tool result so it survives a session
       // restart mid-unit (Bug #4385 — non-persisted evidence false positives).
-      const dash = getAutoDashboardData();
+      const dash = getAutoRuntimeSnapshot();
       if (dash.basePath && dash.currentUnit?.type === "execute-task") {
         const { milestone: pMid, slice: pSid, task: pTid } = parseUnitId(dash.currentUnit.id);
         if (pMid && pSid && pTid) {

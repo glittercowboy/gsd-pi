@@ -4,12 +4,13 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 import { Key } from "@gsd/pi-tui";
 
-import { GSDDashboardOverlay } from "../dashboard-overlay.js";
-import { GSDNotificationOverlay } from "../notification-overlay.js";
-import { ParallelMonitorOverlay } from "../parallel-monitor-overlay.js";
 import { GSD_SHORTCUTS } from "../shortcut-defs.js";
-import { projectRoot } from "../commands/context.js";
 import { shortcutDesc } from "../../shared/mod.js";
+
+async function getProjectRoot(): Promise<string> {
+  const { projectRoot } = await import("../commands/context.js");
+  return projectRoot();
+}
 
 export function registerShortcuts(pi: ExtensionAPI): void {
   const overlayOptions = {
@@ -20,7 +21,10 @@ export function registerShortcuts(pi: ExtensionAPI): void {
   } as const;
 
   const openDashboardOverlay = async (ctx: ExtensionContext) => {
-    const basePath = projectRoot();
+    const [{ GSDDashboardOverlay }, basePath] = await Promise.all([
+      import("../dashboard-overlay.js"),
+      getProjectRoot(),
+    ]);
     if (!existsSync(join(basePath, ".gsd"))) {
       ctx.ui.notify("No .gsd/ directory found. Run /gsd to start.", "info");
       return;
@@ -35,6 +39,7 @@ export function registerShortcuts(pi: ExtensionAPI): void {
   };
 
   const openNotificationsOverlay = async (ctx: ExtensionContext) => {
+    const { GSDNotificationOverlay } = await import("../notification-overlay.js");
     await ctx.ui.custom<boolean>(
       (tui, theme, _kb, done) => new GSDNotificationOverlay(tui, theme, () => done(true)),
       {
@@ -51,12 +56,13 @@ export function registerShortcuts(pi: ExtensionAPI): void {
   };
 
   const openParallelOverlay = async (ctx: ExtensionContext) => {
-    const basePath = projectRoot();
+    const basePath = await getProjectRoot();
     const parallelDir = join(basePath, ".gsd", "parallel");
     if (!existsSync(parallelDir)) {
       ctx.ui.notify("No parallel workers found. Run /gsd parallel start first.", "info");
       return;
     }
+    const { ParallelMonitorOverlay } = await import("../parallel-monitor-overlay.js");
     await ctx.ui.custom<boolean>(
       (tui, theme, _kb, done) => new ParallelMonitorOverlay(tui, theme, () => done(true), basePath),
       {

@@ -33,29 +33,21 @@ import { inferCommitType } from "./git-service.js";
 import type { FileLineStat } from "./worktree-manager.js";
 import { existsSync, realpathSync, readdirSync, rmSync, unlinkSync } from "node:fs";
 import { nativeMergeAbort } from "./native-git-bridge.js";
-import { join, sep } from "node:path";
+import { join } from "node:path";
+import {
+  clearWorktreeOriginalCwd,
+  ensureWorktreeOriginalCwdFromPath,
+  getActiveWorktreeName,
+  getWorktreeOriginalCwd,
+  setWorktreeOriginalCwd,
+} from "./worktree-session-state.js";
+
+export { getActiveWorktreeName, getWorktreeOriginalCwd } from "./worktree-session-state.js";
 
 /**
  * Tracks the original project root so we can switch back.
  * Set when we first chdir into a worktree, cleared on return.
  */
-let originalCwd: string | null = null;
-
-/** Get the original project root if currently in a worktree, or null. */
-export function getWorktreeOriginalCwd(): string | null {
-  return originalCwd;
-}
-
-/** Get the name of the active worktree, or null if not in one. */
-export function getActiveWorktreeName(): string | null {
-  if (!originalCwd) return null;
-  const cwd = process.cwd();
-  const wtDir = join(originalCwd, ".gsd", "worktrees");
-  if (!cwd.startsWith(wtDir)) return null;
-  const rel = cwd.slice(wtDir.length + 1);
-  const name = rel.split("/")[0] ?? rel.split("\\")[0];
-  return name || null;
-}
 
 // ─── Shared completions and handler (used by both /worktree and /wt) ────────
 
@@ -145,7 +137,7 @@ async function worktreeHandler(
       return;
     }
     // create and switch both do the same thing: switch if exists, create if not
-    const mainBase = originalCwd ?? basePath;
+    const mainBase = getWorktreeOriginalCwd() ?? basePath;
     const existing = listWorktrees(mainBase);
     if (existing.some(wt => wt.name === name)) {
       await handleSwitch(basePath, name, ctx);
@@ -157,7 +149,7 @@ async function worktreeHandler(
 
   if (trimmed === "merge" || trimmed.startsWith("merge ")) {
     const mergeArgs = trimmed.replace(/^merge\s*/, "").trim().split(/\s+/).filter(Boolean);
-    const mainBase = originalCwd ?? basePath;
+    const mainBase = getWorktreeOriginalCwd() ?? basePath;
     const activeWt = getActiveWorktreeName();
 
     if (mergeArgs.length === 0) {
@@ -191,7 +183,7 @@ async function worktreeHandler(
 
   if (trimmed === "remove" || trimmed.startsWith("remove ")) {
     const name = trimmed.replace(/^remove\s*/, "").trim();
-    const mainBase = originalCwd ?? basePath;
+    const mainBase = getWorktreeOriginalCwd() ?? basePath;
 
     if (name === "all") {
       await handleRemoveAll(mainBase, ctx);
@@ -213,7 +205,7 @@ async function worktreeHandler(
     return;
   }
 
-  const mainBase = originalCwd ?? basePath;
+  const mainBase = getWorktreeOriginalCwd() ?? basePath;
   const nameOnly = trimmed.split(/\s+/)[0]!;
   if (trimmed !== nameOnly) {
     ctx.ui.notify(`Unknown command. Did you mean /${alias} switch ${nameOnly}?`, "warning");
@@ -241,14 +233,7 @@ export function registerWorktreeCommand(pi: ExtensionAPI): void {
   // Restore worktree state after /reload.
   // The module-level originalCwd resets to null when extensions are re-loaded,
   // but process.cwd() is still inside the worktree. Detect this and recover.
-  if (!originalCwd) {
-    const cwd = process.cwd();
-    const marker = `${sep}.gsd${sep}worktrees${sep}`;
-    const markerIdx = cwd.indexOf(marker);
-    if (markerIdx !== -1) {
-      originalCwd = cwd.slice(0, markerIdx);
-    }
-  }
+  ensureWorktreeOriginalCwdFromPath();
 
   pi.registerCommand("worktree", {
     description: "Git worktrees (also /wt): /worktree <name> | list | merge | remove",
@@ -320,7 +305,7 @@ async function handleCreate(
     const commitMsg = autoCommitCurrentBranch(basePath, "worktree-switch", name);
 
     // Create from the main tree, not from inside another worktree
-    const mainBase = originalCwd ?? basePath;
+    const mainBase = getWorktreeOriginalCwd() ?? basePath;
     const info = createWorktree(mainBase, name);
 
     // Run user-configured post-create hook (#597) — e.g. copy .env, symlink assets
@@ -330,7 +315,7 @@ async function handleCreate(
     }
 
     // Track original cwd before switching
-    if (!originalCwd) originalCwd = basePath;
+    if (!getWorktreeOriginalCwd()) setWorktreeOriginalCwd(basePath);
 
     const prevCwd = process.cwd();
     process.chdir(info.path);
@@ -390,7 +375,7 @@ async function handleSwitch(
   ctx: ExtensionCommandContext,
 ): Promise<void> {
   try {
-    const mainBase = originalCwd ?? basePath;
+    const mainBase = getWorktreeOriginalCwd() ?? basePath;
     const wtPath = worktreePath(mainBase, name);
 
     if (!existsSync(wtPath)) {
@@ -405,7 +390,7 @@ async function handleSwitch(
     const commitMsg = autoCommitCurrentBranch(basePath, "worktree-switch", name);
 
     // Track original cwd before switching
-    if (!originalCwd) originalCwd = basePath;
+    if (!getWorktreeOriginalCwd()) setWorktreeOriginalCwd(basePath);
 
     const prevCwd = process.cwd();
     process.chdir(wtPath);
@@ -433,6 +418,7 @@ async function handleSwitch(
 }
 
 async function handleReturn(ctx: ExtensionCommandContext): Promise<void> {
+  const originalCwd = getWorktreeOriginalCwd();
   if (!originalCwd) {
     ctx.ui.notify("Already in the main project tree.", "info");
     return;
@@ -442,7 +428,7 @@ async function handleReturn(ctx: ExtensionCommandContext): Promise<void> {
   const commitMsg = autoCommitCurrentBranch(process.cwd(), "worktree-return", "worktree");
 
   const returnTo = originalCwd;
-  originalCwd = null;
+  clearWorktreeOriginalCwd();
 
   const prevCwd = process.cwd();
   process.chdir(returnTo);
@@ -504,7 +490,7 @@ async function handleList(
   ctx: ExtensionCommandContext,
 ): Promise<void> {
   try {
-    const mainBase = originalCwd ?? basePath;
+    const mainBase = getWorktreeOriginalCwd() ?? basePath;
     const worktrees = listWorktrees(mainBase);
 
     if (worktrees.length === 0) {
@@ -552,6 +538,7 @@ async function handleList(
       lines.push("");
     }
 
+    const originalCwd = getWorktreeOriginalCwd();
     if (originalCwd) {
       lines.push(`  ${CLR.label("main tree")}  ${CLR.path(originalCwd)}`);
     }
@@ -651,11 +638,11 @@ async function handleMerge(
 
     // Switch to the main tree before merging.
     // Must be on the main branch to run git merge --squash.
-    if (originalCwd) {
+    if (getWorktreeOriginalCwd()) {
       const prevCwd = process.cwd();
       process.chdir(basePath);
       nudgeGitBranchCache(prevCwd);
-      originalCwd = null;
+      clearWorktreeOriginalCwd();
     }
 
     // --- Deterministic merge path (preferred) ---
@@ -754,7 +741,7 @@ async function handleRemove(
   ctx: ExtensionCommandContext,
 ): Promise<void> {
   try {
-    const mainBase = originalCwd ?? basePath;
+    const mainBase = getWorktreeOriginalCwd() ?? basePath;
 
     // Validate the worktree exists before attempting removal
     const worktrees = listWorktrees(mainBase);
@@ -779,9 +766,9 @@ async function handleRemove(
     removeWorktree(mainBase, name, { deleteBranch: true });
 
     // If we were in that worktree, removeWorktree chdir'd us out — clear tracking
-    if (originalCwd && process.cwd() !== prevCwd) {
+    if (getWorktreeOriginalCwd() && process.cwd() !== prevCwd) {
       nudgeGitBranchCache(prevCwd);
-      originalCwd = null;
+      clearWorktreeOriginalCwd();
     }
 
     ctx.ui.notify(`${CLR.ok("✓")} Worktree ${CLR.name(name)} removed ${CLR.muted("(branch deleted)")}.`, "info");
@@ -796,7 +783,7 @@ async function handleRemoveAll(
   ctx: ExtensionCommandContext,
 ): Promise<void> {
   try {
-    const mainBase = originalCwd ?? basePath;
+    const mainBase = getWorktreeOriginalCwd() ?? basePath;
     const worktrees = listWorktrees(mainBase);
 
     if (worktrees.length === 0) {
@@ -830,9 +817,9 @@ async function handleRemoveAll(
     }
 
     // If we were in a worktree that got removed, clear tracking
-    if (originalCwd && process.cwd() !== prevCwd) {
+    if (getWorktreeOriginalCwd() && process.cwd() !== prevCwd) {
       nudgeGitBranchCache(prevCwd);
-      originalCwd = null;
+      clearWorktreeOriginalCwd();
     }
 
     const lines: string[] = [];

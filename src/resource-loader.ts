@@ -1,4 +1,4 @@
-import { DefaultResourceLoader, sortExtensionPaths } from '@gsd/pi-coding-agent'
+import type { DefaultResourceLoader as DefaultResourceLoaderType } from '@gsd/pi-coding-agent'
 import { createHash } from 'node:crypto'
 import { homedir } from 'node:os'
 import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, openSync, closeSync, readFileSync, readlinkSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -7,6 +7,14 @@ import { fileURLToPath } from 'node:url'
 import { compareSemver } from './update-check.js'
 import { discoverExtensionEntryPaths } from './extension-discovery.js'
 import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled, ensureRegistryEntries } from './extension-registry.js'
+
+type PiCodingAgentModule = typeof import('@gsd/pi-coding-agent')
+
+let piCodingAgentModulePromise: Promise<PiCodingAgentModule> | undefined
+
+function loadPiCodingAgentModule(): Promise<PiCodingAgentModule> {
+  return (piCodingAgentModulePromise ??= import('@gsd/pi-coding-agent'))
+}
 
 // Resolve resources directory — prefer dist/resources/ (stable, set at build time)
 // over src/resources/ (live working tree, changes with git branch).
@@ -27,6 +35,7 @@ const resourcesDir = (existsSync(distResources) && existsSync(join(distResources
   : srcResources
 const bundledExtensionsDir = join(resourcesDir, 'extensions')
 const resourceVersionManifestName = 'managed-resources.json'
+const resourceFingerprintFileName = '.managed-resources-content-hash'
 
 interface ManagedResourceManifest {
   gsdVersion: string
@@ -102,7 +111,7 @@ function writeManagedResourceManifest(agentDir: string): void {
   const manifest: ManagedResourceManifest = {
     gsdVersion: getBundledGsdVersion(),
     syncedAt: Date.now(),
-    contentHash: computeResourceFingerprint(),
+    contentHash: getCurrentResourceFingerprint(),
     installedExtensionRootFiles,
     installedExtensionDirs,
   }
@@ -152,9 +161,22 @@ export function computeResourceFingerprint(rootDir: string = resourcesDir): stri
   return createHash('sha256').update(entries.join('\n')).digest('hex').slice(0, 16)
 }
 
+function getCurrentResourceFingerprint(): string {
+  try {
+    const precomputed = readFileSync(join(resourcesDir, resourceFingerprintFileName), 'utf-8').trim()
+    if (/^[a-f0-9]{16}$/i.test(precomputed)) {
+      return precomputed
+    }
+  } catch {
+    // Source-tree and partial-build workflows may not have a precomputed hash.
+  }
+  return computeResourceFingerprint()
+}
+
 function collectFileEntries(dir: string, root: string, out: string[]): void {
   if (!existsSync(dir)) return
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === resourceFingerprintFileName) continue
     const fullPath = join(dir, entry.name)
     if (entry.isDirectory()) {
       collectFileEntries(fullPath, root, out)
@@ -568,7 +590,7 @@ export function initResources(agentDir: string, skillsDir: string = join(homedir
   // hotfixes within a release). The content hash catches those at ~1ms cost.
   if (manifest && manifest.gsdVersion === currentVersion) {
     // Version matches — check content fingerprint for same-version staleness.
-    const currentHash = computeResourceFingerprint()
+    const currentHash = getCurrentResourceFingerprint()
     const hasStaleExtensionFiles = hasStaleCompiledExtensionSiblings(extensionsDir, bundledExtensionsDir)
     if (manifest.contentHash && manifest.contentHash === currentHash && !hasStaleExtensionFiles) {
       return
@@ -742,7 +764,15 @@ function getBundledExtensionKeys(): Set<string> {
   return _bundledExtensionKeys
 }
 
-export function buildResourceLoader(agentDir: string): DefaultResourceLoader {
+interface BuildResourceLoaderOptions {
+  additionalExtensionPaths?: string[]
+}
+
+export async function buildResourceLoader(
+  agentDir: string,
+  options: BuildResourceLoaderOptions = {},
+): Promise<DefaultResourceLoaderType> {
+  const { DefaultResourceLoader, sortExtensionPaths } = await loadPiCodingAgentModule()
   const registry = loadRegistry()
   const piAgentDir = join(homedir(), '.pi', 'agent')
   const piExtensionsDir = join(piAgentDir, 'extensions')
@@ -754,10 +784,14 @@ export function buildResourceLoader(agentDir: string): DefaultResourceLoader {
       if (!manifest) return true
       return isExtensionEnabled(registry, manifest.id)
     })
+  const additionalExtensionPaths = [
+    ...piExtensionPaths,
+    ...(options.additionalExtensionPaths ?? []),
+  ]
 
   return new DefaultResourceLoader({
     agentDir,
-    additionalExtensionPaths: piExtensionPaths,
+    additionalExtensionPaths,
     bundledExtensionKeys: bundledKeys,
     extensionPathsTransform: (paths: string[]) => {
       // 1. Filter community extensions through the GSD registry

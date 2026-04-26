@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const AUTO_TS_PATH = join(__dirname, "..", "auto.ts");
 const SESSION_TS_PATH = join(__dirname, "..", "auto", "session.ts");
+const RUNTIME_STATE_TS_PATH = join(__dirname, "..", "auto-runtime-state.ts");
 
 function getAutoTsSource(): string {
   return readFileSync(AUTO_TS_PATH, "utf-8");
@@ -25,6 +26,10 @@ function getAutoTsSource(): string {
 
 function getSessionTsSource(): string {
   return readFileSync(SESSION_TS_PATH, "utf-8");
+}
+
+function getRuntimeStateTsSource(): string {
+  return readFileSync(RUNTIME_STATE_TS_PATH, "utf-8");
 }
 
 // ── Invariant 1: No module-level mutable variables in auto.ts ────────────────
@@ -75,18 +80,18 @@ test("auto.ts has no module-level var declarations", () => {
 
 // ── Invariant 2: AutoSession singleton is the only mutable module-level binding ──
 
-test("auto.ts has exactly one module-level const for AutoSession", () => {
-  const source = getAutoTsSource();
+test("auto-runtime-state.ts has exactly one module-level const for AutoSession", () => {
+  const source = getRuntimeStateTsSource();
   const lines = source.split("\n");
 
   const sessionConsts = lines.filter(line =>
-    /^const\s+\w+\s*=\s*new\s+AutoSession/.test(line),
+    /^(export\s+)?const\s+\w+\s*=\s*new\s+AutoSession/.test(line),
   );
 
   assert.equal(
     sessionConsts.length,
     1,
-    `auto.ts should have exactly one \`const s = new AutoSession()\`. ` +
+    `auto-runtime-state.ts should have exactly one \`const autoSession = new AutoSession()\`. ` +
     `Found ${sessionConsts.length}: ${sessionConsts.join(", ")}`,
   );
 });
@@ -201,7 +206,6 @@ test("auto.ts module-level consts are only AutoSession instance, true constants,
 
   // Patterns that are acceptable at module level
   const allowedPatterns = [
-    /^const s = new AutoSession/,                 // The session singleton
     /^const [A-Z_]+\s*=/,                          // UPPER_CASE constants
     /^const \w+StateAccessors/,                    // Static accessor objects
     /^const \w+:\s*\w+\s*=/,                       // Typed constants

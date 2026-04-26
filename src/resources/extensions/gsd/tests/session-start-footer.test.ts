@@ -7,9 +7,8 @@
  *
  * Testing strategy:
  *   1. Source-code regression guards: structural checks on register-hooks.ts.
- *   2. Behavioral integration test: fires the live session_start handler with a
- *      fake ctx when isAutoActive() is false (default) and confirms neither
- *      setFooter nor setWidget("gsd-health") is called.
+ *   2. Behavioral integration tests: fire the live session handlers with fake
+ *      contexts and confirm footer/widget behavior from runtime effects.
  *
  * Relates to #4314.
  */
@@ -21,6 +20,7 @@ import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
+import { autoSession } from "../auto-runtime-state.ts";
 import { registerHooks } from "../bootstrap/register-hooks.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -68,27 +68,89 @@ test("session_start handler guards initHealthWidget with !isAutoActive()", () =>
   );
 });
 
-test("session_switch handler suppresses gsd-health when isAutoActive()", () => {
-  const sessionSwitchIdx = HOOKS_SOURCE.indexOf('"session_switch"');
-  assert.ok(sessionSwitchIdx > -1, "session_switch handler must exist");
-
-  const beforeAgentStartIdx = HOOKS_SOURCE.indexOf('"before_agent_start"');
-  assert.ok(beforeAgentStartIdx > sessionSwitchIdx, "before_agent_start handler must follow session_switch");
-
-  const sessionSwitchBody = HOOKS_SOURCE.slice(sessionSwitchIdx, beforeAgentStartIdx);
-
-  assert.ok(
-    sessionSwitchBody.includes("isAutoActive()"),
-    "session_switch handler must call isAutoActive()",
+test("session_switch toggles gsd-health from runtime auto state without touching the footer", async (t) => {
+  const dir = join(
+    tmpdir(),
+    `gsd-session-switch-widget-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );
-  assert.ok(
-    sessionSwitchBody.includes('setWidget("gsd-health", undefined)'),
-    "session_switch handler must call setWidget(\"gsd-health\", undefined) when auto is active",
+  mkdirSync(join(dir, ".gsd"), { recursive: true });
+  const tempGsdHome = join(dir, "home");
+  mkdirSync(tempGsdHome, { recursive: true });
+
+  const originalCwd = process.cwd();
+  const originalGsdHome = process.env.GSD_HOME;
+  process.env.GSD_HOME = tempGsdHome;
+  process.chdir(dir);
+  autoSession.reset();
+  t.after(() => {
+    autoSession.reset();
+    process.chdir(originalCwd);
+    if (originalGsdHome === undefined) delete process.env.GSD_HOME;
+    else process.env.GSD_HOME = originalGsdHome;
+    try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ }
+  });
+
+  const handlers = new Map<string, (event: unknown, ctx: any) => Promise<void> | void>();
+  const pi = {
+    on(event: string, handler: (event: unknown, ctx: any) => Promise<void> | void) {
+      handlers.set(event, handler);
+    },
+  } as any;
+
+  registerHooks(pi, []);
+
+  const sessionSwitch = handlers.get("session_switch");
+  assert.ok(sessionSwitch, "session_switch handler must be registered");
+
+  let setFooterCallCount = 0;
+  const widgetCalls: Array<{ key: string; value: unknown }> = [];
+  const ctx = {
+    hasUI: true,
+    ui: {
+      notify: () => {},
+      setStatus: () => {},
+      setFooter: (_footer: unknown) => {
+        setFooterCallCount++;
+      },
+      setWorkingMessage: () => {},
+      onTerminalInput: () => () => {},
+      setWidget: (key: string, value: unknown) => {
+        widgetCalls.push({ key, value });
+      },
+    },
+    sessionManager: { getSessionId: () => null },
+    model: null,
+    modelRegistry: {
+      setDisabledModelProviders: () => {},
+      getProviderAuthMode: () => undefined,
+      isProviderRequestReady: () => false,
+    },
+  };
+
+  autoSession.active = true;
+  await sessionSwitch!({ reason: "resume" }, ctx);
+  assert.deepEqual(
+    widgetCalls.filter((call) => call.key === "gsd-health").map((call) => call.value),
+    [undefined],
+    "session_switch should hide gsd-health when auto is active",
   );
+  assert.equal(setFooterCallCount, 0, "session_switch must not call setFooter when auto is active");
+
+  widgetCalls.length = 0;
+  autoSession.active = false;
+  await sessionSwitch!({ reason: "resume" }, ctx);
+  const healthWidgetValues = widgetCalls
+    .filter((call) => call.key === "gsd-health")
+    .map((call) => call.value);
+
+  assert.ok(healthWidgetValues.length >= 2, "session_switch should initialize gsd-health when auto is inactive");
   assert.ok(
-    !sessionSwitchBody.includes("setFooter"),
-    "session_switch handler must NOT call setFooter",
+    healthWidgetValues.every((value) => value !== undefined),
+    "session_switch must not hide gsd-health when auto is inactive",
   );
+  assert.ok(Array.isArray(healthWidgetValues[0]), "initHealthWidget should publish initial health lines");
+  assert.equal(typeof healthWidgetValues.at(-1), "function", "initHealthWidget should register the live widget factory");
+  assert.equal(setFooterCallCount, 0, "session_switch must not call setFooter when auto is inactive");
 });
 
 // ─── Behavioral test: neither setFooter nor health suppression when auto inactive ─

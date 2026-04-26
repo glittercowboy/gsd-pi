@@ -53,3 +53,23 @@ export function resolveSystemRtkPath(pathValue, platform = process.platform) {
 
   return null;
 }
+
+export function prependPathEntry(env, entry) {
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? (process.platform === "win32" ? "Path" : "PATH");
+  const currentPath = env[pathKey] ?? "";
+  const parts = currentPath.split(delimiter).filter(Boolean);
+  if (!parts.includes(entry)) {
+    env[pathKey] = [entry, currentPath].filter(Boolean).join(delimiter);
+  }
+  return env;
+}
+
+export function applyRtkProcessEnv(env = process.env) {
+  prependPathEntry(env, getManagedRtkDir(env));
+  env[RTK_TELEMETRY_DISABLED_ENV] = "1";
+  return env;
+}
+
+export function buildRtkEnv(env = process.env) {
+  return applyRtkProcessEnv({ ...env });
+}

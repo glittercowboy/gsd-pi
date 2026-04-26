@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 // GSD Startup Loader
-// Copyright (c) 2026 Jeremy McSpadden <jeremy@fluxlabs.net>
 import { fileURLToPath } from 'url'
 import { dirname, resolve, join, relative, delimiter } from 'path'
 import { existsSync, readFileSync, readdirSync, statSync, mkdirSync, symlinkSync, cpSync } from 'fs'
@@ -70,7 +69,7 @@ if (firstArg === '--help' || firstArg === '-h') {
 }
 
 import { agentDir, appRoot } from './app-paths.js'
-import { applyRtkProcessEnv } from './rtk.js'
+import { applyRtkProcessEnv } from './rtk-shared.js'
 import { serializeBundledExtensionPaths } from './bundled-extension-paths.js'
 import { discoverExtensionEntryPaths } from './extension-discovery.js'
 import { loadRegistry, readManifestFromEntryPath, isExtensionEnabled } from './extension-registry.js'

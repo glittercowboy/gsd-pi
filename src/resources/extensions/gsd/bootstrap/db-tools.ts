@@ -2,24 +2,15 @@ import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";
 import { Text } from "@gsd/pi-tui";
 
-import { findMilestoneIds, nextMilestoneId, claimReservedId, getReservedMilestoneIds } from "../guided-flow.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
 import { ensureDbOpen } from "./dynamic-tools.js";
 import { StringEnum } from "@gsd/pi-ai";
 import { logError } from "../workflow-logger.js";
 import { getErrorMessage } from "../error-utils.js";
-import {
-  executeCompleteMilestone,
-  executePlanMilestone,
-  executePlanSlice,
-  executeReplanSlice,
-  executeReassessRoadmap,
-  executeSaveGateResult,
-  executeSliceComplete,
-  executeSummarySave,
-  executeTaskComplete,
-  executeValidateMilestone,
-} from "../tools/workflow-tool-executors.js";
+
+async function loadWorkflowExecutors(): Promise<typeof import("../tools/workflow-tool-executors.js")> {
+  return import("../tools/workflow-tool-executors.js");
+}
 
 /**
  * Register an alias tool that shares the same execute function as its canonical counterpart.
@@ -302,6 +293,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_summary_save (formerly gsd_save_summary) ──────────────────────
 
   const summarySaveExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executeSummarySave } = await loadWorkflowExecutors();
     return executeSummarySave(params, process.cwd());
   };
 
@@ -354,6 +346,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
     try {
       // Claim a reserved ID if the guided-flow already previewed one to the user.
       // This guarantees the ID shown in the UI matches the one materialised on disk.
+      const { claimReservedId, findMilestoneIds, getReservedMilestoneIds, nextMilestoneId } = await import("../guided-flow.js");
       const reserved = claimReservedId();
       if (reserved) {
         await ensureMilestoneDbRow(reserved);
@@ -435,6 +428,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_plan_milestone (gsd_milestone_plan alias) ─────────────────────
 
   const planMilestoneExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executePlanMilestone } = await loadWorkflowExecutors();
     return executePlanMilestone(params, process.cwd());
   };
 
@@ -504,6 +498,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_plan_slice (gsd_slice_plan alias) ─────────────────────────────
 
   const planSliceExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executePlanSlice } = await loadWorkflowExecutors();
     return executePlanSlice(params, process.cwd());
   };
 
@@ -626,6 +621,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_task_complete (gsd_complete_task alias) ────────────────────────
 
   const taskCompleteExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executeTaskComplete } = await loadWorkflowExecutors();
     return executeTaskComplete(params, process.cwd());
   };
 
@@ -696,6 +692,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_slice_complete (gsd_complete_slice alias) ─────────────────────
 
   const sliceCompleteExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executeSliceComplete } = await loadWorkflowExecutors();
     return executeSliceComplete(params, process.cwd());
   };
 
@@ -888,6 +885,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_complete_milestone ────────────────────────────────────────────
 
   const milestoneCompleteExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executeCompleteMilestone } = await loadWorkflowExecutors();
     return executeCompleteMilestone(params, process.cwd());
   };
 
@@ -933,6 +931,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_validate_milestone (gsd_milestone_validate alias) ─────────────
 
   const milestoneValidateExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executeValidateMilestone } = await loadWorkflowExecutors();
     return executeValidateMilestone(params, process.cwd());
   };
 
@@ -970,6 +969,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_replan_slice (gsd_slice_replan alias) ─────────────────────────
 
   const replanSliceExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executeReplanSlice } = await loadWorkflowExecutors();
     return executeReplanSlice(params, process.cwd());
   };
 
@@ -1020,6 +1020,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_reassess_roadmap (gsd_roadmap_reassess alias) ─────────────────
 
   const reassessRoadmapExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executeReassessRoadmap } = await loadWorkflowExecutors();
     return executeReassessRoadmap(params, process.cwd());
   };
 
@@ -1275,6 +1276,7 @@ export function registerDbTools(pi: ExtensionAPI): void {
   // ─── gsd_save_gate_result ──────────────────────────────────────────────
 
   const saveGateResultExecute = async (_toolCallId: string, params: any, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: unknown) => {
+    const { executeSaveGateResult } = await loadWorkflowExecutors();
     return executeSaveGateResult(params, process.cwd());
   };
 
