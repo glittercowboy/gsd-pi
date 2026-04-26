@@ -133,6 +133,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "service_tier",
   "forensics_dedup",
   "show_token_cost",
+  "min_request_interval_ms",
   "stale_commit_threshold_minutes",
   "context_management",
   "experimental",
@@ -368,6 +369,8 @@ export interface GSDPreferences {
   forensics_dedup?: boolean;
   /** Opt-in: show per-prompt and cumulative session token cost in the footer. Default: false. */
   show_token_cost?: boolean;
+  /** Proactive rate limiting: minimum milliseconds between auto-mode LLM requests. Prevents 429s on rate-limited providers. 0 = disabled (default). */
+  min_request_interval_ms?: number;
   /**
    * Minutes without a commit before flagging uncommitted changes as stale.
    * When the threshold is exceeded and the working tree is dirty, doctor will

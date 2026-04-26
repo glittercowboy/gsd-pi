@@ -195,19 +195,31 @@ function resolveDispatchNodeKind(
   return "unit";
 }
 
+async function enforceMinRequestInterval(s: AutoSession, prefs: IterationContext["prefs"]): Promise<void> {
+  const minInterval = prefs?.min_request_interval_ms ?? 0;
+  if (minInterval > 0 && s.lastRequestTimestamp > 0) {
+    const elapsed = Date.now() - s.lastRequestTimestamp;
+    if (elapsed < minInterval) {
+      const waitMs = minInterval - elapsed;
+      debugLog("autoLoop", { phase: "rate-limit-wait", waitMs });
+      await new Promise<void>(r => setTimeout(r, waitMs));
+    }
+  }
+}
+
 async function runUnitPhaseViaContract(
   dispatchContract: DispatchContract,
   ic: IterationContext,
   iterData: IterationData,
   loopState: LoopState,
   sidecarItem?: SidecarItem,
-): Promise<PhaseResult<{ unitStartedAt: number }>> {
+): Promise<PhaseResult<{ unitStartedAt?: number; requestDispatchedAt?: number }>> {
   if (dispatchContract === "legacy-direct") {
     return runUnitPhase(ic, iterData, loopState, sidecarItem);
   }
 
   const scheduler = new ExecutionGraphScheduler();
-  let outcome: PhaseResult<{ unitStartedAt: number }> | null = null;
+  let outcome: PhaseResult<{ unitStartedAt?: number; requestDispatchedAt?: number }> | null = null;
   const executeNode = async (): Promise<void> => {
     outcome = await runUnitPhase(ic, iterData, loopState, sidecarItem);
   };
@@ -468,12 +480,17 @@ export async function autoLoop(
         }
 
         // ── Unit execution (shared with dev path) ──
+        await enforceMinRequestInterval(s, prefs);
         const unitPhaseResult = await runUnitPhaseViaContract(
           dispatchContract,
           ic,
           iterData,
           loopState,
         );
+        if (unitPhaseResult.action === "next") {
+          const requestTimestamp = unitPhaseResult.data.requestDispatchedAt ?? unitPhaseResult.data.unitStartedAt;
+          if (typeof requestTimestamp === "number") s.lastRequestTimestamp = requestTimestamp;
+        }
         deps.uokObserver?.onPhaseResult("unit", unitPhaseResult.action, {
           unitType: iterData.unitType,
           unitId: iterData.unitId,
@@ -653,6 +670,7 @@ export async function autoLoop(
         });
       }
 
+      await enforceMinRequestInterval(s, prefs);
       const unitPhaseResult = await runUnitPhaseViaContract(
         dispatchContract,
         ic,
@@ -660,6 +678,10 @@ export async function autoLoop(
         loopState,
         sidecarItem,
       );
+      if (unitPhaseResult.action === "next") {
+        const requestTimestamp = unitPhaseResult.data.requestDispatchedAt ?? unitPhaseResult.data.unitStartedAt;
+        if (typeof requestTimestamp === "number") s.lastRequestTimestamp = requestTimestamp;
+      }
       deps.uokObserver?.onPhaseResult("unit", unitPhaseResult.action, {
         unitType: iterData.unitType,
         unitId: iterData.unitId,

@@ -193,6 +193,8 @@ export class AutoSession {
   lastPromptCharCount: number | undefined;
   lastBaselineCharCount: number | undefined;
   pendingQuickTasks: CaptureEntry[] = [];
+  /** Timestamp of the last LLM request dispatch (ms since epoch). Used for proactive rate limiting. */
+  lastRequestTimestamp = 0;
 
   // ── Safety harness ───────────────────────────────────────────────────────
   /** SHA of the pre-unit git checkpoint ref. Cleared on success or rollback. */
@@ -294,6 +296,7 @@ export class AutoSession {
     this.lastPromptCharCount = undefined;
     this.lastBaselineCharCount = undefined;
     this.pendingQuickTasks = [];
+    this.lastRequestTimestamp = 0;
     this.sidecarQueue = [];
     this.rewriteAttemptCount = 0;
     this.consecutiveCompleteBootstraps = 0;

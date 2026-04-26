@@ -66,6 +66,7 @@ export interface UnitResult {
   status: "completed" | "cancelled" | "error";
   event?: AgentEndEvent;
   errorContext?: ErrorContext;
+  requestDispatchedAt?: number;
 }
 
 // ─── Phase pipeline types ────────────────────────────────────────────────────

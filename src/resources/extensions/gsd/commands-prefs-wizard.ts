@@ -1524,6 +1524,18 @@ async function configureAdvanced(ctx: ExtensionCommandContext, prefs: Record<str
   const tokenCost = await promptBoolean(ctx, "Show token cost in footer", prefs.show_token_cost, false);
   if (tokenCost !== undefined) prefs.show_token_cost = tokenCost;
 
+  const minRequestInterval = await promptInteger(
+    ctx,
+    "Minimum interval between auto-mode LLM requests (ms, 0 to disable)",
+    prefs.min_request_interval_ms,
+    "0",
+  );
+  if (minRequestInterval === "clear") {
+    delete prefs.min_request_interval_ms;
+  } else if (minRequestInterval !== undefined) {
+    prefs.min_request_interval_ms = minRequestInterval;
+  }
+
   const widget = await promptEnum(ctx, "Auto-mode widget display", prefs.widget_mode, ["full", "small", "min", "off"], "full");
   if (widget !== undefined) prefs.widget_mode = widget;
 
@@ -1715,6 +1727,7 @@ export function serializePreferencesToFrontmatter(prefs: Record<string, unknown>
     "budget_ceiling", "budget_enforcement", "context_pause_threshold",
     "notifications", "cmux", "remote_questions", "git",
     "stale_commit_threshold_minutes",
+    "min_request_interval_ms",
     "post_unit_hooks", "pre_dispatch_hooks",
     "dynamic_routing", "disabled_model_providers", "uok", "token_profile",
     "service_tier", "flat_rate_providers",
