@@ -19,6 +19,7 @@ import { getActiveHook } from "./post-unit-hooks.js";
 import { getLedger, getProjectTotals } from "./metrics.js";
 import { getErrorMessage } from "./error-utils.js";
 import { nativeIsRepo } from "./native-git-bridge.js";
+import { getHomeDir } from "./home-dir.js";
 import {
   resolveMilestoneFile,
   resolveSliceFile,
@@ -582,8 +583,8 @@ export function updateProgressWidget(
   let widgetPwd: string;
   {
     let fullPwd = process.cwd();
-    const widgetHome = process.env.HOME || process.env.USERPROFILE;
-    if (widgetHome && fullPwd.startsWith(widgetHome)) {
+    const widgetHome = getHomeDir();
+    if (widgetHome && (fullPwd === widgetHome || fullPwd.startsWith(widgetHome + "/") || fullPwd.startsWith(widgetHome + "\\"))) {
       fullPwd = `~${fullPwd.slice(widgetHome.length)}`;
     }
     const parts = fullPwd.split("/");
