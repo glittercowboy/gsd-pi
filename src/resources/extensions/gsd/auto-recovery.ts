@@ -107,6 +107,17 @@ export function hasImplementationArtifacts(basePath: string, milestoneId?: strin
         const tagged = getChangedFilesFromMilestoneTaggedCommits(basePath, milestoneId);
         if (!tagged.ok) return "unknown";
         if (tagged.matched) return classifyImplementationFiles(tagged.files);
+
+        // Some projects keep `.gsd/` outside the git worktree (for example as
+        // a symlink into the per-project GSD store). In that topology the
+        // milestone-path history scan above has no tracked `.gsd/milestones/*`
+        // commits to bind `GSD-Task: Sxx/Tyy` trailers back to the milestone,
+        // even though the implementation commits are already on the integration
+        // branch. Fall back to GSD-tagged commits that explicitly reference the
+        // milestone ID in their message or changed non-.gsd paths.
+        const referenced = getChangedFilesFromMilestoneReferencedCommits(basePath, milestoneId);
+        if (!referenced.ok) return "unknown";
+        if (referenced.matched) return classifyImplementationFiles(referenced.files);
       }
       if (currentBranch && currentBranch !== "HEAD") return "absent";
       return "unknown";
@@ -251,6 +262,59 @@ function getChangedFilesFromMilestoneTaggedCommits(
     logWarning("recovery", `milestone-tagged commit scan failed: ${(e as Error).message}`);
     return { ok: false, matched: false, files: [] };
   }
+}
+
+function getChangedFilesFromMilestoneReferencedCommits(
+  basePath: string,
+  milestoneId: string,
+): { ok: boolean; matched: boolean; files: string[] } {
+  try {
+    const logOutput = execFileSync(
+      "git",
+      ["log", "--format=%H%x1f%B%x1e", "HEAD"],
+      { cwd: basePath, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" },
+    );
+    const records = logOutput
+      .split("\x1e")
+      .map((record) => record.trim())
+      .filter(Boolean)
+      .flatMap((record) => {
+        const sep = record.indexOf("\x1f");
+        if (sep === -1) return [];
+        const hash = record.slice(0, sep).trim();
+        const message = record.slice(sep + 1);
+        return [{ hash, message }];
+      });
+
+    const files = new Set<string>();
+    let matched = false;
+    for (const { hash, message } of records) {
+      if (!commitMessageHasGsdTrailer(message)) continue;
+
+      const commitFiles = getChangedFilesForCommit(basePath, hash);
+      if (!commitReferencesMilestone(message, milestoneId, commitFiles)) continue;
+
+      matched = true;
+      for (const file of commitFiles) {
+        files.add(file);
+      }
+    }
+
+    return { ok: true, matched, files: [...files] };
+  } catch (e) {
+    logWarning("recovery", `milestone-referenced commit scan failed: ${(e as Error).message}`);
+    return { ok: false, matched: false, files: [] };
+  }
+}
+
+function commitReferencesMilestone(message: string, milestoneId: string, files: readonly string[]): boolean {
+  if (message.includes(milestoneId)) return true;
+  return files.some((file) => isMilestoneNamedPath(file, milestoneId));
+}
+
+function isMilestoneNamedPath(file: string, milestoneId: string): boolean {
+  const normalized = file.replace(/\\/g, "/");
+  return normalized.split("/").includes(milestoneId);
 }
 
 function getChangedFilesForCommit(basePath: string, hash: string): string[] {
