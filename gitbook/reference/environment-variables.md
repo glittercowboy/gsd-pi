@@ -11,6 +11,7 @@
 | `GSD_FETCH_ALLOWED_URLS` | (none) | Comma-separated hostnames exempt from internal URL blocking. |
 | `GSD_ALLOWED_COMMAND_PREFIXES` | (built-in) | Comma-separated command prefixes allowed for value resolution. |
 | `GSD_WEB_PROJECT_CWD` | — | Default project path for `gsd --web` when `?project=` is not specified. |
+| `PI_TOKEN_TELEMETRY` | (unset) | Set to literal `1` to emit opt-in per-call token telemetry as JSONL on stderr. Other values are ignored. |
 
 ## LLM Provider Keys
 
@@ -42,6 +43,36 @@
 | `CONTEXT7_API_KEY` | Context7 documentation lookup |
 | `DISCORD_BOT_TOKEN` | Discord remote questions |
 | `TELEGRAM_BOT_TOKEN` | Telegram remote questions |
+
+## Token Telemetry
+
+Set `PI_TOKEN_TELEMETRY=1` to emit raw token and prompt-cache telemetry for each assistant API attempt. Telemetry writes to stderr, so stdout remains available for normal TUI output or headless `--json` events.
+
+```bash
+# Capture telemetry separately from headless JSONL events
+PI_TOKEN_TELEMETRY=1 gsd headless --json auto \
+  > gsd-events.jsonl \
+  2> token-telemetry.jsonl
+
+# Capture telemetry from an interactive session
+PI_TOKEN_TELEMETRY=1 gsd 2> token-telemetry.jsonl
+```
+
+Each line is one JSON object:
+
+| Field | Description |
+|-------|-------------|
+| `ts` | Assistant message timestamp in milliseconds since Unix epoch. |
+| `model` | Model identifier used for the call. |
+| `stopReason` | Provider stop reason recorded for the assistant message, such as `stop` or `error`. |
+| `input` | Input tokens reported for the call, excluding tokens served from prompt cache. |
+| `output` | Output tokens reported for the call. |
+| `cacheRead` | Input tokens read from prompt cache. |
+| `cacheWrite` | Input tokens written to prompt cache. |
+| `costTotal` | Provider total cost from the model registry. This is `0` when no rate is known for the model. |
+| `cacheHitRatio` | `cacheRead / (cacheRead + input)`. This is `0` when both values are zero and `1` for a full cache hit. |
+
+Records are per attempt, not per user turn. A retrying call can emit one line for the failed assistant message, usually with `stopReason: "error"`, plus one line for each retry attempt that reaches an assistant message. Keep every line for billed-attempt accounting; group with session logs or timestamps downstream if you need a deduplicated final-response view.
 
 ## URL Blocking
 

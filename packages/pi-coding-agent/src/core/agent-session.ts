@@ -78,6 +78,7 @@ import { getLatestCompactionEntry } from "./session-manager.js";
 import type { SettingsManager } from "./settings-manager.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
 import { buildSystemPrompt } from "./system-prompt.js";
+import { emitTokenTelemetry } from "./token-telemetry.js";
 import type { BashOperations } from "./tools/bash.js";
 import { createAllTools } from "./tools/index.js";
 
@@ -469,6 +470,12 @@ export class AgentSession {
 				this._cumulativeInputTokens += assistantMsg.usage?.input ?? 0;
 				this._cumulativeOutputTokens += assistantMsg.usage?.output ?? 0;
 				this._cumulativeToolCalls += assistantMsg.content.filter((c) => c.type === "toolCall").length;
+
+				// Per-call token telemetry (off by default; gated by PI_TOKEN_TELEMETRY=1).
+				// Note: a turn that retries emits one record per attempt — group by
+				// session/turn downstream if you want a deduplicated view. Both records
+				// are valid (each was a billed/attempted API call). #5023
+				emitTokenTelemetry(assistantMsg);
 
 				if (assistantMsg.stopReason !== "error") {
 					this._compactionOrchestrator.clearOverflowRecovery();
