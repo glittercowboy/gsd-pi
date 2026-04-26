@@ -28,6 +28,12 @@ Plan (with integrated research) → Execute (per task) → Complete → Reassess
 
 Every task, research phase, and planning step gets a clean context window. No accumulated garbage. No degraded quality from context bloat. The dispatch prompt includes everything needed — task plans, prior summaries, dependency context, decisions register — so the LLM starts oriented instead of spending tool calls reading files.
 
+### Runtime Tool Policy
+
+Each auto-mode unit has a `UnitContextManifest` with a `ToolsPolicy`, and GSD enforces that policy before tool calls execute. Execution units use `all` mode and may edit project files, run shell commands, and dispatch subagents. Planning and discussion units use `planning` mode: they can read broadly, write planning artifacts under `.gsd/`, run only read-only shell commands, and cannot dispatch subagents. Documentation units use `docs` mode, which keeps the same restrictions but also allows writes to the manifest's explicit documentation globs such as `docs/**`, top-level `README*.md`, `CHANGELOG.md`, and top-level `*.md`.
+
+Writes outside those allowed paths, unsafe bash commands, and subagent dispatch from non-execution units are blocked with a hard policy error instead of relying on prompt compliance.
+
 ### Context Pre-Loading
 
 The dispatch prompt is carefully constructed with:

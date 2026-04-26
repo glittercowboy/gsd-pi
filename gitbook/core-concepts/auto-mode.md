@@ -68,6 +68,12 @@ Fire-and-forget thought capture. Captures are triaged automatically between task
 
 Every task gets a clean AI context window. No accumulated garbage, no quality degradation from context bloat. The dispatch prompt includes everything needed — task plans, prior summaries, decisions, dependency context — so the AI starts oriented.
 
+## Runtime Tool Policy
+
+Every auto-mode unit declares a `ToolsPolicy` in its `UnitContextManifest`, and GSD enforces it before tool calls run. Execution units use `all` mode and can edit project files, run shell commands, and dispatch subagents. Planning and discussion units use `planning` mode: read tools are allowed, writes are limited to `.gsd/`, bash must be read-only, and subagent dispatch is blocked. Documentation units use `docs` mode, which also allows writes to the manifest's documentation globs such as `docs/**`, top-level `README*.md`, `CHANGELOG.md`, and top-level `*.md`.
+
+Policy violations return a hard block, so unsafe writes, unsafe bash, and subagent dispatch are stopped at runtime rather than handled as model instructions.
+
 ## Git Isolation
 
 GSD isolates milestone work using one of three modes:

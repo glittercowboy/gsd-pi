@@ -10,7 +10,8 @@ import { getEcosystemReadyPromise } from "../ecosystem/loader.js";
 import { buildMilestoneFileName, resolveMilestonePath, resolveSliceFile, resolveSlicePath } from "../paths.js";
 import { buildBeforeAgentStartResult } from "./system-context.js";
 import { handleAgentEnd } from "./agent-end-recovery.js";
-import { clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockQueueExecution, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { clearDiscussionFlowState, isDepthConfirmationAnswer, isQueuePhaseActive, markDepthVerified, resetWriteGateState, shouldBlockContextWrite, shouldBlockPlanningUnit, shouldBlockQueueExecution, isGateQuestionId, setPendingGate, clearPendingGate, getPendingGate, shouldBlockPendingGate, shouldBlockPendingGateBash, extractDepthVerificationMilestoneId } from "./write-gate.js";
+import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { cleanupQuickBranch } from "../quick.js";
 import { getDiscussionMilestoneId } from "../guided-flow.js";
@@ -335,6 +336,36 @@ export function registerHooks(
       }
       const queueGuard = shouldBlockQueueExecution(event.toolName, queueInput, true);
       if (queueGuard.block) return queueGuard;
+    }
+
+    // ── Planning-unit tools-policy enforcement (#4934): runtime half ─────
+    // The active auto-mode unit's manifest declares a ToolsPolicy. For
+    // planning/docs/read-only modes, deny writes outside .gsd/ (or the
+    // manifest's allowedPathGlobs), bash that isn't read-only, and
+    // subagent dispatch. Closes the b23 bug class where a discuss-milestone
+    // turn used the host Edit tool to modify user source files.
+    const dash = getAutoDashboardData();
+    const activeUnitType = dash.currentUnit?.type;
+    if (activeUnitType) {
+      const manifest = resolveManifest(activeUnitType);
+      if (manifest) {
+        let planningInput = "";
+        if (isToolCallEventType("write", event)) {
+          planningInput = event.input.path;
+        } else if (isToolCallEventType("edit", event)) {
+          planningInput = event.input.path;
+        } else if (isToolCallEventType("bash", event)) {
+          planningInput = event.input.command;
+        }
+        const planningGuard = shouldBlockPlanningUnit(
+          event.toolName,
+          planningInput,
+          dash.basePath || discussionBasePath,
+          activeUnitType,
+          manifest.tools,
+        );
+        if (planningGuard.block) return planningGuard;
+      }
     }
 
     // ── Single-writer engine: block direct writes to STATE.md ──────────

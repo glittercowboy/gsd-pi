@@ -93,10 +93,10 @@ export type PreferencesPolicy = "none" | "active-only" | "full";
 /**
  * Tool-access policy per unit type (#4934).
  *
- * Declarative-only in this PR — runtime enforcement (write-gate.ts predicate
- * + dispatch-time isolation) lands in follow-up PRs. The shape is the
- * agreement between manifest authors and enforcement; surfacing it now lets
- * reviewers ratify per-unit policy intent before any blocking logic ships.
+ * Runtime-enforced by the GSD write gate for active auto-mode units. The
+ * manifest declares the allowed tool surface; register-hooks.ts resolves the
+ * active unit's manifest before each tool call and write-gate.ts rejects
+ * violations before the tool executes.
  *
  * Modes:
  *   - "all"        — Read + Edit/Write/MultiEdit/NotebookEdit + Bash + Task.
@@ -214,10 +214,10 @@ export interface UnitContextManifest {
   /** Preferences block policy. */
   readonly preferences: PreferencesPolicy;
   /**
-   * Tool-access policy (#4934). Declarative in this PR; runtime enforcement
-   * (path-scoped write blocking + subagent denial + bash allowlist) lands
-   * in follow-ups. Required on every manifest so missing entries fail loud
-   * via the CI invariant test rather than defaulting to "all" silently.
+   * Tool-access policy (#4934). Runtime enforcement covers path-scoped write
+   * blocking, subagent denial, and bash allowlisting for active auto-mode
+   * units. Required on every manifest so missing entries fail loud via the CI
+   * invariant test rather than defaulting to "all" silently.
    */
   readonly tools: ToolsPolicy;
   /** Artifact handling: inline (full body), excerpt (compact), or on-demand (path only). */

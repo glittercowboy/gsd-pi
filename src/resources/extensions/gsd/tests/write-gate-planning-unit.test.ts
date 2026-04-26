@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 import { join, sep } from 'node:path';
 
 import { shouldBlockPlanningUnit } from '../bootstrap/write-gate.ts';
+import { isDeterministicPolicyError } from '../auto-tool-tracking.ts';
 import type { ToolsPolicy } from '../unit-context-manifest.ts';
 
 const BASE = join('/tmp', 'fake-project');
@@ -34,6 +35,20 @@ test('planning-unit: blocks edit to user source (the b23 forensic)', () => {
   assert.strictEqual(r.block, true);
   assert.match(r.reason!, /HARD BLOCK/);
   assert.match(r.reason!, /discuss-milestone/);
+});
+
+test('planning-unit: deterministic block reason is suitable for retry short-circuiting', () => {
+  const r = shouldBlockPlanningUnit(
+    'edit',
+    'src/main.ts',
+    BASE,
+    'discuss-milestone',
+    PLANNING,
+  );
+  assert.strictEqual(r.block, true);
+  assert.match(r.reason!, /HARD BLOCK/);
+  assert.match(r.reason!, /tools-policy/);
+  assert.strictEqual(isDeterministicPolicyError(r.reason!), true);
 });
 
 test('planning-unit: blocks write to user source via relative path', () => {

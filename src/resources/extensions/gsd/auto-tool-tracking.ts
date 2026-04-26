@@ -151,8 +151,6 @@ export const DETERMINISTIC_POLICY_ERROR_STRINGS = [
  */
 export function isDeterministicPolicyError(errorMsg: string): boolean {
   if (!errorMsg) return false;
-  return (
-    DETERMINISTIC_POLICY_ERROR_RE.test(errorMsg) ||
-    DETERMINISTIC_POLICY_ERROR_STRINGS.some(s => errorMsg.includes(s))
-  );
+  return DETERMINISTIC_POLICY_ERROR_RE.test(errorMsg)
+    || DETERMINISTIC_POLICY_ERROR_STRINGS.some(s => errorMsg.includes(s));
 }
