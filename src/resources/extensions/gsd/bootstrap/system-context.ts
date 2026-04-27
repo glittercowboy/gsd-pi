@@ -52,6 +52,17 @@ export const BUNDLED_SKILL_TRIGGERS: Array<{ trigger: string; skill: string }> =
   { trigger: "HTTP/REST/GraphQL API design — verbs, status codes, pagination, errors, idempotency, versioning", skill: "api-design" },
   { trigger: "Dependency upgrades — risk-batched, verified between batches, one major per commit", skill: "dependency-upgrade" },
   { trigger: "Agent-first observability — structured logs, persisted failure state, health surfaces, explicit failure modes", skill: "observability" },
+  { trigger: "React/Next.js performance — components, data fetching, bundle optimization, rendering patterns from Vercel Engineering", skill: "react-best-practices" },
+  { trigger: "Core Web Vitals — fix LCP, CLS, INP; layout shifts; page experience optimization", skill: "core-web-vitals" },
+  { trigger: "GitHub Actions CI/CD — write, run, and debug workflow files; live syntax and run monitoring", skill: "github-workflows" },
+  { trigger: "Comprehensive web quality audit — performance, accessibility, SEO, and best-practices (Lighthouse-style)", skill: "web-quality-audit" },
+  { trigger: "Browser automation — open sites, fill forms, click, screenshot, scrape, or test web apps programmatically", skill: "agent-browser" },
+  { trigger: "Review UI code for Web Interface Guidelines compliance — UX, design, and accessibility patterns", skill: "web-design-guidelines" },
+  { trigger: "UI/UX patterns reference — animations, CSS, typography, prefetching, icons (file:line findings)", skill: "userinterface-wiki" },
+  { trigger: "Author or refine a GSD skill — SKILL.md structure, frontmatter, and best practices", skill: "create-skill" },
+  { trigger: "Create or debug a GSD extension — tools, commands, event hooks, custom TUI, providers", skill: "create-gsd-extension" },
+  { trigger: "Author a YAML workflow definition — steps, triggers, and templates", skill: "create-workflow" },
+  { trigger: "Deep code optimization audit — perf anti-patterns, memory leaks, algorithmic complexity, bundle size, I/O, caching, dead code (parallel pattern-based hunt)", skill: "code-optimizer" },
 ];
 
 function buildBundledSkillsTable(): string {

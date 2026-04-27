@@ -45,6 +45,26 @@ test('BUNDLED_SKILL_TRIGGERS: PR #4505 bundled skills are present', () => {
   }
 });
 
+test('BUNDLED_SKILL_TRIGGERS: previously-unexposed skills are now registered', () => {
+  const expected = [
+    'react-best-practices',
+    'core-web-vitals',
+    'github-workflows',
+    'web-quality-audit',
+    'agent-browser',
+    'web-design-guidelines',
+    'userinterface-wiki',
+    'create-skill',
+    'create-gsd-extension',
+    'create-workflow',
+    'code-optimizer',
+  ];
+  const registered = new Set(BUNDLED_SKILL_TRIGGERS.map(e => e.skill));
+  for (const skill of expected) {
+    assert.ok(registered.has(skill), `expected bundled skill "${skill}" to be registered`);
+  }
+});
+
 test('BUNDLED_SKILL_TRIGGERS: skill ids are unique', () => {
   const seen = new Set<string>();
   for (const { skill } of BUNDLED_SKILL_TRIGGERS) {
