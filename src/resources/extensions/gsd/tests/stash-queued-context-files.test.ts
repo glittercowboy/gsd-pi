@@ -35,6 +35,7 @@ import { _clearGsdRootCache } from "../paths.ts";
 // Isolate from user's global preferences (which may have git.main_branch set)
 let originalHome: string | undefined;
 let fakeHome: string;
+const testCwd = process.cwd();
 
 test.before(() => {
   originalHome = process.env.HOME;
@@ -50,6 +51,13 @@ test.after(() => {
   _resetServiceCache();
   rmSync(fakeHome, { recursive: true, force: true });
 });
+
+function cleanupTempPaths(...paths: string[]): void {
+  try { process.chdir(testCwd); } catch { /* best-effort */ }
+  for (const p of paths) {
+    rmSync(p, { recursive: true, force: true });
+  }
+}
 
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, {
@@ -271,7 +279,7 @@ test("#2505: mergeMilestoneToMain preserves queued CONTEXT files (not swept into
       }
     }
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    cleanupTempPaths(repo);
   }
 });
 
@@ -308,8 +316,7 @@ test("#2505: pre-merge stash handles symlinked .gsd without traversing it", () =
     assert.equal(readFileSync(join(repo, "README.md"), "utf-8").replace(/\r\n/g, "\n"), "# test\n\nDirty change.\n");
     assert.equal(readFileSync(join(repo, "local-note.txt"), "utf-8"), "local scratch\n");
   } finally {
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(stateDir, { recursive: true, force: true });
+    cleanupTempPaths(repo, stateDir);
   }
 });
 
@@ -375,7 +382,7 @@ test("#2505: back-to-back merges preserve queued CONTEXT files", () => {
       "M013 context content preserved after back-to-back merges",
     );
   } finally {
-    rmSync(repo, { recursive: true, force: true });
+    cleanupTempPaths(repo);
   }
 });
 
@@ -430,7 +437,6 @@ test("#4573: gitignored .gsd symlink does not break pre-merge stash", () => {
       ".gsd symlink remains in place",
     );
   } finally {
-    rmSync(repo, { recursive: true, force: true });
-    rmSync(stateDir, { recursive: true, force: true });
+    cleanupTempPaths(repo, stateDir);
   }
 });

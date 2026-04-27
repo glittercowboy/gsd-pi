@@ -21,6 +21,7 @@ import { _clearGsdRootCache } from "../paths.ts";
 // Isolate from user's global preferences (which may have git.main_branch set)
 let originalHome: string | undefined;
 let fakeHome: string;
+const testCwd = process.cwd();
 
 test.before(() => {
   originalHome = process.env.HOME;
@@ -36,6 +37,11 @@ test.after(() => {
   _resetServiceCache();
   rmSync(fakeHome, { recursive: true, force: true });
 });
+
+function cleanupTempRepo(repo: string): void {
+  try { process.chdir(testCwd); } catch { /* best-effort */ }
+  try { rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* cleanup best-effort */ }
+}
 
 function run(cmd: string, cwd: string): string {
   return execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], encoding: "utf-8" }).trim();
@@ -106,7 +112,7 @@ test("#2766: stash pop conflict on .gsd/ files is auto-resolved", () => {
     try { stashList = run("git stash list", repo); } catch { /* empty stash */ }
     assert.strictEqual(stashList, "", "stash is empty after .gsd/ conflict auto-resolution");
   } finally {
-    try { rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* cleanup best-effort */ }
+    cleanupTempRepo(repo);
   }
 });
 
@@ -141,6 +147,6 @@ test("#2766: stash pop conflict on non-.gsd files preserves stash for manual res
       "merge succeeds even with non-.gsd stash pop conflict",
     );
   } finally {
-    try { rmSync(repo, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }); } catch { /* cleanup best-effort */ }
+    cleanupTempRepo(repo);
   }
 });
