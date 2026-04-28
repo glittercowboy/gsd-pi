@@ -157,7 +157,7 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
 /** Canonical list of all dispatch unit types. */
 export const KNOWN_UNIT_TYPES = [
   "research-milestone", "plan-milestone", "research-slice", "plan-slice", "refine-slice",
-  "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
+  "execute-task", "execute-task-simple", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
   "run-uat", "complete-milestone", "validate-milestone", "rewrite-docs",
   "discuss-milestone", "discuss-slice", "worktree-merge",
 ] as const;
