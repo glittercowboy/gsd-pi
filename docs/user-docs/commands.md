@@ -123,7 +123,7 @@ backwards compatibility.
 | `/gsd workflow` | List all discoverable plugins, grouped by mode |
 | `/gsd workflow <name> [args]` | Run a plugin directly (resolved via precedence chain) |
 | `/gsd workflow info <name>` | Show plugin metadata — source, mode, phases, path |
-| `/gsd workflow new` | Create a new workflow definition (via the `create-workflow` skill) |
+| `/gsd workflow new` | Create a new workflow definition by guiding you to the `create-workflow` skill |
 | `/gsd workflow install <source>` | Install a plugin from `https://...`, `gist:<id>`, or `gh:owner/repo/path[@ref]` |
 | `/gsd workflow uninstall <name>` | Remove an installed plugin and its provenance record |
 | `/gsd workflow run <name> [k=v]` | Explicit YAML run form (same as `/gsd workflow <name>` for yaml-step plugins) |
@@ -146,7 +146,7 @@ backwards compatibility.
 
 ### Authoring a custom plugin
 
-Run `/gsd workflow new <name>` to scaffold via the `create-workflow` skill.
+Run `/gsd workflow new` and follow the prompt to scaffold via the `create-workflow` skill.
 Plugins are plain YAML (`.yaml`) or markdown (`.md`) files. See
 `src/resources/extensions/gsd/workflow-templates/` for bundled examples.
 

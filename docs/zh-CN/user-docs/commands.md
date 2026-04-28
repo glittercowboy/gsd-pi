@@ -120,7 +120,7 @@
 | `/gsd workflow` | 按模式分组列出所有可发现插件 |
 | `/gsd workflow <name> [args]` | 直接运行某个插件（按优先级链解析来源） |
 | `/gsd workflow info <name>` | 查看插件元数据：来源、模式、阶段、路径 |
-| `/gsd workflow new` | 创建一个新的 workflow definition（通过 `create-workflow` skill） |
+| `/gsd workflow new` | 创建一个新的 workflow definition（引导使用 `create-workflow` skill） |
 | `/gsd workflow install <source>` | 从 `https://...`、`gist:<id>` 或 `gh:owner/repo/path[@ref]` 安装插件 |
 | `/gsd workflow uninstall <name>` | 卸载已安装插件及其 provenance 记录 |
 | `/gsd workflow run <name> [k=v]` | 显式 YAML 运行形式（对于 yaml-step 插件，等价于 `/gsd workflow <name>`） |
@@ -138,7 +138,7 @@
 
 ### 编写自定义插件
 
-运行 `/gsd workflow new <name>`，通过 `create-workflow` skill 生成脚手架。插件就是普通的 YAML（`.yaml`）或 markdown（`.md`）文件。内置示例可参考 `src/resources/extensions/gsd/workflow-templates/`。
+运行 `/gsd workflow new`，按提示通过 `create-workflow` skill 生成脚手架。插件就是普通的 YAML（`.yaml`）或 markdown（`.md`）文件。内置示例可参考 `src/resources/extensions/gsd/workflow-templates/`。
 
 ## 扩展
 

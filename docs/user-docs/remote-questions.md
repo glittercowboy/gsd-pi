@@ -1,6 +1,6 @@
 # Remote Questions
 
-Remote questions allow GSD to ask for user input and send informational notifications via Slack, Discord, or Telegram when running in headless auto-mode. When GSD encounters a decision point that needs human input, it posts the question to your configured channel and polls for a response. Milestone completions, blockers, budget alerts, and other status events are also routed to the same channel.
+Remote questions allow GSD to ask for user input and send informational notifications via Slack, Discord, or Telegram when running in auto-mode. When GSD encounters a decision point that needs human input, it posts the question to your configured channel and polls for a response. Milestone completions, blockers, budget alerts, and other status events are also routed to the same channel.
 
 ## Setup
 
