@@ -31,7 +31,7 @@ import {
 } from "./paths.js";
 import { parseRoadmap } from "./parsers-legacy.js";
 import { validateArtifact } from "./schemas/validate.js";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { logWarning, logError } from "./workflow-logger.js";
 import { join } from "node:path";
 import { hasImplementationArtifacts } from "./auto-recovery.js";
@@ -100,14 +100,24 @@ export interface DispatchContext {
 }
 
 type ReassessmentChecker = typeof checkNeedsReassessment;
+type ResearchProjectPromptBuilder = typeof buildResearchProjectPrompt;
 
 let reassessmentChecker: ReassessmentChecker = checkNeedsReassessment;
+let researchProjectPromptBuilder: ResearchProjectPromptBuilder = buildResearchProjectPrompt;
 
 export function setReassessmentCheckerForTest(checker: ReassessmentChecker): () => void {
   const previous = reassessmentChecker;
   reassessmentChecker = checker;
   return () => {
     reassessmentChecker = previous;
+  };
+}
+
+export function setResearchProjectPromptBuilderForTest(builder: ResearchProjectPromptBuilder): () => void {
+  const previous = researchProjectPromptBuilder;
+  researchProjectPromptBuilder = builder;
+  return () => {
+    researchProjectPromptBuilder = previous;
   };
 }
 
@@ -705,12 +715,22 @@ export const DISPATCH_RULES: DispatchRule[] = [
         if (err && typeof err === "object" && "code" in err && err.code === "EEXIST") return null;
         throw err;
       }
-      return {
-        action: "dispatch",
-        unitType: "research-project",
-        unitId: "RESEARCH-PROJECT",
-        prompt: await buildResearchProjectPrompt(basePath, structuredQuestionsAvailable),
-      };
+      try {
+        const prompt = await researchProjectPromptBuilder(basePath, structuredQuestionsAvailable);
+        return {
+          action: "dispatch",
+          unitType: "research-project",
+          unitId: "RESEARCH-PROJECT",
+          prompt,
+        };
+      } catch (err) {
+        try {
+          if (existsSync(inflightMarkerPath)) unlinkSync(inflightMarkerPath);
+        } catch {
+          // Preserve the prompt assembly error; marker cleanup is best-effort.
+        }
+        throw err;
+      }
     },
   },
   {

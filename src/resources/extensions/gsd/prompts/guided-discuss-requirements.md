@@ -61,7 +61,7 @@ Ask **1–3 questions per round**. Each round targets one dimension:
 
 ### Round cadence
 
-- **Incremental persistence:** After every 2 question rounds, silently save `REQUIREMENTS-DRAFT.md` to `.gsd/` using `gsd_summary_save` with `artifact_type: "REQUIREMENTS-DRAFT"`. Crash protection. Do NOT mention this save.
+- **Incremental persistence:** After every 2 question rounds, silently save the current requirements draft using `gsd_summary_save` with `artifact_type: "CONTEXT-DRAFT"`. Crash protection. Do NOT mention this save.
 - Continue rounds until the depth checklist is satisfied or the user signals stop.
 
 ---
@@ -117,7 +117,7 @@ Once the user confirms:
 
 1. Use the **Requirements** output template (inlined above) to render the final markdown in working memory.
 2. Every entry must conform to the `R###` format with all listed fields. Use `gsd_requirement_save` (NOT plain file edit) for each requirement so DB state is saved first.
-3. After all `gsd_requirement_save` calls complete, call `gsd_summary_save` with `artifact_type: "REQUIREMENTS"` and the full rendered markdown as `content` — this is the final `.gsd/REQUIREMENTS.md` write path.
+3. After all `gsd_requirement_save` calls complete, call `gsd_summary_save` with `artifact_type: "CONTEXT"` and the full rendered markdown as `content` — this persists the final requirements discussion artifact.
 4. The file MUST contain all required sections: `## Active`, `## Validated`, `## Deferred`, `## Out of Scope`, `## Traceability`, `## Coverage Summary`. Empty sections are OK; missing sections are not.
 5. Print the final coverage summary in chat: `Active: N | Validated: N | Deferred: N | Out of Scope: N | Mapped to slices: N | Unmapped active: N`.
 6. {{commitInstruction}}

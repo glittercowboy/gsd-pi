@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   DISPATCH_RULES,
+  setResearchProjectPromptBuilderForTest,
   type DispatchContext,
 } from "../auto-dispatch.ts";
 import type { GSDState } from "../types.ts";
@@ -435,6 +436,26 @@ test("Deep mode: research-project DOES dispatch when decision is 'research' and 
     existsSync(join(base, ".gsd", "runtime", "research-project-inflight")),
     "dispatch must create the in-flight marker before returning",
   );
+});
+
+test("Deep mode: research-project clears in-flight marker when prompt assembly fails", async (t) => {
+  const base = makeIsolatedBase();
+  t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
+
+  const restorePromptBuilder = setResearchProjectPromptBuilderForTest(async () => {
+    throw new Error("prompt assembly failed");
+  });
+  t.after(restorePromptBuilder);
+
+  setupReadyForResearchProject(base);
+  const prefs = { planning_depth: "deep" } as GSDPreferences;
+  const markerPath = join(base, ".gsd", "runtime", "research-project-inflight");
+
+  await assert.rejects(
+    () => rule(RESEARCH_PROJECT_RULE_NAME).match(makeCtx(base, prefs)),
+    /prompt assembly failed/,
+  );
+  assert.strictEqual(existsSync(markerPath), false, "failed prompt assembly must not strand the in-flight marker");
 });
 
 test("Deep mode: research-project does NOT dispatch while in-flight marker exists", async (t) => {
