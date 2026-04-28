@@ -780,6 +780,51 @@ disabled_model_providers:
   - google-gemini-cli
 ```
 
+### `thinking_policy`
+
+Per-unit-type and per-prefix thinking-level policy. Lets you dial thinking off
+for cheap/low-stakes units (e.g. `execute-task-simple`) and crank it up for
+high-leverage planning or discussion units, without flipping `/thinking` by hand
+between phases.
+
+```yaml
+thinking_policy:
+  default: medium
+  prefixes:
+    research-: medium
+    discuss-: high
+    plan-: high
+  unitTypes:
+    execute-task: off          # quote "off" if you prefer not to rely on coercion
+    execute-task-simple: off
+    reactive-execute: off
+    replan-slice: high
+```
+
+Valid levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` (matches Pi
+SDK's `defaultThinkingLevel`).
+
+Resolution order at dispatch time (first match wins):
+
+1. `unitTypes[unitType]` — exact match.
+2. `prefixes[<longest matching prefix>]` — e.g. `research-slice` matches `research-`.
+3. `default`.
+4. The thinking level captured at auto-mode start (your `/thinking` or
+   `--thinking` choice, or the level from `~/.gsd/agent/settings.json`).
+
+Notes:
+
+- `unitTypes` keys are validated against the canonical unit-type list — typos
+  are rejected with a helpful error listing valid types.
+- Prefix keys conventionally end with `-` (e.g. `research-`); a missing dash
+  produces a warning, not a rejection.
+- YAML 1.1 parses bare `off` as boolean `false`. The loader coerces it back to
+  the string `"off"`, so `default: off` works without quoting — but quoting
+  (`default: "off"`) keeps the file unambiguous if you share it with non-YAML
+  readers.
+- Only auto-mode honours the policy. Interactive `/gsd run` dispatches keep
+  whatever level your session is on, mirroring how `dynamic_routing` is gated.
+
 ### `context_management` (v2.59)
 
 Controls observation masking and tool result truncation during auto-mode sessions. Reduces context bloat between compactions with zero LLM overhead.
