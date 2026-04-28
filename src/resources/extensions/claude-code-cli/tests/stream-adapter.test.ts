@@ -1627,6 +1627,24 @@ describe("stream-adapter — canUseTool handler", () => {
 		assert.match(notified[0], /AskUserQuestion/);
 	});
 
+	test("Always Allow for non-Bash with empty suggestions array builds tool-name-only fallback rule", async () => {
+		const notified: string[] = [];
+		const ui = { select: async (_p: string, opts: string[]) => opts.find((o) => o.startsWith("Always Allow"))!, notify: (msg: string) => notified.push(msg) };
+
+		const handler = createClaudeCodeCanUseToolHandler(ui as any);
+		const result = await handler!("AskUserQuestion", { questions: [{ question: "?", header: "h", multiSelect: false, options: [] }] }, makeOptions({ suggestions: [] }));
+
+		assert.equal(result.behavior, "allow");
+		assert.deepEqual((result as any).updatedPermissions, [{
+			type: "addRules",
+			rules: [{ toolName: "AskUserQuestion" }],
+			behavior: "allow",
+			destination: "localSettings",
+		}]);
+		assert.equal(notified.length, 1);
+		assert.match(notified[0], /AskUserQuestion/);
+	});
+
 	test("prompt includes command text for Bash tools", async () => {
 		let selectPrompt = "";
 		const ui = {
