@@ -103,7 +103,7 @@ If no response is received within `timeout_minutes`, the prompt times out and GS
 
 ## Informational Notifications
 
-In addition to interactive questions, GSD sends informational notifications to your remote channel for significant auto-mode events. These do not require a response — they are delivered alongside desktop notifications.
+In addition to interactive questions, GSD sends informational notifications to your remote channel for significant auto-mode events. These do not require a response and are independent of desktop notification settings; when a remote channel is configured and a relevant event fires, GSD attempts remote delivery.
 
 Events that are sent remotely:
 
@@ -115,7 +115,7 @@ Events that are sent remotely:
 | Budget alert | Spending is approaching or has reached the configured ceiling |
 | Budget ceiling reached | Auto-mode paused because the `budget_ceiling` was exceeded |
 
-Informational notifications are sent whenever `notifications.enabled: true` is set in preferences **and** a remote channel is configured. The same channel that receives interactive questions also receives these status events — no separate configuration is needed.
+The same remote channel that receives interactive questions also receives these status events; no separate configuration is needed. If no remote channel is configured, GSD skips remote informational notifications.
 
 ## Telegram Commands
 
