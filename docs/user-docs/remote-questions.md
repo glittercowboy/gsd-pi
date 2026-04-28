@@ -119,7 +119,7 @@ Informational notifications are sent whenever `notifications.enabled: true` is s
 
 ## Telegram Commands
 
-When Telegram is configured as your remote channel, GSD runs a background polling loop (every ~5 seconds) while auto-mode is active. This allows you to send commands directly to your bot and receive live project status updates in return.
+When Telegram is configured as your remote channel, GSD runs an idle-time background polling loop (every ~5 seconds) while auto-mode is active. This allows you to send commands directly to your bot and receive live project status updates in return.
 
 > **Note:** Background command polling is only available for Telegram. Slack and Discord use a webhook-based model and do not support incoming commands from the chat.
 
@@ -139,11 +139,11 @@ All command responses are prefixed with the project name (e.g., `📁 MyProject`
 
 ### How Background Polling Works
 
-While auto-mode is running, GSD polls the Telegram Bot API every ~5 seconds for new messages sent to the bot. When a command is received, GSD processes it and replies in the same chat.
+While auto-mode is running and no remote question prompt is active, GSD polls the Telegram Bot API every ~5 seconds for new messages sent to the bot. When a command is received, GSD processes it and replies in the same chat. If a Telegram remote question prompt is currently waiting for an answer, commands are handled by that prompt's polling loop rather than the background polling loop.
 
-Polling is active only while auto-mode is running. When auto-mode stops (normally, or via `/pause`), polling stops as well. The next `/gsd auto` resumes polling automatically.
+Polling is active only while auto-mode is running. When auto-mode stops (normally, or via `/pause`), polling stops as well. Starting or resuming auto-mode with `/gsd auto` resumes polling automatically.
 
-The `/pause` command sets a stop directive that GSD checks at each unit boundary — the current unit always completes before auto-mode halts. `/resume` clears that directive so auto-mode continues without requiring a terminal interaction.
+The `/pause` command sets a stop directive that GSD checks at each unit boundary; the current unit always completes before auto-mode halts. If auto-mode is still running and has not reached that boundary, `/resume` clears the directive so auto-mode continues without requiring a terminal interaction. If auto-mode has already stopped, run `/gsd auto` from the terminal to resume.
 
 ## Commands
 
