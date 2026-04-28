@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { getProjectGSDPreferencesPath } from "./preferences.js";
+import { logWarning } from "./workflow-logger.js";
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/;
 
@@ -31,11 +32,19 @@ export function setPlanningDepth(
     const content = readFileSync(path, "utf-8");
     const match = content.match(FRONTMATTER_RE);
     if (match) {
-      const parsed = parseYaml(match[1]);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        frontmatter = parsed as Record<string, unknown>;
+      try {
+        const parsed = parseYaml(match[1]);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          frontmatter = parsed as Record<string, unknown>;
+        }
+        body = match[2];
+      } catch (err) {
+        // Invalid YAML — don't lose user content. Treat the whole file as
+        // a legacy non-frontmatter document and preserve it via the body
+        // path. The depth setter then prepends a fresh frontmatter block.
+        logWarning("guided", `PREFERENCES.md frontmatter has invalid YAML — preserving body and rewriting frontmatter: ${err instanceof Error ? err.message : String(err)}`);
+        body = content;
       }
-      body = match[2];
     } else {
       // No frontmatter delimiters — preserve existing content as body.
       body = content;

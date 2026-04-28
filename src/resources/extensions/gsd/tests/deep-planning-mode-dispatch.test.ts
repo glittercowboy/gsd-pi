@@ -69,7 +69,7 @@ test("Deep mode: workflow-preferences does NOT dispatch in light mode", async (t
   assert.strictEqual(result, null);
 });
 
-test("Deep mode: workflow-preferences DOES dispatch in deep mode when config.json missing", async (t) => {
+test("Deep mode: workflow-preferences DOES dispatch in deep mode when PREFERENCES.md missing", async (t) => {
   const base = makeIsolatedBase();
   t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
 
@@ -82,31 +82,36 @@ test("Deep mode: workflow-preferences DOES dispatch in deep mode when config.jso
   }
 });
 
-test("Deep mode: workflow-preferences does NOT dispatch when config.json has commit_policy", async (t) => {
+test("Deep mode: workflow-preferences DOES dispatch when PREFERENCES.md exists but lacks workflow_prefs_captured marker", async (t) => {
   const base = makeIsolatedBase();
   t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
 
-  writeFileSync(join(base, ".gsd", "config.json"), JSON.stringify({ commit_policy: "per-task" }));
+  // Partial PREFERENCES.md (e.g. only planning_depth set) must not falsely
+  // suppress the wizard — the explicit captured marker is required.
+  writeFileSync(join(base, ".gsd", "PREFERENCES.md"), "---\nplanning_depth: deep\n---\n");
   const prefs = { planning_depth: "deep" } as GSDPreferences;
   const result = await rule(WORKFLOW_PREFS_RULE_NAME).match(makeCtx(base, prefs));
-  assert.strictEqual(result, null, "presence of any deep-mode key indicates already configured");
+  assert.ok(result && result.action === "dispatch", "missing capture marker must re-fire wizard");
 });
 
-test("Deep mode: workflow-preferences DOES re-dispatch on malformed config.json", async (t) => {
+test("Deep mode: workflow-preferences DOES dispatch when frontmatter is malformed", async (t) => {
   const base = makeIsolatedBase();
   t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
 
-  writeFileSync(join(base, ".gsd", "config.json"), "not-json{");
+  writeFileSync(join(base, ".gsd", "PREFERENCES.md"), "---\nthis is not valid yaml: [\n---\n");
   const prefs = { planning_depth: "deep" } as GSDPreferences;
   const result = await rule(WORKFLOW_PREFS_RULE_NAME).match(makeCtx(base, prefs));
-  assert.ok(result && result.action === "dispatch", "malformed config treated as missing");
+  assert.ok(result && result.action === "dispatch", "malformed frontmatter treated as not captured");
 });
 
-test("Deep mode: workflow-preferences does NOT dispatch when config.json has phases.skip_research", async (t) => {
+test("Deep mode: workflow-preferences does NOT dispatch when PREFERENCES.md has workflow_prefs_captured: true", async (t) => {
   const base = makeIsolatedBase();
   t.after(() => { try { rmSync(base, { recursive: true, force: true }); } catch {} });
 
-  writeFileSync(join(base, ".gsd", "config.json"), JSON.stringify({ phases: { skip_research: false } }));
+  writeFileSync(
+    join(base, ".gsd", "PREFERENCES.md"),
+    "---\nplanning_depth: deep\nworkflow_prefs_captured: true\ncommit_policy: per-task\n---\n",
+  );
   const prefs = { planning_depth: "deep" } as GSDPreferences;
   const result = await rule(WORKFLOW_PREFS_RULE_NAME).match(makeCtx(base, prefs));
   assert.strictEqual(result, null);

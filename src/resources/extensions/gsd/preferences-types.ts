@@ -159,6 +159,9 @@ export const KNOWN_UNIT_TYPES = [
   "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
   "run-uat", "complete-milestone", "validate-milestone", "rewrite-docs",
   "discuss-milestone", "discuss-slice", "worktree-merge",
+  // Deep planning mode (project-level) units
+  "workflow-preferences", "discuss-project", "discuss-requirements",
+  "research-decision", "research-project",
 ] as const;
 export type UnitType = (typeof KNOWN_UNIT_TYPES)[number];
 

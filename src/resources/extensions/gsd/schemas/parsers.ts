@@ -56,6 +56,12 @@ export interface ParsedRoadmap {
   slices: ParsedRoadmapSlice[];
   definitionOfDone: string[];
   hasTemplateTokens: boolean;
+  /**
+   * Tokens in a slice's "Depends" field that did not match S\d{2}. Surfaced
+   * by the validator as a "malformed-depends" warning so the user sees the
+   * typo instead of having it silently dropped from the dependency graph.
+   */
+  malformedDepends: Array<{ sliceId: string; values: string[] }>;
 }
 
 const TEMPLATE_TOKEN_RE = /\{\{[^}]+\}\}/;
@@ -212,11 +218,82 @@ export function parseRequirements(content: string): ParsedRequirements {
   };
 }
 
+/**
+ * Parse a "Depends" cell (e.g. "S01, S02" or "none" or "—") into a list of
+ * slice IDs and a list of malformed values that did not match S\d{2}.
+ * Used by both H3-format and Slice-Overview-table parsing paths.
+ */
+function parseDependsCell(raw: string): { ids: string[]; malformed: string[] } {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.toLowerCase() === "none" || trimmed === "—" || trimmed === "-") {
+    return { ids: [], malformed: [] };
+  }
+  const ids: string[] = [];
+  const malformed: string[] = [];
+  for (const tok of trimmed.split(/[,\s]+/).filter(Boolean)) {
+    if (/^S\d{2}$/.test(tok)) ids.push(tok);
+    else malformed.push(tok);
+  }
+  return { ids, malformed };
+}
+
+/**
+ * Parse the "Slice Overview" table format emitted by `renderRoadmapContent`
+ * in workflow-projections.ts. Columns are: ID | Slice | Risk | Depends |
+ * Done | After this. Returns [] when no recognizable table is present.
+ */
+function parseSliceOverviewTable(body: string): {
+  slices: ParsedRoadmapSlice[];
+  malformedDepends: Array<{ sliceId: string; values: string[] }>;
+} {
+  const slices: ParsedRoadmapSlice[] = [];
+  const malformedDepends: Array<{ sliceId: string; values: string[] }> = [];
+  const lines = body.split("\n").map(l => l.trim()).filter(Boolean);
+  // Find the header row (starts with "|" and contains "ID")
+  const headerIdx = lines.findIndex(l => l.startsWith("|") && /\bID\b/i.test(l));
+  if (headerIdx < 0) return { slices, malformedDepends };
+  const headers = lines[headerIdx]
+    .replace(/^\|/, "").replace(/\|$/, "")
+    .split("|").map(s => s.trim().toLowerCase());
+  const idCol = headers.indexOf("id");
+  const sliceCol = headers.indexOf("slice");
+  const riskCol = headers.indexOf("risk");
+  const dependsCol = headers.indexOf("depends");
+  // "After this" is the demo/outcome column. Some templates may use "demo" instead.
+  let demoCol = headers.indexOf("after this");
+  if (demoCol < 0) demoCol = headers.indexOf("demo");
+  if (idCol < 0 || sliceCol < 0) return { slices, malformedDepends };
+
+  // Skip the separator row (|---|---|...) and walk data rows.
+  for (let i = headerIdx + 2; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.startsWith("|")) break;
+    const cells = line.replace(/^\|/, "").replace(/\|$/, "").split("|").map(s => s.trim());
+    if (cells.length < headers.length) continue;
+    const id = cells[idCol];
+    if (!/^S\d{2}$/.test(id)) continue;
+    const dependsRaw = dependsCol >= 0 ? cells[dependsCol] : "";
+    const { ids: dependsIds, malformed } = parseDependsCell(dependsRaw);
+    if (malformed.length > 0) malformedDepends.push({ sliceId: id, values: malformed });
+    slices.push({
+      id,
+      title: cells[sliceCol] ?? "",
+      risk: riskCol >= 0 ? cells[riskCol] : "",
+      depends: dependsIds,
+      demo: demoCol >= 0 ? cells[demoCol] : "",
+    });
+  }
+  return { slices, malformedDepends };
+}
+
 export function parseRoadmap(content: string): ParsedRoadmap {
   const { sections, order } = splitH2Sections(content);
   const tokens = detectTemplateTokens(sections);
 
   const slices: ParsedRoadmapSlice[] = [];
+  const malformedDepends: Array<{ sliceId: string; values: string[] }> = [];
+
+  // Format A: legacy "## Slices" H3 format (used by fixtures + some templates).
   const slicesBody = sections["Slices"] ?? "";
   for (const block of splitH3Blocks(slicesBody)) {
     const headerMatch = block.match(SLICE_HEADER_RE);
@@ -228,17 +305,27 @@ export function parseRoadmap(content: string): ParsedRoadmap {
       const matched = block.match(re);
       return matched ? matched[1].trim() : "";
     };
-    const dependsRaw = fieldOf("Depends");
-    const depends = dependsRaw && dependsRaw.toLowerCase() !== "none"
-      ? dependsRaw.split(/[,\s]+/).filter(s => /^S\d{2}$/.test(s))
-      : [];
+    const { ids: dependsIds, malformed } = parseDependsCell(fieldOf("Depends"));
+    if (malformed.length > 0) malformedDepends.push({ sliceId: id, values: malformed });
     slices.push({
       id,
       title,
       risk: fieldOf("Risk"),
-      depends,
+      depends: dependsIds,
       demo: fieldOf("Demo"),
     });
+  }
+
+  // Format B: "## Slice Overview" table format emitted by workflow-projections
+  // (gsd_plan_milestone). Used as a fallback when format A produced nothing,
+  // so a roadmap that contains both H3 and table sections is parsed once.
+  if (slices.length === 0) {
+    const overviewBody = sections["Slice Overview"] ?? "";
+    if (overviewBody) {
+      const parsed = parseSliceOverviewTable(overviewBody);
+      slices.push(...parsed.slices);
+      malformedDepends.push(...parsed.malformedDepends);
+    }
   }
 
   const dodBody = sections["Definition of Done"] ?? "";
@@ -254,5 +341,6 @@ export function parseRoadmap(content: string): ParsedRoadmap {
     slices,
     definitionOfDone,
     hasTemplateTokens: tokens.has,
+    malformedDepends,
   };
 }

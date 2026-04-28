@@ -62,7 +62,23 @@ export function resolveModelWithFallbacksForUnit(unitType: string): ResolvedMode
       break;
     case "discuss-milestone":
     case "discuss-slice":
+    // Deep-mode project-level discussion units route to the same model
+    // bucket as milestone-level discussion (interactive interview style).
+    case "discuss-project":
+    case "discuss-requirements":
+    // Workflow preferences and research-decision are tiny ask_user_questions
+    // style units; they share the discuss bucket because they are
+    // conversational rather than research/execution. Falling back to planning
+    // when no `discuss` bucket is set keeps parity with the milestone units.
+    case "workflow-preferences":
+    case "research-decision":
       phaseConfig = m.discuss ?? m.planning;
+      break;
+    // Deep-mode project research orchestrator. Reads PROJECT.md / REQUIREMENTS.md
+    // and fans out research subagents. Routes to the research bucket so it
+    // gets the research-tier model when one is configured.
+    case "research-project":
+      phaseConfig = m.research;
       break;
     case "execute-task":
     case "reactive-execute":

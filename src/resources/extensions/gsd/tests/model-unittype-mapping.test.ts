@@ -230,22 +230,41 @@ test("unitVerb handles discuss-slice", () => {
 // KNOWN_UNIT_TYPES but forgets to wire it into one of the four registries.
 // The allowlist freezes the baseline so pre-existing omissions do not block
 // the test, but any brand-new addition must be either handled or justified.
+// Deep-mode project-level units (workflow-preferences, discuss-project,
+// discuss-requirements, research-decision, research-project) operate above
+// the milestone/slice/task model. They do not produce slice-shaped artifacts,
+// they do not have per-unit dashboard renderers, and they do not have
+// post-unit hooks that mirror execute/complete patterns. They legitimately
+// rely on default behavior in all four registries. Adding them to the
+// allowlist with this justification.
+const DEEP_MODE_PROJECT_UNITS = [
+  "workflow-preferences",
+  "discuss-project",
+  "discuss-requirements",
+  "research-decision",
+  "research-project",
+];
+
 const REGISTRY_EXCEPTIONS: Record<string, Set<string>> = {
   // metrics.ts classifyUnitPhase uses default → "execution" for most unit types.
   "metrics.ts": new Set([
     "worktree-merge", "custom-step",
     "rewrite-docs", "run-uat", "gate-evaluate", "replan-slice",
     "reactive-execute", "validate-milestone", "complete-milestone",
+    ...DEEP_MODE_PROJECT_UNITS,
   ]),
   "auto-dashboard.ts": new Set([
     "worktree-merge",
     "gate-evaluate", "reactive-execute", "validate-milestone", "complete-milestone",
+    ...DEEP_MODE_PROJECT_UNITS,
   ]),
   "auto-artifact-paths.ts": new Set([
     "rewrite-docs", "gate-evaluate", "reactive-execute", "discuss-slice", "worktree-merge",
+    ...DEEP_MODE_PROJECT_UNITS,
   ]),
   "auto-post-unit.ts": new Set([
     "execute-task", "reactive-execute", "gate-evaluate", "worktree-merge",
+    ...DEEP_MODE_PROJECT_UNITS,
   ]),
 };
 

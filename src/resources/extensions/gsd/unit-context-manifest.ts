@@ -325,6 +325,12 @@ export const KNOWN_UNIT_TYPES = [
   "run-uat",
   "gate-evaluate",
   "rewrite-docs",
+  // Deep planning mode (project-level) units
+  "workflow-preferences",
+  "discuss-project",
+  "discuss-requirements",
+  "research-decision",
+  "research-project",
 ] as const;
 
 export type UnitType = typeof KNOWN_UNIT_TYPES[number];
@@ -585,6 +591,93 @@ export const UNIT_MANIFESTS: Record<UnitType, UnitContextManifest> = {
     tools: TOOLS_DOCS,
     artifacts: {
       inline: ["project", "requirements", "decisions", "templates"],
+      excerpt: [],
+      onDemand: [],
+    },
+    maxSystemPromptChars: COMMON_BUDGET_MEDIUM,
+  },
+
+  // ─── Deep planning mode (project-level) units ────────────────────────
+  // workflow-preferences: minimal 5-question wizard that captures
+  // commit_policy / branch_model / executor_class / uat_dispatch /
+  // skip_research into PREFERENCES.md. No project artifacts needed; the
+  // structured-questions UI carries the full prompt body.
+  "workflow-preferences": {
+    skills: { mode: "none" },
+    knowledge: "none",
+    memory: "none",
+    codebaseMap: false,
+    preferences: "none",
+    tools: TOOLS_PLANNING,
+    artifacts: {
+      inline: [],
+      excerpt: [],
+      onDemand: [],
+    },
+    maxSystemPromptChars: COMMON_BUDGET_SMALL,
+  },
+  // discuss-project: PROJECT.md interview (deep mode only). Project-scoped
+  // discussion runs before any milestone exists, so milestone artifacts are
+  // not loaded. Keeps templates available for PROJECT.md scaffolding.
+  "discuss-project": {
+    skills: { mode: "all" },
+    knowledge: "scoped",
+    memory: "prompt-relevant",
+    codebaseMap: true,
+    preferences: "active-only",
+    tools: TOOLS_PLANNING,
+    artifacts: {
+      inline: ["templates"],
+      excerpt: [],
+      onDemand: [],
+    },
+    maxSystemPromptChars: COMMON_BUDGET_MEDIUM,
+  },
+  // discuss-requirements: REQUIREMENTS.md interview. PROJECT.md is the
+  // primary context input; templates carry the requirements format.
+  "discuss-requirements": {
+    skills: { mode: "all" },
+    knowledge: "scoped",
+    memory: "prompt-relevant",
+    codebaseMap: true,
+    preferences: "active-only",
+    tools: TOOLS_PLANNING,
+    artifacts: {
+      inline: ["project", "templates"],
+      excerpt: [],
+      onDemand: [],
+    },
+    maxSystemPromptChars: COMMON_BUDGET_MEDIUM,
+  },
+  // research-decision: lightweight one-question yes/no unit. Writes a
+  // marker JSON; no project artifacts needed.
+  "research-decision": {
+    skills: { mode: "none" },
+    knowledge: "none",
+    memory: "none",
+    codebaseMap: false,
+    preferences: "none",
+    tools: TOOLS_PLANNING,
+    artifacts: {
+      inline: [],
+      excerpt: [],
+      onDemand: [],
+    },
+    maxSystemPromptChars: COMMON_BUDGET_SMALL,
+  },
+  // research-project: orchestrator that fans out 4 parallel research
+  // subagents (stack, features, architecture, pitfalls). Needs the
+  // planning-dispatch policy to dispatch them. PROJECT.md + REQUIREMENTS.md
+  // give the orchestrator the framing context.
+  "research-project": {
+    skills: { mode: "all" },
+    knowledge: "scoped",
+    memory: "prompt-relevant",
+    codebaseMap: true,
+    preferences: "active-only",
+    tools: { mode: "planning-dispatch", allowedSubagents: ["scout", "researcher"] },
+    artifacts: {
+      inline: ["project", "requirements", "templates"],
       excerpt: [],
       onDemand: [],
     },

@@ -27,6 +27,13 @@ export interface ValidateOptions {
   crossRefs?: {
     projectPath?: string;
     requirementsPath?: string;
+    /**
+     * Optional per-milestone roadmap paths. When supplied, requirement
+     * primaryOwner / supportingSlices entries are checked for slice-half
+     * (S##) existence in the named milestone's roadmap. Without this,
+     * only the milestone half (M###) is validated.
+     */
+    roadmapPaths?: Record<string, string>;
   };
 }
 
@@ -48,7 +55,13 @@ const REQUIRED_REQUIREMENTS_SECTIONS = [
   "Coverage Summary",
 ];
 
-const REQUIRED_ROADMAP_SECTIONS = ["Slices", "Definition of Done"];
+// Roadmap section requirements:
+//   - "Slices" (legacy H3 format) OR "Slice Overview" (table format
+//     emitted by workflow-projections.ts) — at least one must be present.
+//   - "Definition of Done" — always required.
+// Defensive parsing accepts both shapes; the validator does the same.
+const REQUIRED_ROADMAP_SECTIONS = ["Definition of Done"];
+const ROADMAP_SLICE_SECTIONS = ["Slices", "Slice Overview"];
 
 const ALLOWED_REQUIREMENT_CLASSES = new Set([
   "core-capability",
@@ -141,7 +154,19 @@ function validateProjectContent(content: string): ValidationResult {
 
 // ─── REQUIREMENTS.md ────────────────────────────────────────────────────
 
-function validateRequirementsContent(content: string, projectContent: string | null): ValidationResult {
+function parseSliceList(raw: string): string[] {
+  // e.g. "M001/S02, M002/S03" or "—" or "none"
+  if (!raw) return [];
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === "—" || trimmed === "-" || trimmed.toLowerCase() === "none") return [];
+  return trimmed.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+}
+
+function validateRequirementsContent(
+  content: string,
+  projectContent: string | null,
+  roadmapsByMilestone: Map<string, ReturnType<typeof parseRoadmap>>,
+): ValidationResult {
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
   const parsed = parseRequirements(content);
@@ -177,10 +202,58 @@ function validateRequirementsContent(content: string, projectContent: string | n
   if (projectContent) {
     const project = parseProject(projectContent);
     const milestoneIds = new Set(project.milestones.map(m => m.id));
+
+    /**
+     * Validate one "M###/S##" reference (or partial). Pushes an error if
+     * the milestone is missing; pushes a warning if a roadmap is loaded
+     * for the milestone and the slice half is missing.
+     */
+    const checkRef = (
+      requirementId: string,
+      ref: string,
+      field: "primaryOwner" | "supportingSlices",
+    ): void => {
+      // Tolerate the documented "none yet" / "none" sentinels for primaryOwner.
+      if (field === "primaryOwner" && /^(none yet|none)$/.test(ref)) return;
+      // "M###" alone (no slash) is allowed for primaryOwner shape; still want
+      // to check milestone existence.
+      const milestoneOnly = ref.match(/^(M\d{3})$/);
+      if (milestoneOnly) {
+        if (!milestoneIds.has(milestoneOnly[1])) {
+          errors.push(err("dangling-owner", `Requirement ${requirementId} ${field} references non-existent milestone ${milestoneOnly[1]}`, requirementId));
+        }
+        return;
+      }
+      const m = ref.match(/^(M\d{3})\/(S\d{2}|none yet)$/);
+      if (!m) {
+        warnings.push(err("malformed-slice-ref", `Requirement ${requirementId} ${field} value "${ref}" does not match expected M###/S## format`, requirementId));
+        return;
+      }
+      const [, milestoneId, sliceHalf] = m;
+      if (!milestoneIds.has(milestoneId)) {
+        errors.push(err("dangling-owner", `Requirement ${requirementId} ${field} references non-existent milestone ${milestoneId}`, requirementId));
+        return;
+      }
+      // Slice-half cross-ref: only enforced when we have a roadmap for the milestone.
+      if (sliceHalf === "none yet") return;
+      const roadmap = roadmapsByMilestone.get(milestoneId);
+      if (!roadmap) return;
+      const sliceExists = roadmap.slices.some(s => s.id === sliceHalf);
+      if (!sliceExists) {
+        errors.push(err(
+          "dangling-slice-ref",
+          `Requirement ${requirementId} ${field} references slice ${milestoneId}/${sliceHalf} which does not exist in that milestone's roadmap`,
+          requirementId,
+        ));
+      }
+    };
+
     for (const r of parsed.requirements) {
-      const ownerMatch = r.primaryOwner.match(/^(M\d{3})\//);
-      if (ownerMatch && !milestoneIds.has(ownerMatch[1])) {
-        errors.push(err("dangling-owner", `Requirement ${r.id} references non-existent milestone ${ownerMatch[1]}`, r.id));
+      // primaryOwner: single reference.
+      if (r.primaryOwner) checkRef(r.id, r.primaryOwner, "primaryOwner");
+      // supportingSlices: comma/space-separated list.
+      for (const ref of parseSliceList(r.supportingSlices)) {
+        checkRef(r.id, ref, "supportingSlices");
       }
     }
   }
@@ -233,6 +306,11 @@ function validateRoadmapContent(content: string, requirementsContent: string | n
       errors.push(err("missing-section", `Missing required section "## ${required}"`, required));
     }
   }
+  // Slice section: accept either "## Slices" or "## Slice Overview".
+  const hasSliceSection = ROADMAP_SLICE_SECTIONS.some(name => name in parsed.sections);
+  if (!hasSliceSection) {
+    errors.push(err("missing-section", `Missing slice section — expected "## Slices" or "## Slice Overview"`));
+  }
 
   for (const sectionName of Object.keys(parsed.sections)) {
     const body = parsed.sections[sectionName];
@@ -241,8 +319,20 @@ function validateRoadmapContent(content: string, requirementsContent: string | n
     }
   }
 
-  if (parsed.slices.length === 0 && "Slices" in parsed.sections) {
-    errors.push(err("no-slices", "Slices section has no entries", "Slices"));
+  if (parsed.slices.length === 0 && hasSliceSection) {
+    const sliceSection = ROADMAP_SLICE_SECTIONS.find(name => name in parsed.sections) ?? "Slices";
+    errors.push(err("no-slices", `${sliceSection} section has no entries`, sliceSection));
+  }
+
+  // I5: surface malformed Depends tokens (e.g. "S99;" or "S01-S03") that the
+  // parser dropped from the dependency graph. Warning, not error — the rest
+  // of the graph is still usable.
+  for (const m of parsed.malformedDepends) {
+    warnings.push(err(
+      "malformed-depends",
+      `Slice ${m.sliceId} has malformed Depends value(s) that were dropped from the graph: ${m.values.join(", ")}`,
+      m.sliceId,
+    ));
   }
 
   if (parsed.definitionOfDone.length === 0 && "Definition of Done" in parsed.sections) {
@@ -338,8 +428,16 @@ export function validateArtifact(
   switch (kind) {
     case "project":
       return validateProjectContent(content);
-    case "requirements":
-      return validateRequirementsContent(content, opts.crossRefs?.projectPath ? loadFile(opts.crossRefs.projectPath) : null);
+    case "requirements": {
+      const projectContent = opts.crossRefs?.projectPath ? loadFile(opts.crossRefs.projectPath) : null;
+      const roadmapsByMilestone = new Map<string, ReturnType<typeof parseRoadmap>>();
+      const roadmapPaths = opts.crossRefs?.roadmapPaths ?? {};
+      for (const [mid, path] of Object.entries(roadmapPaths)) {
+        const c = loadFile(path);
+        if (c) roadmapsByMilestone.set(mid, parseRoadmap(c));
+      }
+      return validateRequirementsContent(content, projectContent, roadmapsByMilestone);
+    }
     case "roadmap":
       return validateRoadmapContent(content, opts.crossRefs?.requirementsPath ? loadFile(opts.crossRefs.requirementsPath) : null);
   }

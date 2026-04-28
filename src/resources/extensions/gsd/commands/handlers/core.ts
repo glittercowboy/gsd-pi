@@ -64,6 +64,7 @@ export function showHelp(ctx: ExtensionCommandContext, args = ""): void {
     "  /gsd pause          Pause auto-mode (preserves state, /gsd auto to resume)",
     "  /gsd discuss        Start guided milestone/slice discussion",
     "  /gsd new-milestone  Create milestone from headless context (used by gsd headless)",
+    "  /gsd new-project    Bootstrap a new project (use --deep for staged project-level discovery)",
     "  /gsd quick          Execute a quick task without full planning overhead",
     "  /gsd dispatch       Dispatch a specific phase directly  [research|plan|execute|complete|uat|replan]",
     "  /gsd parallel       Parallel milestone orchestration  [start|status|stop|pause|resume|merge|watch]",

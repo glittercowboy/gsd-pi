@@ -231,6 +231,10 @@ test('planning-dispatch mode is reserved for slice-level decomposition and compl
     "refine-slice",
     "complete-slice",
     "complete-milestone",
+    // Deep planning mode: research-project orchestrates 4 parallel research
+    // subagents (stack/features/architecture/pitfalls). Subagent dispatch is
+    // the unit's core mechanism — without it, the unit cannot do its job.
+    "research-project",
   ]);
   for (const [unitType, manifest] of Object.entries(UNIT_MANIFESTS)) {
     const mode = (manifest as { tools: { mode: string } }).tools.mode;

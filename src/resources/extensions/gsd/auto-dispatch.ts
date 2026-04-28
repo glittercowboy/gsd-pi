@@ -149,6 +149,75 @@ async function readUatGateVerdict(
   return null;
 }
 
+/**
+ * Read the YAML frontmatter from .gsd/PREFERENCES.md and check whether the
+ * deep-mode workflow-preferences wizard has run. Uses an explicit
+ * `workflow_prefs_captured: true` marker so a partial frontmatter (e.g.
+ * just `commit_policy: merge`) does not falsely suppress the wizard.
+ */
+function isWorkflowPrefsCaptured(basePath: string): boolean {
+  const prefsPath = join(gsdRoot(basePath), "PREFERENCES.md");
+  if (!existsSync(prefsPath)) return false;
+  let content: string;
+  try {
+    content = readFileSync(prefsPath, "utf-8");
+  } catch {
+    return false;
+  }
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return false;
+  // Match a top-level "workflow_prefs_captured: true" line. The frontmatter is
+  // YAML; this lightweight regex avoids pulling in the YAML parser at the
+  // dispatch hot path. Treats only an explicit `true` value as captured.
+  return /^workflow_prefs_captured:\s*true\s*$/m.test(match[1]);
+}
+
+/**
+ * Deep planning mode: check whether any project-level stage gate
+ * (workflow-preferences, discuss-project, discuss-requirements,
+ * research-decision, research-project) still has work pending.
+ *
+ * Used by the milestone-level discuss rules to yield to project-level
+ * deep-mode rules when the project hasn't finished its setup interview.
+ * Returns false in light mode (or when prefs absent) so the milestone
+ * rules behave exactly as before.
+ */
+function hasPendingDeepStage(prefs: GSDPreferences | undefined, basePath: string): boolean {
+  if (prefs?.planning_depth !== "deep") return false;
+  const root = gsdRoot(basePath);
+  // 1. workflow-preferences captured (explicit marker in PREFERENCES.md frontmatter).
+  if (!isWorkflowPrefsCaptured(basePath)) return true;
+  // 2. PROJECT.md exists.
+  if (!existsSync(join(root, "PROJECT.md"))) return true;
+  // 3. REQUIREMENTS.md exists.
+  if (!existsSync(join(root, "REQUIREMENTS.md"))) return true;
+  // 4. research-decision marker exists.
+  const decisionPath = join(root, "runtime", "research-decision.json");
+  if (!existsSync(decisionPath)) return true;
+  // 5. Decision must be one of the recognized values; if not, the
+  // research-decision rule will re-ask. Any value other than "research" or
+  // "skip" — including a missing field, malformed JSON, or "garbage" — must
+  // be treated as pending here, otherwise this guard reports "all gates
+  // passed" while the downstream research-decision rule disagrees.
+  try {
+    const cfg = JSON.parse(readFileSync(decisionPath, "utf-8")) as Record<string, unknown>;
+    const decision = typeof cfg.decision === "string" ? cfg.decision : undefined;
+    if (decision !== "research" && decision !== "skip") return true;
+    if (decision === "research") {
+      const researchDir = join(root, "research");
+      const allFilesExist =
+        existsSync(join(researchDir, "STACK.md")) &&
+        existsSync(join(researchDir, "FEATURES.md")) &&
+        existsSync(join(researchDir, "ARCHITECTURE.md")) &&
+        existsSync(join(researchDir, "PITFALLS.md"));
+      if (!allFilesExist) return true;
+    }
+  } catch {
+    return true; // malformed — research-decision rule will re-ask
+  }
+  return false;
+}
+
 function missingSliceStop(mid: string, phase: string): DispatchAction {
   return {
     action: "stop",
@@ -459,8 +528,14 @@ export const DISPATCH_RULES: DispatchRule[] = [
   },
   {
     name: "needs-discussion → discuss-milestone",
-    match: async ({ state, mid, midTitle, basePath, structuredQuestionsAvailable }) => {
+    match: async ({ state, mid, midTitle, basePath, prefs, structuredQuestionsAvailable }) => {
       if (state.phase !== "needs-discussion") return null;
+      // Deep mode bypass: yield to the project-level deep stage gates
+      // (workflow-prefs, discuss-project, discuss-requirements,
+      // research-decision, research-project) when any of them still have
+      // work pending. Without this guard, the milestone discuss rule wins
+      // before the deep rules ever get a chance to fire.
+      if (hasPendingDeepStage(prefs, basePath)) return null;
       // H6 fix (#4973): auto-mark depth-verified so the write-gate does not
       // deadlock in non-interactive (auto-mode) runs. See ordering note at
       // "execution-entry phase (no context) → discuss-milestone" above.
@@ -483,29 +558,13 @@ export const DISPATCH_RULES: DispatchRule[] = [
   {
     // Deep mode stage gate: workflow preferences not yet captured.
     // Fires once per project, before discuss-project, when planning_depth === "deep"
-    // and the project has no .gsd/config.json (or the file lacks the workflow keys).
-    // Captures 5 toggles via structured questions; writes config.json.
-    // Light mode skips entirely.
+    // and the .gsd/PREFERENCES.md frontmatter does NOT carry the
+    // `workflow_prefs_captured: true` marker. Light mode skips entirely.
     name: "deep: pre-planning (no workflow prefs) → workflow-preferences",
     match: async ({ state, basePath, prefs, structuredQuestionsAvailable }) => {
       if (prefs?.planning_depth !== "deep") return null;
       if (state.phase !== "pre-planning" && state.phase !== "needs-discussion") return null;
-      const configPath = join(gsdRoot(basePath), "config.json");
-      if (existsSync(configPath)) {
-        // Treat presence of any of the 5 deep-mode keys as "already configured".
-        try {
-          const cfg = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-          const hasAnyDeepKey =
-            "commit_policy" in cfg ||
-            "branch_model" in cfg ||
-            (typeof cfg.models === "object" && cfg.models !== null && "executor_class" in (cfg.models as Record<string, unknown>)) ||
-            "uat_dispatch" in cfg ||
-            (typeof cfg.phases === "object" && cfg.phases !== null && "skip_research" in (cfg.phases as Record<string, unknown>));
-          if (hasAnyDeepKey) return null; // already configured — fall through
-        } catch {
-          // malformed config — treat as missing and re-run
-        }
-      }
+      if (isWorkflowPrefsCaptured(basePath)) return null; // already captured — fall through
       return {
         action: "dispatch",
         unitType: "workflow-preferences",
@@ -567,7 +626,19 @@ export const DISPATCH_RULES: DispatchRule[] = [
       const requirementsPath = join(gsdRoot(basePath), "REQUIREMENTS.md");
       if (!existsSync(requirementsPath)) return null; // earlier rule handles
       const decisionPath = join(gsdRoot(basePath), "runtime", "research-decision.json");
-      if (existsSync(decisionPath)) return null; // already decided — fall through
+      if (existsSync(decisionPath)) {
+        // I3: a corrupted decision marker must NOT silently fall through to
+        // milestone planning — re-ask. Treat any parse error or missing
+        // decision field as "not yet decided".
+        try {
+          const cfg = JSON.parse(readFileSync(decisionPath, "utf-8")) as Record<string, unknown>;
+          const decision = typeof cfg.decision === "string" ? cfg.decision : undefined;
+          if (decision === "research" || decision === "skip") return null; // valid — fall through
+          logWarning("dispatch", `research-decision.json missing or has unrecognized "decision" field — re-asking`);
+        } catch (err) {
+          logWarning("dispatch", `malformed research-decision.json — re-asking: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
       return {
         action: "dispatch",
         unitType: "research-decision",
@@ -595,8 +666,9 @@ export const DISPATCH_RULES: DispatchRule[] = [
       try {
         const cfg = JSON.parse(readFileSync(decisionPath, "utf-8")) as Record<string, unknown>;
         decision = typeof cfg.decision === "string" ? cfg.decision : undefined;
-      } catch {
-        return null; // malformed marker — leave for research-decision rule to re-ask
+      } catch (err) {
+        logWarning("dispatch", `malformed research-decision.json — leaving for research-decision rule to re-ask: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
       }
       if (decision !== "research") return null; // user picked "skip" — fall through
       const researchDir = join(gsdRoot(basePath), "research");

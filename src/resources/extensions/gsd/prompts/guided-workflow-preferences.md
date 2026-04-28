@@ -1,6 +1,6 @@
 **Working directory:** `{{workingDirectory}}`. All file reads, writes, and shell commands MUST operate relative to this directory. Do NOT `cd` to any other directory.
 
-Configure project workflow preferences. This stage runs ONCE per project, early in deep-mode bootstrap, before `discuss-project`. It captures a small set of high-impact workflow toggles via structured questions and persists them to `.gsd/config.json`.
+Configure project workflow preferences. This stage runs ONCE per project, early in deep-mode bootstrap, before `discuss-project`. It captures a small set of high-impact workflow toggles via structured questions and persists them to the YAML frontmatter of `.gsd/PREFERENCES.md` (the same file the runtime reads its preferences from).
 
 This is a **fixed-question** stage — do NOT do open Socratic interviewing. Ask the questions below verbatim, capture answers, write the file, end. No follow-ups, no research, no opinion.
 
@@ -75,16 +75,19 @@ Ask all five questions in a single `ask_user_questions` call (one turn) when `{{
 
 Once all five answers are captured:
 
-1. Read `.gsd/config.json` if it exists; create empty object if not.
-2. Merge the answers into the appropriate keys:
-   - Q1 commit policy → `commit_policy: "per-task" | "per-slice" | "manual"`
-   - Q2 executor model class → `models.executor_class: "balanced" | "quality" | "budget"`
-   - Q3 research → `phases.skip_research: false | true` (skip=true if user picked "Skip")
-   - Q4 auto UAT → `uat_dispatch: true | false`
-   - Q5 branch model → `branch_model: "single" | "per-milestone" | "per-slice"`
-3. Write the merged config back to `.gsd/config.json` (pretty-printed JSON).
-4. Print a concise summary in chat: each key on its own line, format `key: value`.
-5. Say exactly: `"Workflow preferences saved."` — nothing else.
+1. Read `.gsd/PREFERENCES.md` if it exists. The file is YAML frontmatter (between `---` lines) followed by an optional markdown body. Parse the existing frontmatter so you can preserve unrelated keys (e.g. `planning_depth`).
+2. Merge the answers into the frontmatter under these keys:
+   - Q1 commit policy → top-level `commit_policy: per-task | per-slice | manual`
+   - Q2 executor model class → nested `models.executor_class: balanced | quality | budget`
+   - Q3 research → nested `phases.skip_research: false | true` (skip=true if user picked "Skip")
+   - Q4 auto UAT → top-level `uat_dispatch: true | false`
+   - Q5 branch model → top-level `branch_model: single | per-milestone | per-slice`
+3. Also set top-level `workflow_prefs_captured: true` — this is the single explicit marker the dispatch layer uses to know the wizard has run.
+4. Write `.gsd/PREFERENCES.md` back with the merged frontmatter and the original body preserved unchanged. Frontmatter delimiters are exactly `---` on their own lines.
+5. Print a concise summary in chat: each key on its own line, format `key: value`.
+6. Say exactly: `"Workflow preferences saved."` — nothing else.
+
+Do NOT write to `.gsd/config.json`; runtime preferences load from `PREFERENCES.md`.
 
 ---
 

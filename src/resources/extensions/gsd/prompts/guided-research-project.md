@@ -32,7 +32,9 @@ If either file is missing, STOP and emit: `"PROJECT.md or REQUIREMENTS.md missin
 
 ## Fan-out
 
-Spawn **4 parallel `Task` calls** in a single response. Each task gets its own focused prompt. Each task writes one file. Do NOT await; let them run in parallel.
+Issue **4 `Task` tool calls in a single assistant response** (one tool block containing four `Task` invocations). The tool runtime executes them concurrently — that is the parallelism mechanism here. Do not split them across multiple turns; do not chain them sequentially. After issuing the four calls, wait for ALL of their tool results to come back before doing anything in the "After fan-out completes" step below.
+
+Each task gets its own focused prompt. Each task writes one file.
 
 ### Task 1 — Stack research → `.gsd/research/STACK.md`
 
@@ -114,7 +116,7 @@ Once all 4 tasks return:
 
 ## Critical rules
 
-- **Spawn all 4 tasks in parallel** in a single response. Do NOT chain them sequentially.
+- **Issue all 4 `Task` calls in a single assistant response** (one block of four tool calls). The tool runtime parallelizes them; do NOT chain them across turns or await them individually.
 - **Each task writes exactly one file** to `.gsd/research/`. No cross-writes.
 - **Research is informational, not prescriptive** — it surfaces options; the user / requirements stage already chose what to build.
 - **Stay within scope** — don't research milestones or slices. That's a different stage.
