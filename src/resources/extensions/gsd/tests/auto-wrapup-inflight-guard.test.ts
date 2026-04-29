@@ -119,6 +119,10 @@ describe("#3512: pauseAuto and stopAuto must flush queued follow-up messages", (
     );
     assert.ok(stopAutoSection, "Could not locate stopAuto function");
     assert.ok(
+      stopAutoSection.includes("ignoreAsyncJobsForUnitExecution"),
+      "stopAuto must mark the current unit's async jobs stale before flushing follow-up messages",
+    );
+    assert.ok(
       stopAutoSection.includes("clearQueue"),
       "stopAuto must call clearQueue() to flush queued follow-up messages",
     );
@@ -131,6 +135,10 @@ describe("#3512: pauseAuto and stopAuto must flush queued follow-up messages", (
     );
     assert.ok(pauseAutoSection, "Could not locate pauseAuto function");
     assert.ok(
+      pauseAutoSection.includes("ignoreAsyncJobsForUnitExecution"),
+      "pauseAuto must mark the current unit's async jobs stale before flushing follow-up messages",
+    );
+    assert.ok(
       pauseAutoSection.includes("clearQueue"),
       "pauseAuto must call clearQueue() to flush queued follow-up messages",
     );
@@ -138,6 +146,10 @@ describe("#3512: pauseAuto and stopAuto must flush queued follow-up messages", (
 
   test("run-unit.ts still has its existing clearQueue() call (baseline)", () => {
     // Verify the original clearQueue pattern in run-unit.ts hasn't been removed.
+    assert.ok(
+      runUnitSrc.includes("ignoreAsyncJobsForUnitExecution"),
+      "run-unit.ts must mark completed unit-owned async jobs stale before clearing follow-up queue",
+    );
     assert.ok(
       runUnitSrc.includes("clearQueue"),
       "run-unit.ts must retain its clearQueue() call after unit completion",
@@ -164,6 +176,52 @@ describe("#4365: tool_execution_start hook must pass toolName to markToolStart",
     assert.ok(
       toolExecutionStartSection.includes("markToolStart(event.toolCallId, event.toolName)"),
       "tool_execution_start handler must pass event.toolName to markToolStart so hasInteractiveToolInFlight() works correctly",
+    );
+  });
+});
+
+describe("#4670: stale async jobs must be tracked, filtered, and truncated", () => {
+  test("startAuto rebinds the shared async job event bus after session reset", () => {
+    const startAutoSection = autoSrc.slice(
+      autoSrc.indexOf("export async function startAuto("),
+      autoSrc.indexOf("export { describeNextUnit }"),
+    );
+    assert.ok(startAutoSection.length > 0, "Could not locate startAuto function");
+    assert.ok(
+      startAutoSection.includes("setAsyncJobEventBus(pi.events)"),
+      "startAuto must rebind the shared async job event bus on each start/resume attempt",
+    );
+  });
+
+  test("registerHooks wires async job tracking and shared event bus", () => {
+    assert.ok(
+      registerHooksSrc.includes("setAsyncJobEventBus(pi.events)"),
+      "registerHooks must give auto-mode access to the shared event bus for async job cleanup",
+    );
+    assert.ok(
+      registerHooksSrc.includes("trackAsyncBashJob(event.toolName, event.result)"),
+      "tool_execution_end must track async_bash job ids from successful tool results",
+    );
+  });
+
+  test("before_provider_request filters ignored late async job messages and truncates wrapped notifications", () => {
+    const startMarker = 'pi.on("before_provider_request", async (event) => {';
+    const beforeProviderSection = registerHooksSrc.slice(
+      registerHooksSrc.indexOf(startMarker),
+    );
+
+    assert.ok(beforeProviderSection.length > 0, "Could not locate before_provider_request handler section");
+    assert.ok(
+      beforeProviderSection.includes("filterIgnoredAsyncJobMessages"),
+      "before_provider_request must drop ignored late async_job_result notifications",
+    );
+    assert.ok(
+      beforeProviderSection.includes("truncateContextMessage"),
+      "before_provider_request must reuse shared truncation for wrapped tool-derived messages",
+    );
+    assert.ok(
+      beforeProviderSection.includes("isAutoActive() || isAutoPaused()"),
+      "before_provider_request must enforce stale async-job hygiene while auto-mode is paused as well as active",
     );
   });
 });

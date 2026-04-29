@@ -20,6 +20,8 @@ import { createAsyncBashTool } from "./async-bash-tool.js";
 import { createAwaitTool } from "./await-tool.js";
 import { createCancelJobTool } from "./cancel-job-tool.js";
 
+const ASYNC_JOBS_CONTROL_CHANNEL = "gsd:async-jobs-control";
+
 export default function AsyncJobs(pi: ExtensionAPI) {
 	let manager: AsyncJobManager | null = null;
 	let latestCwd: string = process.cwd();
@@ -34,6 +36,22 @@ export default function AsyncJobs(pi: ExtensionAPI) {
 	function getCwd(): string {
 		return latestCwd;
 	}
+
+	pi.events.on(ASYNC_JOBS_CONTROL_CHANNEL, (payload: unknown) => {
+		if (!manager || !payload || typeof payload !== "object") return;
+		const action = (payload as { action?: unknown }).action;
+		const jobIds = Array.isArray((payload as { jobIds?: unknown }).jobIds)
+			? (payload as { jobIds: unknown[] }).jobIds.filter((id): id is string => typeof id === "string")
+			: [];
+		if (jobIds.length === 0) return;
+
+		if (action === "cancel_or_ignore") {
+			for (const jobId of jobIds) {
+				manager.suppressFollowUp(jobId);
+				manager.cancel(jobId);
+			}
+		}
+	});
 
 	// ── Session lifecycle ──────────────────────────────────────────────────
 

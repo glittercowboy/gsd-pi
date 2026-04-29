@@ -12,6 +12,8 @@ import { resolveManifest } from "../unit-context-manifest.js";
 import { isBlockedStateFile, isBashWriteToStateFile, BLOCKED_WRITE_ERROR } from "../write-intercept.js";
 import { loadFile, saveFile, formatContinue } from "../files.js";
 import { getAutoRuntimeSnapshot, isAutoActive, isAutoPaused, markToolEnd, markToolStart, recordToolInvocationError } from "../auto-runtime-state.js";
+import { getIgnoredAsyncJobIds, setAsyncJobEventBus, trackAsyncBashJob } from "../auto.js";
+import { filterIgnoredAsyncJobMessages, truncateContextMessage } from "../async-job-hygiene.js";
 
 import { checkToolCallLoop, resetToolCallLoopGuard } from "./tool-call-loop-guard.js";
 import { saveActivityLog } from "../activity-log.js";
@@ -66,6 +68,7 @@ export function registerHooks(
   pi: ExtensionAPI,
   ecosystemHandlers: GSDEcosystemBeforeAgentStartHandler[],
 ): void {
+  setAsyncJobEventBus(pi.events);
   pi.on("session_start", async (_event, ctx) => {
     initNotificationStore(process.cwd());
     installNotifyInterceptor(ctx);
@@ -581,6 +584,9 @@ export function registerHooks(
 
   pi.on("tool_execution_end", async (event) => {
     markToolEnd(event.toolCallId);
+    if (isAutoActive() && event.toolName === "async_bash" && !event.isError) {
+      trackAsyncBashJob(event.toolName, event.result);
+    }
     // #2883/#4974: Capture deterministic invocation/policy errors
     // so postUnitPreVerification can break the retry loop instead of re-dispatching.
     if (event.isError) {
@@ -616,47 +622,47 @@ export function registerHooks(
 
     // ── Observation Masking ─────────────────────────────────────────────
     // Replace old tool results with placeholders to reduce context bloat.
-    // Only active during auto-mode when context_management.observation_masking is enabled.
-    if (isAutoActive()) {
+    // Also drop ignored late async-job notifications before they can expand
+    // the outbound payload for a follow-up turn.
+    if (isAutoActive() || isAutoPaused()) {
       try {
+        let messages = Array.isArray(payload.messages) ? payload.messages : undefined;
+        const ignoredAsyncJobIds = getIgnoredAsyncJobIds();
+        if (messages && ignoredAsyncJobIds.size > 0) {
+          const filtered = filterIgnoredAsyncJobMessages(messages, ignoredAsyncJobIds);
+          if (Array.isArray(filtered) && filtered !== messages) {
+            payload.messages = filtered;
+            messages = filtered;
+          }
+        }
+
         const { loadEffectiveGSDPreferences } = await import("../preferences.js");
         const prefs = loadEffectiveGSDPreferences();
         const cmConfig = prefs?.preferences.context_management;
 
         // Observation masking: replace old tool results with placeholders
-        if (cmConfig?.observation_masking !== false) {
+        if (cmConfig?.observation_masking !== false && Array.isArray(messages)) {
           const keepTurns = cmConfig?.observation_mask_turns ?? 8;
           const { createObservationMask } = await import("../context-masker.js");
           const mask = createObservationMask(keepTurns);
-          const messages = payload.messages;
-          if (Array.isArray(messages)) {
-            payload.messages = mask(messages);
-          }
+          payload.messages = mask(messages);
         }
 
-        // Tool result truncation: cap individual tool result content length.
-        // In pi-ai format, toolResult messages have role: "toolResult" and content: TextContent[].
-        // Creates new objects to avoid mutating shared conversation state.
+        // Tool result truncation: cap tool-derived observation content length.
         const maxChars = cmConfig?.tool_result_max_chars ?? 800;
         const msgs = payload.messages;
         if (Array.isArray(msgs)) {
-          payload.messages = msgs.map((msg: Record<string, unknown>) => {
-            // Match toolResult messages (role: "toolResult", content is array of content blocks)
-            if (msg?.role === "toolResult" && Array.isArray(msg.content)) {
-              const blocks = msg.content as Array<Record<string, unknown>>;
-              const totalLen = blocks.reduce((sum: number, b) => sum + (typeof b.text === "string" ? b.text.length : 0), 0);
-              if (totalLen > maxChars) {
-                const truncated = blocks.map(b => {
-                  if (typeof b.text === "string" && b.text.length > maxChars) {
-                    return { ...b, text: b.text.slice(0, maxChars) + "\n…[truncated]" };
-                  }
-                  return b;
-                });
-                return { ...msg, content: truncated };
-              }
+          let changed = false;
+          const truncatedMsgs = msgs.map((msg: Record<string, unknown>) => {
+            const next = truncateContextMessage(msg, maxChars) as Record<string, unknown>;
+            if (next !== msg) {
+              changed = true;
             }
-            return msg;
+            return next;
           });
+          if (changed) {
+            payload.messages = truncatedMsgs;
+          }
         }
       } catch { /* non-fatal */ }
     }

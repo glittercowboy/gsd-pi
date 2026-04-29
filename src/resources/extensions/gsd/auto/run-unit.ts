@@ -8,6 +8,7 @@ import type { ExtensionAPI, ExtensionContext } from "@gsd/pi-coding-agent";
 
 import type { AutoSession } from "./session.js";
 import { NEW_SESSION_TIMEOUT_MS } from "./session.js";
+import { ignoreAsyncJobsForUnitExecution } from "../auto.js";
 import type { UnitResult } from "./types.js";
 import { _clearCurrentResolve, _setCurrentResolve, _setSessionSwitchInFlight } from "./resolve.js";
 import {
@@ -222,6 +223,10 @@ export async function runUnit(
   // clearQueue() lives on AgentSession but isn't part of the typed
   // ExtensionCommandContext interface — call it via runtime check.
   try {
+    const startedAt = s.currentUnit?.type === unitType && s.currentUnit?.id === unitId
+      ? s.currentUnit.startedAt
+      : undefined;
+    ignoreAsyncJobsForUnitExecution(unitType, unitId, startedAt);
     const cmdCtxAny = s.cmdCtx as Record<string, unknown> | null;
     if (typeof cmdCtxAny?.clearQueue === "function") {
       (cmdCtxAny.clearQueue as () => unknown)();

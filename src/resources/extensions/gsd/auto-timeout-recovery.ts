@@ -16,6 +16,7 @@ import {
   diagnoseExpectedArtifact,
   writeBlockerPlaceholder,
 } from "./auto-recovery.js";
+import { ignoreAsyncJobsForUnitExecution } from "./auto.js";
 import { existsSync } from "node:fs";
 
 import { bumpAndResolveSynthetic } from "./auto/resolve.js";
@@ -51,6 +52,8 @@ export async function recoverTimedOutUnit(
   const recoveryKey = `${unitType}/${unitId}`;
   const attemptNumber = (unitRecoveryCount.get(recoveryKey) ?? 0) + 1;
   unitRecoveryCount.set(recoveryKey, attemptNumber);
+
+  ignoreAsyncJobsForUnitExecution(unitType, unitId, currentUnitStartedAt);
 
   if (attemptNumber > 1) {
     // Exponential backoff: 2^(n-1) seconds, capped at 30s
