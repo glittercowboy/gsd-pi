@@ -575,8 +575,10 @@ export function convertMessages(
 			// Filter out empty thinking blocks to avoid API validation errors
 			const nonEmptyThinkingBlocks = thinkingBlocks.filter((b) => b.thinking && b.thinking.trim().length > 0);
 			if (nonEmptyThinkingBlocks.length > 0) {
-				if (compat.requiresThinkingAsText) {
-					// Convert thinking blocks to plain text (no tags to avoid model mimicking them)
+				// If stripReasoningFromHistory is true, skip all thinking serialization (text conversion or re-injection).
+				// This takes priority over requiresThinkingAsText.
+				if (!compat.stripReasoningFromHistory && compat.requiresThinkingAsText) {
+					// Convert thinking blocks to plain text (no tags to avoid model mimicking them).
 					const thinkingText = nonEmptyThinkingBlocks.map((b) => b.thinking).join("\n\n");
 					const textContent = assistantMsg.content as Array<{ type: "text"; text: string }> | null;
 					if (textContent) {
@@ -584,13 +586,17 @@ export function convertMessages(
 					} else {
 						assistantMsg.content = [{ type: "text", text: thinkingText }];
 					}
-				} else {
-					// Use the signature from the first thinking block if available (for llama.cpp server + gpt-oss)
+				} else if (!compat.stripReasoningFromHistory) {
+					// Re-inject thinking via thinkingSignature field (e.g., reasoning_content, reasoning)
+					// so the provider sees it on the next turn. Use the signature from the first thinking block
+					// if available (for llama.cpp server + gpt-oss).
 					const signature = nonEmptyThinkingBlocks[0].thinkingSignature;
 					if (signature && signature.length > 0) {
 						(assistantMsg as any)[signature] = nonEmptyThinkingBlocks.map((b) => b.thinking).join("\n");
 					}
 				}
+				// If stripReasoningFromHistory: true, thinking blocks are silently dropped from the
+				// serialized payload. They remain intact in context.messages for GSD's internal use.
 			}
 
 			const toolCalls = msg.content.filter((b) => b.type === "toolCall") as ToolCall[];
@@ -613,7 +619,7 @@ export function convertMessages(
 						}
 					})
 					.filter(Boolean);
-				if (reasoningDetails.length > 0) {
+				if (reasoningDetails.length > 0 && !compat.stripReasoningFromHistory) {
 					(assistantMsg as any).reasoning_details = reasoningDetails;
 				}
 			}
@@ -789,6 +795,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
 		requiresThinkingAsText: false,
+		stripReasoningFromHistory: false,
 		thinkingFormat: isZai ? "zai" : "openai",
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
@@ -815,6 +822,7 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompletio
 		requiresAssistantAfterToolResult:
 			model.compat.requiresAssistantAfterToolResult ?? detected.requiresAssistantAfterToolResult,
 		requiresThinkingAsText: model.compat.requiresThinkingAsText ?? detected.requiresThinkingAsText,
+		stripReasoningFromHistory: model.compat.stripReasoningFromHistory ?? detected.stripReasoningFromHistory,
 		thinkingFormat: model.compat.thinkingFormat ?? detected.thinkingFormat,
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,

@@ -66,6 +66,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	requiresToolResultName: Type.Optional(Type.Boolean()),
 	requiresAssistantAfterToolResult: Type.Optional(Type.Boolean()),
 	requiresThinkingAsText: Type.Optional(Type.Boolean()),
+	stripReasoningFromHistory: Type.Optional(Type.Boolean()),
 	requiresMistralToolIds: Type.Optional(Type.Boolean()),
 	thinkingFormat: Type.Optional(Type.Union([Type.Literal("openai"), Type.Literal("zai"), Type.Literal("qwen")])),
 	openRouterRouting: Type.Optional(OpenRouterRoutingSchema),

@@ -193,6 +193,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **workspace**: gsd.linkable manifest — single source of truth + CI coverage gate (#4680)
 
 ### Added
+
+- **pi-ai**: add `stripReasoningFromHistory` compat flag for OpenAI-completions providers — strips `reasoning_content` and `reasoning_details` from replayed assistant messages to prevent 400 errors on providers (TRT-LLM, vLLM) that return reasoning fields in responses but reject them as input
 - **gsd**: worktree lifespan + divergence telemetry via journal events (#4764). New event types `worktree-created`, `worktree-merged`, `worktree-orphaned`, `auto-exit`, `canonical-root-redirect`, `slice-merged`, `milestone-resquash`. New `summarizeWorktreeTelemetry` aggregator returns counts, orphan breakdown, merge durations, conflict counts, exit reasons, and producer-side "exits with unmerged work" metric.
 - **gsd**: `/gsd forensics` surfaces worktree telemetry — new Worktree Telemetry section in reports; new anomalies `worktree-orphan` and `worktree-unmerged-exit` (#4764).
 - **gsd**: opt-in slice-cadence worktree collapse (#4765). New `git.collapse_cadence: "milestone" | "slice"` preference (default `milestone`). When set to `slice`, each validated slice is squash-merged to main immediately, shrinking the orphan window from milestone-size to slice-size. Optional `git.milestone_resquash: true` (default when cadence=slice) collapses per-slice commits into one milestone commit at milestone completion.

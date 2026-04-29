@@ -63,6 +63,7 @@ Local and non-standard servers often need compatibility adjustments:
 | `supportsDeveloperRole` | `true` | Set `false` if the server doesn't support the `developer` message role |
 | `supportsReasoningEffort` | `true` | Set `false` if the server doesn't support reasoning effort parameters |
 | `supportsUsageInStreaming` | `true` | Set `false` if streaming responses don't include token usage |
+| `stripReasoningFromHistory` | — | Strip `reasoning_content`/`reasoning_details` from replayed messages — for providers (TRT-LLM, vLLM) that return reasoning fields in responses but reject them as input |
 | `thinkingFormat` | — | Set `"qwen"` for Qwen thinking mode, `"qwen-chat-template"` for chat template variant |
 
 ## Custom Headers

@@ -313,6 +313,7 @@ export GSD_ALLOWED_COMMAND_PREFIXES="pass,op,sops,doppler"
 | `requiresToolResultName` | tool result message 中是否必须包含 `name` |
 | `requiresAssistantAfterToolResult` | tool result 之后、user message 之前是否需要插入 assistant message |
 | `requiresThinkingAsText` | 是否把 thinking block 转成纯文本 |
+| `stripReasoningFromHistory` | 从历史消息中删除 `reasoning_content`/`reasoning_details` 字段，适用于响应中返回推理字段但拒绝将其作为输入的 provider（如 TRT-LLM、vLLM） |
 | `thinkingFormat` | 使用 `reasoning_effort`、`zai`、`qwen` 或 `qwen-chat-template` 的 thinking 参数格式 |
 | `supportsStrictMode` | 是否在 tool definitions 中包含 `strict` 字段 |
 | `openRouterRouting` | 传给 OpenRouter 的路由配置，用于 model/provider 选择 |

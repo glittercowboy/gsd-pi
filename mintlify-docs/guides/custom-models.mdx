@@ -115,6 +115,8 @@ For providers with partial OpenAI compatibility, use the `compat` field at provi
 | `supportsReasoningEffort` | Support for `reasoning_effort` parameter |
 | `supportsUsageInStreaming` | Support for `stream_options: { include_usage: true }` |
 | `maxTokensField` | `max_completion_tokens` or `max_tokens` |
+| `requiresThinkingAsText` | Convert thinking blocks to plain text before replay |
+| `stripReasoningFromHistory` | Strip `reasoning_content`/`reasoning_details` from replayed messages (for TRT-LLM, vLLM) |
 | `thinkingFormat` | `reasoning_effort`, `zai`, `qwen`, or `qwen-chat-template` |
 | `openRouterRouting` | OpenRouter provider selection config |
 | `vercelGatewayRouting` | Vercel AI Gateway provider selection |
