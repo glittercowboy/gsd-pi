@@ -66,7 +66,10 @@ export const EvalFixFrontmatter = Type.Object({
   generated: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }),
   slice: Type.String({ pattern: "^S\\d+$" }),
   milestone: Type.String({ minLength: 1 }),
-  review_source: Type.String({ minLength: 1 }),
+  // Basename only: must start with a word char (so `.` and `..` are out) and
+  // is restricted to filename-safe chars; rejects path separators, whitespace,
+  // and control characters by construction.
+  review_source: Type.String({ pattern: "^\\w[\\w.-]*$" }),
   review_generated: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }),
   fixes: Type.Array(EvalFixEntry),
   counts: EvalFixCounts,
@@ -154,10 +157,12 @@ export function deriveStatus(counts: EvalFixCountsT): EvalFixStatus {
 
 // ─── Cross-validation against the source EVAL-REVIEW.md ───────────────────────
 
-// `\.\w{1,12}:\d+` is linear-time (no nested quantifier on a character class
-// that would backtrack catastrophically) and matches the `.ts:42` / `.py:9`
-// / `.go:1` shape every example in the prompt uses.
-const CITATION_RE = /\.\w{1,12}:\d+/;
+// `(?<=\w)\.[A-Za-z]\w{0,11}:\d+` matches `<name>.<alpha-ext>:<line>` shapes
+// like `wrapper.ts:42` or `parser.py:9`. The fixed-width lookbehind keeps the
+// pattern linear (no catastrophic backtracking). Requiring an alpha first
+// character in the extension rejects `v1.2:3`-style version tokens, and the
+// lookbehind rejects bare `.ts:1` substrings that lack a filename.
+const CITATION_RE = /(?<=\w)\.[A-Za-z]\w{0,11}:\d+/;
 const TEST_PATH_RE = /(?:(?:^|[\/])tests?[\/])|(?:\.(?:test|spec)\.(?:[jt]sx?|mjs|cjs))|(?:_test\.go$)|(?:(?:^|[\/])test_[^\/]+\.py$)/;
 const MAX_EVIDENCE_BYTES = 4096;
 

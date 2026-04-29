@@ -35,7 +35,7 @@ import {
 import { MAX_CONTEXT_BYTES } from "../commands-eval-review.js";
 import { withFileLock } from "../file-lock.js";
 import { GSD_COMMAND_DESCRIPTION, TOP_LEVEL_SUBCOMMANDS } from "../commands/catalog.js";
-import { _clearGsdRootCache, clearPathCache, resolveSliceFile } from "../paths.js";
+import { _clearGsdRootCache, clearPathCache } from "../paths.js";
 import {
   EVAL_FIX_SCHEMA_VERSION,
   parseEvalFixFrontmatter,
@@ -578,9 +578,10 @@ describe("findEvalFixFile sees freshly-written files when the path cache is clea
     // Without invalidation: still null (stale).
     assert.equal(findEvalFixFile(basePath, "M001", "S07"), null, "cache must be stale");
 
-    // After invalidation: the file is visible.
+    // After invalidation: the file is visible via the same code path the
+    // handler uses (findEvalFixFile, not the lower-level resolver).
     clearPathCache();
-    assert.equal(resolveSliceFile(basePath, "M001", "S07", "EVAL-FIX"), target);
+    assert.equal(findEvalFixFile(basePath, "M001", "S07"), target);
   });
 });
 

@@ -197,6 +197,27 @@ describe("parseEvalFixFrontmatter (failure paths)", () => {
     if (!result.ok) assert.match(result.pointer, /slice/);
   });
 
+  it("rejects a review_source that contains a path separator (basename-only contract)", () => {
+    for (const bad of [
+      ".gsd/milestones/M001/slices/S07/S07-EVAL-REVIEW.md",
+      "../../etc/passwd",
+      "C:\\Windows\\System32\\foo.md",
+      ".",
+      "..",
+    ]) {
+      const wrong = happyPathWith({ "review_source: S07-EVAL-REVIEW.md": `review_source: ${bad}` });
+      const result = parseEvalFixFrontmatter(wrong);
+      assert.equal(result.ok, false, `must reject review_source=${JSON.stringify(bad)}`);
+      if (!result.ok) assert.match(result.pointer, /review_source/);
+    }
+  });
+
+  it("accepts a review_source that is a plain basename", () => {
+    const result = parseEvalFixFrontmatter(HAPPY_PATH_FRONTMATTER);
+    assert.equal(result.ok, true);
+    if (result.ok) assert.equal(result.data.review_source, "S07-EVAL-REVIEW.md");
+  });
+
   it("rejects an empty evidence string (anti-Goodhart contract)", () => {
     const wrong = HAPPY_PATH_FRONTMATTER.replace(
       "    evidence: \"src/llm/wrapper.ts:42 — emit('llm.latency', { latency_ms })\"",
@@ -339,6 +360,16 @@ describe("isCitationEvidence", () => {
     assert.equal(isCitationEvidence("see comment"), false);
     assert.equal(isCitationEvidence("// TODO: log llm.latency"), false);
     assert.equal(isCitationEvidence("documented in the README"), false);
+  });
+
+  it("rejects a bare extension citation with no filename in front (`.ts:1`)", () => {
+    assert.equal(isCitationEvidence(".ts:1"), false);
+    assert.equal(isCitationEvidence("the .ts:1 example"), false);
+  });
+
+  it("rejects version-token-shaped strings whose 'extension' is digits (`v1.2:3`)", () => {
+    assert.equal(isCitationEvidence("v1.2:3 mentioned"), false);
+    assert.equal(isCitationEvidence("released v1.2:3"), false);
   });
 
   it("returns false on huge inputs in linear time (ReDoS regression)", () => {
