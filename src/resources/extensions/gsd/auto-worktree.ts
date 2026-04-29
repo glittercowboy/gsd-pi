@@ -80,6 +80,13 @@ import {
 const gsdHome = process.env.GSD_HOME || join(homedir(), ".gsd");
 const PROJECT_PREFERENCES_FILE = "PREFERENCES.md";
 const LEGACY_PROJECT_PREFERENCES_FILE = "preferences.md";
+const LEGACY_DEEP_SETUP_RUNTIME_UNIT_FILES = new Set([
+  "workflow-preferences-WORKFLOW-PREFS.json",
+  "discuss-project-PROJECT.json",
+  "discuss-requirements-REQUIREMENTS.json",
+  "research-decision-RESEARCH-DECISION.json",
+  "research-project-RESEARCH-PROJECT.json",
+]);
 
 // ─── Shared Constants & Helpers ─────────────────────────────────────────────
 
@@ -579,6 +586,16 @@ export function cleanStaleRuntimeUnits(
   try {
     for (const file of readdirSync(runtimeUnitsDir)) {
       if (!file.endsWith(".json")) continue;
+      if (LEGACY_DEEP_SETUP_RUNTIME_UNIT_FILES.has(file)) {
+        try {
+          unlinkSync(join(runtimeUnitsDir, file));
+          cleaned++;
+        } catch (err) {
+          /* non-fatal */
+          logWarning("worktree", `stale runtime unit unlink failed (${file}): ${err instanceof Error ? err.message : String(err)}`);
+        }
+        continue;
+      }
       const staleDiscussMatch = file.match(/^discuss-milestone-(.+)\.json$/);
       if (staleDiscussMatch && !MILESTONE_ID_RE.test(staleDiscussMatch[1])) {
         try {

@@ -442,7 +442,7 @@ export async function runPreDispatch(
     };
   }
 
-  if (prefs?.uok?.plan_v2?.enabled && shouldRunPlanV2Gate(state.phase)) {
+  if (uokFlags.planV2 && shouldRunPlanV2Gate(state.phase)) {
     const compiled = ensurePlanV2Graph(s.basePath, state);
     if (!compiled.ok) {
       const reason = compiled.reason ?? "Plan v2 compilation failed";

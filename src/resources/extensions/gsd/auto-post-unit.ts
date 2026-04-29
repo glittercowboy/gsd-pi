@@ -977,6 +977,8 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       // unbounded loops (#2007).
       //
       // Pre-checks short-circuit retry for known-unrecoverable failures:
+      // - User-input waits in deep setup: pause instead of retrying or writing
+      //   placeholders while the agent is waiting for approval.
       // - Deterministic policy rejection (#4973): structural write-gate failure
       //   that will recur on every retry, so write a blocker placeholder.
       // - DB infra failure (#2517): completion tool returned db_unavailable, so
@@ -984,11 +986,24 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
       // - Tool invocation error (#2883/#3595): malformed JSON args or queued
       //   user message — retry will produce the same failure.
       //
-      // #4973: Deterministic policy rejections (e.g. context_write_blocked from the
-      // write-gate) are checked FIRST — before the DB-availability check — because
-      // they are structural gates that will fire on every retry regardless of DB or
-      // model tier. Short-circuit immediately by writing a blocker placeholder.
-      if (!triggerArtifactVerified && s.lastToolInvocationError && isDeterministicPolicyError(s.lastToolInvocationError)) {
+      // User-driven deep setup prompts may ask for approval before the final
+      // root artifact write. If a premature write hits the write gate in the
+      // same turn, the user wait is the meaningful state; pause instead of
+      // writing a placeholder over PROJECT/REQUIREMENTS.
+      if (!triggerArtifactVerified && USER_DRIVEN_DEEP_UNITS.has(s.currentUnit.type) && isAwaitingUserInput(opts?.agentEndMessages)) {
+        debugLog("postUnit", {
+          phase: "artifact-verify-awaiting-user",
+          unitType: s.currentUnit.type,
+          unitId: s.currentUnit.id,
+        });
+        ctx.ui.notify(
+          `${s.currentUnit.type} ${s.currentUnit.id} is waiting for your input — pausing auto-mode instead of retrying the missing artifact.`,
+          "info",
+        );
+        s.lastToolInvocationError = null;
+        await pauseAuto(ctx, pi);
+        return "dispatched";
+      } else if (!triggerArtifactVerified && s.lastToolInvocationError && isDeterministicPolicyError(s.lastToolInvocationError)) {
         const retryKey = `${s.currentUnit.type}:${s.currentUnit.id}`;
         debugLog("postUnit", { phase: "deterministic-policy-error-placeholder", unitType: s.currentUnit.type, unitId: s.currentUnit.id, error: s.lastToolInvocationError });
         const reason = `Deterministic policy rejection for ${s.currentUnit.type} "${s.currentUnit.id}": ${s.lastToolInvocationError}. Retrying cannot resolve this gate — writing blocker placeholder to advance pipeline.`;
@@ -1001,18 +1016,6 @@ export async function postUnitPreVerification(pctx: PostUnitContext, opts?: PreV
           "warning",
         );
         // Fall through to "continue" — do NOT enter the retry or db-unavailable paths.
-      } else if (!triggerArtifactVerified && USER_DRIVEN_DEEP_UNITS.has(s.currentUnit.type) && isAwaitingUserInput(opts?.agentEndMessages)) {
-        debugLog("postUnit", {
-          phase: "artifact-verify-awaiting-user",
-          unitType: s.currentUnit.type,
-          unitId: s.currentUnit.id,
-        });
-        ctx.ui.notify(
-          `${s.currentUnit.type} ${s.currentUnit.id} is waiting for your input — pausing auto-mode instead of retrying the missing artifact.`,
-          "info",
-        );
-        await pauseAuto(ctx, pi);
-        return "dispatched";
       } else if (!triggerArtifactVerified && !isDbAvailable()) {
         debugLog("postUnit", { phase: "artifact-verify-skip-db-unavailable", unitType: s.currentUnit.type, unitId: s.currentUnit.id });
         const dbSkipDiag = diagnoseExpectedArtifact(s.currentUnit.type, s.currentUnit.id, s.basePath);

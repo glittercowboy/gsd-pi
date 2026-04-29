@@ -225,7 +225,11 @@ export function detectWorkflowMcpLaunchConfig(
   const explicitArgs = parseJsonEnv<unknown>(env, "GSD_WORKFLOW_MCP_ARGS");
   const explicitEnv = parseJsonEnv<Record<string, string>>(env, "GSD_WORKFLOW_MCP_ENV");
   const explicitCwd = env.GSD_WORKFLOW_MCP_CWD?.trim();
-  const gsdCliPath = env.GSD_CLI_PATH?.trim() || env.GSD_BIN_PATH?.trim();
+  const gsdCliPath =
+    explicitEnv?.GSD_CLI_PATH?.trim()
+    || explicitEnv?.GSD_BIN_PATH?.trim()
+    || env.GSD_CLI_PATH?.trim()
+    || env.GSD_BIN_PATH?.trim();
   const workflowProjectRoot =
     explicitEnv?.GSD_WORKFLOW_PROJECT_ROOT?.trim() ||
     env.GSD_WORKFLOW_PROJECT_ROOT?.trim() ||
@@ -298,6 +302,12 @@ export function buildWorkflowMcpServers(
 
 export function getRequiredWorkflowToolsForGuidedUnit(unitType: string): string[] {
   switch (unitType) {
+    case "discuss-project":
+      return ["ask_user_questions", "gsd_summary_save"];
+    case "discuss-requirements":
+      return ["ask_user_questions", "gsd_requirement_save", "gsd_summary_save"];
+    case "research-decision":
+      return ["ask_user_questions"];
     case "discuss-milestone":
       return ["gsd_summary_save", "gsd_plan_milestone"];
     case "discuss-slice":
@@ -320,6 +330,12 @@ export function getRequiredWorkflowToolsForGuidedUnit(unitType: string): string[
 
 export function getRequiredWorkflowToolsForAutoUnit(unitType: string): string[] {
   switch (unitType) {
+    case "discuss-project":
+      return ["ask_user_questions", "gsd_summary_save"];
+    case "discuss-requirements":
+      return ["ask_user_questions", "gsd_requirement_save", "gsd_summary_save"];
+    case "research-decision":
+      return ["ask_user_questions"];
     case "discuss-milestone":
       return ["gsd_summary_save", "gsd_plan_milestone"];
     case "research-milestone":

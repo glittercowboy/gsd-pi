@@ -113,6 +113,30 @@ test("guided flow routes recoverable missing finalized context to discuss-milest
   );
 });
 
+test("guided flow checks pending deep setup before plan-v2 gate", () => {
+  const source = readFileSync(join(gsdDir, "guided-flow.ts"), "utf-8");
+  const showSmartEntryIdx = source.indexOf("export async function showSmartEntry");
+  assert.notEqual(showSmartEntryIdx, -1);
+  const deepIdx = source.indexOf("hasPendingDeepStage(prefs, basePath)", showSmartEntryIdx);
+  const planIdx = source.indexOf("runPlanV2Gate(ctx, basePath, state)", showSmartEntryIdx);
+  assert.ok(
+    deepIdx > -1 && planIdx > -1 && deepIdx < planIdx,
+    "foreground deep setup must run before plan-v2 can fail-close guided /gsd",
+  );
+  assert.ok(
+    source.includes("loadEffectiveGSDPreferences(basePath)?.preferences"),
+    "guided plan-v2 gate must load preferences from the target project root",
+  );
+});
+
+test("auto pre-dispatch uses resolved plan-v2 defaults", () => {
+  const source = readFileSync(join(gsdDir, "auto", "phases.ts"), "utf-8");
+  assert.ok(
+    source.includes("uokFlags.planV2 && shouldRunPlanV2Gate(state.phase)"),
+    "auto-mode should honor resolveUokFlags defaults, not only explicit uok.plan_v2.enabled",
+  );
+});
+
 test("plan-v2 gate fails closed for execution phase when finalized context is missing", () => {
   const basePath = createBasePath();
   seedGraphRows();

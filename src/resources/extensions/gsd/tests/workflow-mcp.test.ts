@@ -43,6 +43,33 @@ test("auto execute-task requires legacy completion alias until prompt contract i
   assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("execute-task"), ["gsd_complete_task"]);
 });
 
+test("deep project setup units declare required workflow MCP tools", () => {
+  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("discuss-project"), [
+    "ask_user_questions",
+    "gsd_summary_save",
+  ]);
+  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("discuss-requirements"), [
+    "ask_user_questions",
+    "gsd_requirement_save",
+    "gsd_summary_save",
+  ]);
+  assert.deepEqual(getRequiredWorkflowToolsForGuidedUnit("research-decision"), [
+    "ask_user_questions",
+  ]);
+  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("discuss-project"), [
+    "ask_user_questions",
+    "gsd_summary_save",
+  ]);
+  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("discuss-requirements"), [
+    "ask_user_questions",
+    "gsd_requirement_save",
+    "gsd_summary_save",
+  ]);
+  assert.deepEqual(getRequiredWorkflowToolsForAutoUnit("research-decision"), [
+    "ask_user_questions",
+  ]);
+});
+
 test("detectWorkflowMcpLaunchConfig prefers explicit env override", () => {
   const launch = detectWorkflowMcpLaunchConfig("/tmp/project", {
     GSD_WORKFLOW_MCP_NAME: "workflow-tools",
@@ -67,6 +94,22 @@ test("detectWorkflowMcpLaunchConfig prefers explicit env override", () => {
   assert.equal(launch?.env?.GSD_WORKFLOW_PROJECT_ROOT, "/tmp/project");
   assert.match(launch?.env?.GSD_WORKFLOW_EXECUTORS_MODULE ?? "", /workflow-tool-executors\.(js|ts)$/);
   assert.match(launch?.env?.GSD_WORKFLOW_WRITE_GATE_MODULE ?? "", /write-gate\.(js|ts)$/);
+});
+
+test("detectWorkflowMcpLaunchConfig normalizes explicit workflow MCP env CLI aliases", () => {
+  const binOnly = detectWorkflowMcpLaunchConfig("/tmp/project", {
+    GSD_WORKFLOW_MCP_COMMAND: "node",
+    GSD_WORKFLOW_MCP_ENV: JSON.stringify({ GSD_BIN_PATH: "/tmp/gsd-bin" }),
+  });
+  assert.equal(binOnly?.env?.GSD_CLI_PATH, "/tmp/gsd-bin");
+  assert.equal(binOnly?.env?.GSD_BIN_PATH, "/tmp/gsd-bin");
+
+  const cliOnly = detectWorkflowMcpLaunchConfig("/tmp/project", {
+    GSD_WORKFLOW_MCP_COMMAND: "node",
+    GSD_WORKFLOW_MCP_ENV: JSON.stringify({ GSD_CLI_PATH: "/tmp/gsd-cli" }),
+  });
+  assert.equal(cliOnly?.env?.GSD_CLI_PATH, "/tmp/gsd-cli");
+  assert.equal(cliOnly?.env?.GSD_BIN_PATH, "/tmp/gsd-cli");
 });
 
 test("buildWorkflowMcpServers mirrors explicit launch config", () => {

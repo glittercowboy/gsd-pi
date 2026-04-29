@@ -723,7 +723,9 @@ test("milestone-transition event is emitted when milestone changes", async () =>
       blockers: [],
     }) as any,
   });
-  const ic = makeIC(deps);
+  const ic = makeIC(deps, {
+    prefs: { uok: { plan_v2: { enabled: false } } } as any,
+  });
   // Session says current milestone is M001, but state will return M002
   ic.s.currentMilestoneId = "M001";
   const loopState: LoopState = { recentUnits: [], stuckRecoveryAttempts: 0, consecutiveFinalizeTimeouts: 0 };

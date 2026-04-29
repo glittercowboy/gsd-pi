@@ -629,7 +629,11 @@ function makeMockDeps(
         blockers: [],
       } as any;
     },
-    loadEffectiveGSDPreferences: () => ({ preferences: {} }),
+    loadEffectiveGSDPreferences: () => ({
+      // These loop-mechanics tests mock executing state without plan-v2 artifacts.
+      // Plan-v2 default-on coverage lives in uok-plan-v2-wiring.test.ts.
+      preferences: { uok: { plan_v2: { enabled: false } } },
+    }),
     preDispatchHealthGate: async () => ({ proceed: true, fixesApplied: [] }),
     syncProjectRootToWorktree: () => {},
     checkResourcesStale: () => null,
@@ -2489,7 +2493,10 @@ test("autoLoop enforces min_request_interval_ms delay between LLM dispatches (#2
 
     const deps = makeMockDeps({
       loadEffectiveGSDPreferences: () => ({
-        preferences: { min_request_interval_ms: 300 },
+        preferences: {
+          min_request_interval_ms: 300,
+          uok: { plan_v2: { enabled: false } },
+        },
       }),
       deriveState: async () => {
         iterCount++;
@@ -2574,7 +2581,7 @@ test("autoLoop skips rate-limit delay when min_request_interval_ms is 0 (default
 
     const deps = makeMockDeps({
       loadEffectiveGSDPreferences: () => ({
-        preferences: {},
+        preferences: { uok: { plan_v2: { enabled: false } } },
       }),
       deriveState: async () => {
         iterCount++;

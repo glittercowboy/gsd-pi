@@ -24,7 +24,7 @@ Use these recommended defaults without asking:
 - `branch_model: single` — all work on current branch
 - `uat_dispatch: true` — verification runs automatically; failures pause execution
 - `models.executor_class: balanced` — sensible cost/quality default
-- `research: research` — run domain research before defining requirements
+- `research: skip` — skip project research by default; users can explicitly opt into research later
 
 ---
 
@@ -52,7 +52,7 @@ Apply the defaults:
      }
      ```
    Use `"skip"` unless an existing valid `{{workingDirectory}}/.gsd/runtime/research-decision.json` explicitly says `"research"` with `"source": "research-decision"` or `"source": "user"`.
-6. Print a concise summary in chat: each key on its own line, format `key: value`. Include `commit_policy`, `branch_model`, `uat_dispatch`, `models.executor_class`, and `research`.
+6. Print a concise summary in chat: each key on its own line, format `key: value`. Include `commit_policy`, `branch_model`, `uat_dispatch`, `models.executor_class`, and `research` (`research: skip` unless preserving an explicit user research decision).
 7. Say exactly: `"Workflow preferences saved."` — nothing else.
 
 Do NOT write to `.gsd/config.json`; runtime preferences load from `PREFERENCES.md`.

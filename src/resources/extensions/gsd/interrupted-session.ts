@@ -51,11 +51,35 @@ export interface InterruptedSessionAssessment {
   isBootstrapCrash: boolean;
 }
 
+const LEGACY_DEEP_SETUP_UNITS = new Set([
+  "workflow-preferences:WORKFLOW-PREFS",
+  "discuss-project:PROJECT",
+  "discuss-requirements:REQUIREMENTS",
+  "research-decision:RESEARCH-DECISION",
+  "research-project:RESEARCH-PROJECT",
+]);
+
 function isStalePseudoMilestonePause(meta: PausedSessionMetadata): boolean {
   if (meta.activeEngineId && meta.activeEngineId !== "dev") return false;
-  return meta.unitType === "discuss-milestone"
+  if (
+    meta.unitType === "discuss-milestone"
     && typeof meta.unitId === "string"
-    && !MILESTONE_ID_RE.test(meta.unitId);
+    && !MILESTONE_ID_RE.test(meta.unitId)
+  ) {
+    return true;
+  }
+  if (
+    typeof meta.unitType === "string"
+    && typeof meta.unitId === "string"
+    && LEGACY_DEEP_SETUP_UNITS.has(`${meta.unitType}:${meta.unitId}`)
+  ) {
+    return true;
+  }
+  return typeof meta.milestoneId === "string"
+    && !MILESTONE_ID_RE.test(meta.milestoneId)
+    && typeof meta.unitType === "string"
+    && typeof meta.unitId === "string"
+    && LEGACY_DEEP_SETUP_UNITS.has(`${meta.unitType}:${meta.unitId}`);
 }
 
 export function readPausedSessionMetadata(

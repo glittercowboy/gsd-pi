@@ -113,7 +113,9 @@ test("workflow preferences prompt writes defaults without interactive questions"
   assert.match(prompt, /Do NOT call `ask_user_questions`/);
   assert.match(prompt, /commit_policy:\s*per-task/);
   assert.match(prompt, /branch_model:\s*single/);
+  assert.match(prompt, /research:\s*skip/);
   assert.match(prompt, /"decision": "skip"/);
+  assert.doesNotMatch(prompt, /research:\s*research/);
   assert.doesNotMatch(prompt, /Ask all three questions/i);
   assert.doesNotMatch(prompt, /Ask all four questions/i);
   assert.doesNotMatch(prompt, /Ask all five questions/i);

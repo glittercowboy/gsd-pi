@@ -91,7 +91,7 @@ function runPlanV2Gate(
   basePath: string,
   state: GSDState,
 ): PlanV2GateDecision {
-  const prefs = loadEffectiveGSDPreferences()?.preferences;
+  const prefs = loadEffectiveGSDPreferences(basePath)?.preferences;
   const uokFlags = resolveUokFlags(prefs);
   if (!uokFlags.planV2 || !needsPlanV2Gate(state)) return "pass";
   const compiled = ensurePlanV2Graph(basePath, state);
@@ -1828,9 +1828,6 @@ export async function showSmartEntry(
     logWarning("guided", `STATE.md rebuild failed: ${(err as Error).message}`);
   }
 
-  const planV2GateDecision = runPlanV2Gate(ctx, basePath, state);
-  if (planV2GateDecision === "block") return;
-
   // ── Deep planning mode kickoff ────────────────────────────────────────
   // When `planning_depth: deep` is set (e.g. via `/gsd new-project --deep`)
   // and any project-level stage gate is still pending, keep the user-question
@@ -1847,6 +1844,9 @@ export async function showSmartEntry(
       return;
     }
   }
+
+  const planV2GateDecision = runPlanV2Gate(ctx, basePath, state);
+  if (planV2GateDecision === "block") return;
 
   if (!state.activeMilestone?.id) {
     // Guard: if a discuss session is already in flight, don't re-inject the prompt.

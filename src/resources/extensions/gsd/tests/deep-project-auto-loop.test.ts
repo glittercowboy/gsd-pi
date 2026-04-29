@@ -415,7 +415,7 @@ test("deep project setup: pre-dispatch does not rewrite execution state to PROJE
         pi: {} as any,
         s,
         deps,
-        prefs: { planning_depth: "deep" } as GSDPreferences,
+        prefs: { planning_depth: "deep", uok: { plan_v2: { enabled: false } } } as GSDPreferences,
         iteration: 1,
         flowId: "test-flow",
         nextSeq: () => ++seq,
@@ -1236,6 +1236,54 @@ test("deep project setup: discuss-milestone question failure pauses instead of a
     assert.ok(
       notifications.some((message) => message.includes("waiting for your input")),
       "should notify that the discuss unit is waiting for user input",
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test("deep project setup: approval wait wins over deterministic write-gate placeholder", async () => {
+  const base = makeBase();
+  try {
+    const s = new AutoSession();
+    s.active = true;
+    s.basePath = base;
+    s.currentUnit = { type: "discuss-requirements", id: "REQUIREMENTS", startedAt: Date.now() };
+    s.lastToolInvocationError = "gsd_summary_save: Error saving artifact: root_artifact_write_blocked";
+    s.verificationRetryCount.set("discuss-requirements:REQUIREMENTS", 2);
+
+    let pauseCalled = false;
+    const notifications: string[] = [];
+    const result = await postUnitPreVerification(
+      {
+        s,
+        ctx: { ui: { notify: (message: string) => notifications.push(message) } } as any,
+        pi: {} as any,
+        buildSnapshotOpts: () => ({}) as any,
+        lockBase: () => base,
+        stopAuto: async () => {},
+        pauseAuto: async () => { pauseCalled = true; },
+        updateProgressWidget: () => {},
+      },
+      {
+        skipSettleDelay: true,
+        skipWorktreeSync: true,
+        agentEndMessages: [
+          {
+            role: "assistant",
+            content: "Requirements look solid. Waiting for your confirmation before writing.",
+          },
+        ],
+      },
+    );
+
+    assert.equal(result, "dispatched");
+    assert.equal(pauseCalled, true);
+    assert.equal(s.lastToolInvocationError, null);
+    assert.equal(existsSync(join(base, ".gsd", "REQUIREMENTS.md")), false);
+    assert.ok(
+      notifications.some((message) => message.includes("waiting for your input")),
+      "should pause on the user wait instead of writing a blocker placeholder",
     );
   } finally {
     rmSync(base, { recursive: true, force: true });
