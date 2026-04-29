@@ -45,8 +45,12 @@ import {
 } from "../workflow-logger.js";
 import { gsdRoot } from "../paths.js";
 import { atomicWriteSync } from "../atomic-write.js";
-import { verifyExpectedArtifact, diagnoseExpectedArtifact, buildLoopRemediationSteps } from "../auto-recovery.js";
+import { verifyExpectedArtifact, diagnoseExpectedArtifact, buildLoopRemediationSteps, writeBlockerPlaceholder } from "../auto-recovery.js";
 import { writeUnitRuntimeRecord } from "../unit-runtime.js";
+import { resolveModelWithFallbacksForUnit, getNextFallbackModel } from "../preferences.js";
+import { resolveModelId as resolveModelForFallback } from "../auto-model-selection.js";
+import { blockModel, isModelBlocked } from "../blocked-models.js";
+import { setCurrentDispatchedModelId } from "../auto.js";
 import { withTimeout, FINALIZE_PRE_TIMEOUT_MS, FINALIZE_POST_TIMEOUT_MS } from "./finalize-timeout.js";
 import { getEligibleSlices } from "../slice-parallel-eligibility.js";
 import { startSliceParallel } from "../slice-parallel-orchestrator.js";
@@ -1680,6 +1684,145 @@ export async function runUnitPhase(
 
   if (unitResult.status === "cancelled") {
     const errorCategory = unitResult.errorContext?.category;
+
+    // ── Zero-progress check for cancelled units (#5143) ────────────
+    // Cancelled units bypass the zero tool-call guard (line ~1877) because
+    // every cancelled branch returns before reaching it. When a model returns
+    // an empty response (0 content items, 0 tokens), the unit resolves as
+    // cancelled — but re-dispatching to the same model will produce the same
+    // failure indefinitely across sessions (stuck-detection window resets).
+    //
+    // Close out the unit to populate the metrics ledger, then check whether
+    // the model produced zero tool calls. If so, try a model fallback (same
+    // pattern as agent-end-recovery.ts for provider errors). Only write a
+    // blocker placeholder if no fallback is available.
+    //
+    // Transient cancellations (session creation timeout, recoverable session
+    // failure) are excluded because retrying those *might* succeed.
+    let closeoutAlreadyRan = false;
+    if (!unitResult.errorContext?.isTransient && s.currentUnit) {
+      await deps.closeoutUnit(
+        ctx,
+        s.basePath,
+        unitType,
+        unitId,
+        s.currentUnit.startedAt,
+        deps.buildSnapshotOpts(unitType, unitId),
+      );
+      closeoutAlreadyRan = true;
+
+      const cancelledLedger = deps.getLedger() as { units: Array<{ type: string; id: string; startedAt: number; toolCalls: number }> } | null;
+      if (cancelledLedger?.units) {
+        const cancelledUnit = [...cancelledLedger.units].reverse().find(
+          (u: { type: string; id: string; startedAt: number; toolCalls: number }) =>
+            u.type === unitType && u.id === unitId && u.startedAt === s.currentUnit?.startedAt,
+        );
+        if (cancelledUnit && (cancelledUnit.toolCalls ?? 0) === 0) {
+          debugLog("runUnitPhase", {
+            phase: "cancelled-zero-tool-calls",
+            unitType,
+            unitId,
+            errorCategory,
+            warning: "Cancelled unit with 0 tool calls — model produced nothing",
+          });
+
+          // Try model fallback before giving up (mirrors agent-end-recovery.ts
+          // pattern for provider errors). Block the dead model so it isn't
+          // re-selected on restart, then walk the configured fallback chain,
+          // then try the auto-mode start model.
+          const failedProvider = s.currentUnitModel?.provider ?? ctx.model?.provider;
+          const failedId = s.currentUnitModel?.id ?? ctx.model?.id;
+          if (failedProvider && failedId) {
+            try {
+              blockModel(s.basePath, failedProvider, failedId, "empty response (0 tool calls, 0 tokens)");
+              ctx.ui.notify(
+                `Blocked ${failedProvider}/${failedId} for this project — returned empty response.`,
+                "warning",
+              );
+            } catch (err) {
+              logWarning("engine", `Failed to persist blocked model: ${err instanceof Error ? err.message : String(err)}`);
+            }
+          }
+
+          let fellBack = false;
+          const modelConfig = resolveModelWithFallbacksForUnit(unitType);
+          if (modelConfig && modelConfig.fallbacks.length > 0) {
+            const availableModels = ctx.modelRegistry.getAvailable();
+            let cursorModelId: string | undefined = ctx.model?.id;
+            while (true) {
+              const nextModelId = getNextFallbackModel(cursorModelId, modelConfig);
+              if (!nextModelId) break;
+              const candidate = resolveModelForFallback(nextModelId, availableModels, ctx.model?.provider);
+              if (candidate && !isModelBlocked(s.basePath, candidate.provider, candidate.id)) {
+                const ok = await pi.setModel(candidate, { persist: false });
+                if (ok) {
+                  setCurrentDispatchedModelId({ provider: candidate.provider, id: candidate.id });
+                  ctx.ui.notify(
+                    `${unitType} ${unitId} — model returned empty response (0 tool calls). ` +
+                    `Switched to fallback ${candidate.provider}/${candidate.id}.`,
+                    "warning",
+                  );
+                  fellBack = true;
+                  break;
+                }
+              }
+              cursorModelId = nextModelId;
+            }
+          }
+          // Fallback chain exhausted — try auto-mode start model if it isn't
+          // the one we just blocked and isn't itself blocked.
+          if (!fellBack && s.autoModeStartModel) {
+            const startProvider = s.autoModeStartModel.provider;
+            const startId = s.autoModeStartModel.id;
+            if (
+              !(startProvider === failedProvider && startId === failedId) &&
+              !isModelBlocked(s.basePath, startProvider, startId)
+            ) {
+              const startModel = ctx.modelRegistry.getAvailable().find(
+                (m: any) => m.provider === startProvider && m.id === startId,
+              );
+              if (startModel) {
+                const ok = await pi.setModel(startModel, { persist: false });
+                if (ok) {
+                  setCurrentDispatchedModelId({ provider: startModel.provider, id: startModel.id });
+                  ctx.ui.notify(
+                    `${unitType} ${unitId} — model returned empty response (0 tool calls). ` +
+                    `Restored session model ${startModel.provider}/${startModel.id}.`,
+                    "warning",
+                  );
+                  fellBack = true;
+                }
+              }
+            }
+          }
+
+          if (fellBack) {
+            // Re-dispatch with the new model — next iteration will call
+            // selectAndApplyModel which respects the active model.
+            await deps.autoCommitUnit?.(s.basePath, unitType, unitId, ctx);
+            await emitCancelledUnitEnd(ic, unitType, unitId, unitStartSeq, unitResult.errorContext);
+            return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt, requestDispatchedAt: unitResult.requestDispatchedAt } };
+          }
+
+          // No fallback available — write blocker placeholder so pipeline advances
+          writeBlockerPlaceholder(
+            unitType,
+            unitId,
+            s.basePath,
+            `Model returned empty response (0 tool calls, 0 tokens) for ${unitType} "${unitId}". ` +
+            `No fallback model available. The model may not support this prompt structure.`,
+          );
+          ctx.ui.notify(
+            `${unitType} ${unitId} — model returned empty response (0 tool calls), no fallback available. Wrote blocker placeholder.`,
+            "warning",
+          );
+          await deps.autoCommitUnit?.(s.basePath, unitType, unitId, ctx);
+          await emitCancelledUnitEnd(ic, unitType, unitId, unitStartSeq, unitResult.errorContext);
+          return { action: "next", data: { unitStartedAt: s.currentUnit?.startedAt, requestDispatchedAt: unitResult.requestDispatchedAt } };
+        }
+      }
+    }
+
     // Provider-error pause: agent_end recovery normally pauses before this
     // branch. Provider readiness failures happen before dispatch, so pause here
     // if nothing upstream already did.
@@ -1788,7 +1931,8 @@ export async function runUnitPhase(
       return { action: "break", reason: "session-timeout" };
     }
     // All other cancelled states (structural errors, non-transient failures): hard stop
-    if (s.currentUnit) {
+    // Guard: closeoutUnit may have already run in the zero-progress check above (#5143).
+    if (s.currentUnit && !closeoutAlreadyRan) {
       await deps.closeoutUnit(
         ctx,
         s.basePath,

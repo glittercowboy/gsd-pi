@@ -2606,3 +2606,312 @@ test("autoLoop classifies ModelPolicyDispatchBlockedError as blocked, not a retr
   assert.equal(pausedTurn!.unitType, "research-slice", "onTurnResult must receive the blocked unitType from the typed error");
   assert.equal(pausedTurn!.unitId, "M001/S01", "onTurnResult must receive the blocked unitId from the typed error");
 });
+
+// ─── Cancelled unit with 0 tool calls writes blocker placeholder (#5143) ────
+
+test("cancelled unit with 0 tool calls tries model fallback before blocker placeholder (#5143)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  // Provide modelRegistry with getAvailable so fallback resolution works
+  ctx.modelRegistry = {
+    getProviderAuthMode: () => "api-key",
+    isProviderRequestReady: () => true,
+    getAvailable: () => [
+      { provider: "anthropic", id: "claude-sonnet-4-20250514" },
+      { provider: "openai", id: "gpt-4o" },
+    ],
+  };
+  ctx.model = { provider: "anthropic", id: "claude-sonnet-4-20250514" };
+  const pi = makeMockPi();
+
+  let iterationCount = 0;
+  const notifications: string[] = [];
+  ctx.ui.notify = (msg: string) => { notifications.push(msg); };
+
+  const s = makeLoopSession();
+  // Set a different start model so the session-model fallback has something to try
+  s.autoModeStartModel = { provider: "openai", id: "gpt-4o" };
+
+  const mockLedger = {
+    version: 1,
+    projectStartedAt: Date.now(),
+    units: [] as any[],
+  };
+
+  const setModelCalls: any[] = [];
+  pi.setModel = async (model: any) => {
+    setModelCalls.push(model);
+    return true;
+  };
+
+  const deps = makeMockDeps({
+    deriveState: async () => {
+      deps.callLog.push("deriveState");
+      iterationCount++;
+      if (iterationCount > 2) {
+        s.active = false;
+      }
+      return {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Test", status: "active" },
+        activeSlice: { id: "S01", title: "Slice 1" },
+        activeTask: { id: "T01" },
+        registry: [{ id: "M001", status: "active" }],
+        blockers: [],
+      } as any;
+    },
+    resolveDispatch: async () => {
+      deps.callLog.push("resolveDispatch");
+      return {
+        action: "dispatch" as const,
+        unitType: "research-slice",
+        unitId: "M001/S01",
+        prompt: "research the feature",
+      };
+    },
+    closeoutUnit: async () => {
+      mockLedger.units.push({
+        type: "research-slice",
+        id: "M001/S01",
+        startedAt: s.currentUnit?.startedAt ?? Date.now(),
+        toolCalls: 0,
+        assistantMessages: 0,
+        tokens: { input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+      });
+    },
+    getLedger: () => mockLedger,
+    postUnitPostVerification: async () => {
+      deps.callLog.push("postUnitPostVerification");
+      s.active = false;
+      return "continue" as const;
+    },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+
+  // First iteration: resolve as cancelled (non-transient) — should try fallback
+  await new Promise((r) => setTimeout(r, 50));
+  resolveAgentEndCancelled({
+    message: "Provider error: Request timed out.",
+    category: "provider",
+    isTransient: false,
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  s.active = false;
+  await loopPromise;
+
+  // Model fallback should have been attempted via autoModeStartModel
+  const fallbackCall = setModelCalls.find(
+    (m: any) => m.provider === "openai" && m.id === "gpt-4o",
+  );
+  assert.ok(
+    fallbackCall,
+    `should have tried fallback model (autoModeStartModel), setModel calls: ${JSON.stringify(setModelCalls)}`,
+  );
+
+  // Should NOT have written a blocker placeholder (fallback succeeded)
+  const blockerNotification = notifications.find(
+    (n) => n.includes("blocker placeholder"),
+  );
+  assert.equal(
+    blockerNotification,
+    undefined,
+    "should NOT write blocker placeholder when model fallback is available",
+  );
+
+  // Verify the loop did NOT call stopAuto
+  assert.ok(
+    !deps.callLog.includes("stopAuto"),
+    "should NOT have called stopAuto — unit should advance via model fallback",
+  );
+});
+
+test("cancelled unit with 0 tool calls writes blocker when no fallback available (#5143)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+
+  let iterationCount = 0;
+  const notifications: string[] = [];
+  ctx.ui.notify = (msg: string) => { notifications.push(msg); };
+
+  const s = makeLoopSession();
+  // No autoModeStartModel — simulates no fallback available
+  s.autoModeStartModel = null;
+
+  const mockLedger = {
+    version: 1,
+    projectStartedAt: Date.now(),
+    units: [] as any[],
+  };
+
+  const setModelCalls: any[] = [];
+  pi.setModel = async (model: any) => {
+    setModelCalls.push(model);
+    return true;
+  };
+
+  const deps = makeMockDeps({
+    deriveState: async () => {
+      deps.callLog.push("deriveState");
+      iterationCount++;
+      if (iterationCount > 2) {
+        s.active = false;
+      }
+      return {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Test", status: "active" },
+        activeSlice: { id: "S01", title: "Slice 1" },
+        activeTask: { id: "T01" },
+        registry: [{ id: "M001", status: "active" }],
+        blockers: [],
+      } as any;
+    },
+    resolveDispatch: async () => {
+      deps.callLog.push("resolveDispatch");
+      return {
+        action: "dispatch" as const,
+        unitType: "research-slice",
+        unitId: "M001/S01",
+        prompt: "research the feature",
+      };
+    },
+    closeoutUnit: async () => {
+      mockLedger.units.push({
+        type: "research-slice",
+        id: "M001/S01",
+        startedAt: s.currentUnit?.startedAt ?? Date.now(),
+        toolCalls: 0,
+        assistantMessages: 0,
+        tokens: { input: 0, output: 0, total: 0, cacheRead: 0, cacheWrite: 0 },
+        cost: 0,
+      });
+    },
+    getLedger: () => mockLedger,
+    postUnitPostVerification: async () => {
+      deps.callLog.push("postUnitPostVerification");
+      s.active = false;
+      return "continue" as const;
+    },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+
+  await new Promise((r) => setTimeout(r, 50));
+  resolveAgentEndCancelled({
+    message: "Provider error: Request timed out.",
+    category: "provider",
+    isTransient: false,
+  });
+
+  await new Promise((r) => setTimeout(r, 50));
+  s.active = false;
+  await loopPromise;
+
+  // Should have written a blocker placeholder (no fallback available)
+  const blockerNotification = notifications.find(
+    (n) => n.includes("blocker placeholder"),
+  );
+  assert.ok(
+    blockerNotification,
+    `should notify about blocker placeholder when no fallback available, got: ${notifications.join("; ")}`,
+  );
+
+  assert.ok(
+    !deps.callLog.includes("stopAuto"),
+    "should NOT have called stopAuto — unit should advance via blocker placeholder",
+  );
+});
+
+test("cancelled unit with tool calls > 0 does NOT write blocker placeholder (#5143)", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+
+  let iterationCount = 0;
+  const notifications: string[] = [];
+  ctx.ui.notify = (msg: string) => { notifications.push(msg); };
+
+  const s = makeLoopSession();
+
+  const mockLedger = {
+    version: 1,
+    projectStartedAt: Date.now(),
+    units: [] as any[],
+  };
+
+  const deps = makeMockDeps({
+    deriveState: async () => {
+      deps.callLog.push("deriveState");
+      iterationCount++;
+      return {
+        phase: "executing",
+        activeMilestone: { id: "M001", title: "Test", status: "active" },
+        activeSlice: { id: "S01", title: "Slice 1" },
+        activeTask: { id: "T01" },
+        registry: [{ id: "M001", status: "active" }],
+        blockers: [],
+      } as any;
+    },
+    resolveDispatch: async () => {
+      deps.callLog.push("resolveDispatch");
+      return {
+        action: "dispatch" as const,
+        unitType: "research-slice",
+        unitId: "M001/S01",
+        prompt: "research the feature",
+      };
+    },
+    closeoutUnit: async () => {
+      // Simulate snapshotUnitMetrics — unit made some progress
+      mockLedger.units.push({
+        type: "research-slice",
+        id: "M001/S01",
+        startedAt: s.currentUnit?.startedAt ?? Date.now(),
+        toolCalls: 3,
+        assistantMessages: 2,
+        tokens: { input: 500, output: 300, total: 800, cacheRead: 0, cacheWrite: 0 },
+        cost: 0.25,
+      });
+    },
+    getLedger: () => mockLedger,
+    postUnitPostVerification: async () => {
+      deps.callLog.push("postUnitPostVerification");
+      s.active = false;
+      return "continue" as const;
+    },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+
+  // Resolve as cancelled (non-transient) — but the unit made progress
+  await new Promise((r) => setTimeout(r, 50));
+  resolveAgentEndCancelled({
+    message: "Provider error: connection reset.",
+    category: "provider",
+    isTransient: false,
+  });
+
+  await loopPromise;
+
+  // Should NOT have the blocker placeholder notification
+  const blockerNotification = notifications.find(
+    (n) => n.includes("blocker placeholder"),
+  );
+  assert.equal(
+    blockerNotification,
+    undefined,
+    "should NOT write blocker placeholder when cancelled unit has tool calls > 0",
+  );
+});
