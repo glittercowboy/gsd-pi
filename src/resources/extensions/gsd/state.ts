@@ -64,6 +64,7 @@ import {
   updateTaskStatus,
   getPendingGateCountForTurn,
   autoHealSketchFlags,
+  _getAdapter,
   type MilestoneRow,
   type SliceRow,
   type TaskRow,
@@ -211,6 +212,74 @@ let _telemetry = { dbDeriveCount: 0, markdownDeriveCount: 0 };
 export function getDeriveTelemetry() { return { ..._telemetry }; }
 export function resetDeriveTelemetry() { _telemetry = { dbDeriveCount: 0, markdownDeriveCount: 0 }; }
 
+const RECENT_DECISION_LIMIT = 5;
+
+type RecentDecisionRow = {
+  id: string;
+  decision: string;
+  choice: string;
+};
+
+function formatRecentDecision(row: RecentDecisionRow): string {
+  const choice = row.choice.trim();
+  return choice ? `${row.id}: ${row.decision.trim()} - ${choice}` : `${row.id}: ${row.decision.trim()}`;
+}
+
+function parseRecentDecisionRows(content: string): RecentDecisionRow[] {
+  const rows: RecentDecisionRow[] = [];
+
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("|")) continue;
+    if (/^\|[\s-|]+\|$/.test(trimmed)) continue;
+
+    const cells = trimmed.split("|").map((cell) => cell.trim());
+    if (cells[0] === "") cells.shift();
+    if (cells[cells.length - 1] === "") cells.pop();
+    if (cells.length < 5) continue;
+
+    const id = cells[0];
+    if (!/^D\d+$/i.test(id)) continue;
+
+    rows.push({
+      id,
+      decision: cells[3] ?? "",
+      choice: cells[4] ?? "",
+    });
+  }
+
+  return rows;
+}
+
+function loadRecentDecisionsFromDb(): string[] {
+  if (!isDbAvailable()) return [];
+  const adapter = _getAdapter();
+  if (!adapter) return [];
+
+  try {
+    const rows = adapter
+      .prepare("SELECT id, decision, choice FROM decisions WHERE superseded_by IS NULL ORDER BY seq DESC LIMIT ?")
+      .all(RECENT_DECISION_LIMIT) as RecentDecisionRow[];
+    return rows.map(formatRecentDecision);
+  } catch {
+    return [];
+  }
+}
+
+function loadRecentDecisions(basePath: string): string[] {
+  const dbDecisions = loadRecentDecisionsFromDb();
+  if (dbDecisions.length > 0) return dbDecisions;
+
+  try {
+    const decisionsPath = resolveGsdRootFile(basePath, "DECISIONS");
+    if (!existsSync(decisionsPath)) return [];
+    const rows = parseRecentDecisionRows(readFileSync(decisionsPath, "utf8"));
+    return rows.slice(-RECENT_DECISION_LIMIT).reverse().map(formatRecentDecision);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Invalidate the deriveState() cache. Call this whenever planning files on disk
  * may have changed (unit completion, merges, file writes).
@@ -338,6 +407,7 @@ export async function deriveState(basePath: string): Promise<GSDState> {
   }
 
   stopTimer({ phase: result.phase, milestone: result.activeMilestone?.id });
+  result.recentDecisions = loadRecentDecisions(basePath);
   debugCount("deriveStateCalls");
   _stateCache = { basePath, result, timestamp: Date.now() };
   return result;

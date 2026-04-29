@@ -56,6 +56,10 @@ function writeRequirements(base: string, content: string): void {
   writeFileSync(join(base, '.gsd', 'REQUIREMENTS.md'), content);
 }
 
+function writeDecisions(base: string, content: string): void {
+  writeFileSync(join(base, '.gsd', 'DECISIONS.md'), content);
+}
+
 function cleanup(base: string): void {
   rmSync(base, { recursive: true, force: true });
 }
@@ -79,6 +83,28 @@ describe('derive-state', async () => {
       assert.deepStrictEqual(state.registry, [], 'registry is empty');
       assert.deepStrictEqual(state.progress?.milestones?.done, 0, 'milestones done = 0');
       assert.deepStrictEqual(state.progress?.milestones?.total, 0, 'milestones total = 0');
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  test('loads recent decisions from DECISIONS.md into derived state', async () => {
+    const base = createFixtureBase();
+    try {
+      writeDecisions(base, `# Decisions
+
+| # | When | Scope | Decision | Choice | Rationale | Revisable? | Made By |
+|---|---|---|---|---|---|---|---|
+| D001 | M001/S01 | architecture | Keep state projection canonical | Use deriveState output | Shared source of truth | yes | agent |
+| D002 | M001/S02 | workflow | Keep PRs standalone | Avoid dependency chains | Reviewer clarity | yes | collaborative |
+`);
+
+      const state = await deriveState(base);
+
+      assert.deepStrictEqual(state.recentDecisions, [
+        "D002: Keep PRs standalone - Avoid dependency chains",
+        "D001: Keep state projection canonical - Use deriveState output",
+      ]);
     } finally {
       cleanup(base);
     }
