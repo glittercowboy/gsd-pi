@@ -521,8 +521,8 @@ const TEST_ENDPOINTS: Record<string, { url: string; method?: string; headers?: (
 export async function testProviderKey(
   provider: ProviderInfo,
   auth: AuthStorage,
+  baseUrlOverride?: string,
 ): Promise<TestResult> {
-  // Get the API key
   const key = await auth.getApiKey(provider.id);
   if (!key || key === "<authenticated>") {
     if (!key) {
@@ -536,10 +536,12 @@ export async function testProviderKey(
     return { provider, status: "skipped", message: "no test endpoint configured" };
   }
 
-  // Special handling for Telegram (token in URL)
-  let url = endpoint.url;
+  let url: string;
   if (provider.id === "telegram_bot") {
-    url = `https://api.telegram.org/bot${key}/getMe`;
+    const base = baseUrlOverride ?? "https://api.telegram.org";
+    url = `${base}/bot${key}/getMe`;
+  } else {
+    url = baseUrlOverride ?? endpoint.url;
   }
 
   // Special handling for Tavily (API key in body)

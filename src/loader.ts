@@ -177,9 +177,14 @@ process.env.GSD_BUNDLED_EXTENSION_PATHS = serializeBundledExtensionPaths(discove
 // pi-coding-agent's cli.ts sets this, but GSD bypasses that entry point — so we
 // must set it here before any SDK clients are created.
 // Lazy-load undici (~200ms) only when proxy env vars are actually set.
-if (process.env.HTTP_PROXY || process.env.HTTPS_PROXY || process.env.http_proxy || process.env.https_proxy) {
+const hasProxy = process.env.HTTP_PROXY || process.env.HTTPS_PROXY ||
+                 process.env.http_proxy || process.env.https_proxy
+if (hasProxy) {
   const { EnvHttpProxyAgent, setGlobalDispatcher } = await import('undici')
-  setGlobalDispatcher(new EnvHttpProxyAgent())
+  setGlobalDispatcher(new EnvHttpProxyAgent({ connect: { autoSelectFamily: true } }))
+} else {
+  const { Agent, setGlobalDispatcher } = await import('undici')
+  setGlobalDispatcher(new Agent({ connect: { autoSelectFamily: true } }))
 }
 
 // Ensure workspace packages are linked (or copied on Windows) before importing

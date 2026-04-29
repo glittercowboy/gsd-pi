@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
 import { AuthStorage } from "@gsd/pi-coding-agent";
 import {
   maskKey,
@@ -11,8 +12,26 @@ import {
   formatTestResults,
   runKeyDoctor,
   formatDoctorFindings,
+  testProviderKey,
   PROVIDER_REGISTRY,
 } from "../key-manager.ts";
+
+function startMockServer(statusCode: number, body = "{}", onRequest?: (req: http.IncomingMessage) => void): Promise<{ url: string; close: () => Promise<void> }> {
+  return new Promise((resolve) => {
+    const server = http.createServer((req, res) => {
+      onRequest?.(req);
+      res.writeHead(statusCode, { "Content-Type": "application/json" });
+      res.end(body);
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const addr = server.address() as { port: number };
+      resolve({
+        url: `http://127.0.0.1:${addr.port}`,
+        close: () => new Promise<void>((r) => server.close(() => r())),
+      });
+    });
+  });
+}
 
 function makeAuth(data: Record<string, any> = {}): AuthStorage {
   return AuthStorage.inMemory(data);
@@ -498,4 +517,92 @@ test("getAllKeyStatuses detects DASHSCOPE_API_KEY for alibaba-dashscope (failure
   } finally {
     if (saved !== undefined) process.env.DASHSCOPE_API_KEY = saved;
   }
+});
+
+// ─── testProviderKey ─────────────────────────────────────────────────────────────
+
+test("testProviderKey returns skipped when key is not configured", async () => {
+  const provider = findProvider("anthropic")!;
+  const auth = makeAuth();
+  const result = await testProviderKey(provider, auth);
+  assert.equal(result.status, "skipped");
+  assert.equal(result.message, "not configured");
+});
+
+test("testProviderKey returns skipped when provider has no test endpoint", async () => {
+  const provider = { id: "unknown-provider", label: "Test", category: "tool" as const };
+  const auth = makeAuth({ "unknown-provider": { type: "api_key", key: "some-key" } });
+  const result = await testProviderKey(provider, auth);
+  assert.equal(result.status, "skipped");
+  assert.equal(result.message, "no test endpoint configured");
+});
+
+test("testProviderKey returns skipped for OAuth credential chain providers", async () => {
+  const provider = findProvider("github-copilot")!;
+  const auth = makeAuth({ "github-copilot": { type: "api_key", key: "<authenticated>" } });
+  const result = await testProviderKey(provider, auth);
+  assert.equal(result.status, "skipped");
+  assert.equal(result.message, "uses credential chain (not testable)");
+});
+
+test("testProviderKey HTTP response mapping via local server: 200 → valid", async (t) => {
+  const mock = await startMockServer(200, "{}");
+  t.after(() => mock.close());
+  const provider = findProvider("brave")!;
+  const auth = makeAuth({ brave: { type: "api_key", key: "test-brave-key" } });
+  const result = await testProviderKey(provider, auth, mock.url);
+  assert.equal(result.status, "valid");
+  assert.ok(result.latencyMs !== undefined);
+});
+
+test("testProviderKey HTTP response mapping via local server: 401 → invalid", async (t) => {
+  const mock = await startMockServer(401);
+  t.after(() => mock.close());
+  const provider = findProvider("brave")!;
+  const auth = makeAuth({ brave: { type: "api_key", key: "test-brave-key" } });
+  const result = await testProviderKey(provider, auth, mock.url);
+  assert.equal(result.status, "invalid");
+  assert.ok(result.message.includes("401"));
+});
+
+test("testProviderKey HTTP response mapping via local server: 403 → invalid", async (t) => {
+  const mock = await startMockServer(403);
+  t.after(() => mock.close());
+  const provider = findProvider("brave")!;
+  const auth = makeAuth({ brave: { type: "api_key", key: "test-brave-key" } });
+  const result = await testProviderKey(provider, auth, mock.url);
+  assert.equal(result.status, "invalid");
+  assert.ok(result.message.includes("403"));
+});
+
+test("testProviderKey HTTP response mapping via local server: 429 → rate_limited", async (t) => {
+  const mock = await startMockServer(429);
+  t.after(() => mock.close());
+  const provider = findProvider("brave")!;
+  const auth = makeAuth({ brave: { type: "api_key", key: "test-brave-key" } });
+  const result = await testProviderKey(provider, auth, mock.url);
+  assert.equal(result.status, "rate_limited");
+});
+
+test("testProviderKey HTTP response mapping via local server: 500 → error with HTTP status", async (t) => {
+  const mock = await startMockServer(500);
+  t.after(() => mock.close());
+  const provider = findProvider("brave")!;
+  const auth = makeAuth({ brave: { type: "api_key", key: "test-brave-key" } });
+  const result = await testProviderKey(provider, auth, mock.url);
+  assert.equal(result.status, "error");
+  assert.ok(result.message.includes("500"));
+});
+
+test("testProviderKey telegram_bot embeds token in URL path not header", async (t) => {
+  let receivedPath = "";
+  const mock = await startMockServer(200, '{"ok":true,"result":{"id":1}}', (req) => {
+    receivedPath = req.url ?? "";
+  });
+  t.after(() => mock.close());
+  const provider = findProvider("telegram_bot")!;
+  const key = "123456789:AABBCCtest";
+  const auth = makeAuth({ telegram_bot: { type: "api_key", key } });
+  await testProviderKey(provider, auth, mock.url);
+  assert.ok(receivedPath.includes(`/bot${key}/getMe`), `Expected path to contain /bot${key}/getMe, got: ${receivedPath}`);
 });
