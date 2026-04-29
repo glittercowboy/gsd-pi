@@ -151,12 +151,13 @@ export const KNOWN_PREFERENCE_KEYS = new Set<string>([
   "language",
   "context_window_override",
   "context_mode",
+  "thinking_policy",
 ]);
 
 /** Canonical list of all dispatch unit types. */
 export const KNOWN_UNIT_TYPES = [
   "research-milestone", "plan-milestone", "research-slice", "plan-slice", "refine-slice",
-  "execute-task", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
+  "execute-task", "execute-task-simple", "reactive-execute", "gate-evaluate", "complete-slice", "replan-slice", "reassess-roadmap",
   "run-uat", "complete-milestone", "validate-milestone", "rewrite-docs",
   "discuss-milestone", "discuss-slice", "worktree-merge",
 ] as const;
@@ -288,6 +289,49 @@ export interface ExperimentalPreferences {
   rtk?: boolean;
 }
 
+/**
+ * Thinking levels supported by Pi SDK. Mirrors the enum in
+ * `packages/pi-coding-agent/src/core/settings-manager.ts` (`defaultThinkingLevel`).
+ */
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+/** All valid thinking levels (lowercase, case-sensitive). */
+export const KNOWN_THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const satisfies readonly ThinkingLevel[];
+
+/**
+ * Per-unit-type / per-prefix thinking-level policy. Resolved at dispatch time
+ * by `resolveThinkingLevel` in `thinking-policy.ts`. Resolution order:
+ *   1. `unitTypes[unitType]` — exact match wins.
+ *   2. `prefixes[<longest matching prefix>]` — e.g. `research-slice` matches `research-`.
+ *   3. `default`.
+ *   4. Fallback supplied by caller (typically the live `pi.getThinkingLevel()`).
+ *
+ * A user-driven `/thinking` override (captured separately at auto-mode start)
+ * always wins over the policy.
+ */
+export interface ThinkingPolicyConfig {
+  /** Default thinking level when no prefix or unit-type rule matches. */
+  default?: ThinkingLevel;
+  /**
+   * Map of unit-type prefix (e.g. `research-`) → thinking level. Longest matching
+   * prefix wins. Convention: keys end with `-`; non-conforming keys produce a warning
+   * but are still honoured.
+   */
+  prefixes?: Record<string, ThinkingLevel>;
+  /**
+   * Map of exact unit-type → thinking level. Keys must be in `KNOWN_UNIT_TYPES`;
+   * typos are rejected with a clear error.
+   */
+  unitTypes?: Record<string, ThinkingLevel>;
+}
+
 /** Configuration for the codebase map generator (/gsd codebase). */
 export interface CodebaseMapPreferences {
   /** Additional directory/file patterns to exclude (e.g. ["docs/", "fixtures/"]). Merged with built-in defaults. */
@@ -336,6 +380,13 @@ export interface GSDPreferences {
    */
   context_window_override?: number;
   context_management?: ContextManagementConfig;
+  /**
+   * Per-unit-type and per-prefix thinking-level policy. Lets users dial
+   * thinking off for cheap/low-stakes units (e.g. `execute-task-simple`) and
+   * up for high-leverage planning/discussion units. Resolved at dispatch time.
+   * A user `/thinking` override always beats the policy.
+   */
+  thinking_policy?: ThinkingPolicyConfig;
   /**
    * Tool-output sandboxing via gsd_exec. Keeps sub-session context windows
    * clean by running scripts in a subprocess and only surfacing a short

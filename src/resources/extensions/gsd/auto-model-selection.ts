@@ -20,6 +20,8 @@ import { resolveUokFlags } from "./uok/flags.js";
 import { applyModelPolicyFilter } from "./uok/model-policy.js";
 import { isModelBlocked } from "./blocked-models.js";
 import { getRequiredWorkflowToolsForAutoUnit } from "./workflow-mcp.js";
+import { getEffectiveThinkingLevel } from "./thinking-policy.js";
+import type { ThinkingLevel } from "./thinking-policy.js";
 
 /**
  * Thrown when the model-policy gate rejects every candidate model for a unit
@@ -200,6 +202,18 @@ export async function selectAndApplyModel(
       flatRateCtx: buildFlatRateContext(autoModeStartModel.provider, ctx, prefs),
     };
   }
+
+  // ─── Thinking-policy resolution (per-dispatch) ────────────────────────
+  // `autoModeStartThinkingLevel` is the user's level snapshot at auto start
+  // (incl. any `/thinking` or `--thinking` they applied before bootstrap).
+  // The policy in PREFERENCES.md may override the default-per-unit/prefix,
+  // but unmatched rules fall back to that snapshot — so a user level always
+  // wins when no policy rule applies. Only auto-mode applies the policy
+  // (interactive/guided dispatches use the session level as-is).
+  const effectiveThinkingLevel: ThinkingLevel | null | undefined = isAutoMode
+    ? getEffectiveThinkingLevel(unitType, prefs?.thinking_policy, autoModeStartThinkingLevel)
+    : autoModeStartThinkingLevel ?? null;
+
   const modelConfig = effectiveSessionModelOverride
     ? undefined
     : resolvePreferredModelConfig(unitType, autoModeStartModel, isAutoMode);
@@ -517,7 +531,7 @@ export async function selectAndApplyModel(
       const ok = await pi.setModel(model, { persist: false });
       if (ok) {
         appliedModel = model;
-        reapplyThinkingLevel(pi, autoModeStartThinkingLevel);
+        reapplyThinkingLevel(pi, effectiveThinkingLevel);
 
         // ADR-005: Adjust active tool set for the selected model's provider capabilities.
         // Hard-filter incompatible tools, then let extensions override via adjust_tool_set hook.
@@ -596,12 +610,12 @@ export async function selectAndApplyModel(
             const fallbackOk = await pi.setModel(byId, { persist: false });
             if (fallbackOk) {
               appliedModel = byId;
-              reapplyThinkingLevel(pi, autoModeStartThinkingLevel);
+              reapplyThinkingLevel(pi, effectiveThinkingLevel);
             }
           }
         } else {
           appliedModel = startModel;
-          reapplyThinkingLevel(pi, autoModeStartThinkingLevel);
+          reapplyThinkingLevel(pi, effectiveThinkingLevel);
         }
       }
     }

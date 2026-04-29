@@ -32,8 +32,20 @@ test("hook model override preserves captured thinking level", () => {
   const hookIdx = phasesSrc.indexOf("const hookModelOverride = sidecarItem?.model ?? iterData.hookModelOverride;");
   assert.ok(hookIdx > -1, "phases.ts should include hook model override handling");
   const hookBlock = extractSourceRegion(phasesSrc, "const hookModelOverride = sidecarItem?.model ?? iterData.hookModelOverride;");
+  // After thinking_policy was wired, the hook block routes through
+  // resolveThinkingLevel so the policy-resolved level (or the start snapshot
+  // when no policy is configured) is re-applied — not the raw start level
+  // unconditionally. Both branches still ultimately call pi.setThinkingLevel.
   assert.ok(
-    hookBlock.includes("pi.setThinkingLevel(s.autoModeStartThinkingLevel)"),
-    "hook model override should re-apply captured thinking level after setModel",
+    hookBlock.includes("pi.setThinkingLevel("),
+    "hook model override should re-apply a thinking level after setModel",
+  );
+  assert.ok(
+    hookBlock.includes("s.autoModeStartThinkingLevel"),
+    "hook model override should reference the captured start-level snapshot (as fallback)",
+  );
+  assert.ok(
+    hookBlock.includes("getEffectiveThinkingLevel"),
+    "hook model override should consult thinking_policy via getEffectiveThinkingLevel",
   );
 });

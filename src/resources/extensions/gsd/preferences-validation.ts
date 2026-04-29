@@ -14,9 +14,12 @@ import { normalizeStringArray } from "../shared/format-utils.js";
 
 import {
   KNOWN_PREFERENCE_KEYS,
+  KNOWN_THINKING_LEVELS,
   KNOWN_UNIT_TYPES,
 
   SKILL_ACTIONS,
+  type ThinkingLevel,
+  type ThinkingPolicyConfig,
   type WorkflowMode,
   type GSDPreferences,
   type GSDSkillRule,
@@ -1265,6 +1268,103 @@ export function validatePreferences(preferences: GSDPreferences): {
       validated.discuss_depth = preferences.discuss_depth as GSDPreferences["discuss_depth"];
     } else {
       errors.push(`discuss_depth must be one of: quick, standard, thorough`);
+    }
+  }
+
+  // ─── Thinking Policy ───────────────────────────────────────────────
+  // Per-unit-type and per-prefix thinking-level policy. Resolved at dispatch
+  // time; a user `/thinking` override always beats the policy.
+  if (preferences.thinking_policy !== undefined) {
+    if (
+      typeof preferences.thinking_policy === "object" &&
+      preferences.thinking_policy !== null &&
+      !Array.isArray(preferences.thinking_policy)
+    ) {
+      const tp = preferences.thinking_policy as Record<string, unknown>;
+      const validTp: ThinkingPolicyConfig = {};
+      const validLevels = new Set<string>(KNOWN_THINKING_LEVELS);
+      const knownUnitTypeSet = new Set<string>(KNOWN_UNIT_TYPES);
+
+      // YAML parses unquoted `off` as boolean false. Coerce so that the user
+      // can write `default: off` without quoting (better UX).
+      const coerceLevel = (raw: unknown): ThinkingLevel | undefined => {
+        if (raw === false) return "off";
+        if (typeof raw !== "string") return undefined;
+        return validLevels.has(raw) ? (raw as ThinkingLevel) : undefined;
+      };
+
+      if (tp.default !== undefined) {
+        const lvl = coerceLevel(tp.default);
+        if (lvl) {
+          validTp.default = lvl;
+        } else {
+          errors.push(
+            `thinking_policy.default must be one of: ${KNOWN_THINKING_LEVELS.join(", ")}`,
+          );
+        }
+      }
+
+      if (tp.prefixes !== undefined) {
+        if (typeof tp.prefixes === "object" && tp.prefixes !== null && !Array.isArray(tp.prefixes)) {
+          const out: Record<string, ThinkingLevel> = {};
+          for (const [key, raw] of Object.entries(tp.prefixes as Record<string, unknown>)) {
+            const lvl = coerceLevel(raw);
+            if (!lvl) {
+              errors.push(
+                `thinking_policy.prefixes["${key}"] must be one of: ${KNOWN_THINKING_LEVELS.join(", ")}`,
+              );
+              continue;
+            }
+            if (!key.endsWith("-")) {
+              warnings.push(
+                `thinking_policy.prefixes["${key}"] does not end with "-" — convention is to terminate prefixes with a dash (e.g. "research-")`,
+              );
+            }
+            out[key] = lvl;
+          }
+          if (Object.keys(out).length > 0) validTp.prefixes = out;
+        } else {
+          errors.push("thinking_policy.prefixes must be an object");
+        }
+      }
+
+      if (tp.unitTypes !== undefined) {
+        if (typeof tp.unitTypes === "object" && tp.unitTypes !== null && !Array.isArray(tp.unitTypes)) {
+          const out: Record<string, ThinkingLevel> = {};
+          for (const [key, raw] of Object.entries(tp.unitTypes as Record<string, unknown>)) {
+            if (!knownUnitTypeSet.has(key)) {
+              errors.push(
+                `thinking_policy.unitTypes["${key}"] is not a known unit type. Valid: ${KNOWN_UNIT_TYPES.join(", ")}`,
+              );
+              continue;
+            }
+            const lvl = coerceLevel(raw);
+            if (!lvl) {
+              errors.push(
+                `thinking_policy.unitTypes["${key}"] must be one of: ${KNOWN_THINKING_LEVELS.join(", ")}`,
+              );
+              continue;
+            }
+            out[key] = lvl;
+          }
+          if (Object.keys(out).length > 0) validTp.unitTypes = out;
+        } else {
+          errors.push("thinking_policy.unitTypes must be an object");
+        }
+      }
+
+      const knownTpKeys = new Set(["default", "prefixes", "unitTypes"]);
+      for (const key of Object.keys(tp)) {
+        if (!knownTpKeys.has(key)) {
+          warnings.push(`unknown thinking_policy key "${key}" — ignored`);
+        }
+      }
+
+      if (Object.keys(validTp).length > 0) {
+        validated.thinking_policy = validTp;
+      }
+    } else {
+      errors.push("thinking_policy must be a mapping (not an array or scalar)");
     }
   }
 
