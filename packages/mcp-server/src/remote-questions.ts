@@ -121,7 +121,13 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
  *     child: value
  *   ---
  * Sufficient for the flat remote_questions config block.
+ *
+ * @internal — exported for testing only
  */
+export function _parseSimpleFrontmatter(content: string): Record<string, unknown> {
+  return parseSimpleFrontmatter(content);
+}
+
 function parseSimpleFrontmatter(content: string): Record<string, unknown> {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/m);
   if (!match) return {};
@@ -163,10 +169,24 @@ function parseSimpleFrontmatter(content: string): Record<string, unknown> {
 }
 
 function parseSimpleScalar(raw: string): string | number | boolean | null {
-  const s = raw.replace(/^["']|["']$/g, '').trim();
+  const trimmed = raw.trim();
+  const quoted =
+    (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+    (trimmed.startsWith("'") && trimmed.endsWith("'"));
+  const s = quoted ? trimmed.slice(1, -1) : trimmed;
+  // Quoted scalars are always strings — preserves Discord/Telegram snowflake IDs
+  // and any other identifier that exceeds Number.MAX_SAFE_INTEGER.
+  if (quoted) return s;
   if (s === 'true') return true;
   if (s === 'false') return false;
   if (s === 'null' || s === '~') return null;
+  // Unquoted integers larger than 2^53-1 lose precision through Number();
+  // keep them as strings so snowflake-shaped bare numerics still round-trip.
+  if (s !== '' && /^-?\d+$/.test(s)) {
+    const n = Number(s);
+    if (!Number.isSafeInteger(n)) return s;
+    return n;
+  }
   const n = Number(s);
   if (s !== '' && !Number.isNaN(n)) return n;
   return s;

@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import {
   isRemoteConfigured,
   tryRemoteQuestions,
+  _parseSimpleFrontmatter,
   type RemoteQuestion,
 } from './remote-questions.js';
 
@@ -290,5 +291,61 @@ describe('remote-questions YAML frontmatter parsing (via isRemoteConfigured)', (
     makePrefsFile(tmpDir, 'remote_questions:\n  channel: discord\n  channel_id: "123456789012345678"\n');
     // No --- fences — not recognized as frontmatter
     assert.equal(isRemoteConfigured(), false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// _parseSimpleFrontmatter — scalar parsing contract
+// ---------------------------------------------------------------------------
+// Regression coverage for snowflake-precision loss: bare numerics or quoted
+// strings whose digits exceed Number.MAX_SAFE_INTEGER (2^53 - 1) must
+// round-trip as strings, not coerced through Number(). Discord, Telegram, and
+// Slack channel/chat IDs all routinely exceed that range.
+
+describe('_parseSimpleFrontmatter — scalar precision', () => {
+  it('preserves a quoted snowflake-shaped channel_id as a string', () => {
+    const content = '---\nremote_questions:\n  channel: discord\n  channel_id: "1234567890123456789"\n---\n';
+    const parsed = _parseSimpleFrontmatter(content);
+    const rq = parsed['remote_questions'] as Record<string, unknown>;
+    assert.equal(rq['channel_id'], '1234567890123456789');
+    assert.equal(typeof rq['channel_id'], 'string');
+  });
+
+  it('preserves a bare numeric channel_id larger than MAX_SAFE_INTEGER as a string', () => {
+    const content = '---\nremote_questions:\n  channel: discord\n  channel_id: 1234567890123456789\n---\n';
+    const parsed = _parseSimpleFrontmatter(content);
+    const rq = parsed['remote_questions'] as Record<string, unknown>;
+    assert.equal(rq['channel_id'], '1234567890123456789');
+    assert.equal(typeof rq['channel_id'], 'string');
+  });
+
+  it('still parses small bare integers as numbers', () => {
+    const content = '---\nremote_questions:\n  channel: discord\n  timeout_minutes: 10\n  poll_interval_seconds: 3\n---\n';
+    const parsed = _parseSimpleFrontmatter(content);
+    const rq = parsed['remote_questions'] as Record<string, unknown>;
+    assert.equal(rq['timeout_minutes'], 10);
+    assert.equal(typeof rq['timeout_minutes'], 'number');
+    assert.equal(rq['poll_interval_seconds'], 3);
+    assert.equal(typeof rq['poll_interval_seconds'], 'number');
+  });
+
+  it('parses booleans and nulls unchanged', () => {
+    const content = '---\nflags:\n  enabled: true\n  disabled: false\n  cleared: null\n  also_cleared: ~\n---\n';
+    const parsed = _parseSimpleFrontmatter(content);
+    const flags = parsed['flags'] as Record<string, unknown>;
+    assert.equal(flags['enabled'], true);
+    assert.equal(flags['disabled'], false);
+    assert.equal(flags['cleared'], null);
+    assert.equal(flags['also_cleared'], null);
+  });
+
+  it('treats quoted "true"/"false"/"null" as strings, not booleans', () => {
+    const content = '---\nlabels:\n  one: "true"\n  two: "null"\n---\n';
+    const parsed = _parseSimpleFrontmatter(content);
+    const labels = parsed['labels'] as Record<string, unknown>;
+    assert.equal(labels['one'], 'true');
+    assert.equal(typeof labels['one'], 'string');
+    assert.equal(labels['two'], 'null');
+    assert.equal(typeof labels['two'], 'string');
   });
 });
