@@ -18,6 +18,7 @@ import {
   type AgentEndEvent,
   type LoopDeps,
 } from "../auto-loop.js";
+import { resolveIterationEndReason } from "../auto/loop.js";
 import { ModelPolicyDispatchBlockedError } from "../auto-model-selection.js";
 import type { SessionLockStatus } from "../session-lock.js";
 
@@ -192,18 +193,41 @@ test("double resolveAgentEnd only resolves once (second is dropped)", async () =
   assert.deepEqual(result.event, event1);
 });
 
-test("runUnit returns cancelled when session creation fails", async () => {
+test("runUnit returns cancelled with non-transient session-failed context for synchronous non-callable newSession errors", async () => {
   _resetPendingResolve();
 
   const ctx = makeMockCtx();
   const pi = makeMockPi();
-  const s = makeMockSession({ newSessionThrows: "connection refused" });
+  const s = makeMockSession();
+  s.cmdCtx.newSession = undefined as any;
 
   const result = await runUnit(ctx, pi, s, "task", "T01", "prompt");
 
   assert.equal(result.status, "cancelled");
   assert.equal(result.event, undefined);
+  assert.equal(result.errorContext?.category, "session-failed");
+  assert.equal(result.errorContext?.isTransient, false, "structural session errors should not be treated as transient");
+  assert.equal(
+    isSessionSwitchInFlight(),
+    false,
+    "session-switch guard should be cleared after synchronous newSession failure",
+  );
   // sendMessage should NOT have been called
+  assert.equal(pi.calls.length, 0);
+});
+
+test("runUnit returns cancelled with transient session-failed context for network newSession errors", async () => {
+  _resetPendingResolve();
+
+  const ctx = makeMockCtx();
+  const pi = makeMockPi();
+  const s = makeMockSession({ newSessionThrows: "fetch failed" });
+
+  const result = await runUnit(ctx, pi, s, "task", "T01", "prompt");
+
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.errorContext?.category, "session-failed");
+  assert.equal(result.errorContext?.isTransient, true, "network session errors should be marked transient");
   assert.equal(pi.calls.length, 0);
 });
 
@@ -1006,6 +1030,75 @@ test("autoLoop calls deriveState → resolveDispatch → runUnit in sequence", a
   assert.ok(
     postVerIdx > verIdx,
     "postUnitPostVerification should come after verification",
+  );
+});
+
+test("autoLoop emits iteration-end when cancelled unit execution breaks the loop", async () => {
+  _resetPendingResolve();
+
+  const events: any[] = [];
+  const ctx = makeMockCtx();
+  ctx.ui.setStatus = () => {};
+  ctx.sessionManager = { getSessionFile: () => "/tmp/session.json" };
+  const pi = makeMockPi();
+  const s = makeLoopSession();
+
+  let deps: ReturnType<typeof makeMockDeps>;
+  deps = makeMockDeps({
+    emitJournalEvent: (entry: any) => {
+      events.push(entry);
+    },
+    pauseAuto: async () => {
+      deps.callLog.push("pauseAuto");
+    },
+  });
+
+  const loopPromise = autoLoop(ctx, pi, s, deps);
+
+  // Wait for runUnit to arm the pending resolver.
+  await new Promise((r) => setTimeout(r, 50));
+
+  resolveAgentEndCancelled({
+    message: "Session creation timed out",
+    category: "timeout",
+    isTransient: true,
+  });
+
+  await loopPromise;
+
+  const startEvents = events.filter((e) => e.eventType === "iteration-start");
+  const endEvents = events.filter((e) => e.eventType === "iteration-end");
+
+  assert.equal(startEvents.length, 1, "should emit one iteration-start");
+  assert.equal(endEvents.length, 1, "should emit one iteration-end even when unit execution breaks");
+  assert.equal(
+    endEvents[0].data?.reason,
+    "session-timeout",
+    "iteration-end reason should preserve the runUnitPhase break reason",
+  );
+  assert.ok(
+    deps.callLog.includes("pauseAuto"),
+    "timeout cancellation path should pause auto-mode",
+  );
+});
+
+test("resolveIterationEndReason falls back when extra.reason is missing or not a string", () => {
+  assert.equal(resolveIterationEndReason("guards-break"), "guards-break");
+  assert.equal(
+    resolveIterationEndReason("guards-break", { reason: undefined }),
+    "guards-break",
+  );
+  assert.equal(
+    resolveIterationEndReason("guards-break", { reason: null }),
+    "guards-break",
+  );
+  assert.equal(
+    resolveIterationEndReason("guards-break", { reason: 123 }),
+    "guards-break",
+  );
+  assert.equal(
+    resolveIterationEndReason("guards-break", { reason: "dispatch-break" }),
+    "dispatch-break",
   );
 });
 

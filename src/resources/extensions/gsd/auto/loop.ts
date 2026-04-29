@@ -171,6 +171,13 @@ function checkMemoryPressure(): { pressured: boolean; heapMB: number; limitMB: n
   return { pressured: pct > MEMORY_PRESSURE_THRESHOLD, heapMB, limitMB, pct };
 }
 
+export function resolveIterationEndReason(
+  fallbackReason: string,
+  extra: Record<string, unknown> = {},
+): string {
+  return typeof extra.reason === "string" ? extra.reason : fallbackReason;
+}
+
 function resolveDispatchNodeKind(
   unitType: string,
   sidecarItem?: SidecarItem,
@@ -411,6 +418,16 @@ export async function autoLoop(
 
       const ic: IterationContext = { ctx, pi, s, deps, prefs, iteration, flowId, nextSeq };
       deps.emitJournalEvent({ ts: new Date().toISOString(), flowId, seq: nextSeq(), eventType: "iteration-start", data: { iteration } });
+      const emitIterationEnd = (reason: string, extra: Record<string, unknown> = {}) => {
+        const resolvedReason = resolveIterationEndReason(reason, extra);
+        deps.emitJournalEvent({
+          ts: new Date().toISOString(),
+          flowId,
+          seq: nextSeq(),
+          eventType: "iteration-end",
+          data: { iteration, ...extra, reason: resolvedReason },
+        });
+      };
       let iterData: IterationData;
 
       // ── Custom engine path ──────────────────────────────────────────────
@@ -431,6 +448,7 @@ export async function autoLoop(
 
         const engineState = await engine.deriveState(s.basePath);
         if (engineState.isComplete) {
+          emitIterationEnd("custom-engine-complete");
           await deps.stopAuto(ctx, pi, "Workflow complete");
           break;
         }
@@ -439,6 +457,7 @@ export async function autoLoop(
         const dispatch = await engine.resolveDispatch(engineState, { basePath: s.basePath });
 
         if (dispatch.action === "stop") {
+          emitIterationEnd("custom-engine-dispatch-stop", { reason: dispatch.reason ?? "Engine stopped" });
           await deps.stopAuto(ctx, pi, dispatch.reason ?? "Engine stopped");
           break;
         }
@@ -475,7 +494,8 @@ export async function autoLoop(
           unitId: iterData.unitId,
         });
         if (guardsResult.action === "break") {
-          finishTurn("stopped", "manual-attention", "guard-break");
+          emitIterationEnd("custom-engine-guards-break", { reason: guardsResult.reason });
+          finishTurn("stopped", "manual-attention", guardsResult.reason ?? "guard-break");
           break;
         }
 
@@ -496,7 +516,8 @@ export async function autoLoop(
           unitId: iterData.unitId,
         });
         if (unitPhaseResult.action === "break") {
-          finishTurn("stopped", "execution", "unit-break");
+          emitIterationEnd("custom-engine-unit-break", { reason: unitPhaseResult.reason });
+          finishTurn("stopped", "execution", unitPhaseResult.reason ?? "unit-break");
           break;
         }
 
@@ -504,6 +525,7 @@ export async function autoLoop(
         debugLog("autoLoop", { phase: "custom-engine-verify", iteration, unitId: iterData.unitId });
         const verifyResult = await policy.verify(iterData.unitType, iterData.unitId, { basePath: s.basePath });
         if (verifyResult === "pause") {
+          emitIterationEnd("custom-engine-verify-pause");
           await deps.pauseAuto(ctx, pi);
           deps.uokObserver?.onPhaseResult("custom-engine", "pause", {
             unitType: iterData.unitType,
@@ -615,7 +637,8 @@ export async function autoLoop(
         const preDispatchResult = await runPreDispatch(ic, loopState);
         deps.uokObserver?.onPhaseResult("pre-dispatch", preDispatchResult.action);
         if (preDispatchResult.action === "break") {
-          finishTurn("stopped", "manual-attention", "pre-dispatch-break");
+          emitIterationEnd("pre-dispatch-break", { reason: preDispatchResult.reason });
+          finishTurn("stopped", "manual-attention", preDispatchResult.reason ?? "pre-dispatch-break");
           break;
         }
         if (preDispatchResult.action === "continue") {
@@ -629,7 +652,8 @@ export async function autoLoop(
         const guardsResult = await runGuards(ic, preData.mid);
         deps.uokObserver?.onPhaseResult("guard", guardsResult.action);
         if (guardsResult.action === "break") {
-          finishTurn("stopped", "manual-attention", "guard-break");
+          emitIterationEnd("guards-break", { reason: guardsResult.reason });
+          finishTurn("stopped", "manual-attention", guardsResult.reason ?? "guard-break");
           break;
         }
 
@@ -637,7 +661,8 @@ export async function autoLoop(
         const dispatchResult = await runDispatch(ic, preData, loopState);
         deps.uokObserver?.onPhaseResult("dispatch", dispatchResult.action);
         if (dispatchResult.action === "break") {
-          finishTurn("stopped", "manual-attention", "dispatch-break");
+          emitIterationEnd("dispatch-break", { reason: dispatchResult.reason });
+          finishTurn("stopped", "manual-attention", dispatchResult.reason ?? "dispatch-break");
           break;
         }
         if (dispatchResult.action === "continue") {
@@ -687,7 +712,8 @@ export async function autoLoop(
         unitId: iterData.unitId,
       });
       if (unitPhaseResult.action === "break") {
-        finishTurn("stopped", "execution", "unit-break");
+        emitIterationEnd("unit-break", { reason: unitPhaseResult.reason });
+        finishTurn("stopped", "execution", unitPhaseResult.reason ?? "unit-break");
         break;
       }
 
@@ -699,10 +725,11 @@ export async function autoLoop(
         unitId: iterData.unitId,
       });
       if (finalizeResult.action === "break") {
+        emitIterationEnd("finalize-break", { reason: finalizeResult.reason });
         const finalizeFailureClass = finalizeResult.reason === "git-closeout-failure"
           ? "git"
           : "closeout";
-        finishTurn("stopped", finalizeFailureClass, "finalize-break");
+        finishTurn("stopped", finalizeFailureClass, finalizeResult.reason ?? "finalize-break");
         break;
       }
       if (finalizeResult.action === "continue") {

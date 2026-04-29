@@ -65,6 +65,44 @@ export function resolveAgentEnd(event: AgentEndEvent): void {
   }
 }
 
+/**
+ * Cancel the current unit's pending agent_end wait without treating the turn
+ * like a successful completion.
+ *
+ * Contract:
+ * - Safe to call only from explicit pause paths while an auto unit may be
+ *   awaiting agent_end, currently abort handling and provider-error pause.
+ * - Resolves at most the one in-flight unit promise; it does not mutate
+ *   AutoSession state, release locks, close unit records, or persist pause
+ *   metadata. Callers must still run pauseAuto() or an equivalent owner.
+ * - Safe when no unit is pending: logs a debug no-op and returns.
+ * - Ignored during session switches so a late provider/abort signal cannot
+ *   cancel the next unit's promise.
+ */
+export function cancelPendingUnit(reason: "aborted" | "provider-error"): void {
+  if (_sessionSwitchInFlight) {
+    debugLog("cancelPendingUnit", { status: "ignored-during-switch", reason });
+    return;
+  }
+  if (_currentResolve) {
+    debugLog("cancelPendingUnit", { status: "resolving-cancelled", reason });
+    const r = _currentResolve;
+    _currentResolve = null;
+    r({
+      status: "cancelled",
+      errorContext: {
+        message: reason === "aborted" ? "Agent aborted during unit execution" : "Provider error paused auto-mode",
+        category: reason === "aborted" ? "aborted" : "provider",
+      },
+    });
+  } else {
+    debugLog("cancelPendingUnit", {
+      status: "no-pending-resolve",
+      reason,
+    });
+  }
+}
+
 export function isSessionSwitchInFlight(): boolean {
   return _sessionSwitchInFlight;
 }

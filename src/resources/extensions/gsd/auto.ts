@@ -220,6 +220,14 @@ import { initHealthWidget } from "./health-widget.js";
 import { runLegacyAutoLoop, runUokKernelLoop, resolveAgentEnd, resolveAgentEndCancelled, _resetPendingResolve, isSessionSwitchInFlight, type LoopDeps, type ErrorContext } from "./auto-loop.js";
 import { runAutoLoopWithUok } from "./uok/kernel.js";
 import { resolveUokFlags } from "./uok/flags.js";
+import { cleanupPausedMetadataAfterResumeLock } from "./auto/paused-metadata-cleanup.js";
+import {
+  snapshotPausedModelMetadata,
+  restoreModelSnapshotFromPausedMetadata,
+  applyPausedModelSnapshot,
+  backfillMissingPausedModelSnapshot,
+  attemptRestoreOriginalModelForPausedInteraction,
+} from "./auto/paused-model-snapshot.js";
 // Slice-level parallelism (#2340)
 import { getEligibleSlices } from "./slice-parallel-eligibility.js";
 import { startSliceParallel } from "./slice-parallel-orchestrator.js";
@@ -1120,7 +1128,7 @@ export async function stopAuto(
  */
 export async function pauseAuto(
   ctx?: ExtensionContext,
-  _pi?: ExtensionAPI,
+  pi?: ExtensionAPI,
   _errorContext?: ErrorContext,
 ): Promise<void> {
   if (!s.active) return;
@@ -1153,6 +1161,7 @@ export async function pauseAuto(
       milestoneId: s.currentMilestoneId,
       worktreePath: isInAutoWorktree(s.basePath) ? s.basePath : null,
       originalBasePath: s.originalBasePath,
+      basePath: s.originalBasePath || s.basePath,
       stepMode: s.stepMode,
       pausedAt: new Date().toISOString(),
       sessionFile: s.pausedSessionFile,
@@ -1162,6 +1171,7 @@ export async function pauseAuto(
       activeRunDir: s.activeRunDir,
       autoStartTime: s.autoStartTime,
       milestoneLock: s.sessionMilestoneLock ?? undefined,
+      ...snapshotPausedModelMetadata(s),
     };
     const runtimeDir = join(gsdRoot(s.originalBasePath || s.basePath), "runtime");
     mkdirSync(runtimeDir, { recursive: true });
@@ -1204,6 +1214,35 @@ export async function pauseAuto(
   restoreMilestoneLockEnv();
   s.pendingVerificationRetry = null;
   s.verificationRetryCount.clear();
+
+  // Return the interactive session to the user's pre-auto model so the paused
+  // state does not stay stranded on an auto-selected provider/model.
+  const restoreResult = await attemptRestoreOriginalModelForPausedInteraction({
+    originalModelProvider: s.originalModelProvider,
+    originalModelId: s.originalModelId,
+    findModel: ctx?.modelRegistry?.find?.bind(ctx.modelRegistry),
+    setModel: pi
+      ? async (model, options) => pi.setModel(model as Parameters<ExtensionAPI["setModel"]>[0], options)
+      : null,
+  });
+
+  if (restoreResult.status === "set-model-false") {
+    logWarning(
+      "engine",
+      `paused-model restore skipped: setModel returned false for ${s.originalModelProvider}/${s.originalModelId}`,
+      { file: "auto.ts" },
+    );
+  } else if (restoreResult.status === "error") {
+    const err = restoreResult.error;
+    logWarning("engine", `paused-model restore failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+  } else if (restoreResult.status === "restored") {
+    debugLog("paused-model-restore", {
+      status: "restored",
+      provider: s.originalModelProvider,
+      id: s.originalModelId,
+    });
+  }
+
   ctx?.ui.setStatus("gsd-auto", "paused");
   ctx?.ui.setWidget("gsd-progress", undefined);
   if (ctx) initHealthWidget(ctx);
@@ -1452,82 +1491,91 @@ export async function startAuto(
 
   // If resuming from paused state, just re-activate and dispatch next unit.
   // Check persisted paused-session first (#1383) — survives /exit.
+  let pausedMetadataCleanupPath: string | null = null;
   if (!s.paused) {
     try {
       const meta = freshStartAssessment.pausedSession ?? readPausedSessionMetadata(base);
-      const pausedPath = join(gsdRoot(base), "runtime", "paused-session.json");
-      if (meta?.activeEngineId && meta.activeEngineId !== "dev") {
-        // Custom workflow resume — restore engine state
-        s.activeEngineId = meta.activeEngineId;
-        s.activeRunDir = meta.activeRunDir ?? null;
-        s.originalBasePath = meta.originalBasePath || base;
-        s.stepMode = meta.stepMode ?? requestedStepMode;
-        s.autoStartTime = meta.autoStartTime || Date.now();
-        s.sessionMilestoneLock = meta.milestoneLock ?? null;
-        s.paused = true;
-        try { unlinkSync(pausedPath); } catch (e) {
-          if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
-            logWarning("session", `pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" });
-          }
-        }
-        ctx.ui.notify(
-          `Resuming paused custom workflow${meta.activeRunDir ? ` (${meta.activeRunDir})` : ""}.`,
-          "info",
-        );
-      } else if (meta?.milestoneId) {
-        const shouldResumePausedSession =
-          freshStartAssessment.classification === "recoverable"
-          && (
-            freshStartAssessment.hasResumableDiskState
-            || !!freshStartAssessment.recoveryPrompt
-            || !!freshStartAssessment.lock
+      const pausedMetadataBase =
+        meta?.originalBasePath
+        || meta?.basePath
+        || base;
+      const pausedPath = join(gsdRoot(pausedMetadataBase), "runtime", "paused-session.json");
+      if (meta) {
+        const restoredModelSnapshot = restoreModelSnapshotFromPausedMetadata(meta);
+        const applyRestoredModelSnapshot = () => {
+          applyPausedModelSnapshot(s, restoredModelSnapshot);
+        };
+
+        if (meta.activeEngineId && meta.activeEngineId !== "dev") {
+          // Custom workflow resume — restore engine state
+          s.activeEngineId = meta.activeEngineId;
+          s.activeRunDir = meta.activeRunDir ?? null;
+          s.originalBasePath = meta.originalBasePath || base;
+          s.stepMode = meta.stepMode ?? requestedStepMode;
+          s.pausedSessionFile = normalizeSessionFilePath(meta.sessionFile ?? null);
+          s.pausedUnitType = meta.unitType ?? null;
+          s.pausedUnitId = meta.unitId ?? null;
+          s.autoStartTime = meta.autoStartTime || Date.now();
+          s.sessionMilestoneLock = meta.milestoneLock ?? null;
+          s.paused = true;
+          applyRestoredModelSnapshot();
+          pausedMetadataCleanupPath = pausedPath;
+          ctx.ui.notify(
+            `Resuming paused custom workflow${meta.activeRunDir ? ` (${meta.activeRunDir})` : ""}.`,
+            "info",
           );
-        if (shouldResumePausedSession) {
-          // Validate the milestone still exists and isn't already complete (#1664).
-          const mDir = resolveMilestonePath(base, meta.milestoneId);
-          const summaryFile = resolveMilestoneFile(base, meta.milestoneId, "SUMMARY");
-          let summaryIsTerminal = false;
-          if (summaryFile) {
-            try {
-              summaryIsTerminal = classifyMilestoneSummaryContent(readFileSync(summaryFile, "utf-8")) !== "failure";
-            } catch {
-              summaryIsTerminal = false;
-            }
-          }
-          if (!mDir || summaryIsTerminal) {
-            try { unlinkSync(pausedPath); } catch (err) {
-              if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-                logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+        } else if (meta.milestoneId) {
+          const shouldResumePausedSession =
+            freshStartAssessment.classification === "recoverable"
+            && (
+              freshStartAssessment.hasResumableDiskState
+              || !!freshStartAssessment.recoveryPrompt
+              || !!freshStartAssessment.lock
+            );
+          if (shouldResumePausedSession) {
+            // Validate the milestone still exists and isn't already complete (#1664).
+            const mDir = resolveMilestonePath(base, meta.milestoneId);
+            const summaryFile = resolveMilestoneFile(base, meta.milestoneId, "SUMMARY");
+            let summaryIsTerminal = false;
+            if (summaryFile) {
+              try {
+                summaryIsTerminal = classifyMilestoneSummaryContent(readFileSync(summaryFile, "utf-8")) !== "failure";
+              } catch {
+                summaryIsTerminal = false;
               }
             }
-            ctx.ui.notify(
-              `Paused milestone ${meta.milestoneId} is ${!mDir ? "missing" : "already complete"}. Starting fresh.`,
-              "info",
-            );
-          } else {
-            s.currentMilestoneId = meta.milestoneId;
-            s.originalBasePath = meta.originalBasePath || base;
-            s.stepMode = meta.stepMode ?? requestedStepMode;
-            s.pausedSessionFile = normalizeSessionFilePath(meta.sessionFile ?? null);
-            s.pausedUnitType = meta.unitType ?? null;
-            s.pausedUnitId = meta.unitId ?? null;
-            s.autoStartTime = meta.autoStartTime || Date.now();
-            s.sessionMilestoneLock = meta.milestoneLock ?? null;
-            s.paused = true;
+            if (!mDir || summaryIsTerminal) {
+              try { unlinkSync(pausedPath); } catch (err) {
+                if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+                  logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+                }
+              }
+              ctx.ui.notify(
+                `Paused milestone ${meta.milestoneId} is ${!mDir ? "missing" : "already complete"}. Starting fresh.`,
+                "info",
+              );
+            } else {
+              s.currentMilestoneId = meta.milestoneId;
+              s.originalBasePath = meta.originalBasePath || base;
+              s.stepMode = meta.stepMode ?? requestedStepMode;
+              s.pausedSessionFile = normalizeSessionFilePath(meta.sessionFile ?? null);
+              s.pausedUnitType = meta.unitType ?? null;
+              s.pausedUnitId = meta.unitId ?? null;
+              s.autoStartTime = meta.autoStartTime || Date.now();
+              s.sessionMilestoneLock = meta.milestoneLock ?? null;
+              s.paused = true;
+              applyRestoredModelSnapshot();
+              pausedMetadataCleanupPath = pausedPath;
+              ctx.ui.notify(
+                `Resuming paused session for ${meta.milestoneId}${meta.worktreePath && existsSync(meta.worktreePath) ? ` (worktree)` : ""}.`,
+                "info",
+              );
+            }
+          } else if (existsSync(pausedPath)) {
             try { unlinkSync(pausedPath); } catch (e) {
               if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
-                logWarning("session", `pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" });
+                logWarning("session", `stale pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" });
               }
-            }
-            ctx.ui.notify(
-              `Resuming paused session for ${meta.milestoneId}${meta.worktreePath && existsSync(meta.worktreePath) ? ` (worktree)` : ""}.`,
-              "info",
-            );
-          }
-        } else if (existsSync(pausedPath)) {
-          try { unlinkSync(pausedPath); } catch (e) {
-            if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
-              logWarning("session", `stale pause file cleanup failed: ${e instanceof Error ? e.message : String(e)}`, { file: "auto.ts" });
             }
           }
         }
@@ -1585,11 +1633,37 @@ export async function startAuto(
       return;
     }
 
+    // Lock acquired — now safe to delete paused-session metadata.
+    cleanupPausedMetadataAfterResumeLock(
+      true,
+      base,
+      s.originalBasePath,
+      pausedMetadataCleanupPath,
+    );
+    pausedMetadataCleanupPath = null;
+
     s.paused = false;
     s.active = true;
     s.verbose = verboseMode;
     s.stepMode = requestedStepMode;
-    s.cmdCtx = ctx;
+    // Preserve the original cmdCtx (ExtensionCommandContext with newSession)
+    // when resuming from a provider-error pause. The resume callback receives
+    // an ExtensionContext (from the agent_end hook) which lacks newSession —
+    // using it would crash runUnit with "newSession is not a function".
+    // Only override if the new ctx actually has newSession (user-initiated resume).
+    if ("newSession" in ctx && typeof (ctx as any).newSession === "function") {
+      s.cmdCtx = ctx;
+      if (ctx.model) {
+        backfillMissingPausedModelSnapshot(s, {
+          provider: ctx.model.provider,
+          id: ctx.model.id,
+        });
+      }
+    } else if (!s.cmdCtx) {
+      // No saved cmdCtx — this shouldn't happen, but handle gracefully
+      s.cmdCtx = ctx as ExtensionCommandContext;
+    }
+    // else: keep existing s.cmdCtx which has the real newSession
     s.basePath = base;
     // ── Resume worktree: if the paused session was inside a milestone worktree,
     // apply that path as the dispatch basePath immediately (#3723).
@@ -1682,11 +1756,14 @@ export async function startAuto(
     invalidateAllCaches();
 
     if (s.pausedSessionFile) {
-      const recovery = synthesizePausedSessionRecovery(
+      const pausedSessionFile = s.pausedSessionFile;
+      const activityDir = join(gsdRoot(s.basePath), "activity");
+      const recovery = synthesizeCrashRecovery(
         s.basePath,
         s.currentUnit?.type ?? s.pausedUnitType ?? "unknown",
         s.currentUnit?.id ?? s.pausedUnitId ?? "unknown",
-        s.pausedSessionFile,
+        pausedSessionFile,
+        activityDir,
       );
       if (recovery && recovery.trace.toolCallCount > 0) {
         s.pendingCrashRecovery = recovery.prompt;
@@ -1694,6 +1771,11 @@ export async function startAuto(
           `Recovered ${recovery.trace.toolCallCount} tool calls from paused session. Resuming with context.`,
           "info",
         );
+      }
+      try { unlinkSync(pausedSessionFile); } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          logWarning("session", `pause file cleanup failed: ${err instanceof Error ? err.message : String(err)}`, { file: "auto.ts" });
+        }
       }
       s.pausedSessionFile = null;
     }

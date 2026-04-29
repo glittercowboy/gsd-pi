@@ -11,7 +11,7 @@ import { clearPathCache } from "../paths.js";
 import { getAutoDashboardData, getAutoModeStartModel, isAutoActive, pauseAuto, setCurrentDispatchedModelId } from "../auto.js";
 import { getNextFallbackModel, resolveModelWithFallbacksForUnit } from "../preferences.js";
 import { pauseAutoForProviderError } from "../provider-error-pause.js";
-import { isSessionSwitchInFlight, resolveAgentEnd } from "../auto-loop.js";
+import { cancelPendingUnit, isSessionSwitchInFlight, resolveAgentEnd } from "../auto-loop.js";
 import { resolveModelId } from "../auto-model-selection.js";
 import { clearDiscussionFlowState } from "./write-gate.js";
 import { resumeAutoAfterProviderDelay } from "./provider-error-resume.js";
@@ -60,12 +60,15 @@ async function pauseTransientWithBackoff(
   if (!allowAutoResume) {
     ctx.ui.notify(`Transient provider errors persisted after ${MAX_TRANSIENT_AUTO_RESUMES} auto-resume attempts. Pausing for manual review.`, "warning");
   }
-  await pauseAutoForProviderError(ctx.ui, errorDetail, () => pauseAuto(ctx, pi, {
-    message: `Provider error: ${errorDetail}`,
-    category: "provider",
-    isTransient: allowAutoResume,
-    retryAfterMs,
-  }), {
+  await pauseAutoForProviderError(ctx.ui, errorDetail, () => {
+    cancelPendingUnit("provider-error");
+    return pauseAuto(ctx, pi, {
+      message: `Provider error: ${errorDetail}`,
+      category: "provider",
+      isTransient: allowAutoResume,
+      retryAfterMs,
+    });
+  }, {
     isRateLimit,
     isTransient: allowAutoResume,
     retryAfterMs,
@@ -140,7 +143,12 @@ export async function handleAgentEnd(
       return;
     }
 
-    await pauseAuto(ctx, pi);
+    cancelPendingUnit("aborted");
+    await pauseAuto(ctx, pi, {
+      message: "Agent aborted during unit execution",
+      category: "aborted",
+      isTransient: false,
+    });
     return;
   }
   if (lastMsg && "stopReason" in lastMsg && lastMsg.stopReason === "error") {
@@ -359,11 +367,14 @@ export async function handleAgentEnd(
     }
 
     // --- Permanent / unknown: pause indefinitely ---
-    await pauseAutoForProviderError(ctx.ui, errorDetail, () => pauseAuto(ctx, pi, {
-      message: `Provider error: ${errorDetail}`,
-      category: "provider",
-      isTransient: false,
-    }), {
+    await pauseAutoForProviderError(ctx.ui, errorDetail, () => {
+      cancelPendingUnit("provider-error");
+      return pauseAuto(ctx, pi, {
+        message: `Provider error: ${errorDetail}`,
+        category: "provider",
+        isTransient: false,
+      });
+    }, {
       isRateLimit: false,
       isTransient: false,
       retryAfterMs: 0,

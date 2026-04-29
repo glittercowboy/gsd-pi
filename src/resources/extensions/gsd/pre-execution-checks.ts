@@ -497,7 +497,12 @@ export function checkFilePathConsistency(
 /**
  * Detect impossible task ordering: task N reads a file that task N+M creates.
  * This is a fatal error — the plan has an impossible dependency.
- * 
+ *
+ * Important: later expected_output only implies "created later" when the file
+ * does not already exist on disk. Existing source files commonly appear in a
+ * later task's expected_output because that task will modify them, not because
+ * it first creates them.
+ *
  * All paths are normalized before comparison to ensure ./src/a.ts matches src/a.ts.
  */
 export function checkTaskOrdering(

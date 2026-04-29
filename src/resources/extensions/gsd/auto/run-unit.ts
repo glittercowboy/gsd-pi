@@ -22,6 +22,13 @@ import { resolveAutoSupervisorConfig } from "../preferences.js";
 // older runUnit() call cannot clear the guard for a newer one.
 let sessionSwitchGeneration = 0;
 
+const TRANSIENT_SESSION_ERROR_RE =
+  /fetch failed|network|timeout|timed out|etimedout|econnreset|econnrefused|enotfound|eai_again|socket hang up|service unavailable|temporarily unavailable|overloaded|rate.?limit|429|500|502|503|504|terminated|upstream.?connect/i;
+
+function isTransientSessionCreationError(message: string): boolean {
+  return TRANSIENT_SESSION_ERROR_RE.test(message);
+}
+
 /**
  * Execute a single unit: create a new session, send the prompt, and await
  * the agent_end promise. Returns a UnitResult describing what happened.
@@ -94,15 +101,29 @@ export async function runUnit(
     sessionResult = await Promise.race([sessionPromise, timeoutPromise]);
   } catch (sessionErr) {
     if (sessionTimeoutHandle) clearTimeout(sessionTimeoutHandle);
+    // Synchronous newSession() failures bypass sessionPromise.finally(); clear
+    // the switch guard here so later agent_end/cancel paths are not swallowed.
+    if (sessionSwitchGeneration === mySessionSwitchGeneration) {
+      _setSessionSwitchInFlight(false);
+    }
     const msg =
       sessionErr instanceof Error ? sessionErr.message : String(sessionErr);
+    const isTransient = isTransientSessionCreationError(msg);
     debugLog("runUnit", {
       phase: "session-error",
       unitType,
       unitId,
       error: msg,
+      isTransient,
     });
-    return { status: "cancelled", errorContext: { message: `Session creation failed: ${msg}`, category: "session-failed", isTransient: true } };
+    return {
+      status: "cancelled",
+      errorContext: {
+        message: `Session creation failed: ${msg}`,
+        category: "session-failed",
+        isTransient,
+      },
+    };
   }
   if (sessionTimeoutHandle) clearTimeout(sessionTimeoutHandle);
 
