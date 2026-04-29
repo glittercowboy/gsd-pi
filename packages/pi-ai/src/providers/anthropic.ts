@@ -20,6 +20,7 @@ import {
 	processAnthropicStream,
 	supportsAdaptiveThinking,
 } from "./anthropic-shared.js";
+import { buildSpoofHeaders, getSessionUuid, isCcSpoofProvider } from "./cc-spoof.js";
 
 // Re-export types used by other modules
 export type { AnthropicEffort, AnthropicOptions };
@@ -77,11 +78,24 @@ async function createClient(
 	interleavedThinking: boolean,
 	optionsHeaders?: Record<string, string>,
 	dynamicHeaders?: Record<string, string>,
+	sessionId?: string,
 ): Promise<{ client: Anthropic; isOAuthToken: boolean }> {
 	const AnthropicClass = await getAnthropicClass();
 	// Adaptive thinking models (Opus 4.6, Sonnet 4.6) have interleaved thinking built-in.
 	// The beta header is deprecated on Opus 4.6 and redundant on Sonnet 4.6, so skip it.
 	const needsInterleavedBeta = interleavedThinking && !supportsAdaptiveThinking(model.id);
+
+	const ccSpoof = isCcSpoofProvider(model.provider, model.headers);
+	const ccSessionUuid = ccSpoof ? getSessionUuid(sessionId) : "";
+	// Strip the internal control flag so it never reaches the wire.
+	const cleanedModelHeaders: Record<string, string> | undefined = model.headers
+		? (() => {
+				const out: Record<string, string> = { ...model.headers };
+				delete out["X-Spoof-Claude-Code"];
+				delete out["x-spoof-claude-code"];
+				return out;
+		})()
+		: undefined;
 
 	// Copilot: Bearer auth, selective betas (no fine-grained-tool-streaming)
 	if (model.provider === "github-copilot") {
@@ -101,7 +115,7 @@ async function createClient(
 					"anthropic-dangerous-direct-browser-access": "true",
 					...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
 				},
-				model.headers,
+				cleanedModelHeaders,
 				dynamicHeaders,
 				optionsHeaders,
 			),
@@ -126,20 +140,19 @@ async function createClient(
 	// API key auth (Anthropic OAuth removed per TOS compliance — use API keys or Claude CLI)
 	// Some Anthropic-compatible providers require Bearer auth instead of x-api-key.
 	const usesBearerAuth = usesAnthropicBearerAuth(model.provider) || hasBearerAuthorizationHeader(model);
+	// CC-spoof headers must override generic betaFeatures, so they go after.
+	const baseHeaders: Record<string, string> = {
+		accept: "application/json",
+		"anthropic-dangerous-direct-browser-access": "true",
+		...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
+		...(ccSpoof ? buildSpoofHeaders(ccSessionUuid, model.id) : {}),
+	};
 	const client = new AnthropicClass({
 		apiKey: usesBearerAuth ? null : apiKey,
 		authToken: usesBearerAuth ? apiKey : undefined,
 		baseURL: resolveAnthropicBaseUrl(model),
 		dangerouslyAllowBrowser: true,
-		defaultHeaders: mergeHeaders(
-			{
-				accept: "application/json",
-				"anthropic-dangerous-direct-browser-access": "true",
-				...(betaFeatures.length > 0 ? { "anthropic-beta": betaFeatures.join(",") } : {}),
-			},
-			model.headers,
-			optionsHeaders,
-		),
+		defaultHeaders: mergeHeaders(baseHeaders, cleanedModelHeaders, optionsHeaders),
 	});
 
 	return { client, isOAuthToken: false };
@@ -170,6 +183,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			options?.interleavedThinking ?? true,
 			options?.headers,
 			copilotDynamicHeaders,
+			options?.sessionId,
 		);
 
 		processAnthropicStream(stream, {

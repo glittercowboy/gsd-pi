@@ -36,6 +36,13 @@ import { parseStreamingJson } from "../utils/json-parse.js";
 import { hasXmlParameterTags, repairToolJson } from "../utils/repair-tool-json.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessagesWithReport } from "./transform-messages.js";
+import {
+	buildAnchorSystemBlocks,
+	buildClaudeCodeUserId,
+	getSessionUuid,
+	isAdaptiveThinkingModel as isCcAdaptiveThinkingModel,
+	isCcSpoofProvider,
+} from "./cc-spoof.js";
 
 /** Effort levels accepted by the Anthropic `output_config.effort` field. */
 export type AnthropicEffort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -493,14 +500,38 @@ export function buildParams(
 ): MessageCreateParamsStreaming {
 	const { cacheControl } = getCacheControl(model.baseUrl, options?.cacheRetention);
 	const apiModelId = model.id.replace(/\[.*\]$/, "");
+	const ccSpoof = isCcSpoofProvider(model.provider, model.headers);
+	// CC-spoof matches real Claude Code wire format which always sends
+	// max_tokens=32000 (room for the forced thinking budget on Haiku + headroom).
+	const defaultMaxTokens = ccSpoof ? 32000 : (model.maxTokens / 3) | 0;
 	const params: MessageCreateParamsStreaming = {
 		model: apiModelId,
 		messages: convertMessages(context.messages, model, isOAuthToken, cacheControl),
-		max_tokens: options?.maxTokens || (model.maxTokens / 3) | 0,
+		max_tokens: options?.maxTokens || defaultMaxTokens,
 		stream: true,
 	};
 
-	if (isOAuthToken) {
+	if (ccSpoof) {
+		// CC-spoof providers validate that system[] starts with the billing
+		// header, the agent marker, and the tail of the real Claude Code
+		// system prompt. The user's system prompt is appended after.
+		const ccSessionUuid = getSessionUuid(options?.sessionId);
+		const userBlocks: Array<{ type: "text"; text: string; cache_control?: { type: string } }> = [];
+		if (context.systemPrompt) {
+			userBlocks.push({
+				type: "text",
+				text: sanitizeSurrogates(context.systemPrompt),
+				...(cacheControl ? { cache_control: cacheControl } : {}),
+			});
+		}
+		params.system = [
+			...buildAnchorSystemBlocks(ccSessionUuid, cacheControl),
+			...userBlocks,
+		] as MessageCreateParamsStreaming["system"];
+
+		// CC's metadata.user_id is a JSON-encoded string with device/session ids.
+		params.metadata = { user_id: buildClaudeCodeUserId(ccSessionUuid) };
+	} else if (isOAuthToken) {
 		// Only the LAST system block carries `cache_control` — the boundary
 		// covers the entire system prefix up to that point. Putting cache_control
 		// on the short "You are Claude Code" header AND the user systemPrompt
@@ -555,7 +586,24 @@ export function buildParams(
 		}
 	}
 
-	if (options?.metadata) {
+	if (ccSpoof) {
+		// Real Claude Code always sends adaptive thinking for Sonnet/Opus and
+		// a context_management block. Force them so proxies that fingerprint
+		// the body shape accept the request.
+		if (isCcAdaptiveThinkingModel(model.id)) {
+			params.thinking = { type: "adaptive" };
+			params.output_config = {
+				effort: (options?.effort ?? "high") as "low" | "medium" | "high" | "max",
+			};
+		} else if (!params.thinking) {
+			params.thinking = { type: "enabled", budget_tokens: 31999 };
+		}
+		(params as unknown as Record<string, unknown>).context_management = {
+			edits: [{ type: "clear_thinking_20251015", keep: "all" }],
+		};
+	}
+
+	if (options?.metadata && !ccSpoof) {
 		const userId = options.metadata.user_id;
 		if (typeof userId === "string") {
 			params.metadata = { user_id: userId };
