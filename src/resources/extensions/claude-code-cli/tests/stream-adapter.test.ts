@@ -1614,17 +1614,17 @@ describe("stream-adapter — canUseTool handler", () => {
 		const ui = { select: async (_p: string, opts: string[]) => opts.find((o) => o.startsWith("Always Allow"))!, notify: (msg: string) => notified.push(msg) };
 
 		const handler = createClaudeCodeCanUseToolHandler(ui as any);
-		const result = await handler!("AskUserQuestion", { questions: [{ question: "?", header: "h", multiSelect: false, options: [] }] }, makeOptions());
+		const result = await handler!("Glob", { pattern: "**/*.ts" }, makeOptions());
 
 		assert.equal(result.behavior, "allow");
 		assert.deepEqual((result as any).updatedPermissions, [{
 			type: "addRules",
-			rules: [{ toolName: "AskUserQuestion" }],
+			rules: [{ toolName: "Glob" }],
 			behavior: "allow",
 			destination: "localSettings",
 		}]);
 		assert.equal(notified.length, 1);
-		assert.match(notified[0], /AskUserQuestion/);
+		assert.match(notified[0], /Glob/);
 	});
 
 	test("Always Allow for non-Bash with empty suggestions array builds tool-name-only fallback rule", async () => {
@@ -1632,17 +1632,17 @@ describe("stream-adapter — canUseTool handler", () => {
 		const ui = { select: async (_p: string, opts: string[]) => opts.find((o) => o.startsWith("Always Allow"))!, notify: (msg: string) => notified.push(msg) };
 
 		const handler = createClaudeCodeCanUseToolHandler(ui as any);
-		const result = await handler!("AskUserQuestion", { questions: [{ question: "?", header: "h", multiSelect: false, options: [] }] }, makeOptions({ suggestions: [] }));
+		const result = await handler!("Glob", { pattern: "**/*.ts" }, makeOptions({ suggestions: [] }));
 
 		assert.equal(result.behavior, "allow");
 		assert.deepEqual((result as any).updatedPermissions, [{
 			type: "addRules",
-			rules: [{ toolName: "AskUserQuestion" }],
+			rules: [{ toolName: "Glob" }],
 			behavior: "allow",
 			destination: "localSettings",
 		}]);
 		assert.equal(notified.length, 1);
-		assert.match(notified[0], /AskUserQuestion/);
+		assert.match(notified[0], /Glob/);
 	});
 
 	test("prompt includes command text for Bash tools", async () => {

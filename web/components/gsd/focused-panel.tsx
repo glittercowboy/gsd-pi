@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils"
 function methodIcon(method: PendingUiRequest["method"]) {
   switch (method) {
     case "select":
+    case "interview":
       return <CheckSquare className="h-4 w-4" />
     case "confirm":
       return <MessageSquare className="h-4 w-4" />
@@ -41,6 +42,8 @@ function methodLabel(method: PendingUiRequest["method"]): string {
   switch (method) {
     case "select":
       return "Selection"
+    case "interview":
+      return "Interview"
     case "confirm":
       return "Confirmation"
     case "input":
@@ -228,6 +231,179 @@ function EditorRenderer({
   )
 }
 
+function InterviewRenderer({
+  request,
+  onSubmit,
+  disabled,
+}: {
+  request: Extract<PendingUiRequest, { method: "interview" }>
+  onSubmit: (value: Record<string, unknown>) => void
+  disabled: boolean
+}) {
+  const [singles, setSingles] = useState<Record<string, string>>({})
+  const [multis, setMultis] = useState<Record<string, Set<string>>>({})
+  const [openPreviews, setOpenPreviews] = useState<Set<string>>(new Set())
+
+  const togglePreview = (key: string) => {
+    setOpenPreviews((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const allAnswered = request.questions.every((q) =>
+    q.allowMultiple ? (multis[q.id]?.size ?? 0) > 0 : Boolean(singles[q.id]),
+  )
+
+  const handleSubmit = () => {
+    const answers: Record<string, { selected: string | string[]; notes: string }> = {}
+    for (const q of request.questions) {
+      if (q.allowMultiple) {
+        const set = multis[q.id]
+        if (set && set.size > 0) {
+          answers[q.id] = { selected: Array.from(set), notes: "" }
+        }
+      } else {
+        const value = singles[q.id]
+        if (value) {
+          answers[q.id] = { selected: value, notes: "" }
+        }
+      }
+    }
+    onSubmit({ answers })
+  }
+
+  const totalSelected = request.questions.reduce(
+    (acc, q) =>
+      q.allowMultiple ? acc + (multis[q.id]?.size ?? 0) : acc + (singles[q.id] ? 1 : 0),
+    0,
+  )
+
+  return (
+    <div className="space-y-6" data-testid="focused-panel-interview">
+      {request.questions.map((q) => (
+        <div key={q.id} className="space-y-3" data-testid={`interview-question-${q.id}`}>
+          <div className="space-y-1">
+            <h3 className="text-sm font-semibold">{q.header}</h3>
+            <p className="text-sm text-muted-foreground">{q.question}</p>
+          </div>
+
+          {q.allowMultiple ? (
+            <div className="space-y-2">
+              {q.options.map((option, i) => {
+                const previewKey = `${q.id}::${i}`
+                const checked = multis[q.id]?.has(option.label) ?? false
+                return (
+                  <div key={option.label} className="space-y-1">
+                    <label
+                      className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background px-3 py-2.5 transition-colors hover:bg-accent/40"
+                      data-testid={`interview-option-${q.id}-${i}`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(state) => {
+                          const next = new Set(multis[q.id] ?? new Set<string>())
+                          if (state) next.add(option.label)
+                          else next.delete(option.label)
+                          setMultis((prev) => ({ ...prev, [q.id]: next }))
+                        }}
+                        disabled={disabled}
+                      />
+                      <span className="flex-1 space-y-0.5">
+                        <span className="block text-sm font-medium">{option.label}</span>
+                        {option.description && (
+                          <span className="block text-xs text-muted-foreground">
+                            {option.description}
+                          </span>
+                        )}
+                      </span>
+                    </label>
+                    {option.preview && (
+                      <button
+                        type="button"
+                        className="ml-7 text-xs text-muted-foreground underline"
+                        onClick={() => togglePreview(previewKey)}
+                        disabled={disabled}
+                      >
+                        {openPreviews.has(previewKey) ? "Hide preview" : "Show preview"}
+                      </button>
+                    )}
+                    {option.preview && openPreviews.has(previewKey) && (
+                      <pre className="ml-7 max-h-48 overflow-auto rounded bg-muted px-3 py-2 text-xs">
+                        {option.preview}
+                      </pre>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <RadioGroup
+              value={singles[q.id] ?? ""}
+              onValueChange={(v) => setSingles((prev) => ({ ...prev, [q.id]: v }))}
+              disabled={disabled}
+            >
+              {q.options.map((option, i) => {
+                const previewKey = `${q.id}::${i}`
+                return (
+                  <div key={option.label} className="space-y-1">
+                    <label
+                      className="flex cursor-pointer items-start gap-3 rounded-lg border border-border bg-background px-3 py-2.5 transition-colors hover:bg-accent/40"
+                      data-testid={`interview-option-${q.id}-${i}`}
+                    >
+                      <RadioGroupItem value={option.label} id={`interview-${q.id}-${i}`} />
+                      <Label
+                        htmlFor={`interview-${q.id}-${i}`}
+                        className="flex-1 cursor-pointer space-y-0.5 font-normal"
+                      >
+                        <span className="block text-sm font-medium">{option.label}</span>
+                        {option.description && (
+                          <span className="block text-xs text-muted-foreground">
+                            {option.description}
+                          </span>
+                        )}
+                      </Label>
+                    </label>
+                    {option.preview && (
+                      <button
+                        type="button"
+                        className="ml-7 text-xs text-muted-foreground underline"
+                        onClick={() => togglePreview(previewKey)}
+                        disabled={disabled}
+                      >
+                        {openPreviews.has(previewKey) ? "Hide preview" : "Show preview"}
+                      </button>
+                    )}
+                    {option.preview && openPreviews.has(previewKey) && (
+                      <pre className="ml-7 max-h-48 overflow-auto rounded bg-muted px-3 py-2 text-xs">
+                        {option.preview}
+                      </pre>
+                    )}
+                  </div>
+                )
+              })}
+            </RadioGroup>
+          )}
+        </div>
+      ))}
+
+      <Button
+        onClick={handleSubmit}
+        disabled={disabled || !allAnswered}
+        className="w-full"
+        data-testid="focused-panel-interview-submit"
+      >
+        <Send className="h-4 w-4" />
+        {totalSelected > 0
+          ? `Submit (${totalSelected} selected)`
+          : "Submit"}
+      </Button>
+    </div>
+  )
+}
+
 function RequestBody({
   request,
   onSubmit,
@@ -242,6 +418,8 @@ function RequestBody({
   switch (request.method) {
     case "select":
       return <SelectRenderer request={request} onSubmit={onSubmit} disabled={disabled} />
+    case "interview":
+      return <InterviewRenderer request={request} onSubmit={onSubmit} disabled={disabled} />
     case "confirm":
       return <ConfirmRenderer request={request} onSubmit={onSubmit} onCancel={onCancel} disabled={disabled} />
     case "input":

@@ -27,7 +27,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { PartialMessageBuilder, ZERO_USAGE, mapUsage } from "./partial-builder.js";
 import { buildWorkflowMcpServers } from "../gsd/workflow-mcp.js";
-import { showInterviewRound, type Question, type RoundResult } from "../shared/tui.js";
+import { showInterviewRound, type Question, type QuestionOption, type RoundResult } from "../shared/tui.js";
 import type {
 	SDKAssistantMessage,
 	SDKMessage,
@@ -965,6 +965,193 @@ function formatToolInput(toolName: string, input: Record<string, unknown>): stri
 	return json.slice(0, 200) + "…";
 }
 
+// ---------------------------------------------------------------------------
+// AskUserQuestion intercept helpers
+// ---------------------------------------------------------------------------
+//
+// These helpers convert between the native Claude Agent SDK `AskUserQuestion`
+// tool input/output shape and GSD's `Question`/`RoundResult` interview types.
+// Kept TUI-free so they can be unit-tested in isolation; the canUseTool
+// intercept that wires them to the interview UI lives in the same file.
+
+/**
+ * Structural shape of an `AskUserQuestion` tool input — mirrors the SDK type
+ * without depending on the SDK re-export. Keep in sync with
+ * `@anthropic-ai/claude-agent-sdk` if the SDK widens or renames fields.
+ */
+interface AskUserQuestionInputShape {
+	questions: Array<{
+		question: string;
+		header: string;
+		multiSelect: boolean;
+		options: Array<{
+			label: string;
+			description: string;
+			preview?: string;
+		}>;
+	}>;
+}
+
+/** Result of converting native `AskUserQuestion` input into interview questions. */
+export type ConvertAskUserQuestionResult =
+	| { ok: true; questions: Question[] }
+	| { ok: false; reason: string };
+
+/**
+ * Convert a native `AskUserQuestion` tool input into GSD interview `Question`s.
+ *
+ * Validates the LLM-supplied shape defensively. On failure returns
+ * `{ ok: false, reason }` with a short human description. On success, each
+ * question is given a positional id (`q_0`, `q_1`, ...) and `allowMultiple`
+ * mirrors `multiSelect`. The LLM's option set is preserved verbatim — no
+ * "Other" / "None of the above" sentinel is appended, since that would
+ * silently change the answer space the LLM was reasoning over.
+ */
+export function convertAskUserQuestionInputToQuestions(
+	input: Record<string, unknown>,
+): ConvertAskUserQuestionResult {
+	const rawQuestions = (input as Partial<AskUserQuestionInputShape>).questions;
+	if (!Array.isArray(rawQuestions) || rawQuestions.length === 0) {
+		return { ok: false, reason: "missing questions array" };
+	}
+
+	const questions: Question[] = [];
+	for (let index = 0; index < rawQuestions.length; index += 1) {
+		const item = rawQuestions[index] as unknown;
+		if (!item || typeof item !== "object") {
+			return { ok: false, reason: `question ${index} is not an object` };
+		}
+		const obj = item as Record<string, unknown>;
+
+		if (typeof obj.question !== "string" || obj.question.length === 0) {
+			return { ok: false, reason: `question ${index} missing question text` };
+		}
+		if (typeof obj.header !== "string" || obj.header.length === 0) {
+			return { ok: false, reason: `question ${index} missing header` };
+		}
+		if (typeof obj.multiSelect !== "boolean") {
+			return { ok: false, reason: `question ${index} missing multiSelect boolean` };
+		}
+		if (!Array.isArray(obj.options) || obj.options.length === 0) {
+			return { ok: false, reason: `question ${index} empty options array` };
+		}
+
+		const options: QuestionOption[] = [];
+		for (let optionIndex = 0; optionIndex < obj.options.length; optionIndex += 1) {
+			const rawOption = obj.options[optionIndex] as unknown;
+			if (!rawOption || typeof rawOption !== "object") {
+				return { ok: false, reason: `question ${index} option ${optionIndex} is not an object` };
+			}
+			const optionObj = rawOption as Record<string, unknown>;
+			if (typeof optionObj.label !== "string" || optionObj.label.length === 0) {
+				return { ok: false, reason: `question ${index} option ${optionIndex} missing label` };
+			}
+			if (typeof optionObj.description !== "string") {
+				return { ok: false, reason: `question ${index} option ${optionIndex} missing description` };
+			}
+			const option: QuestionOption = {
+				label: optionObj.label,
+				description: optionObj.description,
+			};
+			if (typeof optionObj.preview === "string") {
+				option.preview = optionObj.preview;
+			}
+			options.push(option);
+		}
+
+		questions.push({
+			id: `q_${index}`,
+			question: obj.question,
+			header: obj.header,
+			allowMultiple: obj.multiSelect,
+			options,
+		});
+	}
+
+	return { ok: true, questions };
+}
+
+/**
+ * Convert a `RoundResult` from the interview UI back into the native
+ * `AskUserQuestion` answers map keyed by question text.
+ *
+ * Per the SDK doc-comment, multi-select answers are joined with ", " into a
+ * single string. Questions without an answer entry in the round result are
+ * omitted from the returned map.
+ */
+export function roundResultToAskUserQuestionAnswers(
+	input: AskUserQuestionInputShape,
+	result: RoundResult,
+): Record<string, string> {
+	const answers: Record<string, string> = {};
+	for (let index = 0; index < input.questions.length; index += 1) {
+		const question = input.questions[index];
+		if (!question) continue;
+		const answer = result.answers[`q_${index}`];
+		if (!answer) continue;
+		const selected = answer.selected;
+		if (typeof selected === "string") {
+			if (selected.length === 0) continue;
+			answers[question.question] = selected;
+		} else if (Array.isArray(selected)) {
+			if (selected.length === 0) continue;
+			answers[question.question] = selected.join(", ");
+		}
+	}
+	return answers;
+}
+
+/**
+ * Sequential `ui.select`-based fallback for the AskUserQuestion intercept used
+ * when the rich interview surface is unavailable (`ui.askInterview` not
+ * implemented). Each question becomes a separate `ui.select` call. The
+ * LLM-supplied option set is preserved verbatim.
+ *
+ * Option labels are formatted as `"label — description"` so the user sees the
+ * description in plain dialog UIs that don't render rich option metadata.
+ * Selection is mapped back to the original `label` so the answers map keys
+ * match what the LLM provided.
+ *
+ * Returns `undefined` if any question is dismissed (treated as a global
+ * decline).
+ */
+async function promptNativeAskUserQuestionWithDialogs(
+	questions: Question[],
+	ui: ExtensionUIContext,
+	signal: AbortSignal,
+): Promise<RoundResult | undefined> {
+	const answers: Record<string, { selected: string | string[]; notes: string }> = {};
+	for (const q of questions) {
+		const displayLabels = q.options.map((o) =>
+			o.description ? `${o.label} — ${o.description}` : o.label,
+		);
+		const choice = await ui.select(
+			`${q.header}: ${q.question}`,
+			displayLabels,
+			{ signal, ...(q.allowMultiple ? { allowMultiple: true } : {}) },
+		);
+		if (choice === undefined) {
+			return undefined;
+		}
+		const mapBack = (display: string): string => {
+			const idx = displayLabels.indexOf(display);
+			return idx >= 0 ? q.options[idx]!.label : display;
+		};
+		const selectedRaw = Array.isArray(choice) ? choice.map(mapBack) : mapBack(choice);
+		answers[q.id] = {
+			selected: q.allowMultiple
+				? Array.isArray(selectedRaw)
+					? selectedRaw
+					: [selectedRaw]
+				: Array.isArray(selectedRaw)
+					? selectedRaw[0] ?? ""
+					: selectedRaw,
+			notes: "",
+		};
+	}
+	return { endInterview: false, answers };
+}
+
 /**
  * Create a canUseTool handler that routes SDK permission requests through the
  * extension UI's select dialog, or auto-approves when no UI is available.
@@ -991,6 +1178,68 @@ export function createClaudeCodeCanUseToolHandler(
 		// Abort early if the signal is already fired
 		if (options.signal.aborted) {
 			return { behavior: "deny", message: "Aborted", toolUseID: options.toolUseID };
+		}
+
+		// AskUserQuestion intercept: drive GSD's interview UI directly instead
+		// of routing through the generic Allow/Always Allow/Deny permission
+		// flow. The native tool's job is to gather answers; the natural surface
+		// is the structured interview UI.
+		if (toolName === "AskUserQuestion") {
+			const parsed = convertAskUserQuestionInputToQuestions(_input);
+			if (!parsed.ok) {
+				return {
+					behavior: "deny",
+					message: `AskUserQuestion: ${parsed.reason}`,
+					toolUseID: options.toolUseID,
+				};
+			}
+
+			let interviewResult: RoundResult | undefined;
+			if (typeof ui.askInterview === "function") {
+				// Cast across structurally-equivalent named types: ExtensionUIContext
+				// declares InterviewQuestion / InterviewRoundResult (in pi-coding-agent),
+				// while this file works with the original Question / RoundResult from
+				// the shared interview-ui module. Shapes match — only the names differ.
+				const askInterviewFn = ui.askInterview as (
+					questions: unknown,
+					opts?: { signal?: AbortSignal },
+				) => Promise<RoundResult | undefined>;
+				interviewResult = await askInterviewFn(parsed.questions, { signal: options.signal })
+					.catch(() => undefined);
+			} else {
+				interviewResult = await promptNativeAskUserQuestionWithDialogs(
+					parsed.questions,
+					ui,
+					options.signal,
+				);
+			}
+
+			if (!interviewResult || Object.keys(interviewResult.answers).length === 0) {
+				return {
+					behavior: "deny",
+					message: "User declined to answer questions",
+					toolUseID: options.toolUseID,
+				};
+			}
+
+			const answers = roundResultToAskUserQuestionAnswers(
+				_input as unknown as AskUserQuestionInputShape,
+				interviewResult,
+			);
+
+			if (Object.keys(answers).length === 0) {
+				return {
+					behavior: "deny",
+					message: "User declined to answer questions",
+					toolUseID: options.toolUseID,
+				};
+			}
+
+			return {
+				behavior: "allow",
+				updatedInput: { ..._input, answers },
+				toolUseID: options.toolUseID,
+			};
 		}
 
 		// For Bash compound commands (e.g. "cd /path && gh pr list"),

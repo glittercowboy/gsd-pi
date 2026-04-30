@@ -388,6 +388,7 @@ export type ExtensionUiRequestEvent =
   | { type: "extension_ui_request"; id: string; method: "confirm"; title: string; message: string; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "input"; title: string; placeholder?: string; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }
+  | { type: "extension_ui_request"; id: string; method: "interview"; questions: Array<{ id: string; header: string; question: string; allowMultiple: boolean; options: Array<{ label: string; description: string; preview?: string }> }>; timeout?: number }
   | { type: "extension_ui_request"; id: string; method: "notify"; message: string; notifyType?: "info" | "warning" | "error" }
   | { type: "extension_ui_request"; id: string; method: "setStatus"; statusKey: string; statusText: string | undefined }
   | { type: "extension_ui_request"; id: string; method: "setWidget"; widgetKey: string; widgetLines: string[] | undefined; widgetPlacement?: "aboveEditor" | "belowEditor" }
@@ -504,7 +505,7 @@ export type WorkspaceOnboardingRequestState =
 // The `method` field discriminates the payload shape.
 export type PendingUiRequest = Extract<
   ExtensionUiRequestEvent,
-  { method: "select" | "confirm" | "input" | "editor" }
+  { method: "select" | "confirm" | "input" | "editor" | "interview" }
 >
 
 export interface ActiveToolExecution {
@@ -5010,6 +5011,7 @@ export class GSDWorkspaceStore {
       case "confirm":
       case "input":
       case "editor":
+      case "interview":
         this.patchState({
           pendingUiRequests: [...this.state.pendingUiRequests, event as PendingUiRequest],
         })

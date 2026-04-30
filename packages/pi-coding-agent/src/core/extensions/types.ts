@@ -104,6 +104,34 @@ export interface ExtensionWidgetOptions {
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
+/** A single option presented to the user in an interview question. */
+export interface InterviewOption {
+	label: string;
+	description: string;
+	/** Optional markdown content shown alongside the option (e.g. preview panel). */
+	preview?: string;
+}
+
+/** A single question in an interview round. */
+export interface InterviewQuestion {
+	id: string;
+	header: string;
+	question: string;
+	allowMultiple: boolean;
+	options: InterviewOption[];
+}
+
+/** Aggregate result returned from an interview round.
+ *
+ * Structurally compatible with the `RoundResult` produced by GSD's shared
+ * interview UI (`src/resources/extensions/shared/interview-ui.ts`).
+ * Empty `answers` indicates the user dismissed the round without answering.
+ */
+export interface InterviewRoundResult {
+	endInterview: boolean;
+	answers: Record<string, { selected: string | string[]; notes: string }>;
+}
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
@@ -111,6 +139,21 @@ export type TerminalInputHandler = (data: string) => { consume?: boolean; data?:
 export interface ExtensionUIContext {
 	/** Show a selector and return the user's choice. When `opts.allowMultiple` is true, returns an array. */
 	select(title: string, options: string[], opts?: ExtensionUIDialogOptions): Promise<string | string[] | undefined>;
+
+	/**
+	 * Show a multi-question interview dialog.
+	 *
+	 * Returns the round result, or `undefined` if the UI cannot satisfy the
+	 * request (no interactive surface available). An empty `answers` object on
+	 * the result indicates the user dismissed the interview without answering.
+	 *
+	 * Optional: callers must check for `undefined` and fall back to a sequence
+	 * of `select` calls when this method is not implemented.
+	 */
+	askInterview?(
+		questions: InterviewQuestion[],
+		opts?: ExtensionUIDialogOptions,
+	): Promise<InterviewRoundResult | undefined>;
 
 	/** Show a confirmation dialog. */
 	confirm(title: string, message: string, opts?: ExtensionUIDialogOptions): Promise<boolean>;

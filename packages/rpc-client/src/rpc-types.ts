@@ -359,6 +359,23 @@ export type RpcExtensionUIRequest =
 	| {
 			type: "extension_ui_request";
 			id: string;
+			method: "interview";
+			questions: Array<{
+				id: string;
+				header: string;
+				question: string;
+				allowMultiple: boolean;
+				options: Array<{
+					label: string;
+					description: string;
+					preview?: string;
+				}>;
+			}>;
+			timeout?: number;
+	  }
+	| {
+			type: "extension_ui_request";
+			id: string;
 			method: "notify";
 			message: string;
 			notifyType?: "info" | "warning" | "error";
@@ -390,7 +407,12 @@ export type RpcExtensionUIResponse =
 	| { type: "extension_ui_response"; id: string; value: string }
 	| { type: "extension_ui_response"; id: string; values: string[] }
 	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true };
+	| { type: "extension_ui_response"; id: string; cancelled: true }
+	| {
+			type: "extension_ui_response";
+			id: string;
+			answers: Record<string, { selected: string | string[]; notes: string }>;
+	  };
 
 // ============================================================================
 // Helper type for extracting command types

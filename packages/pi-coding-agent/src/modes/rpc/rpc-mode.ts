@@ -218,6 +218,19 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 				"cancelled" in r && r.cancelled ? undefined : "values" in r ? r.values : "value" in r ? r.value : undefined,
 			),
 
+		askInterview: (questions, opts) =>
+			createDialogPromise(
+				opts,
+				undefined,
+				{ method: "interview", questions, timeout: opts?.timeout },
+				(r) =>
+					"cancelled" in r && r.cancelled
+						? undefined
+						: "answers" in r
+							? { endInterview: false, answers: r.answers }
+							: undefined,
+			),
+
 		confirm: (title, message, opts) =>
 			createDialogPromise(opts, false, { method: "confirm", title, message, timeout: opts?.timeout }, (r) =>
 				"cancelled" in r && r.cancelled ? false : "confirmed" in r ? r.confirmed : false,
