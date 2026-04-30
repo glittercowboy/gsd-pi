@@ -313,6 +313,63 @@ describe("createClaudeCodeCanUseToolHandler — AskUserQuestion intercept", () =
 		assert.equal(updatedInput.answers["Pick one"], "A");
 	});
 
+	test("falls back to ui.select when askInterview returns undefined", async () => {
+		const ui: any = {
+			askInterview: async () => undefined,
+			select: async (_title: string, options: string[]) => options[0],
+		};
+		const handler = createClaudeCodeCanUseToolHandler(ui);
+		const result = await handler!("AskUserQuestion", validInput as any, {
+			signal: new AbortController().signal,
+			toolUseID: "tu_fb",
+			suggestions: [],
+		} as any);
+		assert.equal(result.behavior, "allow");
+		if (result.behavior !== "allow") return;
+		const updatedInput = result.updatedInput as { answers: Record<string, string> };
+		assert.equal(updatedInput.answers["Pick one"], "A");
+	});
+
+	test("fallback maps display labels back to original on collision", async () => {
+		// Construct two options whose display strings would collide if
+		// "label — description" weren't disambiguated:
+		// option 0 — label="A — B", description=""        → "A — B"
+		// option 1 — label="A",      description="B"       → "A — B"
+		// The fallback's Map adds " (2)" to the second to make it injective.
+		const collisionInput = {
+			questions: [
+				{
+					question: "Pick",
+					header: "Q",
+					multiSelect: false,
+					options: [
+						{ label: "A — B", description: "" },
+						{ label: "A", description: "B" },
+					],
+				},
+			],
+		};
+		// Capture what ui.select was offered, then pick the second label.
+		let offeredOptions: string[] = [];
+		const ui: any = {
+			select: async (_title: string, options: string[]) => {
+				offeredOptions = options;
+				return options[1];
+			},
+		};
+		const handler = createClaudeCodeCanUseToolHandler(ui);
+		const result = await handler!("AskUserQuestion", collisionInput as any, {
+			signal: new AbortController().signal,
+			toolUseID: "tu_collision",
+			suggestions: [],
+		} as any);
+		assert.equal(result.behavior, "allow");
+		if (result.behavior !== "allow") return;
+		assert.notEqual(offeredOptions[0], offeredOptions[1]);
+		const updatedInput = result.updatedInput as { answers: Record<string, string> };
+		assert.equal(updatedInput.answers["Pick"], "A");
+	});
+
 	test("denies when answers are partial (count != questions)", async () => {
 		const twoQuestionInput = {
 			questions: [

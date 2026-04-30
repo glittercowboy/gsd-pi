@@ -1139,9 +1139,25 @@ async function promptNativeAskUserQuestionWithDialogs(
 ): Promise<RoundResult | undefined> {
 	const answers: Record<string, { selected: string | string[]; notes: string }> = {};
 	for (const q of questions) {
-		const displayLabels = q.options.map((o) =>
-			o.description ? `${o.label} — ${o.description}` : o.label,
-		);
+		// Build display labels with an explicit display→original-label map so
+		// the round-trip is injective. The `${label} — ${description}`
+		// formatting alone isn't injective (e.g. label="A — B"+description=""
+		// collides with label="A"+description="B"), so we disambiguate
+		// collisions with a numeric suffix and look up the original label
+		// via the map rather than Array.indexOf.
+		const displayToLabel = new Map<string, string>();
+		const displayLabels: string[] = [];
+		for (const o of q.options) {
+			const baseDisplay = o.description ? `${o.label} — ${o.description}` : o.label;
+			let display = baseDisplay;
+			let suffix = 2;
+			while (displayToLabel.has(display)) {
+				display = `${baseDisplay} (${suffix})`;
+				suffix += 1;
+			}
+			displayToLabel.set(display, o.label);
+			displayLabels.push(display);
+		}
 		const choice = await ui.select(
 			`${q.header}: ${q.question}`,
 			displayLabels,
@@ -1150,10 +1166,7 @@ async function promptNativeAskUserQuestionWithDialogs(
 		if (choice === undefined) {
 			return undefined;
 		}
-		const mapBack = (display: string): string => {
-			const idx = displayLabels.indexOf(display);
-			return idx >= 0 ? q.options[idx]!.label : display;
-		};
+		const mapBack = (display: string): string => displayToLabel.get(display) ?? display;
 		const selectedRaw = Array.isArray(choice) ? choice.map(mapBack) : mapBack(choice);
 		answers[q.id] = {
 			selected: q.allowMultiple
@@ -1211,10 +1224,15 @@ export function createClaudeCodeCanUseToolHandler(
 				};
 			}
 
-			// Treat any rejection from the interview UI (RPC channel error,
-			// JSON serialization fault, mid-loop ui.select rejection) as a
-			// dismiss — the deny path below already produces the right
-			// fallback for the model.
+			// askInterview contract: returns RoundResult on user response
+			// (empty answers = user dismissed); returns undefined when the
+			// implementation cannot satisfy the request (no interactive
+			// surface available). When askInterview returns undefined, fall
+			// back to the sequential ui.select prompt — same as when no
+			// askInterview is implemented at all. Rejections (RPC channel
+			// error, mid-loop ui.select rejection, etc.) are normalized to
+			// undefined so the deny path below produces a clean fallback
+			// for the model.
 			let interviewResult: RoundResult | undefined;
 			try {
 				if (typeof ui.askInterview === "function") {
@@ -1229,7 +1247,8 @@ export function createClaudeCodeCanUseToolHandler(
 						opts?: { signal?: AbortSignal },
 					) => Promise<RoundResult | undefined>;
 					interviewResult = await askInterviewFn(parsed.questions, { signal: options.signal });
-				} else {
+				}
+				if (interviewResult === undefined) {
 					interviewResult = await promptNativeAskUserQuestionWithDialogs(
 						parsed.questions,
 						ui,
