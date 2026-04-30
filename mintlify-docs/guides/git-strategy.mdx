@@ -21,13 +21,13 @@ Work happens directly on your current branch. No worktree, no milestone branch. 
 
 ### `worktree` mode
 
-Each milestone gets its own git worktree on a `milestone/<MID>` branch. All execution happens inside the worktree. On completion, the worktree is squash-merged to main as one clean commit. The worktree and branch are cleaned up.
+Each milestone gets its own git worktree on a `milestone/<MID>` branch. All execution happens inside the worktree. On completion, the worktree is squash-merged to the integration branch captured when the milestone started. The worktree and branch are cleaned up.
 
 Worktree mode requires the repository to have at least one commit. If `git.isolation: worktree` is configured in a zero-commit repo with no committed `HEAD`, GSD temporarily runs as `none` so startup can continue; worktree isolation takes effect after the first commit exists.
 
 ### `branch` mode
 
-Work happens in the project root on a `milestone/<MID>` branch. No worktree is created. On completion, the branch is merged to main.
+Work happens in the project root on a `milestone/<MID>` branch. No worktree is created. On completion, the branch is merged to the captured integration branch.
 
 <Note>
 **Changed in v2.45.0:** The default isolation mode changed from `worktree` to `none`. If your workflow relies on worktree isolation, set `git.isolation: worktree` explicitly in your preferences.
@@ -36,7 +36,7 @@ Work happens in the project root on a `milestone/<MID>` branch. No worktree is c
 ## Branching model
 
 ```
-main ─────────────────────────────────────────────────────────
+integration ──────────────────────────────────────────────────
   │                                                     ↑
   └── milestone/M001 (worktree) ────────────────────────┘
        commit: feat: core types
@@ -50,7 +50,7 @@ main ─────────────────────────
 With [parallel orchestration](/guides/parallel-orchestration) enabled, multiple milestones run in separate worktrees simultaneously:
 
 ```
-main ──────────────────────────────────────────────────────────
+integration ───────────────────────────────────────────────────
   │                                      ↑              ↑
   ├── milestone/M002 (worktree) ─────────┘              │
   │    → squash-merged first                            │
@@ -88,7 +88,7 @@ mode: team    # shared repos
 |---|---|---|
 | `git.auto_push` | `true` | `false` |
 | `git.push_branches` | `false` | `true` |
-| `git.pre_merge_check` | `false` | `true` |
+| `git.pre_merge_check` | `auto` | `auto` |
 | `git.merge_strategy` | `"squash"` | `"squash"` |
 | `unique_milestone_ids` | `false` | `true` |
 
@@ -102,12 +102,12 @@ git:
   push_branches: false
   remote: origin
   snapshots: false
-  pre_merge_check: false
+  pre_merge_check: auto      # auto-detects package test/typecheck scripts when available
   commit_type: feat
   main_branch: main
   merge_strategy: squash    # "squash" or "merge"
   isolation: none           # "none" (default), "worktree", or "branch"
-  commit_docs: true
+  commit_docs: true          # deprecated; .gsd runtime state is external/gitignored
   auto_pr: false
   pr_target_branch: develop
 ```
@@ -123,11 +123,11 @@ git:
   pr_target_branch: develop
 ```
 
-Pushes the milestone branch and creates a PR targeting your specified branch. Requires `gh` CLI installed and authenticated.
+Pushes the completed milestone branch and creates a PR targeting your specified branch. If `auto_pr: true`, GSD does not also push the integration branch via `auto_push`; the PR is the delivery path. Requires `gh` CLI installed and authenticated.
 
 ### `commit_docs: false`
 
-Adds `.gsd/` to `.gitignore` and keeps all planning artifacts local-only. Useful for teams where only some members use GSD.
+Deprecated. GSD now keeps runtime state external/gitignored by default. Milestone artifacts are managed by the workflow and runtime files such as `STATE.md`, `gsd.db`, activity logs, and worktrees are not committed.
 
 ## Worktree management
 
@@ -136,7 +136,7 @@ Adds `.gsd/` to `.gitignore` and keeps all planning artifacts local-only. Useful
 1. Milestone starts → worktree created at `.gsd/worktrees/<MID>/`
 2. Planning artifacts copied into the worktree
 3. All execution happens inside the worktree
-4. Milestone completes → squash-merged to main
+4. Milestone completes → squash-merged to the captured integration branch
 5. Worktree and branch cleaned up
 
 ### Manual
@@ -153,7 +153,7 @@ Adds `.gsd/` to `.gitignore` and keeps all planning artifacts local-only. Useful
 GSD includes automatic recovery for common git issues:
 
 - **Detached HEAD** — automatically reattaches to the correct branch
-- **Stale lock files** — removes `index.lock` files from crashed processes
+- **Git index locks** — detects `.git/index.lock` before startup and stops rather than deleting it
 - **Orphaned worktrees** — detects and offers cleanup
 
 Run `/gsd doctor` to check git health manually.

@@ -542,74 +542,61 @@ If files disagree, **pause and surface to the user**:
 
 ---
 
-## Git Strategy: Branch-Per-Slice with Squash Merge
+## Git Strategy: Sequential Commits with Optional Milestone Isolation
 
-**Principle:** Main is always clean and working. Each slice gets an isolated branch. The user never runs a git command — the agent handles everything.
+**Principle:** GSD keeps work atomic and recoverable. By default, work happens on the current branch. If `git.isolation` is set to `worktree` or `branch`, a milestone branch is used and merged back to the recorded integration branch when the milestone completes. The user never runs a git command — the agent handles everything.
 
-### Branch Lifecycle
+### Isolation Modes
 
-1. **Slice starts** → create branch `gsd/M001/S01` from main
-2. **Per-task commits** on the branch — atomic, descriptive, bisectable
-3. **Slice completes** → squash merge to main as one clean commit
-4. **Branch deleted** — squash commit on main is the permanent record
+| Mode | Where work happens | Branch behavior |
+|------|--------------------|-----------------|
+| `none` (default) | Project root | Current branch, no isolation branch |
+| `worktree` | `.gsd/worktrees/<MID>/` | `milestone/<MID>` branch in a git worktree |
+| `branch` | Project root | `milestone/<MID>` branch checked out in place |
 
-### What Main Looks Like
+In all modes, slices and tasks commit sequentially on the active branch; there are no per-slice branches. The integration branch is captured when the milestone starts, so stale `git.main_branch` preferences do not redirect merge-back.
+
+### Milestone Lifecycle
+
+1. **Milestone starts** → capture the current integration branch.
+2. **Optional isolation** → create `milestone/M001` only when `git.isolation` is `worktree` or `branch`.
+3. **Per-task commits** — atomic, descriptive, bisectable.
+4. **Slice completes** → write slice summary, UAT script, roadmap checkbox, and milestone summary.
+5. **Milestone completes** → if isolated, squash-merge the milestone branch back to the captured integration branch and clean up the worktree/branch.
+
+### What History Looks Like
 
 ```
-feat(M001/S03): milestone and slice discuss commands
-feat(M001/S02): extension scaffold and command routing
-feat(M001/S01): file I/O foundation
+feat: core type definitions
+feat: markdown parser for plan files
+fix: handle empty state rebuild
 ```
 
-One commit per slice. Individually revertable. Reads like a changelog.
-
-### What the Branch Looks Like
-
-```
-gsd/M001/S01:
-  test(S01/T03): round-trip tests passing
-  feat(S01/T03): file writer with round-trip fidelity
-  feat(S01/T02): markdown parser for plan files
-  feat(S01/T01): core types and interfaces
-  docs(S01): add slice plan
-```
+In `none` mode these commits land directly on the current branch. In isolated modes they land on `milestone/<MID>` and are squashed back at milestone completion.
 
 ### Commit Conventions
 
 | When | Format | Example |
 |------|--------|---------|
-| Task completed | `{type}(S01/T02): <one-liner from summary>` | Type inferred from title (`feat`, `fix`, `test`, etc.) |
-| Plan/docs committed | `docs(S01): add slice plan` | Planning artifacts |
-| Slice squash to main | `type(M001/S01): <slice title>` | Type inferred from title |
-| State rebuild | `chore(S01/T02): auto-commit after state-rebuild` | Bookkeeping only |
+| Task completed | `{type}: <one-liner from summary>` | Type inferred from title (`feat`, `fix`, `test`, etc.) |
+| State rebuild | `chore: auto-commit after state-rebuild` | Bookkeeping only |
+| Milestone squash | `{type}: <milestone title>` | Type inferred from title |
 
 The system reads the task summary after execution and builds a meaningful commit message:
-- **Subject**: `{type}({sliceId}/{taskId}): {one-liner}` — the one-liner from the summary frontmatter
+- **Subject**: `{type}: {one-liner}` — the one-liner from the summary frontmatter, sanitized to one line
 - **Type**: Inferred from the task title and one-liner (`feat`, `fix`, `test`, `refactor`, `docs`, `perf`, `chore`)
 - **Body**: Key files from the summary frontmatter (up to 8 files listed)
+- **Trailers**: `GSD-Task: S##/T##`; if GitHub sync linked an issue, `Resolves #N`
 
 Commit types: `feat`, `fix`, `test`, `refactor`, `docs`, `perf`, `chore`
-
-### Squash Merge Message
-
-```
-feat(M001/S01): file I/O foundation
-
-Agent can parse, format, load, and save all GSD file types with round-trip fidelity.
-
-Tasks completed:
-- T01: core types and interfaces
-- T02: markdown parser for plan files
-- T03: file writer with round-trip fidelity
-```
 
 ### Rollback
 
 | Problem | Fix |
 |---------|-----|
-| Bad task | `git reset --hard HEAD~1` to previous commit on the branch |
-| Bad slice | `git revert <squash commit>` on main |
-| UAT failure after merge | Fix tasks on `gsd/M001/S01-fix` branch, squash as `fix(M001/S01): <fix>` |
+| Bad task | Revert the task commit on the active branch |
+| Bad milestone squash | Revert the squash commit on the integration branch |
+| UAT failure after merge | Create follow-up fix tasks in the current or next milestone |
 
 ---
 
