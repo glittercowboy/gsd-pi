@@ -13,8 +13,15 @@
  */
 
 import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { resolveGsdRoot, findMilestoneIds, resolveMilestoneDir, findSliceIds, resolveSliceDir } from './paths.js';
+import { basename, join, resolve } from 'node:path';
+import {
+  resolveGsdRoot,
+  findMilestoneIds,
+  resolveMilestoneDir,
+  resolveMilestoneFile,
+  findSliceIds,
+  resolveSliceDir,
+} from './paths.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -265,10 +272,11 @@ function parseSingleMilestone(
 
   const milestoneNodeId = `milestone:${milestoneId}`;
 
-  // Try to read the roadmap file
-  const roadmapPath = join(mDir, `${milestoneId}-ROADMAP.md`);
+  // Try to read the roadmap file. Accept both canonical M###-ROADMAP.md and
+  // legacy ROADMAP.md via the shared resolver.
+  const roadmapPath = resolveMilestoneFile(gsdRoot, milestoneId, 'ROADMAP');
   let roadmapContent: string | null = null;
-  if (existsSync(roadmapPath)) {
+  if (roadmapPath && existsSync(roadmapPath)) {
     try {
       roadmapContent = readFileSync(roadmapPath, 'utf-8');
     } catch {
@@ -290,7 +298,7 @@ function parseSingleMilestone(
       label: milestoneTitle,
       type: 'milestone',
       confidence: 'EXTRACTED',
-      sourceFile: roadmapContent ? `milestones/${milestoneId}/${milestoneId}-ROADMAP.md` : undefined,
+      sourceFile: roadmapContent ? `milestones/${milestoneId}/${basename(roadmapPath!)}` : undefined,
     });
   }
 

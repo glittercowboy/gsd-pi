@@ -11,7 +11,7 @@
  * src/mcp-server.ts in the main package).
  */
 
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { z } from 'zod';
@@ -24,7 +24,7 @@ import { readHistory } from './readers/metrics.js';
 import { readCaptures } from './readers/captures.js';
 import { readKnowledge } from './readers/knowledge.js';
 import { buildGraph, writeGraph, writeSnapshot, graphStatus, graphQuery, graphDiff } from './readers/graph.js';
-import { resolveGsdRoot } from './readers/paths.js';
+import { resolveGsdRoot, resolveMilestoneFile } from './readers/paths.js';
 import { runDoctorLite } from './readers/doctor-lite.js';
 import { registerWorkflowTools, validateProjectDir } from './workflow-tools.js';
 import { applySecrets, checkExistingEnvKeys, detectDestination, resolveProjectEnvFilePath } from './env-writer.js';
@@ -178,9 +178,8 @@ async function readProjectState(projectDir: string, query: string | undefined): 
       const milestones: Array<{ id: string; hasRoadmap: boolean; hasSummary: boolean }> = [];
       for (const entry of entries) {
         if (!entry.isDirectory()) continue;
-        const mDir = join(milestonesDir, entry.name);
-        const hasRoadmap = await fileExists(join(mDir, `${entry.name}-ROADMAP.md`));
-        const hasSummary = await fileExists(join(mDir, `${entry.name}-SUMMARY.md`));
+        const hasRoadmap = !!resolveMilestoneFile(gsdDir, entry.name, 'ROADMAP');
+        const hasSummary = !!resolveMilestoneFile(gsdDir, entry.name, 'SUMMARY');
         milestones.push({ id: entry.name, hasRoadmap, hasSummary });
       }
       result.milestones = milestones;
@@ -190,15 +189,6 @@ async function readProjectState(projectDir: string, query: string | undefined): 
   }
 
   return result;
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 // ---------------------------------------------------------------------------

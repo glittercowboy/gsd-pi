@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { _getAdapter, bulkInsertLegacyHierarchy } from "./gsd-db.js";
 import { parseRoadmap, parsePlan } from "./parsers-legacy.js";
 import { logWarning } from "./workflow-logger.js";
+import { resolveMilestoneFile } from "./paths.js";
 
 // ─── needsAutoMigration ───────────────────────────────────────────────────
 
@@ -117,12 +118,12 @@ export function migrateFromMarkdown(basePath: string): void {
     const mDir = join(milestonesDir, mId);
 
     // Determine milestone status: done if a milestone-level SUMMARY.md exists
-    const milestoneSummaryPath = join(mDir, "SUMMARY.md");
+    const milestoneSummaryPath = resolveMilestoneFile(basePath, mId, "SUMMARY") ?? join(mDir, "SUMMARY.md");
     const milestoneDone = existsSync(milestoneSummaryPath);
     const milestoneStatus = milestoneDone ? "done" : "active";
 
     // Parse ROADMAP.md for slices list
-    const roadmapPath = join(mDir, "ROADMAP.md");
+    const roadmapPath = resolveMilestoneFile(basePath, mId, "ROADMAP") ?? join(mDir, "ROADMAP.md");
     let roadmapSlices: Array<{ id: string; title: string; done: boolean; risk: string }> = [];
 
     if (existsSync(roadmapPath)) {
@@ -286,7 +287,7 @@ export function validateMigration(basePath: string): { discrepancies: string[] }
 
     for (const mId of milestoneDirs) {
       const mDir = join(milestonesDir, mId);
-      const roadmapPath = join(mDir, "ROADMAP.md");
+      const roadmapPath = resolveMilestoneFile(basePath, mId, "ROADMAP") ?? join(mDir, "ROADMAP.md");
 
       if (existsSync(roadmapPath)) {
         try {

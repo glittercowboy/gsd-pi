@@ -6,7 +6,9 @@
 
 import {
   gsdRoot,
+  resolveMilestoneFile,
   resolveMilestonePath,
+  resolveSliceFile,
   resolveSlicePath,
   relMilestoneFile,
   relSliceFile,
@@ -16,6 +18,29 @@ import {
 } from "./paths.js";
 import { parseUnitId } from "./unit-id.js";
 import { join } from "node:path";
+
+function resolveMilestoneArtifactPath(
+  base: string,
+  mid: string,
+  suffix: string,
+): string | null {
+  const existing = resolveMilestoneFile(base, mid, suffix);
+  if (existing) return existing;
+  const dir = resolveMilestonePath(base, mid);
+  return dir ? join(dir, buildMilestoneFileName(mid, suffix)) : null;
+}
+
+function resolveSliceArtifactPath(
+  base: string,
+  mid: string,
+  sid: string,
+  suffix: string,
+): string | null {
+  const existing = resolveSliceFile(base, mid, sid, suffix);
+  if (existing) return existing;
+  const dir = resolveSlicePath(base, mid, sid);
+  return dir ? join(dir, buildSliceFileName(sid, suffix)) : null;
+}
 
 /**
  * Resolve the expected artifact for a unit to an absolute path.
@@ -38,20 +63,16 @@ export function resolveExpectedArtifactPath(
     case "research-project":
       return join(gsdRoot(base), "research", "PROJECT-RESEARCH-BLOCKER.md");
     case "discuss-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "CONTEXT")) : null;
+      return resolveMilestoneArtifactPath(base, mid, "CONTEXT");
     }
     case "discuss-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "CONTEXT")) : null;
+      return resolveSliceArtifactPath(base, mid, sid!, "CONTEXT");
     }
     case "research-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "RESEARCH")) : null;
+      return resolveMilestoneArtifactPath(base, mid, "RESEARCH");
     }
     case "plan-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "ROADMAP")) : null;
+      return resolveMilestoneArtifactPath(base, mid, "ROADMAP");
     }
     case "research-slice": {
       // #4414: Sentinel unitId "{mid}/parallel-research" fans out across
@@ -59,30 +80,22 @@ export function resolveExpectedArtifactPath(
       // blocker escalation has somewhere to write. Verification for this
       // sentinel is handled directly in verifyExpectedArtifact.
       if (sid === "parallel-research") {
-        const mdir = resolveMilestonePath(base, mid);
-        return mdir
-          ? join(mdir, buildMilestoneFileName(mid, "PARALLEL-BLOCKER"))
-          : null;
+        return resolveMilestoneArtifactPath(base, mid, "PARALLEL-BLOCKER");
       }
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "RESEARCH")) : null;
+      return resolveSliceArtifactPath(base, mid, sid!, "RESEARCH");
     }
     case "plan-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "PLAN")) : null;
+      return resolveSliceArtifactPath(base, mid, sid!, "PLAN");
     }
     case "refine-slice": {
       // ADR-011: refine-slice expands a sketch and writes the same PLAN.md as plan-slice.
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "PLAN")) : null;
+      return resolveSliceArtifactPath(base, mid, sid!, "PLAN");
     }
     case "reassess-roadmap": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "ASSESSMENT")) : null;
+      return resolveSliceArtifactPath(base, mid, sid!, "ASSESSMENT");
     }
     case "run-uat": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "ASSESSMENT")) : null;
+      return resolveSliceArtifactPath(base, mid, sid!, "ASSESSMENT");
     }
     case "execute-task": {
       const dir = resolveSlicePath(base, mid, sid!);
@@ -91,20 +104,16 @@ export function resolveExpectedArtifactPath(
         : null;
     }
     case "complete-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "SUMMARY")) : null;
+      return resolveSliceArtifactPath(base, mid, sid!, "SUMMARY");
     }
     case "validate-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "VALIDATION")) : null;
+      return resolveMilestoneArtifactPath(base, mid, "VALIDATION");
     }
     case "complete-milestone": {
-      const dir = resolveMilestonePath(base, mid);
-      return dir ? join(dir, buildMilestoneFileName(mid, "SUMMARY")) : null;
+      return resolveMilestoneArtifactPath(base, mid, "SUMMARY");
     }
     case "replan-slice": {
-      const dir = resolveSlicePath(base, mid, sid!);
-      return dir ? join(dir, buildSliceFileName(sid!, "REPLAN")) : null;
+      return resolveSliceArtifactPath(base, mid, sid!, "REPLAN");
     }
     case "rewrite-docs":
       return null;

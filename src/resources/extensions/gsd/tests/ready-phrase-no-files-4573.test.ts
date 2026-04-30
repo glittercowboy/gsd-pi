@@ -177,6 +177,28 @@ describe("#4573 maybeHandleReadyPhraseWithoutFiles", () => {
     }
   });
 
+  test("legacy unprefixed files present → no nudge", () => {
+    const base = mkBase();
+    try {
+      writeFileSync(join(base, ".gsd", "milestones", "M001", "CONTEXT.md"), "# ctx");
+      writeFileSync(join(base, ".gsd", "milestones", "M001", "ROADMAP.md"), "# roadmap");
+      const cap = mkCapture();
+      setPendingAutoStart(base, {
+        basePath: base,
+        milestoneId: "M001",
+        ctx: mkCtx(cap),
+        pi: mkPi(cap),
+      });
+      const handled = maybeHandleReadyPhraseWithoutFiles({
+        messages: [assistantMsg("Milestone M001 ready.")],
+      });
+      assert.equal(handled, false);
+      assert.equal(cap.messages.length, 0);
+    } finally {
+      clearPendingAutoStart();
+    }
+  });
+
   test("last message lacks ready phrase → no-op", () => {
     const base = mkBase();
     try {

@@ -553,13 +553,15 @@ function hasToolUse(msg: any): boolean {
 /**
  * #4573 — Detect and recover from the "ready phrase without files" failure mode.
  *
- * When the LLM emits "Milestone {{id}} ready." but has not written CONTEXT.md
- * or ROADMAP.md, `checkAutoStartAfterDiscuss()` silently returns false and the
- * next /gsd invocation loops into the "All milestones complete" warning.
+ * When the LLM emits "Milestone {{id}} ready." but has not written the
+ * milestone CONTEXT/ROADMAP artifacts, `checkAutoStartAfterDiscuss()` silently
+ * returns false and the next /gsd invocation loops into the "All milestones
+ * complete" warning.
  *
  * This function, called from `handleAgentEnd` after `checkAutoStartAfterDiscuss`
  * returns false, pattern-matches the ready phrase on the last assistant message.
- * If it fired AND neither CONTEXT.md nor ROADMAP.md exists, it:
+ * If it fired AND neither the canonical M###-CONTEXT.md/M###-ROADMAP.md nor
+ * legacy CONTEXT.md/ROADMAP.md files exist, it:
  *   1. Notifies the user that the signal was rejected.
  *   2. Injects a system message via `pi.sendMessage(..., {triggerTurn:true})`
  *      telling the LLM the signal was premature and to emit the writes now.
@@ -599,15 +601,16 @@ export function maybeHandleReadyPhraseWithoutFiles(event: { messages: any[] }): 
     return true;
   }
 
+  const contextRel = relMilestoneFile(basePath, milestoneId, "CONTEXT");
+  const roadmapRel = relMilestoneFile(basePath, milestoneId, "ROADMAP");
   ctx.ui.notify(
-    `Milestone ${milestoneId}: "ready" signal rejected — CONTEXT.md and ROADMAP.md are missing. Asking the LLM to complete the writes.`,
+    `Milestone ${milestoneId}: "ready" signal rejected — ${contextRel} and ${roadmapRel} are missing. Asking the LLM to complete the writes.`,
     "warning",
   );
 
   const nudge =
     `You emitted "Milestone ${milestoneId} ready." but neither ` +
-    `.gsd/milestones/${milestoneId}/${milestoneId}-CONTEXT.md nor ` +
-    `.gsd/milestones/${milestoneId}/${milestoneId}-ROADMAP.md exists on disk. ` +
+    `${contextRel} nor ${roadmapRel} exists on disk. ` +
     `The ready phrase is a POST-WRITE signal and has been rejected. ` +
     `In this turn: (1) write PROJECT.md, REQUIREMENTS.md, and the milestone ` +
     `CONTEXT.md, (2) call gsd_plan_milestone, then (3) emit the ready phrase. ` +
@@ -1867,14 +1870,12 @@ export async function showSmartEntry(
     // and fires another dispatchWorkflow, resetting the conversation mid-interview.
     if (pendingAutoStartMap.has(basePath)) {
       // #3274: If /clear interrupted the discussion, the pending entry is stale.
-      // Detect staleness: no manifest, no CONTEXT.md, AND entry is older than
+      // Detect staleness: no manifest, no milestone CONTEXT artifact, AND entry is older than
       // 30s (avoids race between .set() and LLM writing first artifact).
       const entry = pendingAutoStartMap.get(basePath)!;
       const ageMs = Date.now() - (entry.createdAt || 0);
       const manifestExists = existsSync(join(gsdRoot(basePath), "DISCUSSION-MANIFEST.json"));
-      const milestoneHasContext = existsSync(
-        join(gsdRoot(basePath), "milestones", entry.milestoneId, `${entry.milestoneId}-CONTEXT.md`),
-      );
+      const milestoneHasContext = !!resolveMilestoneFile(basePath, entry.milestoneId, "CONTEXT");
       if (!manifestExists && !milestoneHasContext && ageMs > 30_000) {
         // Stale entry from an interrupted discussion — clear and continue
         pendingAutoStartMap.delete(basePath);
