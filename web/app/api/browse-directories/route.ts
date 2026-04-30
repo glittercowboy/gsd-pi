@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { resolve, dirname, join } from "node:path";
+import { resolve, dirname, join, relative, sep } from "node:path";
 import { homedir, platform } from "node:os";
 
 export const runtime = "nodejs";
@@ -24,38 +24,48 @@ function getDevRoot(): string {
   return homedir();
 }
 
-/**
- * Get available mount points on Linux (external drives, removable media)
- * Returns paths like /media, /mnt, /run/media/<user>
- */
+function existingDirectories(paths: string[]): string[] {
+  return paths.filter((entry) => existsSync(entry));
+}
+
 function getLinuxMountPoints(): string[] {
-  const mountPoints: string[] = [];
   const home = homedir();
+  return existingDirectories([
+    "/media",
+    "/mnt",
+    "/run/media",
+    `/run/media/${home.split("/").pop()}`,
+  ]);
+}
 
-  const standardMounts = ["/media", "/mnt", "/run/media"];
+function getMacMountPoints(): string[] {
+  return existingDirectories(["/Volumes"]);
+}
 
-  for (const mp of standardMounts) {
-    if (existsSync(mp)) {
-      mountPoints.push(mp);
-    }
-  }
-
-  const runMediaUser = `/run/media/${home.split("/").pop()}`;
-  if (existsSync(runMediaUser)) {
-    mountPoints.push(runMediaUser);
-  }
-
-  return mountPoints;
+function isSameOrDescendant(candidate: string, root: string): boolean {
+  const resolvedCandidate = resolve(candidate);
+  const resolvedRoot = resolve(root);
+  if (resolvedCandidate === resolvedRoot) return true;
+  const pathToCandidate = relative(resolvedRoot, resolvedCandidate);
+  return (
+    Boolean(pathToCandidate) &&
+    !pathToCandidate.startsWith("..") &&
+    pathToCandidate !== ".." &&
+    !pathToCandidate.startsWith(sep)
+  );
 }
 
 /**
- * Get additional root-level directories to show as shortcuts on Linux
+ * Get additional root-level directories to show as shortcuts
  * (for accessing external drives and mounted filesystems)
  */
 function getAdditionalRoots(): string[] {
   const os = platform();
   if (os === "linux") {
     return getLinuxMountPoints();
+  }
+  if (os === "darwin") {
+    return getMacMountPoints();
   }
   return [];
 }
@@ -82,13 +92,14 @@ export async function GET(request: Request): Promise<Response> {
     // if no devRoot is configured. Navigating to the parent of devRoot is
     // allowed (one level up) so the UI can show the devRoot in context,
     // but nothing further.
-    // Also allow navigation to common mount points (/media, /mnt, /run/media) on Linux
+    // Also allow navigation to platform mount roots (for example, /Volumes on macOS).
     const devRootParent = dirname(devRoot);
     const additionalRoots = getAdditionalRoots();
-    const isAllowedPath =
-      targetPath.startsWith(devRoot) ||
-      targetPath === devRootParent ||
-      additionalRoots.some((root) => targetPath.startsWith(root));
+    const isAllowedBrowsePath = (candidate: string): boolean =>
+      isSameOrDescendant(candidate, devRoot) ||
+      candidate === devRootParent ||
+      additionalRoots.some((root) => isSameOrDescendant(candidate, root));
+    const isAllowedPath = isAllowedBrowsePath(targetPath);
 
     if (!isAllowedPath) {
       return Response.json(
@@ -113,12 +124,12 @@ export async function GET(request: Request): Promise<Response> {
     }
 
     const parentPath = dirname(targetPath);
-    // Only offer the parent navigation if it's within the allowed scope
-    const parentAllowed = parentPath.startsWith(devRootParent) && parentPath !== targetPath;
+    // Only offer the parent navigation if it's within the allowed scope.
+    const parentAllowed = parentPath !== targetPath && isAllowedBrowsePath(parentPath);
     const entries: Array<{ name: string; path: string }> = [];
 
-    // On Linux, show mount points as quick-access when browsing from home directory
-    const showMountPoints = platform() === "linux" && (targetPath === homedir() || targetPath === devRoot);
+    // Show mount points as quick-access when browsing from the home/dev root.
+    const showMountPoints = additionalRoots.length > 0 && (targetPath === homedir() || targetPath === devRoot);
 
     try {
       const items = readdirSync(targetPath, { withFileTypes: true });
@@ -134,7 +145,7 @@ export async function GET(request: Request): Promise<Response> {
         });
       }
 
-      // Add mount points as quick-access entries on Linux
+      // Add mount points as quick-access entries.
       if (showMountPoints) {
         for (const mp of additionalRoots) {
           if (existsSync(mp)) {
