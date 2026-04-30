@@ -98,6 +98,39 @@ test('handlePlanSlice writes slice/task planning state and renders plan artifact
   }
 });
 
+test('handlePlanSlice leaves omitted enrichment fields empty instead of rendering placeholders', async () => {
+  const base = makeTmpBase();
+  openDatabase(join(base, '.gsd', 'gsd.db'));
+
+  try {
+    seedParentSlice();
+    const { successCriteria, proofLevel, integrationClosure, observabilityImpact, ...params } = validParams();
+    void successCriteria;
+    void proofLevel;
+    void integrationClosure;
+    void observabilityImpact;
+
+    const result = await handlePlanSlice(params, base);
+    assert.ok(!('error' in result), `unexpected error: ${'error' in result ? result.error : ''}`);
+
+    const slice = getSlice('M001', 'S02');
+    assert.ok(slice);
+    assert.equal(slice?.success_criteria, '');
+    assert.equal(slice?.proof_level, '');
+    assert.equal(slice?.integration_closure, '');
+    assert.equal(slice?.observability_impact, '');
+
+    const planPath = join(base, '.gsd', 'milestones', 'M001', 'slices', 'S02', 'S02-PLAN.md');
+    const content = readFileSync(planPath, 'utf-8');
+    assert.doesNotMatch(content, /Not provided/i);
+    assert.doesNotMatch(content, /^## Proof Level$/m);
+    assert.doesNotMatch(content, /^## Integration Closure$/m);
+    assert.match(content, /- Complete the planned slice outcomes\./);
+  } finally {
+    cleanup(base);
+  }
+});
+
 test('handlePlanSlice rejects invalid payloads', async () => {
   const base = makeTmpBase();
   openDatabase(join(base, '.gsd', 'gsd.db'));

@@ -90,6 +90,23 @@ function hasCompleteProjectResearch(base: string): boolean {
   return getProjectResearchStatus(base).complete;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hasCheckedTaskCompletionOnDisk(base: string, mid: string, sid: string, tid: string): boolean {
+  const tasksDir = resolveTasksDir(base, mid, sid);
+  if (!tasksDir) return false;
+  if (!existsSync(join(tasksDir, `${tid}-SUMMARY.md`))) return false;
+
+  const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
+  if (!planAbs || !existsSync(planAbs)) return false;
+
+  const planContent = readFileSync(planAbs, "utf-8");
+  const cbRe = new RegExp(`^\\s*-\\s+\\[[xX]\\]\\s+\\*\\*${escapeRegExp(tid)}:`, "m");
+  return cbRe.test(planContent);
+}
+
 /**
  * Check whether a milestone produced implementation artifacts (non-`.gsd/`
  * files) in git history. The primary signal is the branch diff against the
@@ -574,28 +591,23 @@ export function verifyExpectedArtifact(
   }
 
   // execute-task: DB status is authoritative. Fall back to checked-checkbox
-  // detection when the DB is unavailable (unmigrated projects).
+  // detection when the DB is unavailable (unmigrated projects), or when the
+  // disk artifacts already reflect completion but the DB replay is one beat
+  // behind the completion write.
   if (unitType === "execute-task") {
     const { milestone: mid, slice: sid, task: tid } = parseUnitId(unitId);
     if (mid && sid && tid) {
       const dbTask = getTask(mid, sid, tid);
       if (dbTask) {
-        // DB available — trust it
-        if (dbTask.status !== "complete" && dbTask.status !== "done") return false;
+        if (dbTask.status !== "complete" && dbTask.status !== "done" && !hasCheckedTaskCompletionOnDisk(base, mid, sid, tid)) {
+          return false;
+        }
       } else if (!isDbAvailable()) {
         // LEGACY: Pre-migration fallback for projects without DB.
         // Require a CHECKED checkbox — a bare heading or unchecked checkbox
         // does not prove gsd_complete_task ran. Summary file on disk alone
         // is not sufficient evidence (could be a rogue write) (#3607).
-        const planAbs = resolveSliceFile(base, mid, sid, "PLAN");
-        if (planAbs && existsSync(planAbs)) {
-          const planContent = readFileSync(planAbs, "utf-8");
-          const escapedTid = tid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-          const cbRe = new RegExp(`^- \\[[xX]\\] \\*\\*${escapedTid}:`, "m");
-          if (!cbRe.test(planContent)) return false;
-        } else {
-          return false; // no plan file → cannot verify
-        }
+        if (!hasCheckedTaskCompletionOnDisk(base, mid, sid, tid)) return false;
       } else {
         // DB available but task row not found — completion tool never ran (#3607)
         return false;

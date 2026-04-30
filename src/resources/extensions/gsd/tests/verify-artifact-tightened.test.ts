@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { verifyExpectedArtifact } from "../auto-recovery.ts";
-import { closeDatabase, isDbAvailable } from "../gsd-db.ts";
+import { closeDatabase, insertMilestone, insertSlice, insertTask, isDbAvailable, openDatabase } from "../gsd-db.ts";
 
 /** Scaffold .gsd/milestones/M001/slices/S01/ with tasks/ and a T01-SUMMARY.md. */
 function scaffoldProject(t: { after: (fn: () => void) => void }): {
@@ -149,5 +149,56 @@ test("#3607: execute-task legacy branch — wrong task id in checkbox does not m
     verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
     false,
     "checkbox for a different task id must not count as T01 completion",
+  );
+});
+
+test("execute-task DB lag branch — pending DB status can verify from checked plan plus summary", (t) => {
+  closeDatabase();
+  const { base, planPath } = scaffoldProject(t);
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  assert.equal(isDbAvailable(), true, "DB must be open to hit the DB-lag branch");
+
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Implement feature", status: "pending" });
+
+  writeFileSync(
+    planPath,
+    [
+      "# S01 plan",
+      "",
+      "- [x] **T01: Implement feature**",
+    ].join("\n"),
+  );
+
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
+    true,
+    "checked plan entry plus summary should verify while DB reconcile catches up",
+  );
+});
+
+test("execute-task DB lag branch — summary without checked plan still fails", (t) => {
+  closeDatabase();
+  const { base, planPath } = scaffoldProject(t);
+  openDatabase(join(base, ".gsd", "gsd.db"));
+
+  insertMilestone({ id: "M001", title: "Milestone", status: "active" });
+  insertSlice({ id: "S01", milestoneId: "M001", title: "Slice", status: "pending" });
+  insertTask({ id: "T01", sliceId: "S01", milestoneId: "M001", title: "Implement feature", status: "pending" });
+
+  writeFileSync(
+    planPath,
+    [
+      "# S01 plan",
+      "",
+      "- [ ] **T01: Implement feature**",
+    ].join("\n"),
+  );
+
+  assert.equal(
+    verifyExpectedArtifact("execute-task", "M001/S01/T01", base),
+    false,
+    "pending DB status plus summary is insufficient without a checked task checkbox",
   );
 });

@@ -37,13 +37,13 @@ export interface PlanSliceParams {
   sliceId: string;
   goal: string;
   tasks: PlanSliceTaskInput[];
-  /** @optional — defaults to "Not provided." when omitted by models with limited tool-calling */
+  /** @optional — omitted fields render as conservative defaults */
   successCriteria?: string;
-  /** @optional — defaults to "Not provided." when omitted */
+  /** @optional — omitted fields render as conservative defaults */
   proofLevel?: string;
-  /** @optional — defaults to "Not provided." when omitted */
+  /** @optional — omitted fields render as conservative defaults */
   integrationClosure?: string;
-  /** @optional — defaults to "Not provided." when omitted */
+  /** @optional — omitted fields render as conservative defaults */
   observabilityImpact?: string;
   /** Optional caller-provided identity for audit trail */
   actorName?: string;
@@ -120,11 +120,12 @@ function validateParams(params: PlanSliceParams): PlanSliceParams {
 
   return {
     ...params,
-    // Apply defaults for optional enrichment fields (#2771)
-    successCriteria: params.successCriteria ?? "Not provided.",
-    proofLevel: params.proofLevel ?? "Not provided.",
-    integrationClosure: params.integrationClosure ?? "Not provided.",
-    observabilityImpact: params.observabilityImpact ?? "Not provided.",
+    // Keep optional enrichment fields empty when omitted. The renderer supplies
+    // conservative defaults where needed, without surfacing placeholder prose.
+    successCriteria: params.successCriteria ?? "",
+    proofLevel: params.proofLevel ?? "",
+    integrationClosure: params.integrationClosure ?? "",
+    observabilityImpact: params.observabilityImpact ?? "",
     tasks: validateTasks(params.tasks),
   };
 }

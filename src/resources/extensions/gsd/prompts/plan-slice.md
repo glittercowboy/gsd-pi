@@ -66,7 +66,7 @@ Narrate your decomposition reasoning — why you're grouping work this way, what
 {{executorContextConstraints}}
 
 Then:
-0. If `REQUIREMENTS.md` was preloaded above, identify which Active requirements the roadmap says this slice owns or supports. These are the requirements this plan must deliver — every owned requirement needs at least one task that directly advances it, and verification must prove the requirement is met.
+0. If `REQUIREMENTS.md` was preloaded above, identify which Active requirements the roadmap says this slice owns or supports. Owned requirements are acceptance criteria for this slice — every owned requirement needs at least one task that directly advances it, and verification must prove the requirement is met. Supporting requirements are compatibility constraints only; do not pull a later slice's primary work into this slice unless the roadmap explicitly assigns that work here.
 0a. Call `memory_query` with keywords from the slice title and the source files listed below. Prior architectural decisions, conventions, and gotchas in this area should inform task decomposition — not be re-derived during execution.
 1. Read the templates:
    - `~/.gsd/agent/extensions/gsd/templates/plan.md`
@@ -92,7 +92,7 @@ Then:
    - a matching task plan file with description, steps, must-haves, verification, inputs, and expected output
    - **Inputs and Expected Output must list concrete backtick-wrapped file paths** (e.g. `` `src/types.ts` ``). These are machine-parsed to derive task dependencies — vague prose without paths breaks parallel execution. Every task must have at least one output file path.
    - Observability Impact section **only if the task touches runtime boundaries, async flows, or error paths** — omit it otherwise
-7. **Persist planning state through `gsd_plan_slice`.** Call it with the full slice planning payload (goal, demo, must-haves, verification, tasks, and metadata). The tool inserts all tasks in the same transaction, writes to the DB, and renders `{{outputPath}}` and `{{slicePath}}/tasks/T##-PLAN.md` files automatically. Do **not** call `gsd_plan_task` separately — `gsd_plan_slice` handles task persistence. Do **not** rely on direct `PLAN.md` writes as the source of truth; the DB-backed tool is the canonical write path for slice and task planning state.
+7. **Persist planning state through `gsd_plan_slice`.** Call it with the full slice planning payload: `goal`, `successCriteria`, optional `proofLevel`, optional `integrationClosure`, optional `observabilityImpact`, and `tasks`. Keep each task description's first paragraph concise; detailed steps and must-haves may follow, but the parent slice plan should read as a summary. The tool inserts all tasks in the same transaction, writes to the DB, and renders `{{outputPath}}` and `{{slicePath}}/tasks/T##-PLAN.md` files automatically. Do **not** call `gsd_plan_task` separately — `gsd_plan_slice` handles task persistence. Do **not** rely on direct `PLAN.md` writes as the source of truth; the DB-backed tool is the canonical write path for slice and task planning state.
 8. **Self-audit the plan.** Walk through each check — if any fail, fix the plan files before moving on:
     - **Completion semantics:** If every task were completed exactly as written, the slice goal/demo should actually be true.
     - **Requirement coverage:** Every must-have in the slice maps to at least one task. No must-have is orphaned. If `REQUIREMENTS.md` exists, every Active requirement this slice owns maps to at least one task.
