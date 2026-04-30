@@ -1162,7 +1162,7 @@ export function nativeBranchDelete(basePath: string, branch: string, force = tru
     native.gitBranchDelete(basePath, branch, force);
     return;
   }
-  gitFileExec(basePath, ["branch", force ? "-D" : "-d", branch], true);
+  gitFileExec(basePath, ["branch", force ? "-D" : "-d", branch]);
 }
 
 /**

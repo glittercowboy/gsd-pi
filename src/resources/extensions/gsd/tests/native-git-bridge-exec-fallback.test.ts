@@ -16,7 +16,7 @@ import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { nativeIsRepo, nativeCommit, nativeResetHard } from "../native-git-bridge.js";
+import { nativeIsRepo, nativeCommit, nativeResetHard, nativeBranchDelete } from "../native-git-bridge.js";
 
 // Note: prior static-analysis tests that scanned native-git-bridge.ts for
 // the raw shell-spawn pattern were removed under #4827 — the integration
@@ -94,5 +94,12 @@ describe("native-git-bridge #4180: fallback runtime behaviour", () => {
 
     const content = readFileSync(join(repo, "file.txt"), "utf-8");
     assert.equal(content, "initial\n", "file should be restored to HEAD content after hard reset");
+  });
+
+  test("nativeBranchDelete throws when git cannot delete the branch", () => {
+    assert.throws(
+      () => nativeBranchDelete(repo, "does-not-exist"),
+      /GSD_GIT_ERROR|git branch -D does-not-exist failed/,
+    );
   });
 });
