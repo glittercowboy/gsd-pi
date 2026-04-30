@@ -81,11 +81,11 @@ export class GsdGitIntegration implements vscode.Disposable {
 			return;
 		}
 
-			try {
-				const diff = await this.git(["diff"]);
-				if (!diff.trim()) {
-					// Files may be untracked — show status instead
-					const status = await this.git(["status", "--short"]);
+		try {
+			const diff = await this.git(["diff", "--", ...files]);
+			if (!diff.trim()) {
+				// Files may be untracked — show status instead
+				const status = await this.git(["status", "--short", "--", ...files]);
 				const channel = vscode.window.createOutputChannel("GSD Git Diff");
 				channel.appendLine("# Agent-modified files (unstaged):");
 				channel.appendLine(status);

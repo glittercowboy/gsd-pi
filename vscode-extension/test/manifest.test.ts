@@ -62,3 +62,11 @@ test("checkpoint view is contributed and registered", () => {
 	assert.ok(pkg.contributes.views.gsd.some((view) => view.id === "gsd-checkpoints"));
 	assert.match(extensionSource, /registerTreeDataProvider\(GsdCheckpointProvider\.viewId, checkpointProvider\)/);
 });
+
+test("agent diff command scopes git output to tracked agent files", () => {
+	const gitIntegrationSource = readText("src/git-integration.ts");
+
+	assert.match(gitIntegrationSource, /\["diff", "--", \.\.\.files\]/);
+	assert.match(gitIntegrationSource, /\["status", "--short", "--", \.\.\.files\]/);
+	assert.doesNotMatch(gitIntegrationSource, /\["diff"\]/);
+});
