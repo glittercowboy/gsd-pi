@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server"
+import { isAllowedOrigin } from "./lib/origin-guard"
 
 /**
  * Next.js middleware — validates bearer token and origin on all API routes.
@@ -8,8 +9,9 @@ import { NextResponse, type NextRequest } from "next/server"
  * (SSE) connections may use the `_token` query parameter instead since the
  * EventSource API cannot set custom headers.
  *
- * Additionally, if an `Origin` header is present, it must match the expected
- * localhost origin to prevent cross-site request forgery.
+ * Additionally, if an `Origin` header is present, it must match the launched
+ * origin, the actual request host/forwarded host, or an explicitly allowed
+ * origin to prevent cross-site request forgery while supporting remote access.
  */
 export function middleware(request: NextRequest): NextResponse | undefined {
   const { pathname } = request.nextUrl
@@ -27,23 +29,7 @@ export function middleware(request: NextRequest): NextResponse | undefined {
   // ── Origin / CORS check ────────────────────────────────────────────
   const origin = request.headers.get("origin")
   if (origin) {
-    const host = process.env.GSD_WEB_HOST || "127.0.0.1"
-    const port = process.env.GSD_WEB_PORT || "3000"
-
-    // Default: localhost origin for the launched host:port
-    const allowed = new Set([`http://${host}:${port}`])
-
-    // GSD_WEB_ALLOWED_ORIGINS lets users whitelist additional origins for
-    // secure tunnel setups (Tailscale Serve, Cloudflare Tunnel, ngrok, etc.)
-    const extra = process.env.GSD_WEB_ALLOWED_ORIGINS
-    if (extra) {
-      for (const entry of extra.split(",")) {
-        const trimmed = entry.trim()
-        if (trimmed) allowed.add(trimmed)
-      }
-    }
-
-    if (!allowed.has(origin)) {
+    if (!isAllowedOrigin(request, origin)) {
       return NextResponse.json(
         { error: "Forbidden: origin mismatch" },
         { status: 403 },
