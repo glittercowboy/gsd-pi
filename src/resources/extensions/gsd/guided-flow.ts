@@ -594,6 +594,26 @@ export function maybeHandleReadyPhraseWithoutFiles(event: { messages: any[] }): 
   const roadmapFile = resolveMilestoneFile(basePath, milestoneId, "ROADMAP");
   if (contextFile || roadmapFile) return false;
 
+  // Diagnostic: when the cached resolver reports both files missing, also probe
+  // the canonical paths with uncached existsSync so we can tell whether the
+  // recovery is firing on real-missing files or a path-resolution miss
+  // (basePath/symlink mismatch, stale cache despite agent-end-recovery flush,
+  // legacy descriptor dir not matching, etc.).
+  try {
+    const mDir = resolveMilestonePath(basePath, milestoneId);
+    const canonicalCtx = mDir ? join(mDir, `${milestoneId}-CONTEXT.md`) : null;
+    const canonicalRoadmap = mDir ? join(mDir, `${milestoneId}-ROADMAP.md`) : null;
+    logWarning(
+      "guided",
+      `ready-phrase-reject diagnostic mid=${milestoneId} basePath=${basePath} ` +
+      `mDir=${mDir ?? "null"} ` +
+      `canonical-ctx=${canonicalCtx ?? "null"} ctx-exists=${canonicalCtx ? existsSync(canonicalCtx) : "n/a"} ` +
+      `canonical-roadmap=${canonicalRoadmap ?? "null"} roadmap-exists=${canonicalRoadmap ? existsSync(canonicalRoadmap) : "n/a"}`,
+    );
+  } catch (e) {
+    logWarning("guided", `ready-phrase-reject diagnostic failed: ${(e as Error).message}`);
+  }
+
   entry.readyRejectCount = (entry.readyRejectCount ?? 0) + 1;
 
   if (entry.readyRejectCount > MAX_READY_REJECTS) {

@@ -10,6 +10,12 @@ All relevant context has been preloaded below — start working immediately with
 
 {{inlinedContext}}
 
+## Already Planned? Soft Brake
+
+If `{{outputPath}}` already exists on disk with at least one slice line (e.g. `- [ ] **S01:`) AND `gsd_query` reports slice rows for this milestone, a prior `gsd_plan_milestone` call already persisted the plan. Do **not** re-call `gsd_plan_milestone` — its UPSERT would overwrite the existing plan with whatever you reconstruct, which is unsafe when you don't have the original decomposition reasoning. Skip directly to the ready phrase at the end of this prompt.
+
+If only the file exists (no DB rows) or only DB rows exist (no file), the prior write was incomplete — proceed with planning as normal so the tool reconciles both.
+
 ## Your Role in the Pipeline
 
 You are the first deep look at this milestone. You have full tool access — explore the codebase, look up docs, investigate technology choices. Your job is to understand the landscape and then strategically decompose the work into demoable slices.
