@@ -189,12 +189,17 @@ class OpenRouterDiscoveryAdapter implements ProviderDiscoveryAdapter {
 		}
 		try {
 			const u = new URL(trimmed);
-			const suffix = "/api/v1";
 			let path = u.pathname.replace(/\/+$/, "") || "";
-			if (path === suffix) {
-				path = "";
-			} else if (path.endsWith(suffix)) {
-				path = path.slice(0, -suffix.length);
+			const stripIfPresent = (suffix: string): void => {
+				if (path === suffix) {
+					path = "";
+				} else if (path.endsWith(suffix)) {
+					path = path.slice(0, -suffix.length);
+				}
+			};
+			stripIfPresent("/api/v1/models");
+			if (path.length > 0) {
+				stripIfPresent("/api/v1");
 			}
 			return path.length > 0 ? `${u.origin}${path}` : u.origin;
 		} catch {
