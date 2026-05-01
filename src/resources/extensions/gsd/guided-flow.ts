@@ -36,7 +36,7 @@ import { gsdHome } from "./gsd-home.js";
 import {
   gsdRoot, milestonesDir, resolveMilestoneFile, resolveMilestonePath,
   resolveSliceFile, resolveSlicePath, resolveGsdRootFile, relGsdRootFile,
-  relMilestoneFile, relSliceFile,
+  relMilestoneFile, relSliceFile, clearPathCache,
 } from "./paths.js";
 import { join } from "node:path";
 import { readFileSync, existsSync, mkdirSync, readdirSync, rmSync, unlinkSync } from "node:fs";
@@ -587,6 +587,13 @@ export function maybeHandleReadyPhraseWithoutFiles(event: { messages: any[] }): 
   const lastMsg = event.messages[event.messages.length - 1];
   const text = extractAssistantText(lastMsg);
   if (!READY_PHRASE_RE.test(text)) return false;
+
+  // Bust paths.ts cached dir listings before checking for fresh writes. The
+  // LLM's Write tool calls do not invalidate paths.ts caches, so a stale
+  // listing taken before the milestone dir or its CONTEXT/ROADMAP files
+  // existed would falsely report the artifacts as missing and trigger the
+  // 3-strike "ready without files" abort even though the writes succeeded.
+  clearPathCache();
 
   // Gate: artifacts must still be missing — if they exist, the happy path
   // already fired and we have nothing to do.

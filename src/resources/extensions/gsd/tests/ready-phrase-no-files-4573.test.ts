@@ -22,6 +22,7 @@ import {
   resetEmptyTurnCounter,
 } from "../guided-flow.ts";
 import { drainLogs } from "../workflow-logger.ts";
+import { resolveMilestoneFile, clearPathCache } from "../paths.ts";
 
 // ─── Test harness ──────────────────────────────────────────────────────────
 
@@ -173,6 +174,79 @@ describe("#4573 maybeHandleReadyPhraseWithoutFiles", () => {
       });
       assert.equal(handled, false);
       assert.equal(cap.messages.length, 0);
+    } finally {
+      clearPendingAutoStart();
+    }
+  });
+
+  test("stale path cache from a prior listing → fresh writes are detected (regression)", () => {
+    // Repro the live binary failure where:
+    //   1. paths.ts cached dir listings were populated when M001/ was empty
+    //      (or the milestone dir didn't yet exist).
+    //   2. The LLM then wrote M001-CONTEXT.md and M001-ROADMAP.md via the
+    //      standard Write tool — which has no awareness of paths.ts caches.
+    //   3. maybeHandleReadyPhraseWithoutFiles called resolveMilestoneFile,
+    //      which read the stale cache and reported the artifacts missing,
+    //      firing a false rejection nudge until MAX_READY_REJECTS aborted
+    //      the auto-start with `LLM signaled "ready" 3 times without
+    //      writing files`.
+    //
+    // The fix busts the path cache at the top of the validator before
+    // re-resolving. This test fails pre-fix (handled === true) because the
+    // cache returns the empty listing it captured in step (a).
+    const base = mkBase();
+    try {
+      const mDir = join(base, ".gsd", "milestones", "M001");
+
+      // (a) Prime the cache with a listing that DOES NOT include M001's
+      //     CONTEXT/ROADMAP files. mkBase() has already created the M001
+      //     directory but nothing inside it yet — so this readdir caches an
+      //     empty entry list keyed by the M001 dir path.
+      clearPathCache();
+      assert.equal(
+        resolveMilestoneFile(base, "M001", "CONTEXT"),
+        null,
+        "precondition: resolver must report missing before files are written",
+      );
+
+      // (b) Write the artifacts directly to disk (simulates the LLM Write
+      //     tool — no clearPathCache() call between the write and the
+      //     validator).
+      writeFileSync(join(mDir, "M001-CONTEXT.md"), "# ctx");
+      writeFileSync(join(mDir, "M001-ROADMAP.md"), "# roadmap");
+
+      // (c) Sanity: the cache is still stale. Without the fix, the
+      //     validator would still see the empty cached listing.
+      assert.equal(
+        resolveMilestoneFile(base, "M001", "CONTEXT"),
+        null,
+        "stale cache still reports missing pre-clearPathCache",
+      );
+
+      // (d) Run the validator. With the fix it busts the cache before
+      //     resolving and returns false (no nudge). Without the fix it
+      //     fires the nudge.
+      const cap = mkCapture();
+      setPendingAutoStart(base, {
+        basePath: base,
+        milestoneId: "M001",
+        ctx: mkCtx(cap),
+        pi: mkPi(cap),
+      });
+      const handled = maybeHandleReadyPhraseWithoutFiles({
+        messages: [assistantMsg("Milestone M001 ready.")],
+      });
+      assert.equal(
+        handled,
+        false,
+        "fresh writes must not trigger the rejection nudge — cache must be busted before resolution",
+      );
+      assert.equal(cap.messages.length, 0, "no nudge sent");
+      assert.equal(
+        cap.notifies.length,
+        0,
+        "no rejection notify when files exist on disk",
+      );
     } finally {
       clearPendingAutoStart();
     }
