@@ -142,3 +142,79 @@ describe("supportsDiscoveryForApi", () => {
 		assert.equal(supportsDiscoveryForApi(undefined), false);
 	});
 });
+
+describe("OpenRouter discovery — request URL", () => {
+	const expectedOpenRouterModelsUrl = "https://openrouter.ai/api/v1/models";
+
+	it("requests /api/v1/models when baseUrl is omitted", async () => {
+		const prevFetch = globalThis.fetch;
+		let requestedUrl = "";
+		globalThis.fetch = (async (input: string | URL | Request) => {
+			requestedUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			return new Response(JSON.stringify({ data: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof globalThis.fetch;
+		try {
+			await getDiscoveryAdapter("openrouter").fetchModels("test-key");
+			assert.equal(requestedUrl, expectedOpenRouterModelsUrl);
+		} finally {
+			globalThis.fetch = prevFetch;
+		}
+	});
+
+	it("requests /api/v1/models when baseUrl is registry-style …/api/v1", async () => {
+		const prevFetch = globalThis.fetch;
+		let requestedUrl = "";
+		globalThis.fetch = (async (input: string | URL | Request) => {
+			requestedUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			return new Response(JSON.stringify({ data: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof globalThis.fetch;
+		try {
+			await getDiscoveryAdapter("openrouter").fetchModels("test-key", "https://openrouter.ai/api/v1");
+			assert.equal(requestedUrl, expectedOpenRouterModelsUrl);
+		} finally {
+			globalThis.fetch = prevFetch;
+		}
+	});
+
+	it("requests /api/v1/models when baseUrl is host root only", async () => {
+		const prevFetch = globalThis.fetch;
+		let requestedUrl = "";
+		globalThis.fetch = (async (input: string | URL | Request) => {
+			requestedUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			return new Response(JSON.stringify({ data: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof globalThis.fetch;
+		try {
+			await getDiscoveryAdapter("openrouter").fetchModels("test-key", "https://openrouter.ai");
+			assert.equal(requestedUrl, expectedOpenRouterModelsUrl);
+		} finally {
+			globalThis.fetch = prevFetch;
+		}
+	});
+
+	it("requests /api/v1/models for a custom OpenRouter origin", async () => {
+		const prevFetch = globalThis.fetch;
+		let requestedUrl = "";
+		globalThis.fetch = (async (input: string | URL | Request) => {
+			requestedUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			return new Response(JSON.stringify({ data: [] }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		}) as typeof globalThis.fetch;
+		try {
+			await getDiscoveryAdapter("openrouter").fetchModels("test-key", "https://openrouter.example");
+			assert.equal(requestedUrl, "https://openrouter.example/api/v1/models");
+		} finally {
+			globalThis.fetch = prevFetch;
+		}
+	});
+});
