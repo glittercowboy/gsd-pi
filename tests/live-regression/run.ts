@@ -20,7 +20,7 @@
  *   GSD_SMOKE_BINARY=dist/loader.js node --experimental-strip-types tests/live-regression/run.ts
  */
 
-import { execFileSync, spawn } from "child_process";
+import { execFileSync, spawn, spawnSync } from "child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -79,26 +79,22 @@ function gsd(
   cwd: string,
   env?: Record<string, string>,
 ): { stdout: string; stderr: string; code: number } {
-  try {
-    const stdout = execFileSync(
-      binary === "gsd" ? "gsd" : "node",
-      binary === "gsd" ? args : [binary, ...args],
-      {
-        cwd,
-        encoding: "utf-8",
-        timeout: 30_000,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, ...env, GSD_NON_INTERACTIVE: "1" },
-      },
-    );
-    return { stdout, stderr: "", code: 0 };
-  } catch (err: any) {
-    return {
-      stdout: err.stdout || "",
-      stderr: err.stderr || "",
-      code: err.status ?? 1,
-    };
-  }
+  const result = spawnSync(
+    binary === "gsd" ? "gsd" : "node",
+    binary === "gsd" ? args : [binary, ...args],
+    {
+      cwd,
+      encoding: "utf-8",
+      timeout: 30_000,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, ...env, GSD_NON_INTERACTIVE: "1" },
+    },
+  );
+  return {
+    stdout: result.stdout || "",
+    stderr: result.stderr || "",
+    code: result.status ?? 1,
+  };
 }
 
 function createTempProject(name: string): string {
@@ -133,6 +129,23 @@ function buildMinimalPlan(
 
 function buildTaskSummary(id: string): string {
   return `---\nid: ${id}\nparent: S01\nmilestone: M001\nduration: 5m\nverification_result: passed\ncompleted_at: ${new Date().toISOString()}\n---\n\n# ${id}: Done\n\nCompleted.`;
+}
+
+// Recover DB hierarchy from on-disk markdown projections. DB is authoritative
+// at runtime, so live-regression fixtures that exist only as markdown must be
+// imported via `gsd recover` before `headless query` can derive their state.
+// `handleRecover` exits 0 even when DB init silently fails, so also assert the
+// success-path marker on stderr (commands-maintenance.ts:535).
+function recover(dir: string): void {
+  const result = gsd(["recover"], dir);
+  assert(
+    result.code === 0,
+    `gsd recover should succeed for fixture, got ${result.code}: ${result.stderr}`,
+  );
+  assert(
+    result.stderr.includes("gsd-recover: recovered"),
+    `gsd recover should reach success path, got stderr: ${result.stderr}`,
+  );
 }
 
 // ─── Test: headless query returns valid JSON ──────────────────────────────
@@ -200,6 +213,7 @@ run("headless query: milestone with roadmap reports planning phase", () => {
       buildMinimalRoadmap([{ id: "S01", title: "First Slice", done: false }]),
     );
 
+    recover(dir);
     const result = gsd(["headless", "query"], dir);
     assert(result.code === 0, `expected exit 0, got ${result.code}`);
 
@@ -240,6 +254,7 @@ run("headless query: all tasks done reports summarizing phase", () => {
       buildTaskSummary("T01"),
     );
 
+    recover(dir);
     const result = gsd(["headless", "query"], dir);
     assert(result.code === 0, `expected exit 0, got ${result.code}`);
 
@@ -273,6 +288,7 @@ run("headless query: milestone with summary reports complete or idle", () => {
     );
     writeFileSync(join(mDir, "M001-SUMMARY.md"), "# M001 Summary\n\nComplete.");
 
+    recover(dir);
     const result = gsd(["headless", "query"], dir);
     assert(result.code === 0, `expected exit 0, got ${result.code}`);
 
