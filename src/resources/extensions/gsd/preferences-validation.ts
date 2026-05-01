@@ -431,7 +431,16 @@ export function validatePreferences(preferences: GSDPreferences): {
   // ─── Remote Questions ───────────────────────────────────────────────
   if (preferences.remote_questions !== undefined) {
     if (preferences.remote_questions && typeof preferences.remote_questions === "object") {
-      validated.remote_questions = preferences.remote_questions;
+      const rq = preferences.remote_questions as unknown as Record<string, unknown>;
+      if (typeof rq.channel_id === "number") {
+        errors.push(
+          `remote_questions.channel_id must be quoted as a string in PREFERENCES.md ` +
+            `(got number ${rq.channel_id} — IDs above 2^53 lose precision when parsed as numbers). ` +
+            `Fix: change \`channel_id: ${rq.channel_id}\` to \`channel_id: "${rq.channel_id}"\`.`,
+        );
+      } else {
+        validated.remote_questions = preferences.remote_questions;
+      }
     } else {
       errors.push("remote_questions must be an object");
     }
