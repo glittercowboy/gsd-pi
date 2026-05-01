@@ -59,14 +59,7 @@ function hydrateRemoteTokensFromAuth(): void {
     for (const [providerId, envVar] of needed) {
       try {
         const creds = auth.getCredentialsForProvider(providerId) as Array<{ type: string; key?: string }>;
-        let apiKeyCred: { type: string; key?: string } | undefined;
-        for (let i = creds.length - 1; i >= 0; i--) {
-          const c = creds[i];
-          if (c.type === "api_key" && !!c.key) {
-            apiKeyCred = c;
-            break;
-          }
-        }
+        const apiKeyCred = pickLastApiKeyCredential(creds);
         if (apiKeyCred?.key) {
           process.env[envVar] = apiKeyCred.key;
         }
@@ -122,6 +115,16 @@ export function getRemoteConfigStatus(): string {
 
 export function isValidChannelId(channel: RemoteChannel, id: string): boolean {
   return CHANNEL_ID_PATTERNS[channel].test(id);
+}
+
+export function pickLastApiKeyCredential<T extends { type: string; key?: string }>(
+  creds: ReadonlyArray<T>,
+): T | undefined {
+  for (let i = creds.length - 1; i >= 0; i--) {
+    const c = creds[i];
+    if (c.type === "api_key" && !!c.key) return c;
+  }
+  return undefined;
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
