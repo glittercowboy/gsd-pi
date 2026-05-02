@@ -84,3 +84,4 @@ bun.lock
 
 # ── GSD baseline (auto-generated) ──
 .gsd-id
+.aider*
