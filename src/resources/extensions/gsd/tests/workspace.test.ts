@@ -60,11 +60,12 @@ describe("createWorkspace", () => {
   });
 
   test("follows symlinks — identityKey matches realpath of target", (t) => {
-    const linkPath = join(tmpdir(), `gsd-ws-link-${Date.now()}`);
-    symlinkSync(projectDir, linkPath);
+    const linkParent = mkdtempSync(join(tmpdir(), "gsd-ws-link-"));
+    const linkPath = join(linkParent, "project");
     t.after(() => {
-      try { rmSync(linkPath); } catch { /* ignore */ }
+      rmSync(linkParent, { recursive: true, force: true });
     });
+    symlinkSync(projectDir, linkPath);
 
     const ws = createWorkspace(linkPath);
     assert.equal(ws.identityKey, realpathSync(projectDir));
@@ -146,18 +147,23 @@ describe("scopeMilestone path methods", () => {
 });
 
 describe("createWorkspace: contract.projectGsd is realpath-canonicalized when basePath is a symlink", () => {
-  let projectDir: string;
-  let linkPath: string;
+  let projectDir = "";
+  let linkParent = "";
+  let linkPath = "";
 
   beforeEach(() => {
     projectDir = makeProjectDir();
-    linkPath = join(tmpdir(), `gsd-ws-symlink-${Date.now()}`);
+    linkParent = mkdtempSync(join(tmpdir(), "gsd-ws-symlink-"));
+    linkPath = join(linkParent, "project");
     symlinkSync(projectDir, linkPath);
   });
 
   afterEach(() => {
-    try { rmSync(linkPath); } catch { /* ignore */ }
-    rmSync(projectDir, { recursive: true, force: true });
+    if (linkParent) rmSync(linkParent, { recursive: true, force: true });
+    if (projectDir) rmSync(projectDir, { recursive: true, force: true });
+    linkParent = "";
+    linkPath = "";
+    projectDir = "";
   });
 
   test("contract.projectGsd matches realpath of projectRoot when workspace is created via symlink", () => {
