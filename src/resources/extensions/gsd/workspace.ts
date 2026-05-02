@@ -45,7 +45,13 @@ export function createWorkspace(rawBasePath: string): GsdWorkspace {
 
   const worktreeRoot = isWorktree ? tryRealpath(resolvedBase) : null;
 
-  const contract = Object.freeze(resolveGsdPathContract(resolvedBase));
+  // Derive a canonical base from the already-realpath-normalized paths so that
+  // resolveGsdPathContract always receives a canonical path. Using the raw
+  // resolvedBase here can produce a non-canonical projectGsd when the input
+  // path contains symlinks, causing contract.projectGsd to diverge from the
+  // realpath-normalized projectRoot / identityKey.
+  const canonicalBase = isWorktree ? (worktreeRoot ?? resolvedBase) : projectRoot;
+  const contract = Object.freeze(resolveGsdPathContract(canonicalBase));
 
   const identityKey = tryRealpath(projectRoot);
 

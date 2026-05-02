@@ -144,3 +144,47 @@ describe("scopeMilestone path methods", () => {
     assert.equal(scope1.metaJson(), scope2.metaJson());
   });
 });
+
+describe("createWorkspace: contract.projectGsd is realpath-canonicalized when basePath is a symlink", () => {
+  let projectDir: string;
+  let linkPath: string;
+
+  beforeEach(() => {
+    projectDir = makeProjectDir();
+    linkPath = join(tmpdir(), `gsd-ws-symlink-${Date.now()}`);
+    symlinkSync(projectDir, linkPath);
+  });
+
+  afterEach(() => {
+    try { rmSync(linkPath); } catch { /* ignore */ }
+    rmSync(projectDir, { recursive: true, force: true });
+  });
+
+  test("contract.projectGsd matches realpath of projectRoot when workspace is created via symlink", () => {
+    const ws = createWorkspace(linkPath);
+
+    const canonicalProjectRoot = realpathSync(projectDir);
+
+    // identityKey must be the realpath of the canonical project root
+    assert.equal(ws.identityKey, canonicalProjectRoot);
+    assert.equal(ws.projectRoot, canonicalProjectRoot);
+
+    // contract.projectGsd must start with the canonical project root —
+    // not with the symlink path. If the bug is present, contract.projectGsd
+    // would be linkPath + "/.gsd" instead of canonicalProjectRoot + "/.gsd".
+    assert.ok(
+      ws.contract.projectGsd.startsWith(canonicalProjectRoot),
+      `contract.projectGsd ("${ws.contract.projectGsd}") must be under the realpath'd projectRoot ("${canonicalProjectRoot}"), not the symlink path`,
+    );
+  });
+
+  test("contract.projectDb matches realpath of projectRoot when workspace is created via symlink", () => {
+    const ws = createWorkspace(linkPath);
+    const canonicalProjectRoot = realpathSync(projectDir);
+
+    assert.ok(
+      ws.contract.projectDb.startsWith(canonicalProjectRoot),
+      `contract.projectDb ("${ws.contract.projectDb}") must be under the realpath'd projectRoot ("${canonicalProjectRoot}")`,
+    );
+  });
+});
