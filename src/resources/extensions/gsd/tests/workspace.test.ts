@@ -65,7 +65,7 @@ describe("createWorkspace", () => {
     t.after(() => {
       rmSync(linkParent, { recursive: true, force: true });
     });
-    symlinkSync(projectDir, linkPath);
+    symlinkSync(projectDir, linkPath, "junction");
 
     const ws = createWorkspace(linkPath);
     assert.equal(ws.identityKey, realpathSync(projectDir));
@@ -155,7 +155,7 @@ describe("createWorkspace: contract.projectGsd is realpath-canonicalized when ba
     projectDir = makeProjectDir();
     linkParent = mkdtempSync(join(tmpdir(), "gsd-ws-symlink-"));
     linkPath = join(linkParent, "project");
-    symlinkSync(projectDir, linkPath);
+    symlinkSync(projectDir, linkPath, "junction");
   });
 
   afterEach(() => {
