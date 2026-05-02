@@ -215,23 +215,6 @@ function getChangedFilesFromMilestoneTaggedCommits(
   basePath: string,
   milestoneId: string,
 ): { ok: boolean; matched: boolean; files: string[] } {
-  // Primary: path-scoped log against .gsd/milestones/<id>. Fast and unbounded
-  // by depth when .gsd/ is tracked in git.
-  const scoped = scanGsdTaggedCommits(basePath, milestoneId, [
-    "log", "--format=%H%x1f%B%x1e", "HEAD", "--", `.gsd/milestones/${milestoneId}`,
-  ]);
-  if (!scoped.ok) return scoped;
-  if (scoped.matched) return scoped;
-
-  // Fallback (#5033): when .gsd/ is gitignored / external / untracked, the
-  // path-scoped scan matches no commits even though GSD-tagged commits
-  // referencing the milestone exist on the integration branch. Re-scan all
-  // of HEAD's history and rely on commitMatchesMilestone to bind by
-  // explicit milestone mention in the message body.
-  //
-  // Intentionally unbounded — symmetric with the primary scan, and avoids
-  // reintroducing the rolling-depth failure class removed in #4699 where
-  // milestone evidence aged out behind unrelated activity.
   return scanGsdTaggedCommits(basePath, milestoneId, [
     "log", "--format=%H%x1f%B%x1e", "HEAD",
   ]);
@@ -302,9 +285,11 @@ function commitMatchesMilestone(message: string, milestoneId: string, files: rea
   // either the commit touched this milestone's artifacts, or — for projects
   // where .gsd/ is gitignored/external (#5033) — the message explicitly
   // names the milestone.
-  if (/^GSD-Task:\s*S[^/\s]+\/T\S+/m.test(message)) {
+  const shortTrailer = message.match(/^GSD-Task:\s*(S[^/\s]+)\/T\S+/m);
+  if (shortTrailer) {
     if (files.some((file) => isMilestoneArtifactPath(file, milestoneId))) return true;
     if (commitMessageMentionsMilestone(message, milestoneId)) return true;
+    if (isDbAvailable() && getSlice(milestoneId, shortTrailer[1]!) != null) return true;
   }
 
   return false;

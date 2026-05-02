@@ -789,6 +789,32 @@ test("hasImplementationArtifacts ignores malformed milestone IDs in commit-messa
   }
 });
 
+test("hasImplementationArtifacts binds short-trailer impl commits via DB on integration branch", () => {
+  const base = makeGitBase();
+  try {
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "M", status: "active" });
+    insertSlice({ milestoneId: "M001", id: "S13", title: "S", status: "pending", risk: "low", depends: [] });
+
+    mkdirSync(join(base, ".gsd", "milestones", "M001"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "M001-ROADMAP.md"), "# Roadmap");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "chore: plan\n\nGSD-Unit: M001"], { cwd: base, stdio: "ignore" });
+
+    mkdirSync(join(base, "src"), { recursive: true });
+    writeFileSync(join(base, "src", "feature.ts"), "export const x = 1;\n");
+    execFileSync("git", ["add", "src"], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: impl\n\nGSD-Task: S13/T05"], { cwd: base, stdio: "ignore" });
+
+    const result = hasImplementationArtifacts(base, "M001");
+    assert.equal(result, "present");
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
 test("hasImplementationArtifacts returns true on non-git directory (fail-open)", () => {
   const base = join(tmpdir(), `gsd-test-nogit-${randomUUID()}`);
   mkdirSync(base, { recursive: true });
