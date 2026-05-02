@@ -309,8 +309,12 @@ export interface OpenAICompletionsCompat {
 	requiresAssistantAfterToolResult?: boolean;
 	/** Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL. */
 	requiresThinkingAsText?: boolean;
-	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "zai" uses thinking: { type: "enabled" }, "qwen" uses enable_thinking: boolean. Default: "openai". */
-	thinkingFormat?: "openai" | "zai" | "qwen";
+	/** Format for reasoning/thinking parameter and assistant-history round-trip.
+	 *  "openai" uses reasoning_effort (default);
+	 *  "zai" / "qwen" send enable_thinking: boolean on the request;
+	 *  "deepseek" additionally round-trips the prior turn's reasoning as a top-level `reasoning_content` field on every assistant message in the request history — DeepSeek's thinking-mode API requires this for tool_call turns, returning 400 otherwise (https://api-docs.deepseek.com/guides/thinking_mode).
+	 *  Default: "openai". */
+	thinkingFormat?: "openai" | "zai" | "qwen" | "deepseek";
 	/** OpenRouter-specific routing preferences. Only used when baseUrl points to OpenRouter. */
 	openRouterRouting?: OpenRouterRouting;
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */

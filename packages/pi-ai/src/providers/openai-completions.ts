@@ -574,7 +574,17 @@ export function convertMessages(
 			const thinkingBlocks = msg.content.filter((b) => b.type === "thinking") as ThinkingContent[];
 			// Filter out empty thinking blocks to avoid API validation errors
 			const nonEmptyThinkingBlocks = thinkingBlocks.filter((b) => b.thinking && b.thinking.trim().length > 0);
-			if (nonEmptyThinkingBlocks.length > 0) {
+
+			// DeepSeek thinking-mode: every assistant turn in the request history must carry a
+			// top-level `reasoning_content` field — specifically required for turns with tool_calls,
+			// which otherwise produce `400 The reasoning_content in the thinking mode must be
+			// passed back to the API`. Set unconditionally (empty string when no thinking was produced).
+			// https://api-docs.deepseek.com/guides/thinking_mode
+			if (compat.thinkingFormat === "deepseek") {
+				(assistantMsg as any).reasoning_content = nonEmptyThinkingBlocks.map((b) => b.thinking).join("\n");
+			}
+
+			if (nonEmptyThinkingBlocks.length > 0 && compat.thinkingFormat !== "deepseek") {
 				if (compat.requiresThinkingAsText) {
 					// Convert thinking blocks to plain text (no tags to avoid model mimicking them)
 					const thinkingText = nonEmptyThinkingBlocks.map((b) => b.thinking).join("\n\n");
@@ -747,11 +757,12 @@ function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"]): Sto
  * Provider takes precedence over URL-based detection since it's explicitly configured.
  * Returns a fully resolved OpenAICompletionsCompat object with all fields set.
  */
-function detectCompat(model: Model<"openai-completions">): Required<OpenAICompletionsCompat> {
+export function detectCompat(model: Model<"openai-completions">): Required<OpenAICompletionsCompat> {
 	const provider = model.provider;
 	const baseUrl = model.baseUrl;
 
 	const isZai = provider === "zai" || baseUrl.includes("api.z.ai");
+	const isDeepseek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 
 	const isNonStandard =
 		provider === "cerebras" ||
@@ -759,7 +770,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		provider === "xai" ||
 		baseUrl.includes("api.x.ai") ||
 		baseUrl.includes("chutes.ai") ||
-		baseUrl.includes("deepseek.com") ||
+		isDeepseek ||
 		isZai ||
 		provider === "opencode" ||
 		baseUrl.includes("opencode.ai");
@@ -789,7 +800,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
 		requiresThinkingAsText: false,
-		thinkingFormat: isZai ? "zai" : "openai",
+		thinkingFormat: isZai ? "zai" : isDeepseek ? "deepseek" : "openai",
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		supportsStrictMode: true,
@@ -800,7 +811,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
  * Get resolved compatibility settings for a model.
  * Uses explicit model.compat if provided, otherwise auto-detects from provider/URL.
  */
-function getCompat(model: Model<"openai-completions">): Required<OpenAICompletionsCompat> {
+export function getCompat(model: Model<"openai-completions">): Required<OpenAICompletionsCompat> {
 	const detected = detectCompat(model);
 	if (!model.compat) return detected;
 
