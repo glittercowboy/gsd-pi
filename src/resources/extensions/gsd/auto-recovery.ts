@@ -14,7 +14,7 @@ import { appendEvent } from "./workflow-events.js";
 import { atomicWriteSync } from "./atomic-write.js";
 import { clearParseCache } from "./files.js";
 import { parseRoadmap as parseLegacyRoadmap, parsePlan as parseLegacyPlan } from "./parsers-legacy.js";
-import { isDbAvailable, getTask, getSlice, getSliceTasks, getPendingGates, updateTaskStatus, updateSliceStatus, insertSlice, getMilestone } from "./gsd-db.js";
+import { isDbAvailable, getTask, getSlice, getSliceTasks, getPendingGates, updateTaskStatus, updateSliceStatus, insertSlice, getMilestone, listMilestonesOwningSlice } from "./gsd-db.js";
 import { isValidationTerminal } from "./state.js";
 import { getErrorMessage } from "./error-utils.js";
 import { logWarning, logError } from "./workflow-logger.js";
@@ -299,7 +299,10 @@ function commitMatchesMilestone(
     if (isDbAvailable()) {
       const sliceId = shortTrailer[1]!;
       if (getSlice(milestoneId, sliceId) == null) return false;
-      if (activeMilestone === null) return true;
+      if (activeMilestone === null) {
+        const owners = listMilestonesOwningSlice(sliceId);
+        return owners.length === 1 && owners[0] === milestoneId;
+      }
       return getSlice(activeMilestone, sliceId) == null;
     }
   }

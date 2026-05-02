@@ -883,6 +883,30 @@ test("hasImplementationArtifacts binds short-trailer commit when an unrelated pr
   }
 });
 
+test("hasImplementationArtifacts does not over-attribute ambiguous slice IDs when DB is the only signal", () => {
+  const base = makeGitBase();
+  try {
+    mkdirSync(join(base, ".gsd"), { recursive: true });
+    openDatabase(join(base, ".gsd", "gsd.db"));
+    insertMilestone({ id: "M001", title: "First", status: "complete" });
+    insertSlice({ milestoneId: "M001", id: "S01", title: "S", status: "complete", risk: "low", depends: [] });
+    insertMilestone({ id: "M002", title: "Second", status: "active" });
+    insertSlice({ milestoneId: "M002", id: "S01", title: "S", status: "pending", risk: "low", depends: [] });
+
+    writeFileSync(join(base, ".git", "info", "exclude"), ".gsd/\n");
+    mkdirSync(join(base, "src"), { recursive: true });
+    writeFileSync(join(base, "src", "feature.ts"), "export const x = 1;\n");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: impl\n\nGSD-Task: S01/T01"], { cwd: base, stdio: "ignore" });
+
+    assert.notEqual(hasImplementationArtifacts(base, "M001"), "present");
+    assert.notEqual(hasImplementationArtifacts(base, "M002"), "present");
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
 test("hasImplementationArtifacts returns true on non-git directory (fail-open)", () => {
   const base = join(tmpdir(), `gsd-test-nogit-${randomUUID()}`);
   mkdirSync(base, { recursive: true });

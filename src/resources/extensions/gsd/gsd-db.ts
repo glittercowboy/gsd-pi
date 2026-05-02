@@ -2132,6 +2132,12 @@ export function getSlice(milestoneId: string, sliceId: string): SliceRow | null 
   return rowToSlice(row);
 }
 
+export function listMilestonesOwningSlice(sliceId: string): string[] {
+  if (!currentDb) return [];
+  const rows = currentDb.prepare("SELECT milestone_id FROM slices WHERE id = :sid").all({ ":sid": sliceId }) as Array<{ milestone_id: string }>;
+  return rows.map((r) => r.milestone_id);
+}
+
 export function updateSliceStatus(milestoneId: string, sliceId: string, status: string, completedAt?: string): void {
   if (!currentDb) throw new GSDError(GSD_STALE_STATE, "gsd-db: No database open");
   currentDb.prepare(
