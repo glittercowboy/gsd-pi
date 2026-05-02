@@ -536,6 +536,26 @@ export function _setAutoActiveForTest(active: boolean): void {
   s.active = active;
 }
 
+/**
+ * Test-only seam: emit the missing-worktree warning exactly as the resume path
+ * does.  Allows unit tests to verify the warning is produced without
+ * bootstrapping the full auto-mode entry point.  Do not use in production code.
+ */
+export function _warnIfWorktreeMissingForTest(
+  worktreePath: string | null | undefined,
+  milestoneId: string,
+): boolean {
+  if (worktreePath && !existsSync(worktreePath)) {
+    logWarning(
+      "session",
+      `Worktree was expected at ${worktreePath} but is missing. Continuing in project-root mode. To restart with a fresh worktree, run /gsd-debug or recreate the milestone.`,
+      { file: "auto.ts", milestoneId },
+    );
+    return true;
+  }
+  return false;
+}
+
 export function isAutoPaused(): boolean {
   return s.paused;
 }
@@ -1583,8 +1603,16 @@ export async function startAuto(
             // Build scope from persisted state. Use worktreePath when present and
             // still on disk so mode is detected correctly; fall back to project root.
             {
-              const rawForScope = (meta.worktreePath && existsSync(meta.worktreePath))
-                ? meta.worktreePath
+              const persistedWorktreePath = meta.worktreePath ?? null;
+              if (persistedWorktreePath && !existsSync(persistedWorktreePath)) {
+                logWarning(
+                  "session",
+                  `Worktree was expected at ${persistedWorktreePath} but is missing. Continuing in project-root mode. To restart with a fresh worktree, run /gsd-debug or recreate the milestone.`,
+                  { file: "auto.ts", milestoneId: meta.milestoneId ?? "" },
+                );
+              }
+              const rawForScope = (persistedWorktreePath && existsSync(persistedWorktreePath))
+                ? persistedWorktreePath
                 : (s.originalBasePath || base);
               rebuildScope(rawForScope, s.currentMilestoneId);
             }
@@ -1672,7 +1700,14 @@ export async function startAuto(
     // session (e.g. isolation mode changed, detectWorktreeName differs across
     // process restarts).  We guard with existsSync so a stale or deleted
     // worktree directory safely falls back to the project root.
-    const resumeWorktreePath = freshStartAssessment.pausedSession?.worktreePath;
+    const resumeWorktreePath = freshStartAssessment.pausedSession?.worktreePath ?? null;
+    if (resumeWorktreePath && !existsSync(resumeWorktreePath)) {
+      logWarning(
+        "session",
+        `Worktree was expected at ${resumeWorktreePath} but is missing. Continuing in project-root mode. To restart with a fresh worktree, run /gsd-debug or recreate the milestone.`,
+        { file: "auto.ts", milestoneId: s.currentMilestoneId ?? "" },
+      );
+    }
     if (resumeWorktreePath && existsSync(resumeWorktreePath)) {
       s.basePath = resumeWorktreePath;
     }
