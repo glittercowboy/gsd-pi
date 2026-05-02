@@ -373,6 +373,12 @@ export function syncProjectRootToWorktreeByScope(
       `worktreeScope.identityKey="${worktreeScope.workspace.identityKey}"`,
     );
   }
+  if (rootScope.milestoneId !== worktreeScope.milestoneId) {
+    throw new Error(
+      `syncProjectRootToWorktreeByScope: milestoneId mismatch — ` +
+      `rootScope.milestoneId="${rootScope.milestoneId}" worktreeScope.milestoneId="${worktreeScope.milestoneId}"`,
+    );
+  }
   const projectRoot = rootScope.workspace.projectRoot;
   const worktreePath_ = worktreeScope.workspace.worktreeRoot ?? worktreeScope.workspace.projectRoot;
   const milestoneId = rootScope.milestoneId;
@@ -484,6 +490,12 @@ export function syncStateToProjectRootByScope(
       `syncStateToProjectRootByScope: scope identity mismatch — ` +
       `worktreeScope.identityKey="${worktreeScope.workspace.identityKey}" ` +
       `rootScope.identityKey="${rootScope.workspace.identityKey}"`,
+    );
+  }
+  if (worktreeScope.milestoneId !== rootScope.milestoneId) {
+    throw new Error(
+      `syncStateToProjectRootByScope: milestoneId mismatch — ` +
+      `worktreeScope.milestoneId="${worktreeScope.milestoneId}" rootScope.milestoneId="${rootScope.milestoneId}"`,
     );
   }
   const worktreePath_ = worktreeScope.workspace.worktreeRoot ?? worktreeScope.workspace.projectRoot;
@@ -1148,6 +1160,12 @@ export function reconcilePlanCheckboxesByScope(
       `reconcilePlanCheckboxesByScope: scope identity mismatch — ` +
       `rootScope.identityKey="${rootScope.workspace.identityKey}" ` +
       `worktreeScope.identityKey="${worktreeScope.workspace.identityKey}"`,
+    );
+  }
+  if (rootScope.milestoneId !== worktreeScope.milestoneId) {
+    throw new Error(
+      `reconcilePlanCheckboxesByScope: milestoneId mismatch — ` +
+      `rootScope.milestoneId="${rootScope.milestoneId}" worktreeScope.milestoneId="${worktreeScope.milestoneId}"`,
     );
   }
   const projectRoot = rootScope.workspace.projectRoot;

@@ -384,3 +384,70 @@ describe("sync direction: project→worktree variants only write to worktree sid
     );
   });
 });
+
+// ─── Suite: milestoneId mismatch guard ───────────────────────────────────────
+
+describe("ByScope variants: milestoneId mismatch throws for milestone-aware wrappers", () => {
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "gsd-sync-mid-mismatch-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  test("syncProjectRootToWorktreeByScope throws when milestoneIds differ", () => {
+    const { projectDir, worktreeDir } = makeProjectAndWorktree(tmp);
+    const rootWs = createWorkspace(projectDir);
+    const worktreeWs = createWorkspace(worktreeDir);
+    // Same workspace identity, different milestoneId
+    const rootScope = scopeMilestone(rootWs, "M001-abc123");
+    const worktreeScope = scopeMilestone(worktreeWs, "M002-def456");
+
+    assert.throws(
+      () => syncProjectRootToWorktreeByScope(rootScope, worktreeScope),
+      /milestoneId mismatch/,
+    );
+  });
+
+  test("syncStateToProjectRootByScope throws when milestoneIds differ", () => {
+    const { projectDir, worktreeDir } = makeProjectAndWorktree(tmp);
+    const rootWs = createWorkspace(projectDir);
+    const worktreeWs = createWorkspace(worktreeDir);
+    const rootScope = scopeMilestone(rootWs, "M001-abc123");
+    const worktreeScope = scopeMilestone(worktreeWs, "M002-def456");
+
+    assert.throws(
+      () => syncStateToProjectRootByScope(worktreeScope, rootScope),
+      /milestoneId mismatch/,
+    );
+  });
+
+  test("reconcilePlanCheckboxesByScope throws when milestoneIds differ", () => {
+    const { projectDir, worktreeDir } = makeProjectAndWorktree(tmp);
+    const rootWs = createWorkspace(projectDir);
+    const worktreeWs = createWorkspace(worktreeDir);
+    const rootScope = scopeMilestone(rootWs, "M001-abc123");
+    const worktreeScope = scopeMilestone(worktreeWs, "M002-def456");
+
+    assert.throws(
+      () => reconcilePlanCheckboxesByScope(rootScope, worktreeScope),
+      /milestoneId mismatch/,
+    );
+  });
+
+  test("syncGsdStateToWorktreeByScope does NOT throw when milestoneIds differ (workspace-only wrapper)", () => {
+    const { projectDir, worktreeDir } = makeProjectAndWorktree(tmp);
+    const rootWs = createWorkspace(projectDir);
+    const worktreeWs = createWorkspace(worktreeDir);
+    // Different milestoneIds — syncGsdStateToWorktreeByScope must not guard milestoneId
+    const rootScope = scopeMilestone(rootWs, "M001-abc123");
+    const worktreeScope = scopeMilestone(worktreeWs, "M002-def456");
+
+    assert.doesNotThrow(
+      () => syncGsdStateToWorktreeByScope(rootScope, worktreeScope),
+    );
+  });
+});
