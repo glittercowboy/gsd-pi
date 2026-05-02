@@ -21,7 +21,7 @@ import {
   buildPlanSlicePrompt,
   buildSkillActivationBlock,
 } from "./auto-prompts.js";
-import { deriveState } from "./state.js";
+import { deriveState, isGhostMilestone } from "./state.js";
 import { invalidateAllCaches } from "./cache.js";
 import { startAutoDetached } from "./auto.js";
 import { clearLock } from "./crash-recovery.js";
@@ -83,6 +83,46 @@ export {
   buildExistingMilestonesContext,
 } from "./guided-flow-queue.js";
 import { logWarning } from "./workflow-logger.js";
+
+// ─── Scope-based validator wrappers ──────────────────────────────────────────
+// These thin wrappers accept a MilestoneScope so callers that already hold a
+// pinned scope never have to re-derive (basePath, milestoneId) separately.
+// The underlying implementations in auto-recovery.ts / auto-artifact-paths.ts /
+// state.ts are unchanged — only the call surface in guided-flow.ts is migrated.
+
+/**
+ * Scope-based overload of verifyExpectedArtifact.
+ * Uses scope.workspace.projectRoot as the authoritative base path, making
+ * the check immune to cwd-drift and worktree-path divergence.
+ */
+export function verifyExpectedArtifactForScope(
+  scope: MilestoneScope,
+  unitType: string,
+  unitId: string,
+): boolean {
+  return verifyExpectedArtifact(unitType, unitId, scope.workspace.projectRoot);
+}
+
+/**
+ * Scope-based overload of resolveExpectedArtifactPath.
+ * Returns the canonical absolute path (or null) using the scope's projectRoot.
+ */
+export function resolveExpectedArtifactPathForScope(
+  scope: MilestoneScope,
+  unitType: string,
+  unitId: string,
+): string | null {
+  return resolveExpectedArtifactPath(unitType, unitId, scope.workspace.projectRoot);
+}
+
+/**
+ * Scope-based overload of isGhostMilestone.
+ * Binds basePath and milestoneId from the scope, ensuring path resolution
+ * uses the canonical project root regardless of the cwd at call time.
+ */
+export function isGhostMilestoneByScope(scope: MilestoneScope): boolean {
+  return isGhostMilestone(scope.workspace.projectRoot, scope.milestoneId);
+}
 
 function needsPlanV2Gate(state: GSDState): boolean {
   return state.phase === "executing"
@@ -350,6 +390,10 @@ export async function checkDeepProjectSetupAfterTurn(
   if (!entry) return false;
 
   if (entry.currentUnitType && entry.currentUnitId) {
+    // TODO(C-future): PendingDeepProjectSetupEntry does not carry a MilestoneScope
+    // because deep-project-setup units span non-milestone unit types (discuss-project,
+    // discuss-requirements, etc.).  Migrate to verifyExpectedArtifactForScope once
+    // PendingDeepProjectSetupEntry is extended with a scope field.
     const artifactReady = verifyExpectedArtifact(entry.currentUnitType, entry.currentUnitId, entry.basePath);
     if (!artifactReady) {
       return false;
@@ -1651,6 +1695,9 @@ function selfHealRuntimeRecords(basePath: string, ctx: ExtensionContext): { clea
     for (const record of records) {
       const { unitType, unitId, phase } = record;
       // Clear records whose expected artifact already exists (completed but not cleaned up)
+      // TODO(C-future): selfHealRuntimeRecords iterates across all unit types (not just milestone
+      // units), so it cannot be converted to resolveExpectedArtifactPathForScope without
+      // first establishing a per-record scope.  Migrate once unit runtime records carry scope info.
       const artifactPath = resolveExpectedArtifactPath(unitType, unitId, basePath);
       if (artifactPath && existsSync(artifactPath)) {
         clearUnitRuntimeRecord(basePath, unitType, unitId);
