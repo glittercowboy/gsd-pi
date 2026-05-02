@@ -48,6 +48,7 @@ import {
   SEVERITY_VALUES,
   VERDICT_VALUES,
 } from "./eval-review-schema.js";
+import { buildSafeTildeFence } from "./prompt-fences.js";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -66,7 +67,7 @@ export const SLICE_ID_PATTERN = /^S\d+$/;
 export const MAX_CONTEXT_BYTES = 200 * 1024;
 
 /** Bytes reserved by `readCapped` for its own truncation marker. */
-const READ_MARKER_RESERVE_BYTES = 128;
+export const READ_MARKER_RESERVE_BYTES = 128;
 /** Bytes reserved up front for the optional spec elision/failure marker. */
 const SPEC_MARKER_RESERVE_BYTES = 128;
 /** Below this many bytes left for spec we skip reading and emit only a marker. */
@@ -322,19 +323,40 @@ export async function buildEvalReviewContext(
   };
 }
 
-interface CappedRead {
+export interface CappedRead {
   readonly content: string;
   readonly bytesUsed: number;
   readonly truncated: boolean;
 }
 
-function bestFitMarker(remaining: number, full: string, fallback: string): string | null {
+/**
+ * Fit a marker string into a remaining-byte budget.
+ *
+ * Tries the verbose marker first, falls back to a shorter one, and returns
+ * `null` if neither fits. Exported so other prompt-context builders (e.g.
+ * `commands-eval-fix.ts`) can reuse the same byte-accounting logic.
+ */
+export function bestFitMarker(remaining: number, full: string, fallback: string): string | null {
   if (Buffer.byteLength(full, "utf-8") <= remaining) return full;
   if (Buffer.byteLength(fallback, "utf-8") <= remaining) return fallback;
   return null;
 }
 
-async function readCapped(filePath: string, maxBytes: number): Promise<CappedRead> {
+/**
+ * Stream-read a file with a hard byte cap.
+ *
+ * If the file is at or under `maxBytes`, returns the full contents.
+ * Otherwise reads only the first `maxBytes - READ_MARKER_RESERVE_BYTES`
+ * bytes and appends a truncation marker — never loads the full file into
+ * memory. The `commandLabel` is interpolated into the marker so prompts
+ * built by different commands can stay self-describing without copying
+ * the streaming logic.
+ */
+export async function readCapped(
+  filePath: string,
+  maxBytes: number,
+  commandLabel = "eval-review",
+): Promise<CappedRead> {
   const fh = await open(filePath, "r");
   try {
     const { size } = await fh.stat();
@@ -355,7 +377,7 @@ async function readCapped(filePath: string, maxBytes: number): Promise<CappedRea
       : { bytesRead: 0 };
     const head = new TextDecoder("utf-8").decode(probe.subarray(0, bytesRead), { stream: true });
     const elided = size - bytesRead;
-    const marker = `\n\n[truncated: ${elided} bytes elided to fit eval-review context cap of ${maxBytes} bytes]\n`;
+    const marker = `\n\n[truncated: ${elided} bytes elided to fit ${commandLabel} context cap of ${maxBytes} bytes]\n`;
     const content = `${head}${marker}`;
     return {
       content,
@@ -422,8 +444,12 @@ export function buildEvalReviewPrompt(ctx: EvalReviewContext): string {
     ? "\n> ⚠️  Inputs were truncated to fit the prompt size cap. Audit conclusions should account for the elided content; flag the slice as `NEEDS_WORK` or lower if an unreviewed remainder could materially change the verdict.\n"
     : "";
 
+  // Pick fences longer than any contiguous tilde run in either payload so a
+  // malicious artefact cannot terminate its own data block.
+  const specFence = ctx.spec !== null ? buildSafeTildeFence(ctx.spec) : "";
+  const summaryFence = buildSafeTildeFence(ctx.summary);
   const specBody = ctx.spec !== null
-    ? `~~~~markdown\n${ctx.spec}\n~~~~`
+    ? `${specFence}markdown\n${ctx.spec}\n${specFence}`
     : "(not present — audit against best-practice eval dimensions instead of a per-spec gap analysis)";
 
   return `# Eval Review — ${ctx.milestoneId} / ${ctx.sliceId}
@@ -533,9 +559,9 @@ ${specBody}
 
 ### SUMMARY.md
 
-~~~~markdown
+${summaryFence}markdown
 ${ctx.summary}
-~~~~
+${summaryFence}
 
 ---
 

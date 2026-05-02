@@ -251,6 +251,11 @@ Examples:
     await handleEvalReview(trimmed.replace(/^eval-review\s*/, "").trim(), ctx, pi);
     return true;
   }
+  if (trimmed === "eval-fix" || trimmed.startsWith("eval-fix ")) {
+    const { handleEvalFix } = await import("../../commands-eval-fix.js");
+    await handleEvalFix(trimmed.replace(/^eval-fix\s*/, "").trim(), ctx, pi);
+    return true;
+  }
   if (trimmed === "extract-learnings" || trimmed.startsWith("extract-learnings ")) {
     const { handleExtractLearnings } = await import("../../commands-extract-learnings.js");
     await handleExtractLearnings(trimmed.replace(/^extract-learnings\s*/, "").trim(), ctx, pi);
