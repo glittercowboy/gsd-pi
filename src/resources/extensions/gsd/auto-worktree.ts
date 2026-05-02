@@ -1456,15 +1456,19 @@ export function teardownAutoWorktree(
   }
 
   nudgeGitBranchCache(previousCwd);
-  removeWorktree(originalBasePath, milestoneId, {
-    branch,
-    deleteBranch: !preserveBranch,
-  });
 
-  // 3. Clear module state AFTER removeWorktree — matching mergeMilestoneToMain
-  //    order so activeWorkspace is non-null if removeWorktree throws (worktree dir
-  //    would be orphaned on disk but activeWorkspace still valid for recovery).
-  setActiveWorkspace(null);
+  // 3. Clear module state in a finally block so activeWorkspace is ALWAYS
+  //    reset to null — even if removeWorktree throws (e.g. Windows git
+  //    failure). A stale activeWorkspace causes getActiveAutoWorktreeContext()
+  //    to return wrong data for subsequent operations.
+  try {
+    removeWorktree(originalBasePath, milestoneId, {
+      branch,
+      deleteBranch: !preserveBranch,
+    });
+  } finally {
+    setActiveWorkspace(null);
+  }
 
   // Verify cleanup succeeded — warn if the worktree directory is still on disk.
   // On Windows, bash-based cleanup can silently fail when paths contain
