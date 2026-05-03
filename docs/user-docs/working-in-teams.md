@@ -26,7 +26,6 @@ Share planning artifacts (milestones, roadmaps, decisions) while keeping runtime
 
 ```bash
 # ── GSD: Runtime / Ephemeral (per-developer, per-session) ──────
-.gsd/auto.lock
 .gsd/completed-units.json
 .gsd/STATE.md
 .gsd/gsd.db*
@@ -46,7 +45,7 @@ Share planning artifacts (milestones, roadmaps, decisions) while keeping runtime
 - `.gsd/milestones/` — roadmaps, plans, summaries, research
 
 **What stays local** (gitignored):
-- Database files, lock files, metrics, state projections, runtime records, worktrees, activity logs
+- Database files, metrics, state projections, runtime records, worktrees, activity logs
 
 ### 3. Commit the Preferences
 

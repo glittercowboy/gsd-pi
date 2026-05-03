@@ -3,7 +3,7 @@ title: "Auto mode"
 description: "GSD's autonomous execution engine — run /gsd auto, walk away, come back to built software with clean git history."
 ---
 
-Auto mode is a **state machine driven by files on disk**. It reads `.gsd/STATE.md`, determines the next unit of work, creates a fresh agent session with pre-loaded context, and lets the LLM execute. When the LLM finishes, auto mode reads disk state again and dispatches the next unit.
+Auto mode is a **state machine driven by the GSD database at the project root**. It derives the next unit of work from authoritative SQLite state, creates a fresh agent session with pre-loaded context, and lets the LLM execute. When the LLM finishes, auto mode persists the result to the database, refreshes `.gsd/` projections such as `STATE.md`, and dispatches the next unit.
 
 ## The loop
 
@@ -78,7 +78,7 @@ See [git strategy](/guides/git-strategy) for details.
 
 ### Crash recovery
 
-A lock file tracks the current unit. If the session dies, the next `/gsd auto` synthesizes a recovery briefing from tool calls that made it to disk and resumes with full context.
+Auto mode persists worker state, unit-dispatch state, and paused-session metadata in the project-root SQLite database. If the session dies, the next `/gsd auto` reconstructs the interrupted unit from DB-backed runtime state, synthesizes a recovery briefing from tool calls that made it to disk, and resumes with full context.
 
 **Headless auto-restart:** When running `gsd headless auto`, crashes trigger automatic restart with exponential backoff (5s → 10s → 30s cap, default 3 attempts). Combined with crash recovery, this enables overnight "run until done" execution.
 
@@ -163,7 +163,7 @@ Set `reactive_execution.enabled: true` explicitly to use the earlier two-ready-t
     ```
     /gsd auto
     ```
-    Auto mode reads disk state and picks up where it left off.
+    Auto mode reads DB-backed runtime state and picks up where it left off.
   </Step>
   <Step title="Stop">
     ```

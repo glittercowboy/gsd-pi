@@ -76,11 +76,16 @@ Each worker is a separate `gsd` process with complete isolation:
 | **State derivation** | `GSD_MILESTONE_LOCK` env var — `deriveState()` only sees the assigned milestone |
 | **Context window** | Separate process — each worker has its own agent sessions |
 | **Metrics** | Each worktree has its own `.gsd/metrics.json` |
-| **Crash recovery** | Each worktree has its own `.gsd/auto.lock` |
+| **Crash recovery** | Each worktree keeps its own DB-backed worker + dispatch state and can resume after worker death |
 
 ### Coordination
 
-Workers and the coordinator communicate through file-based IPC:
+Workers and the coordinator use a split coordination model:
+
+- **DB-backed auto-mode state** — each worker persists worker, dispatch, and paused-session state in the worktree's project database
+- **File-based IPC** (`.gsd/parallel/`) — coordinator heartbeats and control signals stay on disk for easy inspection
+
+Coordinator IPC files:
 
 - **Session status files** (`.gsd/parallel/<MID>.status.json`) — workers write heartbeats, the coordinator reads them
 - **Signal files** (`.gsd/parallel/<MID>.signal.json`) — coordinator writes signals, workers consume them
@@ -269,7 +274,7 @@ The coordinator runs stale detection during `refreshWorkerStatuses()` and automa
 ├── worktrees/                   # Git worktrees (one per milestone)
 │   ├── M002/                    # M002's isolated checkout
 │   │   ├── .gsd/                # M002's own state files
-│   │   │   ├── auto.lock
+│   │   │   ├── gsd.db
 │   │   │   ├── metrics.json
 │   │   │   └── milestones/
 │   │   └── src/                 # M002's working copy
@@ -292,7 +297,7 @@ All milestones are either complete or blocked by dependencies. Check `/gsd queue
 
 ### Worker crashed — how to recover
 
-Workers now persist their state to disk automatically. If a worker process dies, the coordinator detects the dead PID via heartbeat expiry and marks the worker as crashed. On restart, the worker picks up from disk state — crash recovery, worktree re-entry, and completed-unit tracking carry over from the crashed session.
+Workers now persist their state in the worktree's project database. If a worker process dies, the coordinator detects the dead PID via heartbeat expiry and marks the worker as crashed. On restart, the worker picks up from DB-backed runtime state — crash recovery, worktree re-entry, and completed-unit tracking carry over from the crashed session.
 
 1. Run `/gsd doctor --fix` to clean up stale sessions
 2. Run `/gsd parallel status` to see current state

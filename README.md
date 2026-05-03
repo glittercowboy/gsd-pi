@@ -322,7 +322,7 @@ The database is authoritative for milestones, slices, tasks, requirements, decis
 
 3. **Git isolation** — When `git.isolation` is set to `worktree` or `branch`, each milestone runs on its own `milestone/<MID>` branch (in a worktree or in-place). All slice work commits sequentially — no branch switching, no merge conflicts. When the milestone completes, it's squash-merged to main as one clean commit. The default is `none` (work on the current branch), configurable via preferences. If `worktree` is configured in a repo with no committed `HEAD`, GSD temporarily behaves as `none` until the first commit exists because git worktrees need a committed start point.
 
-4. **Crash recovery** — A lock file tracks the current unit. If the session dies, the next `/gsd auto` reads the surviving session file, synthesizes a recovery briefing from every tool call that made it to disk, and resumes with full context. Parallel orchestrator state is persisted to disk with PID liveness detection, so multi-worker sessions survive crashes too. In headless mode, crashes trigger automatic restart with exponential backoff (default 3 attempts).
+4. **Crash recovery** — Auto mode persists worker state, unit-dispatch state, and paused-session metadata in the project-root SQLite database. If the session dies, the next `/gsd auto` reconstructs the interrupted unit from DB-backed runtime state, reads the surviving session file, synthesizes a recovery briefing from every tool call that made it to disk, and resumes with full context. Parallel orchestrator IPC still lives under `.gsd/parallel/`, so multi-worker sessions survive crashes too. In headless mode, crashes trigger automatic restart with exponential backoff (default 3 attempts).
 
 5. **Provider error recovery** — Transient provider errors (rate limits, 500/503 server errors, overloaded) auto-resume after a delay. Permanent errors (auth, billing) pause for manual review. The model fallback chain retries transient network errors before switching models.
 
@@ -414,7 +414,7 @@ gsd
 /gsd queue      # queue the next milestone
 ```
 
-Both terminals read and write the same `.gsd/` files on disk. Your decisions in terminal 2 are picked up automatically at the next phase boundary — no need to stop auto mode.
+Both terminals operate against the same project-root GSD database and `.gsd/` projections. Your decisions in terminal 2 are picked up automatically at the next phase boundary — no need to stop auto mode.
 
 ### Headless mode — CI and scripts
 
@@ -439,7 +439,7 @@ gsd headless dispatch plan
 
 Headless auto-responds to interactive prompts, detects completion, and exits with structured codes: `0` complete, `1` error/timeout, `2` blocked. Auto-restarts on crash with exponential backoff. Use `gsd headless query` for instant, machine-readable state inspection — returns phase, next dispatch preview, and parallel worker costs as a single JSON object without spawning an LLM session. Pair with [remote questions](./docs/user-docs/remote-questions.md) to route decisions to Slack or Discord when human input is needed.
 
-**Multi-session orchestration** — headless mode supports file-based IPC in `.gsd/parallel/` for coordinating multiple GSD workers across milestones. Build orchestrators that spawn, monitor, and budget-cap a fleet of GSD workers.
+**Multi-session orchestration** — headless mode uses DB-backed auto-mode state plus file-based IPC in `.gsd/parallel/` for coordinating multiple GSD workers across milestones. Build orchestrators that spawn, monitor, and budget-cap a fleet of GSD workers.
 
 ### First launch
 
@@ -705,8 +705,6 @@ The best practice for working in teams is to ensure unique milestone names acros
 
 ```bash
 # ── GSD: Runtime / Ephemeral (per-developer, per-session) ──────────────────
-# Crash detection sentinel — PID lock, written per auto-mode session
-.gsd/auto.lock
 # Auto-mode dispatch tracker — prevents re-running completed units (includes archived per-milestone files)
 .gsd/completed-units*.json
 # State manifest — workflow state for recovery
@@ -717,7 +715,7 @@ The best practice for working in teams is to ensure unique milestone names acros
 .gsd/metrics.json
 # Raw JSONL session dumps — crash recovery forensics, auto-pruned
 .gsd/activity/
-# Unit execution records — dispatch phase, timeouts, recovery tracking
+# Unit execution records — dispatch phase, timeouts, and recovery tracking
 .gsd/runtime/
 # Git worktree working copies
 .gsd/worktrees/

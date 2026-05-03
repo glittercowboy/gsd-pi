@@ -11,7 +11,7 @@ The built-in diagnostic tool validates `.gsd/` integrity:
 /gsd doctor
 ```
 
-It checks file structure, referential integrity, completion state consistency, git worktree health, and stale lock files.
+It checks file structure, referential integrity, completion state consistency, git worktree health, and stale DB-backed runtime records.
 
 ## Common issues
 
@@ -62,11 +62,10 @@ It checks file structure, referential integrity, completion state consistency, g
     Increase `budget_ceiling` in preferences, or switch to `budget` token profile. Resume with `/gsd auto`.
   </Accordion>
 
-  <Accordion title="Stale lock file">
-    GSD auto-detects stale locks. If automatic recovery fails:
+  <Accordion title="Auto mode says another session is running">
+    GSD now derives active-session ownership from DB-backed worker and dispatch state rather than `auto.lock`. In most cases `/gsd doctor fix` clears stale runtime rows and the next `/gsd auto` resumes normally:
     ```bash
-    rm -f .gsd/auto.lock
-    rm -rf "$(dirname .gsd)/.gsd.lock"
+    /gsd doctor fix
     ```
   </Accordion>
 
@@ -132,11 +131,10 @@ Use `/gsd mcp` to check MCP server status and connectivity at a glance.
 ### Reset auto mode state
 
 ```bash
-rm .gsd/auto.lock
 rm .gsd/completed-units.json
 ```
 
-Then `/gsd auto` to restart from current disk state.
+Then run `/gsd doctor` to refresh projections and `/gsd auto` to restart from current DB-backed state.
 
 ### Reset routing history
 
@@ -150,7 +148,7 @@ rm .gsd/routing-history.json
 /gsd doctor
 ```
 
-Rebuilds `STATE.md` from plan and roadmap files on disk.
+Refreshes `STATE.md` and related projections from authoritative database state.
 
 ## Getting help
 
