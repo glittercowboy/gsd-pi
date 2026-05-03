@@ -123,7 +123,9 @@ export function completeCommand(
   db.prepare(
     `UPDATE command_queue
      SET completed_at = :now, result_json = :result_json
-     WHERE id = :id AND completed_at IS NULL`,
+     WHERE id = :id
+       AND claimed_at IS NOT NULL
+       AND completed_at IS NULL`,
   ).run({
     ":id": id,
     ":now": now,

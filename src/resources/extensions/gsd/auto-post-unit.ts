@@ -1184,7 +1184,7 @@ export async function postUnitPostVerification(pctx: PostUnitContext): Promise<"
           if (mid && sid && tid) {
             try {
               updateTaskStatus(mid, sid, tid, "pending");
-              await renderPlanCheckboxes(s.basePath, mid, sid);
+              await renderPlanCheckboxes(s.canonicalProjectRoot, mid, sid);
             } catch (dbErr) {
               // DB unavailable — fail explicitly rather than silently reverting to markdown mutation.
               // Use 'gsd recover' to rebuild DB state from disk if needed.

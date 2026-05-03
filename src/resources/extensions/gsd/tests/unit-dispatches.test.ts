@@ -13,6 +13,7 @@ import {
   insertSlice,
 } from "../gsd-db.ts";
 import { registerAutoWorker } from "../db/auto-workers.ts";
+import { claimMilestoneLease } from "../db/milestone-leases.ts";
 import {
   recordDispatchClaim,
   markRunning,
@@ -35,24 +36,27 @@ function cleanup(base: string): void {
   try { rmSync(base, { recursive: true, force: true }); } catch { /* noop */ }
 }
 
-function setup(base: string): { workerId: string } {
+function setup(base: string): { workerId: string; leaseToken: number } {
   openDatabase(join(base, ".gsd", "gsd.db"));
   insertMilestone({ id: "M001", title: "Test", status: "active" });
   insertSlice({ id: "S01", milestoneId: "M001", title: "Slice" });
   const workerId = registerAutoWorker({ projectRootRealpath: base });
-  return { workerId };
+  const lease = claimMilestoneLease(workerId, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) throw new Error("expected test lease");
+  return { workerId, leaseToken: lease.token };
 }
 
 test("recordDispatchClaim creates a claimed row", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
-  const { workerId } = setup(base);
+  const { workerId, leaseToken } = setup(base);
 
   const claim = recordDispatchClaim({
     traceId: "trace-1",
     turnId: "turn-1",
     workerId,
-    milestoneLeaseToken: 1,
+    milestoneLeaseToken: leaseToken,
     milestoneId: "M001",
     sliceId: "S01",
     unitType: "plan-slice",
@@ -72,13 +76,12 @@ test("recordDispatchClaim creates a claimed row", (t) => {
 test("partial unique index rejects double-claim of the same active unit", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
-  const { workerId } = setup(base);
-  const w2 = registerAutoWorker({ projectRootRealpath: base });
+  const { workerId, leaseToken } = setup(base);
 
   const first = recordDispatchClaim({
     traceId: "t-a",
     workerId,
-    milestoneLeaseToken: 1,
+    milestoneLeaseToken: leaseToken,
     milestoneId: "M001",
     unitType: "plan-slice",
     unitId: "M001/S01",
@@ -88,8 +91,8 @@ test("partial unique index rejects double-claim of the same active unit", (t) =>
   // Second worker tries to claim the same unit while first is still claimed
   const second = recordDispatchClaim({
     traceId: "t-b",
-    workerId: w2,
-    milestoneLeaseToken: 1,
+    workerId,
+    milestoneLeaseToken: leaseToken,
     milestoneId: "M001",
     unitType: "plan-slice",
     unitId: "M001/S01",
@@ -104,12 +107,12 @@ test("partial unique index rejects double-claim of the same active unit", (t) =>
 test("after markCompleted, a fresh claim for the same unit succeeds", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
-  const { workerId } = setup(base);
+  const { workerId, leaseToken } = setup(base);
 
   const first = recordDispatchClaim({
     traceId: "t-1",
     workerId,
-    milestoneLeaseToken: 1,
+    milestoneLeaseToken: leaseToken,
     milestoneId: "M001",
     unitType: "plan-slice",
     unitId: "M001/S01",
@@ -123,7 +126,7 @@ test("after markCompleted, a fresh claim for the same unit succeeds", (t) => {
   const second = recordDispatchClaim({
     traceId: "t-2",
     workerId,
-    milestoneLeaseToken: 1,
+    milestoneLeaseToken: leaseToken,
     milestoneId: "M001",
     unitType: "plan-slice",
     unitId: "M001/S01",
@@ -142,12 +145,12 @@ test("after markCompleted, a fresh claim for the same unit succeeds", (t) => {
 test("markFailed records error_summary and retry metadata", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
-  const { workerId } = setup(base);
+  const { workerId, leaseToken } = setup(base);
 
   const claim = recordDispatchClaim({
     traceId: "t-1",
     workerId,
-    milestoneLeaseToken: 1,
+    milestoneLeaseToken: leaseToken,
     milestoneId: "M001",
     unitType: "plan-slice",
     unitId: "M001/S01",
@@ -172,10 +175,10 @@ test("markFailed records error_summary and retry metadata", (t) => {
 test("markStuck and markCanceled set their respective statuses", (t) => {
   const base = makeBase();
   t.after(() => cleanup(base));
-  const { workerId } = setup(base);
+  const { workerId, leaseToken } = setup(base);
 
   const a = recordDispatchClaim({
-    traceId: "ta", workerId, milestoneLeaseToken: 1,
+    traceId: "ta", workerId, milestoneLeaseToken: leaseToken,
     milestoneId: "M001", unitType: "plan-slice", unitId: "M001/S01",
   });
   assert.equal(a.ok, true);
@@ -184,11 +187,38 @@ test("markStuck and markCanceled set their respective statuses", (t) => {
   assert.equal(getLatestForUnit("M001/S01")!.status, "stuck");
 
   const b = recordDispatchClaim({
-    traceId: "tb", workerId, milestoneLeaseToken: 1,
+    traceId: "tb", workerId, milestoneLeaseToken: leaseToken,
     milestoneId: "M001", unitType: "run-task", unitId: "M001/S01/T01",
   });
   assert.equal(b.ok, true);
   if (!b.ok) return;
   markCanceled(b.dispatchId, "user-cancel");
   assert.equal(getLatestForUnit("M001/S01/T01")!.status, "canceled");
+});
+
+test("terminal transitions do not overwrite an already terminal dispatch", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  const { workerId, leaseToken } = setup(base);
+
+  const claim = recordDispatchClaim({
+    traceId: "t-terminal",
+    workerId,
+    milestoneLeaseToken: leaseToken,
+    milestoneId: "M001",
+    unitType: "plan-slice",
+    unitId: "M001/S09",
+  });
+  assert.equal(claim.ok, true);
+  if (!claim.ok) return;
+
+  markRunning(claim.dispatchId);
+  markCompleted(claim.dispatchId, { exitReason: "done" });
+  markFailed(claim.dispatchId, { errorSummary: "late-failure" });
+  markStuck(claim.dispatchId, "late-stuck");
+
+  const row = getLatestForUnit("M001/S09")!;
+  assert.equal(row.status, "completed");
+  assert.equal(row.exit_reason, "done");
+  assert.equal(row.error_summary, null);
 });

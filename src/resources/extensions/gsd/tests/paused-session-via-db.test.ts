@@ -108,7 +108,7 @@ test("deleteRuntimeKv on PAUSED_SESSION_KV_KEY removes the row idempotently", (t
 
 test("readPausedSessionMetadata returns null when DB is unavailable", () => {
   // No openDatabase call — DB is closed.
-  closeDatabase();
+  try { closeDatabase(); } catch { /* noop */ }
   // Use a tmpdir-style base; the function should handle DB-unavailable gracefully.
   const base = mkdtempSync(join(tmpdir(), "gsd-paused-no-db-"));
   try {

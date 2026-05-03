@@ -41,7 +41,7 @@ import {
   markFailed as markDispatchFailed,
   markStuck as markDispatchStuck,
   getRecentForUnit as getRecentDispatchesForUnit,
-  getRecentUnitKeysForWorker,
+  getRecentUnitKeysForProjectRoot,
 } from "../db/unit-dispatches.js";
 import { refreshMilestoneLease } from "../db/milestone-leases.js";
 import { getRuntimeKv, setRuntimeKv } from "../db/runtime-kv.js";
@@ -52,6 +52,7 @@ import { ExecutionGraphScheduler } from "../uok/execution-graph.js";
 import type { UokGraphNode } from "../uok/contracts.js";
 import { readFileSync, writeFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { normalizeRealPath } from "../paths.js";
 
 // ── Stuck detection persistence (#3704) ──────────────────────────────────
 // Phase C migration: stuck-state.json deleted in favor of DB-backed
@@ -66,12 +67,17 @@ import { join } from "node:path";
 const STUCK_RECOVERY_ATTEMPTS_KEY = "stuck_recovery_attempts";
 const RECENT_UNIT_KEYS_LIMIT = 20;
 
+function stableStuckStateScopeId(s: AutoSession): string {
+  return normalizeRealPath(s.scope?.workspace.projectRoot ?? (s.originalBasePath || s.basePath));
+}
+
 function loadStuckState(s: AutoSession): { recentUnits: Array<{ key: string }>; stuckRecoveryAttempts: number } {
-  if (!s.workerId) return { recentUnits: [], stuckRecoveryAttempts: 0 };
+  const scopeId = stableStuckStateScopeId(s);
+  if (!scopeId) return { recentUnits: [], stuckRecoveryAttempts: 0 };
   try {
-    const recentUnits = getRecentUnitKeysForWorker(s.workerId, RECENT_UNIT_KEYS_LIMIT);
+    const recentUnits = getRecentUnitKeysForProjectRoot(scopeId, RECENT_UNIT_KEYS_LIMIT);
     const stuckRecoveryAttempts =
-      getRuntimeKv<number>("worker", s.workerId, STUCK_RECOVERY_ATTEMPTS_KEY) ?? 0;
+      getRuntimeKv<number>("global", scopeId, STUCK_RECOVERY_ATTEMPTS_KEY) ?? 0;
     return { recentUnits, stuckRecoveryAttempts };
   } catch (err) {
     debugLog("autoLoop", { phase: "load-stuck-state-failed", error: err instanceof Error ? err.message : String(err) });
@@ -80,12 +86,13 @@ function loadStuckState(s: AutoSession): { recentUnits: Array<{ key: string }>; 
 }
 
 function saveStuckState(s: AutoSession, state: LoopState): void {
-  if (!s.workerId) return;
+  const scopeId = stableStuckStateScopeId(s);
+  if (!scopeId) return;
   // recentUnits is automatically derived from unit_dispatches by the
   // dispatch ledger writes in openDispatchClaim — no separate persistence
   // needed. Only the soft retry counter needs a runtime_kv row.
   try {
-    setRuntimeKv("worker", s.workerId, STUCK_RECOVERY_ATTEMPTS_KEY, state.stuckRecoveryAttempts);
+    setRuntimeKv("global", scopeId, STUCK_RECOVERY_ATTEMPTS_KEY, state.stuckRecoveryAttempts);
   } catch (err) {
     debugLog("autoLoop", { phase: "save-stuck-state-failed", error: err instanceof Error ? err.message : String(err) });
   }
@@ -159,15 +166,20 @@ function saveCustomVerifyRetryCounts(s: AutoSession): void {
  * throws. The auto-loop must continue to behave identically when the
  * ledger is degraded.
  */
+type DispatchClaimOutcome =
+  | { kind: "opened"; dispatchId: number }
+  | { kind: "skip"; reason: "already-active" | "stale-lease"; existingId?: number; existingWorker?: string }
+  | { kind: "degraded" };
+
 function openDispatchClaim(
   s: AutoSession,
   flowId: string,
   turnId: string,
   iterData: IterationData,
-): number | null {
-  if (!s.workerId || s.milestoneLeaseToken === null) return null;
+): DispatchClaimOutcome {
+  if (!s.workerId || s.milestoneLeaseToken === null) return { kind: "degraded" };
   const mid = iterData.mid;
-  if (!mid) return null;
+  if (!mid) return { kind: "degraded" };
 
   try {
     const recent = getRecentDispatchesForUnit(iterData.unitId, 1);
@@ -188,19 +200,28 @@ function openDispatchClaim(
       debugLog("autoLoop", {
         phase: "dispatch-claim-rejected",
         unitId: iterData.unitId,
-        existingId: claim.existingId,
-        existingWorker: claim.existingWorker,
+        reason: claim.error,
+        existingId: "existingId" in claim ? claim.existingId : undefined,
+        existingWorker: "existingWorker" in claim ? claim.existingWorker : undefined,
       });
-      return null;
+      if (claim.error === "already_active") {
+        return {
+          kind: "skip",
+          reason: "already-active",
+          existingId: claim.existingId,
+          existingWorker: claim.existingWorker,
+        };
+      }
+      return { kind: "skip", reason: "stale-lease" };
     }
     markDispatchRunning(claim.dispatchId);
-    return claim.dispatchId;
+    return { kind: "opened", dispatchId: claim.dispatchId };
   } catch (err) {
     debugLog("autoLoop", {
       phase: "dispatch-claim-failed",
       error: err instanceof Error ? err.message : String(err),
     });
-    return null;
+    return { kind: "degraded" };
   }
 }
 
@@ -759,15 +780,35 @@ export async function autoLoop(
       // null when DB unavailable, no worker registered, or no active lease
       // — those degraded paths fall through to the existing single-worker
       // semantics with no ledger entry, preserving back-compat.
-      const dispatchId = openDispatchClaim(s, flowId, turnId, iterData);
+      const dispatchClaim = openDispatchClaim(s, flowId, turnId, iterData);
+      if (dispatchClaim.kind === "skip") {
+        finishTurn("skipped", "execution", dispatchClaim.reason);
+        continue;
+      }
+      const dispatchId = dispatchClaim.kind === "opened" ? dispatchClaim.dispatchId : null;
 
-      const unitPhaseResult = await runUnitPhaseViaContract(
-        dispatchContract,
-        ic,
-        iterData,
-        loopState,
-        sidecarItem,
-      );
+      let unitPhaseResult: Awaited<ReturnType<typeof runUnitPhaseViaContract>>;
+      try {
+        unitPhaseResult = await runUnitPhaseViaContract(
+          dispatchContract,
+          ic,
+          iterData,
+          loopState,
+          sidecarItem,
+        );
+      } catch (err) {
+        if (dispatchId !== null) {
+          try {
+            markDispatchFailed(dispatchId, {
+              errorSummary: `exception:${err instanceof Error ? err.message : String(err)}`,
+            });
+          } catch (ledgerErr) {
+            debugLog("autoLoop", { phase: "dispatch-ledger-write-failed", error: ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr) });
+          }
+        }
+        finishTurn("stopped", "execution", "exception");
+        throw err;
+      }
       if (unitPhaseResult.action === "next") {
         const requestTimestamp = unitPhaseResult.data.requestDispatchedAt ?? unitPhaseResult.data.unitStartedAt;
         if (typeof requestTimestamp === "number") s.lastRequestTimestamp = requestTimestamp;
@@ -786,7 +827,22 @@ export async function autoLoop(
 
       // ── Phase 5: Finalize ───────────────────────────────────────────────
 
-      const finalizeResult = await runFinalize(ic, iterData, loopState, sidecarItem);
+      let finalizeResult: Awaited<ReturnType<typeof runFinalize>>;
+      try {
+        finalizeResult = await runFinalize(ic, iterData, loopState, sidecarItem);
+      } catch (err) {
+        if (dispatchId !== null) {
+          try {
+            markDispatchFailed(dispatchId, {
+              errorSummary: `exception:${err instanceof Error ? err.message : String(err)}`,
+            });
+          } catch (ledgerErr) {
+            debugLog("autoLoop", { phase: "dispatch-ledger-write-failed", error: ledgerErr instanceof Error ? ledgerErr.message : String(ledgerErr) });
+          }
+        }
+        finishTurn("stopped", "execution", "exception");
+        throw err;
+      }
       deps.uokObserver?.onPhaseResult("finalize", finalizeResult.action, {
         unitType: iterData.unitType,
         unitId: iterData.unitId,

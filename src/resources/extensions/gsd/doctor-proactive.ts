@@ -25,6 +25,7 @@ import { resolveMilestoneIntegrationBranch } from "./git-service.js";
 import { nativeIsRepo, nativeHasChanges, nativeLastCommitEpoch, nativeGetCurrentBranch, nativeAddTracked, nativeCommit } from "./native-git-bridge.js";
 import { loadEffectiveGSDPreferences } from "./preferences.js";
 import { runEnvironmentChecks } from "./doctor-environment.js";
+import { ensureDbOpen } from "./bootstrap/dynamic-tools.js";
 
 // ── Health Score Tracking ──────────────────────────────────────────────────
 
@@ -219,6 +220,9 @@ export async function preDispatchHealthGate(basePath: string): Promise<PreDispat
   // If a stale lock exists, the crash recovery path should handle it,
   // not a new dispatch. This prevents double-dispatch after crashes.
   try {
+    if (existsSync(join(gsdRoot(basePath), "gsd.db"))) {
+      await ensureDbOpen(basePath);
+    }
     const lock = readCrashLock(basePath);
     if (lock && !isLockProcessAlive(lock)) {
       // Auto-clear it since we're about to dispatch anyway

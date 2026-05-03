@@ -27,7 +27,7 @@ import {
 } from "./journal.js";
 import {
   findStaleWorkerForProject,
-  getActiveAutoWorkers,
+  getAllAutoWorkers,
   type AutoWorkerRow,
 } from "./db/auto-workers.js";
 import { getLatestForUnit, type DispatchStatus } from "./db/unit-dispatches.js";
@@ -51,8 +51,8 @@ function findActiveWorkerForCurrentProcess(
   projectRootRealpath: string,
 ): AutoWorkerRow | null {
   if (!isDbAvailable()) return null;
-  const active = getActiveAutoWorkers();
-  for (const worker of active) {
+  const workers = getAllAutoWorkers();
+  for (const worker of workers) {
     if (
       worker.pid === process.pid
       && worker.project_root_realpath === projectRootRealpath

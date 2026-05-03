@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { openDatabase, closeDatabase } from "../gsd-db.ts";
+import { _getAdapter } from "../gsd-db.ts";
 import {
   registerAutoWorker,
   heartbeatAutoWorker,
@@ -90,8 +91,10 @@ test("getActiveAutoWorkers filters by status and TTL", (t) => {
   assert.ok(active.find(w => w.worker_id === a));
   assert.ok(active.find(w => w.worker_id === b));
 
-  // Mark one crashed → should disappear from active set
-  markWorkerCrashed(a);
+  _getAdapter()!.prepare(
+    `UPDATE workers SET last_heartbeat_at = '1970-01-01T00:00:00.000Z' WHERE worker_id = :worker_id`,
+  ).run({ ":worker_id": a });
+
   const after = getActiveAutoWorkers();
   assert.equal(after.length, 1);
   assert.equal(after[0].worker_id, b);

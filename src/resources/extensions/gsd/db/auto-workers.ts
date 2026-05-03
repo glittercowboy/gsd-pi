@@ -171,6 +171,19 @@ export function getActiveAutoWorkers(): readonly AutoWorkerRow[] {
   return rows;
 }
 
+/** Return all worker rows regardless of status or TTL. */
+export function getAllAutoWorkers(): readonly AutoWorkerRow[] {
+  if (!isDbAvailable()) return [];
+  const db = _getAdapter()!;
+  const rows = db.prepare(
+    `SELECT worker_id, host, pid, started_at, version,
+            last_heartbeat_at, status, project_root_realpath
+     FROM workers
+     ORDER BY started_at`,
+  ).all() as unknown as AutoWorkerRow[];
+  return rows;
+}
+
 /**
  * Look up a single worker row. Returns null if no row exists.
  */

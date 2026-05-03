@@ -252,16 +252,19 @@ describe('doctor-proactive', async () => {
         `INSERT INTO workers (worker_id, host, pid, started_at, version, last_heartbeat_at, status, project_root_realpath)
          VALUES (:w, 'test-host', 9999999, '2026-03-10T00:00:00Z', 'test', '1970-01-01T00:00:00.000Z', 'active', :root)`,
       ).run({ ":w": `test-fake-${randomUUID().slice(0, 8)}`, ":root": dir });
-
-      const result = await preDispatchHealthGate(dir);
-      assert.ok(result.proceed, "gate passes after auto-clearing stale lock");
-      assert.ok(
-        result.fixesApplied.some(f => f.includes("cleared stale") || f.includes("cleared stale auto.lock")),
-        `reports lock cleared (got: ${result.fixesApplied.join(", ")})`,
-      );
-
       const { closeDatabase } = await import("../../gsd-db.ts");
       closeDatabase();
+
+      try {
+        const result = await preDispatchHealthGate(dir);
+        assert.ok(result.proceed, "gate passes after auto-clearing stale lock");
+        assert.ok(
+          result.fixesApplied.some(f => f.includes("cleared stale") || f.includes("cleared stale auto.lock")),
+          `reports lock cleared (got: ${result.fixesApplied.join(", ")})`,
+        );
+      } finally {
+        closeDatabase();
+      }
     });
 
     test('health gate: corrupt merge state auto-healed', async () => {

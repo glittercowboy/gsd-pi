@@ -1551,8 +1551,10 @@ export async function startAuto(
     ctx.ui.notify("Recovered unfinished migration (.gsd.migrating → .gsd).", "info");
   }
 
-  const freshStartAssessment = interruptedAssessment
-    ?? await assessInterruptedSession(base);
+  const freshStartAssessment = await (interruptedAssessment
+    ?? (() => {
+      return ensureDbOpen(base).then(() => assessInterruptedSession(base));
+    })());
 
   if (freshStartAssessment.classification === "running") {
     const pid = freshStartAssessment.lock?.pid;
@@ -1590,7 +1592,6 @@ export async function startAuto(
         s.autoStartTime = meta.autoStartTime || Date.now();
         s.sessionMilestoneLock = meta.milestoneLock ?? null;
         s.paused = true;
-        clearPausedSession("paused-session DB cleanup failed (custom-engine resume)");
         ctx.ui.notify(
           `Resuming paused custom workflow${meta.activeRunDir ? ` (${meta.activeRunDir})` : ""}.`,
           "info",
@@ -1662,7 +1663,6 @@ export async function startAuto(
                 : (s.originalBasePath || base);
               rebuildScope(rawForScope, s.currentMilestoneId);
             }
-            clearPausedSession("paused-session DB cleanup failed (resume succeeded)");
             ctx.ui.notify(
               `Resuming paused session for ${meta.milestoneId}${meta.worktreePath && existsSync(meta.worktreePath) ? ` (worktree)` : ""}.`,
               "info",
@@ -1851,20 +1851,23 @@ export async function startAuto(
       s.pausedSessionFile = null;
     }
 
+    captureProjectRootEnv(s.originalBasePath || s.basePath);
+    registerAutoWorkerForSession(s);
     updateSessionLock(
       lockBase(),
       "resuming",
       s.currentMilestoneId ?? "unknown",
     );
-    writeLock(
-      lockBase(),
-      "resuming",
-      s.currentMilestoneId ?? "unknown",
-    );
+    if (s.workerId) {
+      writeLock(
+        lockBase(),
+        "resuming",
+        s.currentMilestoneId ?? "unknown",
+      );
+      clearPausedSession("paused-session DB cleanup failed (resume activation)");
+    }
     pi.events.emit(CMUX_CHANNELS.LOG, { preferences: loadEffectiveGSDPreferences(s.basePath || undefined)?.preferences, message: s.stepMode ? "Step-mode resumed." : "Auto-mode resumed.", level: "progress" });
 
-    captureProjectRootEnv(s.originalBasePath || s.basePath);
-    registerAutoWorkerForSession(s);
     startAutoCommandPolling(s.basePath);
     await runAutoLoopWithUok({
       ctx,

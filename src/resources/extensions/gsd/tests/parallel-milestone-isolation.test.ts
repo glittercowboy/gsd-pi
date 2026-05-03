@@ -82,17 +82,19 @@ test("dispatch ledger ties unit_id uniqueness to active status", (t) => {
   insertMilestone({ id: "M001", title: "T", status: "active" });
 
   const w1 = registerAutoWorker({ projectRootRealpath: base });
-  const w2 = registerAutoWorker({ projectRootRealpath: base });
+  const lease = claimMilestoneLease(w1, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
 
-  // Both workers somehow attempt to claim the same unit (e.g. lease drift).
+  // The same lease holder attempts to claim the same unit twice.
   // The partial unique index on unit_dispatches.unit_id WHERE status IN
-  // ('claimed','running') must serialize the writes regardless of lease state.
+  // ('claimed','running') must serialize the writes even before the unit transitions.
   const claim1 = recordDispatchClaim({
-    traceId: "t1", workerId: w1, milestoneLeaseToken: 1,
+    traceId: "t1", workerId: w1, milestoneLeaseToken: lease.token,
     milestoneId: "M001", unitType: "plan-slice", unitId: "M001/S01",
   });
   const claim2 = recordDispatchClaim({
-    traceId: "t2", workerId: w2, milestoneLeaseToken: 1,
+    traceId: "t2", workerId: w1, milestoneLeaseToken: lease.token,
     milestoneId: "M001", unitType: "plan-slice", unitId: "M001/S01",
   });
 

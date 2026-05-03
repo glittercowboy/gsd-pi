@@ -60,13 +60,15 @@ describe('doctor-runtime', async () => {
 
   try {
     // ─── Test 1: Stale crash lock detection & fix ─────────────────────
-    test('stale_crash_lock', async () => {
+    test('stale_crash_lock', async (t) => {
       const dir = createMinimalProject();
       cleanups.push(dir);
 
       // Phase C pt 2: stale lock state lives in the workers table now.
       // Insert a fake stale worker row directly (PID 9999999 is dead).
       const { openDatabase, _getAdapter } = await import("../../gsd-db.ts");
+      const gsdDb = await import("../../gsd-db.ts");
+      t.after(() => { gsdDb.closeDatabase(); });
       const { randomUUID } = await import("node:crypto");
       openDatabase(join(dir, ".gsd", "gsd.db"));
       const db = _getAdapter()!;
@@ -443,9 +445,6 @@ node_modules/
       const detect = await runGSDDoctor(dir);
       const strandedIssues = detect.issues.filter(i => i.code === "stranded_lock_directory");
       assert.deepStrictEqual(strandedIssues.length, 0, "live lock holder: stranded_lock_directory NOT detected");
-
-      const { closeDatabase } = await import("../../gsd-db.ts");
-      closeDatabase();
     });
     } else {
     }

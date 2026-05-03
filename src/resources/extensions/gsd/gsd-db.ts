@@ -691,9 +691,6 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
       )
     `);
 
-    createCoordinationTablesV24(db);
-    createRuntimeKvTableV25(db);
-
     db.exec("CREATE INDEX IF NOT EXISTS idx_memories_active ON memories(superseded_by)");
 
     db.exec("CREATE INDEX IF NOT EXISTS idx_replan_history_milestone ON replan_history(milestone_id, created_at)");
@@ -720,6 +717,9 @@ function initSchema(db: DbAdapter, fileBacked: boolean): void {
 
     const existing = db.prepare("SELECT count(*) as cnt FROM schema_version").get();
     if (existing && (existing["cnt"] as number) === 0) {
+      createCoordinationTablesV24(db);
+      createRuntimeKvTableV25(db);
+
       // Fresh install — all tables are created above with the full current schema,
       // so it is safe to create all migration-specific indexes here.  For existing
       // databases these indexes are created inside the individual migration guards

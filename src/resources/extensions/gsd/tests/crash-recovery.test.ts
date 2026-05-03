@@ -27,6 +27,7 @@ import {
   _getAdapter,
 } from "../gsd-db.ts";
 import { registerAutoWorker } from "../db/auto-workers.ts";
+import { claimMilestoneLease } from "../db/milestone-leases.ts";
 import { recordDispatchClaim } from "../db/unit-dispatches.ts";
 import { insertSlice, insertTask } from "../gsd-db.ts";
 import { setRuntimeKv } from "../db/runtime-kv.ts";
@@ -92,10 +93,11 @@ function writeTestLock(
     try { insertMilestone({ id: mid, title: `Test ${mid}`, status: "active" }); }
     catch { /* may already exist */ }
     try {
+      const lease = claimMilestoneLease(workerId, mid);
       recordDispatchClaim({
         traceId: randomUUID(),
         workerId,
-        milestoneLeaseToken: 1,
+        milestoneLeaseToken: lease.ok ? lease.token : 0,
         milestoneId: mid,
         unitType,
         unitId,
@@ -585,8 +587,11 @@ test("writeLock creates lock file and readCrashLock reads it", (t) => {
   insertMilestone({ id: "M001", title: "Test", status: "active" });
   const projectRoot = normalizeRealPath(base);
   const workerId = registerAutoWorker({ projectRootRealpath: projectRoot });
+  const lease = claimMilestoneLease(workerId, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
   recordDispatchClaim({
-    traceId: "t1", workerId, milestoneLeaseToken: 1,
+    traceId: "t1", workerId, milestoneLeaseToken: lease.token,
     milestoneId: "M001", unitType: "execute-task", unitId: "M001/S01/T01",
   });
   writeLock(base, "execute-task", "M001/S01/T01", "/tmp/session.jsonl");

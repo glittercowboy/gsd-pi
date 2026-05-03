@@ -20,6 +20,7 @@ import {
   _getAdapter,
 } from "../gsd-db.ts";
 import { registerAutoWorker } from "../db/auto-workers.ts";
+import { claimMilestoneLease } from "../db/milestone-leases.ts";
 import { recordDispatchClaim } from "../db/unit-dispatches.ts";
 import { setRuntimeKv, getRuntimeKv } from "../db/runtime-kv.ts";
 import {
@@ -89,8 +90,11 @@ test("readCrashLock includes the most recent dispatch as unitType/unitId", (t) =
   insertMilestone({ id: "M001", title: "T", status: "active" });
   const projectRoot = normalizeRealPath(base);
   const workerId = registerAutoWorker({ projectRootRealpath: projectRoot });
+  const lease = claimMilestoneLease(workerId, "M001");
+  assert.equal(lease.ok, true);
+  if (!lease.ok) return;
   recordDispatchClaim({
-    traceId: "t1", workerId, milestoneLeaseToken: 1,
+    traceId: "t1", workerId, milestoneLeaseToken: lease.token,
     milestoneId: "M001", unitType: "plan-slice", unitId: "M001/S01",
   });
   expireWorker(workerId);
