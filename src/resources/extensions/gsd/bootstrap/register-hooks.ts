@@ -229,21 +229,11 @@ export function registerHooks(
   });
 
   pi.on("session_before_compact", async () => {
-    // Only cancel compaction while auto-mode is actively running.
-    // Paused auto-mode should allow compaction — the user may be doing
-    // interactive work (#3165).
-    if (isAutoActive()) {
-      return { cancel: true };
-    }
     const basePath = process.cwd();
     const { ensureDbOpen } = await import("./dynamic-tools.js");
     await ensureDbOpen();
     const state = await deriveGsdState(basePath);
     if (!state.activeMilestone || !state.activeSlice) return;
-    // Write checkpoint for ALL phases, not just "executing" — discuss, research,
-    // and planning also carry in-memory state (user answers, gate verification)
-    // that would be lost on compaction (#4258).
-    // if (state.phase !== "executing") return;
 
     const sliceDir = resolveSlicePath(basePath, state.activeMilestone.id, state.activeSlice.id);
     if (!sliceDir) return;
