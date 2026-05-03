@@ -234,6 +234,37 @@ test("gsd update bypasses the managed-resource-mismatch gate; non-update command
   );
 });
 
+test("managed resource skew ignores dev/build suffixes on the same release line", async (t) => {
+  const { getNewerManagedResourceVersion } = await import("../resource-loader.ts");
+
+  const tmp = mkdtempSync(join(tmpdir(), "gsd-version-normalize-"));
+  const fakeAgentDir = join(tmp, "agent");
+  mkdirSync(fakeAgentDir, { recursive: true });
+
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));
+
+  writeFileSync(
+    join(fakeAgentDir, "managed-resources.json"),
+    JSON.stringify({ gsdVersion: "2.78.1", syncedAt: Date.now() }),
+  );
+
+  assert.strictEqual(
+    getNewerManagedResourceVersion(fakeAgentDir, "2.78.1-dev.84c045fd2"),
+    null,
+    "same core version must not trip the skew gate just because the binary is a dev build",
+  );
+  assert.strictEqual(
+    getNewerManagedResourceVersion(fakeAgentDir, "2.78.1+local"),
+    null,
+    "build metadata on the running binary must not trip the skew gate",
+  );
+  assert.strictEqual(
+    getNewerManagedResourceVersion(fakeAgentDir, "2.78.0-dev.84c045fd2"),
+    "2.78.1",
+    "older core versions must still be blocked even when they carry a dev suffix",
+  );
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. resource-loader syncs bundled resources
 // ═══════════════════════════════════════════════════════════════════════════

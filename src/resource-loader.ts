@@ -58,6 +58,10 @@ export function getExtensionKey(entryPath: string, extensionsDir: string): strin
   return relPath.split(/[\\/]/)[0].replace(/\.(?:ts|js)$/, '')
 }
 
+function stripSemverBuildMetadata(version: string): string {
+  return version.trim().replace(/^v/, '').split(/[+-]/, 1)[0] || '0.0.0'
+}
+
 function getManagedResourceManifestPath(agentDir: string): string {
   return join(agentDir, resourceVersionManifestName)
 }
@@ -196,7 +200,12 @@ export function getNewerManagedResourceVersion(agentDir: string, currentVersion:
   if (!managedVersion) {
     return null
   }
-  return compareSemver(managedVersion, currentVersion) > 0 ? managedVersion : null
+  // Managed resources stamped from the same release line should remain usable
+  // against local dev binaries like 2.78.1-dev.<sha>.
+  return compareSemver(
+    stripSemverBuildMetadata(managedVersion),
+    stripSemverBuildMetadata(currentVersion),
+  ) > 0 ? managedVersion : null
 }
 
 /**
