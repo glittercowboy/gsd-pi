@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/gsd-build-gsd-2-badge.png)](https://mseep.ai/app/gsd-build-gsd-2)
+
 <div align="center">
 
 # GSD 2
