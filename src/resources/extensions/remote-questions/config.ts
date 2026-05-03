@@ -58,10 +58,8 @@ function hydrateRemoteTokensFromAuth(): void {
 
     for (const [providerId, envVar] of needed) {
       try {
-        const creds = auth.getCredentialsForProvider(providerId);
-        const apiKeyCred = creds.find((c: { type: string; key?: string }) => c.type === "api_key" && !!c.key) as
-          | { type: "api_key"; key: string }
-          | undefined;
+        const creds = auth.getCredentialsForProvider(providerId) as Array<{ type: string; key?: string }>;
+        const apiKeyCred = pickLastApiKeyCredential(creds);
         if (apiKeyCred?.key) {
           process.env[envVar] = apiKeyCred.key;
         }
@@ -81,7 +79,7 @@ export function resolveRemoteConfig(): ResolvedConfig | null {
   if (!rq || !rq.channel || !rq.channel_id) return null;
   if (rq.channel !== "slack" && rq.channel !== "discord" && rq.channel !== "telegram") return null;
 
-  const channelId = String(rq.channel_id);
+  const channelId = rq.channel_id;
   if (!CHANNEL_ID_PATTERNS[rq.channel].test(channelId)) return null;
 
   const token = process.env[ENV_KEYS[rq.channel]];
@@ -105,7 +103,7 @@ export function getRemoteConfigStatus(): string {
   const rq: RemoteQuestionsConfig | undefined = prefs?.preferences.remote_questions;
   if (!rq || !rq.channel || !rq.channel_id) return "Remote questions: not configured";
   if (rq.channel !== "slack" && rq.channel !== "discord" && rq.channel !== "telegram") return `Remote questions: unknown channel type \"${rq.channel}\"`;
-  const channelId = String(rq.channel_id);
+  const channelId = rq.channel_id;
   if (!CHANNEL_ID_PATTERNS[rq.channel].test(channelId)) return `Remote questions: invalid ${rq.channel} channel ID format`;
   const envVar = ENV_KEYS[rq.channel];
   if (!process.env[envVar]) return `Remote questions: ${envVar} not set — remote questions disabled`;
@@ -117,6 +115,16 @@ export function getRemoteConfigStatus(): string {
 
 export function isValidChannelId(channel: RemoteChannel, id: string): boolean {
   return CHANNEL_ID_PATTERNS[channel].test(id);
+}
+
+export function pickLastApiKeyCredential<T extends { type: string; key?: string }>(
+  creds: ReadonlyArray<T>,
+): T | undefined {
+  for (let i = creds.length - 1; i >= 0; i--) {
+    const c = creds[i];
+    if (c.type === "api_key" && !!c.key) return c;
+  }
+  return undefined;
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
