@@ -679,6 +679,25 @@ test("hasImplementationArtifacts finds milestone implementation commits after re
   }
 });
 
+test("hasImplementationArtifacts finds integration-branch milestone commits when .gsd is external (#4935)", () => {
+  const base = makeGitBase();
+  try {
+    writeFileSync(join(base, ".git", "info", "exclude"), ".gsd/\n");
+    mkdirSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks"), { recursive: true });
+    writeFileSync(join(base, ".gsd", "milestones", "M001", "slices", "S01", "tasks", "T01-SUMMARY.md"), "# Summary");
+
+    mkdirSync(join(base, "benchmarks", "M001"), { recursive: true });
+    writeFileSync(join(base, "benchmarks", "M001", "manifest.yaml"), "cases: []\n");
+    execFileSync("git", ["add", "."], { cwd: base, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "feat: materialize M001 evidence\n\nGSD-Task: S01/T01"], { cwd: base, stdio: "ignore" });
+
+    const result = hasImplementationArtifacts(base, "M001");
+    assert.equal(result, "present", "main self-diff retry should find M001 implementation commits even when .gsd is not tracked");
+  } finally {
+    cleanup(base);
+  }
+});
+
 test("hasImplementationArtifacts rejects milestone-scoped main history with only .gsd commits (#4699)", () => {
   const base = makeGitBase();
   try {
