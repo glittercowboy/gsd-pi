@@ -143,7 +143,9 @@ export function recordDispatchClaim(input: RecordClaimInput): RecordClaimResult 
       return { ok: true, dispatchId: id };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      if (!/UNIQUE|constraint/i.test(msg)) throw err;
+      const isUniqueConflict = /UNIQUE/i.test(msg);
+      const isForeignKeyFailure = /FOREIGN KEY/i.test(msg);
+      if (!isUniqueConflict || isForeignKeyFailure) throw err;
 
       // Partial unique index rejected the INSERT — surface the existing
       // active dispatch so callers can decide what to do.

@@ -96,7 +96,7 @@ See [Git Strategy](./git-strategy.md) for details.
 
 ### Parallel Execution
 
-When your project has independent milestones, you can run them simultaneously. Each milestone gets its own worker process and worktree. See [Parallel Orchestration](./parallel-orchestration.md) for setup and usage.
+When your project has independent milestones, you can run them simultaneously. Each milestone gets its own worker process and worktree, and the shared project database coordinates worker heartbeats, milestone leases, dispatch ownership, retry windows, and control commands. See [Parallel Orchestration](./parallel-orchestration.md) for setup and usage.
 
 ### Crash Recovery
 

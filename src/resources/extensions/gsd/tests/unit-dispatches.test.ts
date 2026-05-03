@@ -192,3 +192,21 @@ test("markStuck and markCanceled set their respective statuses", (t) => {
   markCanceled(b.dispatchId, "user-cancel");
   assert.equal(getLatestForUnit("M001/S01/T01")!.status, "canceled");
 });
+
+test("recordDispatchClaim rethrows foreign-key failures instead of mapping them to already_active", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  setup(base);
+
+  assert.throws(
+    () => recordDispatchClaim({
+      traceId: "t-fk",
+      workerId: "missing-worker",
+      milestoneLeaseToken: 1,
+      milestoneId: "M001",
+      unitType: "plan-slice",
+      unitId: "M001/S01",
+    }),
+    /FOREIGN KEY constraint failed/,
+  );
+});

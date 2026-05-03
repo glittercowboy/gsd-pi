@@ -91,7 +91,9 @@ export function claimMilestoneLease(
       // SQLite raises a constraint error on duplicate PK — catch and fall
       // through to UPDATE. Any other error is a bug; rethrow.
       const msg = err instanceof Error ? err.message : String(err);
-      if (!/UNIQUE|PRIMARY KEY|constraint/i.test(msg)) throw err;
+      const isUniqueConflict = /UNIQUE|PRIMARY KEY/i.test(msg);
+      const isForeignKeyFailure = /FOREIGN KEY/i.test(msg);
+      if (!isUniqueConflict || isForeignKeyFailure) throw err;
     }
 
     if (inserted) {

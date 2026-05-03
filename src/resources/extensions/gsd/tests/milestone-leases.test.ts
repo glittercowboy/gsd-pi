@@ -138,3 +138,15 @@ test("refreshMilestoneLease only succeeds with the matching fencing token", (t) 
   // Stale token (e.g. claim.token - 1) refuses
   assert.equal(refreshMilestoneLease(w1, "M001", claim.token - 1), false);
 });
+
+test("claimMilestoneLease rethrows foreign-key failures instead of treating them as lease contention", (t) => {
+  const base = makeBase();
+  t.after(() => cleanup(base));
+  openDatabase(join(base, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test", status: "active" });
+
+  assert.throws(
+    () => claimMilestoneLease("missing-worker", "M001"),
+    /FOREIGN KEY constraint failed/,
+  );
+});
