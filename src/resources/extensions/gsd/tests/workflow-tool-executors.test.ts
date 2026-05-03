@@ -11,7 +11,9 @@ import {
   _getAdapter,
   insertGateRow,
   upsertRequirement,
+  getAllMilestones,
 } from "../gsd-db.ts";
+import { deriveState, invalidateStateCache } from "../state.ts";
 import { markApprovalGateVerified, markDepthVerified, clearDiscussionFlowState, loadWriteGateSnapshot, setPendingGate } from "../bootstrap/write-gate.ts";
 import {
   executeCompleteMilestone,
@@ -731,6 +733,61 @@ test("executeSummarySave supports root-level deep planning artifacts", async () 
         ["REQUIREMENTS.md", "REQUIREMENTS", null],
       ],
     );
+  } finally {
+    closeDatabase();
+    cleanup(base);
+  }
+});
+
+test("executeSummarySave registers PROJECT milestone sequence for the next run", async () => {
+  const base = makeTmpBase();
+  try {
+    openTestDb(base);
+
+    const result = await inProjectDir(base, () => executeSummarySave({
+      artifact_type: "PROJECT",
+      content: [
+        "# Project",
+        "",
+        "## What This Is",
+        "",
+        "Deep project setup output.",
+        "",
+        "## Project Shape",
+        "",
+        "**Complexity:** complex",
+        "**Why:** It spans multiple delivery steps.",
+        "",
+        "## Capability Contract",
+        "",
+        "See .gsd/REQUIREMENTS.md.",
+        "",
+        "## Milestone Sequence",
+        "",
+        "- [ ] M001: Foundation - Establish the first runnable slice.",
+        "- [ ] M002: Polish - Follow-up experience work.",
+        "",
+      ].join("\n"),
+    }, base));
+
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.details.registeredMilestones, ["M001", "M002"]);
+
+    const milestones = getAllMilestones();
+    assert.deepEqual(
+      milestones.map((m) => [m.id, m.title, m.status]),
+      [
+        ["M001", "Foundation", "queued"],
+        ["M002", "Polish", "queued"],
+      ],
+    );
+
+    invalidateStateCache();
+    const state = await deriveState(base);
+    assert.equal(state.activeMilestone?.id, "M001");
+    assert.equal(state.phase, "pre-planning");
+    assert.equal(state.registry[0]?.status, "active");
+    assert.equal(state.registry[1]?.status, "pending");
   } finally {
     closeDatabase();
     cleanup(base);

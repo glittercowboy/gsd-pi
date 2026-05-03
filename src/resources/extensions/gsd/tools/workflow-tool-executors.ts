@@ -3,6 +3,7 @@ import { sanitizeCompleteMilestoneParams } from "../bootstrap/sanitize-complete-
 import { loadWriteGateSnapshot, shouldBlockContextArtifactSaveInSnapshot, shouldBlockRootArtifactSaveInSnapshot } from "../bootstrap/write-gate.js";
 import {
   getActiveRequirements,
+  insertMilestone,
   getMilestone,
   getSliceStatusSummary,
   getSliceTaskCounts,
@@ -31,6 +32,7 @@ import { handleValidateMilestone } from "./validate-milestone.js";
 import { logError, logWarning } from "../workflow-logger.js";
 import { invalidateStateCache } from "../state.js";
 import { loadEffectiveGSDPreferences } from "../preferences.js";
+import { parseProject } from "../schemas/parsers.js";
 
 export const SUPPORTED_SUMMARY_ARTIFACT_TYPES = [
   "SUMMARY",
@@ -69,6 +71,20 @@ export interface SummarySaveParams {
   task_id?: string;
   artifact_type: string;
   content: string;
+}
+
+function registerProjectMilestoneSequence(content: string): string[] {
+  const parsed = parseProject(content);
+  const registered: string[] = [];
+  for (const milestone of parsed.milestones) {
+    insertMilestone({
+      id: milestone.id,
+      title: milestone.title,
+      status: milestone.done ? "complete" : "queued",
+    });
+    registered.push(milestone.id);
+  }
+  return registered;
 }
 
 export async function executeSummarySave(
@@ -173,6 +189,12 @@ export async function executeSummarySave(
       basePath,
     );
 
+    let registeredMilestones: string[] = [];
+    if (params.artifact_type === "PROJECT") {
+      registeredMilestones = registerProjectMilestoneSequence(contentToSave);
+      if (registeredMilestones.length > 0) invalidateStateCache();
+    }
+
     if (params.artifact_type === "CONTEXT" && !params.task_id) {
       try {
         const draftFile = params.slice_id
@@ -186,7 +208,13 @@ export async function executeSummarySave(
 
     return {
       content: [{ type: "text", text: `Saved ${params.artifact_type} artifact to ${relativePath}` }],
-      details: { operation: "save_summary", path: relativePath, artifact_type: params.artifact_type, content_source: contentSource },
+      details: {
+        operation: "save_summary",
+        path: relativePath,
+        artifact_type: params.artifact_type,
+        content_source: contentSource,
+        ...(registeredMilestones.length > 0 ? { registeredMilestones } : {}),
+      },
     };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
