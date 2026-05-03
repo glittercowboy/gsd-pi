@@ -132,6 +132,122 @@ describe("workflow MCP tools", () => {
     }
   });
 
+  it("gsd_exec runs by default, preserves cwd, and returns structured metadata", async () => {
+    const base = makeTmpBase();
+    const originalCwd = process.cwd();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_exec");
+      assert.ok(tool, "exec tool should be registered");
+
+      const result = await tool!.handler({
+        projectDir: base,
+        runtime: "node",
+        script: "console.log(process.cwd()); console.log('context mode default on');",
+        purpose: "default-on smoke",
+      });
+
+      const record = result as any;
+      assert.equal(record.isError, false);
+      assert.match(record.content[0].text as string, /context mode default on/);
+      assert.equal(record.structuredContent.operation, "gsd_exec");
+      assert.equal(record.structuredContent.runtime, "node");
+      assert.ok(existsSync(record.structuredContent.stdout_path), "stdout should be persisted");
+      assert.equal(process.cwd(), originalCwd, "gsd_exec must not mutate process.cwd");
+      assert.match(
+        readFileSync(record.structuredContent.stdout_path, "utf-8"),
+        new RegExp(base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        "script should run relative to the requested projectDir",
+      );
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_exec returns an MCP error when context mode is disabled", async () => {
+    const base = makeTmpBase();
+    try {
+      writeFileSync(
+        join(base, ".gsd", "PREFERENCES.md"),
+        "---\ncontext_mode:\n  enabled: false\n---\n",
+        "utf-8",
+      );
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_exec");
+      assert.ok(tool, "exec tool should be registered");
+
+      const result = await tool!.handler({
+        projectDir: base,
+        runtime: "bash",
+        script: "echo should-not-run",
+      });
+
+      assertToolError(result, /context_mode\.enabled: false/);
+      assert.equal((result as any).structuredContent.error, "context_mode_disabled");
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_exec_search finds a prior gsd_exec run", async () => {
+    const base = makeTmpBase();
+    try {
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const execTool = server.tools.find((t) => t.name === "gsd_exec");
+      const searchTool = server.tools.find((t) => t.name === "gsd_exec_search");
+      assert.ok(execTool, "exec tool should be registered");
+      assert.ok(searchTool, "exec search tool should be registered");
+
+      await execTool!.handler({
+        projectDir: base,
+        runtime: "bash",
+        script: "printf 'needle-output\\n'",
+        purpose: "find-me-later",
+      });
+
+      const result = await searchTool!.handler({
+        projectDir: base,
+        query: "find-me",
+      });
+
+      assert.match((result as any).content[0].text as string, /find-me-later/);
+      assert.equal((result as any).structuredContent.operation, "gsd_exec_search");
+      assert.equal((result as any).structuredContent.matches, 1);
+      assert.match((result as any).structuredContent.results[0].stdout_path, /\.gsd[\\/]exec[\\/].*\.stdout$/);
+    } finally {
+      cleanup(base);
+    }
+  });
+
+  it("gsd_resume reads the context snapshot", async () => {
+    const base = makeTmpBase();
+    try {
+      writeFileSync(
+        join(base, ".gsd", "last-snapshot.md"),
+        "# GSD context snapshot\n\nResume from here.\n",
+        "utf-8",
+      );
+      const server = makeMockServer();
+      registerWorkflowTools(server as any);
+      const tool = server.tools.find((t) => t.name === "gsd_resume");
+      assert.ok(tool, "resume tool should be registered");
+
+      const result = await tool!.handler({ projectDir: base });
+
+      assert.match((result as any).content[0].text as string, /Resume from here/);
+      assert.deepEqual((result as any).structuredContent, {
+        operation: "gsd_resume",
+        found: true,
+        bytes: Buffer.byteLength("# GSD context snapshot\n\nResume from here.\n", "utf-8"),
+      });
+    } finally {
+      cleanup(base);
+    }
+  });
+
   it("gsd_summary_save supports root-level PROJECT artifacts without milestone_id", async () => {
     const base = makeTmpBase();
     try {

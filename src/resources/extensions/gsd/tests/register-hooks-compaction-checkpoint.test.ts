@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { registerHooks } from "../bootstrap/register-hooks.ts";
+import { autoSession } from "../auto-runtime-state.ts";
 import { parseContinue } from "../files.ts";
 import { closeDatabase, insertMilestone, insertSlice, openDatabase } from "../gsd-db.ts";
 import { deriveState, invalidateStateCache } from "../state.ts";
@@ -95,4 +96,88 @@ test("register-hooks writes CONTINUE checkpoint during planning phase without ac
   assert.equal(parsed.frontmatter.status, "compacted");
   assert.match(parsed.completedWork, /planning phase/i, "completed-work should capture non-executing phase context");
   assert.match(parsed.nextAction, /slice S01/i, "next action should route resume to the active slice");
+});
+
+test("register-hooks writes Context Mode snapshot before active auto cancels compaction", async (t) => {
+  const base = createPlanningFixtureBase();
+  const originalCwd = process.cwd();
+  process.chdir(base);
+  invalidateStateCache();
+  closeDatabase();
+  autoSession.reset();
+  autoSession.active = true;
+
+  t.after(() => {
+    autoSession.reset();
+    invalidateStateCache();
+    closeDatabase();
+    process.chdir(originalCwd);
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const handlers = new Map<string, Array<(event: any, ctx?: any) => Promise<any> | any>>();
+  const pi = {
+    on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any) {
+      const existing = handlers.get(event) ?? [];
+      existing.push(handler);
+      handlers.set(event, existing);
+    },
+  } as any;
+
+  registerHooks(pi, []);
+
+  const compactHandlers = handlers.get("session_before_compact");
+  assert.ok(compactHandlers && compactHandlers.length > 0, "session_before_compact handler should be registered");
+
+  const result = await compactHandlers![0]({});
+
+  assert.deepEqual(result, { cancel: true }, "active auto should still cancel compaction");
+  const snapshotPath = join(base, ".gsd", "last-snapshot.md");
+  assert.ok(existsSync(snapshotPath), "active auto cancel should still leave a Context Mode snapshot");
+  assert.match(readFileSync(snapshotPath, "utf-8"), /GSD context snapshot/);
+});
+
+test("register-hooks does not write Context Mode snapshot when disabled", async (t) => {
+  const base = createPlanningFixtureBase();
+  writeFileSync(
+    join(base, ".gsd", "PREFERENCES.md"),
+    "---\ncontext_mode:\n  enabled: false\n---\n",
+    "utf-8",
+  );
+  const originalCwd = process.cwd();
+  process.chdir(base);
+  invalidateStateCache();
+  closeDatabase();
+  autoSession.reset();
+
+  t.after(() => {
+    autoSession.reset();
+    invalidateStateCache();
+    closeDatabase();
+    process.chdir(originalCwd);
+    rmSync(base, { recursive: true, force: true });
+  });
+
+  const handlers = new Map<string, Array<(event: any, ctx?: any) => Promise<any> | any>>();
+  const pi = {
+    on(event: string, handler: (event: any, ctx?: any) => Promise<any> | any) {
+      const existing = handlers.get(event) ?? [];
+      existing.push(handler);
+      handlers.set(event, existing);
+    },
+  } as any;
+
+  registerHooks(pi, []);
+
+  const compactHandlers = handlers.get("session_before_compact");
+  assert.ok(compactHandlers && compactHandlers.length > 0, "session_before_compact handler should be registered");
+
+  for (const handler of compactHandlers ?? []) {
+    await handler({});
+  }
+
+  assert.ok(
+    !existsSync(join(base, ".gsd", "last-snapshot.md")),
+    "disabled Context Mode should not write a snapshot",
+  );
 });

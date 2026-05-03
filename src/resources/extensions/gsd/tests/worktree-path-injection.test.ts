@@ -229,6 +229,9 @@ test("worktree-aware prompt builders include the explicit working directory", as
     ),
   ]);
 
+  assert.ok(prompts[0].includes("## Context Mode"), "discuss-milestone should include standalone Context Mode guidance");
+  assert.ok(prompts[0].includes("interview lane"), "discuss-milestone should render the interview lane");
+
   for (const prompt of prompts) {
     assert.match(prompt, /working directory/i);
     assert.ok(prompt.includes(base), "prompt should include the provided working directory");

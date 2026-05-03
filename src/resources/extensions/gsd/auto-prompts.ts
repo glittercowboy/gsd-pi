@@ -17,6 +17,7 @@ import {
   resolveGsdRootFile, relGsdRootFile, resolveRuntimeFile,
 } from "./paths.js";
 import { resolveSkillDiscoveryMode, resolveInlineLevel, loadEffectiveGSDPreferences, resolveAllSkillReferences } from "./preferences.js";
+import { isContextModeEnabled } from "./preferences-types.js";
 import { parseRoadmap } from "./parsers-legacy.js";
 import type { GSDState, InlineLevel } from "./types.js";
 import type { GSDPreferences } from "./preferences.js";
@@ -33,7 +34,7 @@ import {
 } from "./gate-registry.js";
 import { formatDecisionsCompact, formatRequirementsCompact } from "./structured-data-formatter.js";
 import { readPhaseAnchor, formatAnchorForPrompt } from "./phase-anchor.js";
-import { composeInlinedContext, type ArtifactResolver } from "./unit-context-composer.js";
+import { composeContextModeInstructions, composeInlinedContext, type ArtifactResolver, type ContextModeRenderMode } from "./unit-context-composer.js";
 import { logWarning } from "./workflow-logger.js";
 import { inlineGraphSubgraph } from "./graph-context.js";
 import { buildExtractionStepsBlock } from "./commands-extract-learnings.js";
@@ -87,6 +88,30 @@ function capPreamble(preamble: string): string {
   const budget = Math.min(MAX_PREAMBLE_CHARS, resolvePromptBudgets().inlineContextBudgetChars);
   if (preamble.length <= budget) return preamble;
   return truncateAtSectionBoundary(preamble, budget).content;
+}
+
+function renderContextModeForPrompt(
+  unitType: string,
+  base: string,
+  renderMode: ContextModeRenderMode = "standalone",
+): string {
+  const effectivePrefs = loadEffectiveGSDPreferences(base)?.preferences;
+  return composeContextModeInstructions(unitType, {
+    enabled: isContextModeEnabled(effectivePrefs),
+    renderMode,
+  });
+}
+
+function prependContextModeToBlock(
+  unitType: string,
+  base: string,
+  block: string,
+  renderMode: ContextModeRenderMode = "standalone",
+): string {
+  const contextMode = renderContextModeForPrompt(unitType, base, renderMode);
+  if (!contextMode) return block;
+  if (!block.trim()) return contextMode;
+  return `${contextMode}\n\n${block}`;
 }
 
 // ─── Executor Constraints ─────────────────────────────────────────────────────
@@ -1266,6 +1291,7 @@ export async function buildDiscussMilestonePrompt(
   structuredQuestionsAvailable = "false",
 ): Promise<string> {
   const discussTemplates = inlineTemplate("context", "Context");
+  const contextModeInstructions = renderContextModeForPrompt("discuss-milestone", base);
 
   const basePrompt = loadPrompt("guided-discuss-milestone", {
     workingDirectory: base,
@@ -1276,16 +1302,17 @@ export async function buildDiscussMilestonePrompt(
     commitInstruction: "Do not commit planning artifacts — .gsd/ is managed externally.",
     fastPathInstruction: "",
   });
+  const promptWithContextMode = prependContextModeToBlock("discuss-milestone", base, basePrompt);
 
   // If a CONTEXT-DRAFT.md exists, append it as seed material
   const draftPath = resolveMilestoneFile(base, mid, "CONTEXT-DRAFT");
   const draftContent = draftPath ? await loadFile(draftPath) : null;
 
   if (draftContent) {
-    return `${basePrompt}\n\n## Prior Discussion (Draft Seed)\n\nThe following draft was captured from a prior multi-milestone discussion. Use it as seed material — the user has already provided this context. Start with a brief reflection on what the draft covers, then probe for any gaps or open questions before writing the full CONTEXT.md.\n\n${draftContent}`;
+    return `${promptWithContextMode}\n\n## Prior Discussion (Draft Seed)\n\nThe following draft was captured from a prior multi-milestone discussion. Use it as seed material — the user has already provided this context. Start with a brief reflection on what the draft covers, then probe for any gaps or open questions before writing the full CONTEXT.md.\n\n${draftContent}`;
   }
 
-  return basePrompt;
+  return contextModeInstructions ? promptWithContextMode : basePrompt;
 }
 
 /**
@@ -1298,10 +1325,10 @@ export async function buildWorkflowPreferencesPrompt(
   base: string,
   structuredQuestionsAvailable = "false",
 ): Promise<string> {
-  return loadPrompt("guided-workflow-preferences", {
+  return prependContextModeToBlock("workflow-preferences", base, loadPrompt("guided-workflow-preferences", {
     workingDirectory: base,
     structuredQuestionsAvailable,
-  });
+  }));
 }
 
 /**
@@ -1315,10 +1342,10 @@ export async function buildResearchProjectPrompt(
   base: string,
   structuredQuestionsAvailable = "false",
 ): Promise<string> {
-  return loadPrompt("guided-research-project", {
+  return prependContextModeToBlock("research-project", base, loadPrompt("guided-research-project", {
     workingDirectory: base,
     structuredQuestionsAvailable,
-  });
+  }));
 }
 
 /**
@@ -1331,10 +1358,10 @@ export async function buildResearchDecisionPrompt(
   base: string,
   structuredQuestionsAvailable = "false",
 ): Promise<string> {
-  return loadPrompt("guided-research-decision", {
+  return prependContextModeToBlock("research-decision", base, loadPrompt("guided-research-decision", {
     workingDirectory: base,
     structuredQuestionsAvailable,
-  });
+  }));
 }
 
 /**
@@ -1349,12 +1376,12 @@ export async function buildDiscussProjectPrompt(
 ): Promise<string> {
   const inlinedTemplates = inlineTemplate("project", "Project");
 
-  return loadPrompt("guided-discuss-project", {
+  return prependContextModeToBlock("discuss-project", base, loadPrompt("guided-discuss-project", {
     workingDirectory: base,
     inlinedTemplates,
     structuredQuestionsAvailable,
     commitInstruction: "Do not commit planning artifacts — .gsd/ is managed externally.",
-  });
+  }));
 }
 
 /**
@@ -1369,12 +1396,12 @@ export async function buildDiscussRequirementsPrompt(
 ): Promise<string> {
   const inlinedTemplates = inlineTemplate("requirements", "Requirements");
 
-  return loadPrompt("guided-discuss-requirements", {
+  return prependContextModeToBlock("discuss-requirements", base, loadPrompt("guided-discuss-requirements", {
     workingDirectory: base,
     inlinedTemplates,
     structuredQuestionsAvailable,
     commitInstruction: "Do not commit planning artifacts — .gsd/ is managed externally.",
-  });
+  }));
 }
 
 export async function buildResearchMilestonePrompt(mid: string, midTitle: string, base: string): Promise<string> {
@@ -1428,7 +1455,11 @@ export async function buildResearchMilestonePrompt(mid: string, midTitle: string
     if (knowledgeInlineRM) parts.push(knowledgeInlineRM);
   }
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${parts.join("\n\n---\n\n")}`);
+  const inlinedContext = prependContextModeToBlock(
+    "research-milestone",
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${parts.join("\n\n---\n\n")}`),
+  );
 
   const outputRelPath = relMilestoneFile(base, mid, "RESEARCH");
   return loadPrompt("research-milestone", {
@@ -1501,7 +1532,11 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
     inlined.push(inlineTemplate("task-plan", "Task Plan"));
   }
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const inlinedContext = prependContextModeToBlock(
+    "plan-milestone",
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`),
+  );
 
   const outputRelPath = relMilestoneFile(base, mid, "ROADMAP");
   const researchOutputPath = join(base, relMilestoneFile(base, mid, "RESEARCH"));
@@ -1530,6 +1565,7 @@ export async function buildPlanMilestonePrompt(mid: string, midTitle: string, ba
 
 export async function buildResearchSlicePrompt(
   mid: string, _midTitle: string, sid: string, sTitle: string, base: string,
+  options?: { contextModeRenderMode?: ContextModeRenderMode },
 ): Promise<string> {
   const roadmapPath = resolveMilestoneFile(base, mid, "ROADMAP");
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
@@ -1582,7 +1618,12 @@ export async function buildResearchSlicePrompt(
   const overridesInline = formatOverridesSection(activeOverrides);
   if (overridesInline) inlined.unshift(overridesInline);
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const inlinedContext = prependContextModeToBlock(
+    "research-slice",
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`),
+    options?.contextModeRenderMode,
+  );
 
   const outputRelPath = relSliceFile(base, mid, sid, "RESEARCH");
   return loadPrompt("research-slice", {
@@ -1629,6 +1670,7 @@ async function renderSlicePrompt(options: {
   sessionContextWindow?: number;
   modelRegistry?: MinimalModelRegistry;
   sessionProvider?: string;
+  contextModeRenderMode?: ContextModeRenderMode;
 }): Promise<string> {
   const {
     mid, sid, sTitle, base, level, promptTemplate, prependBlocks = [], extraVars = {},
@@ -1684,7 +1726,12 @@ async function renderSlicePrompt(options: {
   const overridesInline = formatOverridesSection(await loadActiveOverrides(base));
   if (overridesInline) inlined.unshift(overridesInline);
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const inlinedContext = prependContextModeToBlock(
+    promptTemplate,
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`),
+    options.contextModeRenderMode,
+  );
   const executorContextConstraints = formatExecutorConstraints(sessionContextWindow, modelRegistry, sessionProvider);
   const outputRelPath = relSliceFile(base, mid, sid, "PLAN");
   const commitInstruction = "Do not commit — .gsd/ planning docs are managed externally and not tracked in git.";
@@ -1820,6 +1867,8 @@ export interface ExecuteTaskPromptOptions {
   modelRegistry?: MinimalModelRegistry;
   /** Session model provider, used for provider-specific effective context windows. */
   sessionProvider?: string;
+  /** Render compact Context Mode guidance when embedded inside another prompt. */
+  contextModeRenderMode?: ContextModeRenderMode;
 }
 
 export async function buildExecuteTaskPrompt(
@@ -1962,6 +2011,7 @@ export async function buildExecuteTaskPrompt(
     getGatesForTurn("execute-task"),
     { pending: new Set(etPending.map((g) => g.gate_id)), allowOmit: true },
   );
+  phaseAnchorSection = prependContextModeToBlock("execute-task", base, phaseAnchorSection, opts.contextModeRenderMode);
 
   return loadPrompt("execute-task", {
     overridesSection,
@@ -1990,6 +2040,7 @@ export async function buildExecuteTaskPrompt(
       taskTitle: tTitle,
       taskPlanContent,
       extraContext: [taskPlanInline, slicePlanExcerpt, finalCarryForward, resumeSection],
+      unitType: "execute-task",
     }),
   });
 }
@@ -2088,7 +2139,11 @@ export async function buildCompleteSlicePrompt(
     ? `${completeOverridesInline}\n\n---\n\n${body}`
     : body;
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${finalBody}`);
+  const inlinedContext = prependContextModeToBlock(
+    "complete-slice",
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${finalBody}`),
+  );
   const roadmapRel = relMilestoneFile(base, mid, "ROADMAP");
 
   const sliceRel = relSlicePath(base, mid, sid);
@@ -2187,7 +2242,11 @@ export async function buildCompleteMilestonePrompt(
   if (contextInline) inlined.push(contextInline);
   inlined.push(inlineTemplate("milestone-summary", "Milestone Summary"));
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const inlinedContext = prependContextModeToBlock(
+    "complete-milestone",
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`),
+  );
 
   const milestoneSummaryPath = join(base, `${relMilestonePath(base, mid)}/${mid}-SUMMARY.md`);
 
@@ -2324,7 +2383,11 @@ export async function buildValidateMilestonePrompt(
   const contextInline = await inlineFileOptional(contextPath, contextRel, "Milestone Context");
   if (contextInline) inlined.push(contextInline);
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const inlinedContext = prependContextModeToBlock(
+    "validate-milestone",
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`),
+  );
 
   const validationOutputPath = join(base, `${relMilestonePath(base, mid)}/${mid}-VALIDATION.md`);
   const roadmapOutputPath = `${relMilestonePath(base, mid)}/${mid}-ROADMAP.md`;
@@ -2400,7 +2463,11 @@ export async function buildReplanSlicePrompt(
   const replanOverridesInline = formatOverridesSection(replanActiveOverrides);
   if (replanOverridesInline) inlined.unshift(replanOverridesInline);
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`);
+  const inlinedContext = prependContextModeToBlock(
+    "replan-slice",
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${inlined.join("\n\n---\n\n")}`),
+  );
 
   const replanPath = join(base, `${relSlicePath(base, mid, sid)}/${sid}-REPLAN.md`);
 
@@ -2474,7 +2541,11 @@ export async function buildRunUatPrompt(
   };
 
   const composed = await composeInlinedContext("run-uat", resolveArtifact);
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${composed}`);
+  const inlinedContext = prependContextModeToBlock(
+    "run-uat",
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${composed}`),
+  );
 
   const uatResultPath = join(base, relSliceFile(base, mid, sliceId, "ASSESSMENT"));
   const uatType = getUatType(uatContent);
@@ -2548,7 +2619,11 @@ export async function buildReassessRoadmapPrompt(
   const knowledgeInlineRA = await inlineKnowledgeBudgeted(base, extractKeywords(midTitle));
   if (knowledgeInlineRA) parts.push(knowledgeInlineRA);
 
-  const inlinedContext = capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${parts.join("\n\n---\n\n")}`);
+  const inlinedContext = prependContextModeToBlock(
+    "reassess-roadmap",
+    base,
+    capPreamble(`## Inlined Context (preloaded — do not re-read these files)\n\n${parts.join("\n\n---\n\n")}`),
+  );
 
   const assessmentPath = join(base, relSliceFile(base, mid, completedSliceId, "ASSESSMENT"));
 
@@ -2641,6 +2716,7 @@ export async function buildReactiveExecutePrompt(
         sessionContextWindow: opts?.sessionContextWindow,
         modelRegistry: opts?.modelRegistry,
         sessionProvider: opts?.sessionProvider,
+        contextModeRenderMode: "nested",
       },
     );
 
@@ -2664,7 +2740,7 @@ export async function buildReactiveExecutePrompt(
     milestoneTitle: midTitle,
     sliceId: sid,
     sliceTitle: sTitle,
-    graphContext,
+    graphContext: prependContextModeToBlock("reactive-execute", base, graphContext),
     readyTaskCount: String(readyTaskIds.length),
     readyTaskList: readyTaskListLines.join("\n"),
     subagentPrompts: subagentSections.join("\n\n---\n\n"),
@@ -2730,7 +2806,7 @@ export async function buildParallelResearchSlicesPrompt(
   const subagentSections: string[] = [];
   const modelSuffix = subagentModel ? ` with model: "${subagentModel}"` : "";
   for (const slice of slices) {
-    const slicePrompt = await buildResearchSlicePrompt(mid, midTitle, slice.id, slice.title, basePath);
+    const slicePrompt = await buildResearchSlicePrompt(mid, midTitle, slice.id, slice.title, basePath, { contextModeRenderMode: "nested" });
     subagentSections.push([
       `### ${slice.id}: ${slice.title}`,
       "",
@@ -2786,6 +2862,8 @@ export async function buildGateEvaluatePrompt(
     gateListLines.push(`- **${def.id}**: ${def.question}`);
 
     const subPrompt = [
+      renderContextModeForPrompt("gate-evaluate", base, "nested"),
+      "",
       `You are evaluating quality gate **${def.id}** for slice ${sid} (${sTitle}).`,
       "",
       `**Working directory:** \`${normalizedBase}\`. All file reads, writes, and shell commands MUST operate relative to this directory. Do NOT \`cd\` to any other directory.`,
@@ -2828,7 +2906,7 @@ export async function buildGateEvaluatePrompt(
     milestoneTitle: midTitle,
     sliceId: sid,
     sliceTitle: sTitle,
-    slicePlanContent: planContent,
+    slicePlanContent: prependContextModeToBlock("gate-evaluate", base, planContent),
     gateCount: String(pending.length),
     gateList: gateListLines.join("\n"),
     subagentPrompts: subagentSections.join("\n\n---\n\n"),
@@ -2905,7 +2983,7 @@ export async function buildRewriteDocsPrompt(
 
   const documentList = docList.length > 0 ? docList.join("\n") : "- No active plan documents found.";
 
-  return loadPrompt("rewrite-docs", {
+  return prependContextModeToBlock("rewrite-docs", base, loadPrompt("rewrite-docs", {
     workingDirectory: base,
     milestoneId: mid,
     milestoneTitle: midTitle,
@@ -2914,5 +2992,5 @@ export async function buildRewriteDocsPrompt(
     overrideContent,
     documentList,
     overridesPath: relGsdRootFile("OVERRIDES"),
-  });
+  }));
 }

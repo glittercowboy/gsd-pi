@@ -111,6 +111,9 @@ test("#4551: buildPlanSlicePrompt injects fix section when priorPreExecFailure p
     },
   );
 
+  assert.ok(prompt.includes("## Context Mode"), "plan-slice should include standalone Context Mode guidance");
+  assert.ok(prompt.includes("planning lane"), "plan-slice should render the planning lane");
+
   assert.ok(
     prompt.includes("Fix these specific issues from the prior pre-exec check"),
     "prompt must contain the fix section heading",

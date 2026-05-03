@@ -1,7 +1,7 @@
 // GSD2 — Exec (context-mode) tool registration.
 //
-// Exposes the `gsd_exec` tool over MCP. Opt-in: disabled unless
-// `context_mode.enabled: true` is set in preferences.
+// Exposes the Context Mode runtime tools in-process. Default-on; opt out with
+// `context_mode.enabled: false` in preferences.
 
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@gsd/pi-coding-agent";

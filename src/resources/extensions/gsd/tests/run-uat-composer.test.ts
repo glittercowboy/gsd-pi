@@ -95,6 +95,8 @@ test("#4782 phase 3: buildRunUatPrompt inlines slice UAT, slice summary, project
 
   // Context wrapper present
   assert.match(prompt, /## Inlined Context \(preloaded — do not re-read these files\)/);
+  assert.match(prompt, /## Context Mode/);
+  assert.match(prompt, /verification lane/);
 
   // Artifacts from the manifest inline list, in declared order:
   // slice-uat → slice-summary → project (#4925 review).

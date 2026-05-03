@@ -42,6 +42,7 @@ import {
   type BaseResolverContext,
   type ComputedArtifactId,
   type ComputedArtifactRegistry,
+  type ContextModePolicy,
   type UnitContextManifest,
 } from "./unit-context-manifest.js";
 
@@ -90,6 +91,54 @@ export async function composeInlinedContext(
 export function manifestBudgetChars(unitType: string): number | null {
   const manifest = resolveManifest(unitType);
   return manifest ? manifest.maxSystemPromptChars : null;
+}
+
+// ─── Context Mode lane guidance ──────────────────────────────────────────
+
+export type ContextModeRenderMode = "standalone" | "nested";
+
+export interface ComposeContextModeInstructionOptions {
+  readonly enabled: boolean;
+  readonly renderMode: ContextModeRenderMode;
+}
+
+const CONTEXT_MODE_LANE_LABELS: Record<Exclude<ContextModePolicy, "none">, string> = {
+  interview: "interview",
+  research: "research",
+  planning: "planning",
+  execution: "execution",
+  verification: "verification",
+  orchestration: "orchestration",
+  docs: "documentation",
+};
+
+const CONTEXT_MODE_GUIDANCE =
+  "Use `gsd_exec` for noisy scans, builds, and tests so full output stays out of prompt context; call `gsd_exec_search` before repeating prior runs; call `gsd_resume` after compaction or resume to recover stored execution context.";
+
+/**
+ * Render the Context Mode instruction lane for a unit type. Unknown unit
+ * types, disabled config, and explicit `contextMode: "none"` all omit the
+ * block so callers can prefix this safely without extra branching.
+ */
+export function composeContextModeInstructions(
+  unitType: string,
+  opts: ComposeContextModeInstructionOptions,
+): string {
+  if (!opts.enabled) return "";
+  const manifest = resolveManifest(unitType);
+  if (!manifest || manifest.contextMode === "none") return "";
+
+  const lane = CONTEXT_MODE_LANE_LABELS[manifest.contextMode];
+  if (opts.renderMode === "nested") {
+    return `Context Mode (${lane} lane): ${CONTEXT_MODE_GUIDANCE}`;
+  }
+
+  return [
+    "## Context Mode",
+    "",
+    `Lane: **${lane} lane**.`,
+    CONTEXT_MODE_GUIDANCE,
+  ].join("\n");
 }
 
 // ─── v2 surface (#4924) ───────────────────────────────────────────────────

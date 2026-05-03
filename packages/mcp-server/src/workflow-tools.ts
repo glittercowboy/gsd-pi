@@ -692,6 +692,9 @@ export const WORKFLOW_TOOL_NAMES = [
   "gsd_complete_task",
   "gsd_milestone_status",
   "gsd_journal_query",
+  "gsd_exec",
+  "gsd_exec_search",
+  "gsd_resume",
   // ADR-013 step 3: memory-store tools exposed to external MCP clients.
   // gsd_memory_graph is namespaced to avoid collision with the existing
   // gsd_graph tool (project knowledge graph from .gsd/ artifacts).
@@ -1426,6 +1429,30 @@ const journalQueryParams = {
 };
 const journalQuerySchema = z.object(journalQueryParams);
 
+const execRuntimeSchema = z.enum(["bash", "node", "python"]);
+const execParams = {
+  projectDir: projectDirParam,
+  runtime: execRuntimeSchema.describe("Interpreter: bash (-c), node (-e), or python3 (-c)."),
+  script: nonEmptyString("script").describe("Script body. Keep output small; full stdout/stderr are persisted under .gsd/exec."),
+  purpose: z.string().optional().describe("Short label recorded in meta.json for later review."),
+  timeout_ms: z.number().int().min(1_000).max(600_000).optional().describe("Per-invocation timeout in milliseconds."),
+};
+const execSchema = z.object(execParams);
+
+const execSearchParams = {
+  projectDir: projectDirParam,
+  query: z.string().optional().describe("Substring matched against id and purpose, case-insensitive."),
+  runtime: execRuntimeSchema.optional().describe("Restrict to one runtime."),
+  failing_only: z.boolean().optional().describe("Only non-zero exit codes and timeouts."),
+  limit: z.number().int().min(1).max(200).optional().describe("Max results (default 20, cap 200)."),
+};
+const execSearchSchema = z.object(execSearchParams);
+
+const resumeParams = {
+  projectDir: projectDirParam,
+};
+const resumeSchema = z.object(resumeParams);
+
 /**
  * Wrap a real McpToolServer so every handler we register catches thrown
  * errors and returns a structured `{isError: true, content: [...]}` MCP
@@ -1879,6 +1906,60 @@ export function registerWorkflowTools(realServer: McpToolServer): void {
         return { content: [{ type: "text" as const, text: "No matching journal entries found." }] };
       }
       return { content: [{ type: "text" as const, text: JSON.stringify(entries, null, 2) }] };
+    },
+  );
+
+  server.tool(
+    "gsd_exec",
+    "Run a short bash/node/python script in the project directory. Full stdout/stderr persist under .gsd/exec; only a digest returns to MCP.",
+    execParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(execSchema, args);
+      await enforceWorkflowWriteGate("gsd_exec", projectDir);
+      const [{ executeGsdExec }, { loadEffectiveGSDPreferences }] = await Promise.all([
+        importLocalModule<any>("../../../src/resources/extensions/gsd/tools/exec-tool.js"),
+        importLocalModule<any>("../../../src/resources/extensions/gsd/preferences.js"),
+      ]);
+      let prefs: { preferences?: unknown } | null = null;
+      try {
+        prefs = loadEffectiveGSDPreferences(projectDir);
+      } catch {
+        prefs = null;
+      }
+      return adaptExecutorResult(
+        await runSerializedWorkflowOperation(() =>
+          executeGsdExec(params, {
+            baseDir: projectDir,
+            preferences: (prefs?.preferences ?? null) as unknown,
+          }),
+        ),
+      );
+    },
+  );
+
+  server.tool(
+    "gsd_exec_search",
+    "Search prior gsd_exec runs from .gsd/exec/*.meta.json without re-running them.",
+    execSearchParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(execSearchSchema, args);
+      const { executeExecSearch } = await importLocalModule<any>(
+        "../../../src/resources/extensions/gsd/tools/exec-search-tool.js",
+      );
+      return adaptExecutorResult(executeExecSearch(params, { baseDir: projectDir }));
+    },
+  );
+
+  server.tool(
+    "gsd_resume",
+    "Read .gsd/last-snapshot.md so agents can re-orient after compaction or session resume.",
+    resumeParams,
+    async (args: Record<string, unknown>) => {
+      const { projectDir, ...params } = parseWorkflowArgs(resumeSchema, args);
+      const { executeResume } = await importLocalModule<any>(
+        "../../../src/resources/extensions/gsd/tools/resume-tool.js",
+      );
+      return adaptExecutorResult(executeResume(params, { baseDir: projectDir }));
     },
   );
 

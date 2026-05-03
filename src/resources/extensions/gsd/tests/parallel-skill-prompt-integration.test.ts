@@ -147,4 +147,12 @@ test("subagent dispatch prompt (buildParallelResearchSlicesPrompt) carries <skil
     prompt.includes(SKILL_ACTIVATION_SUBSTRING),
     `parallel-research-slices prompt should reference the always-used skill '${SKILL_NAME}'`,
   );
+  assert.ok(
+    prompt.includes("Context Mode (research lane):"),
+    "embedded parallel research subagent prompts should use nested Context Mode guidance",
+  );
+  assert.ok(
+    !prompt.includes("## Context Mode\n\nLane: **research lane**."),
+    "embedded parallel research subagent prompts should not use standalone Context Mode heading",
+  );
 });

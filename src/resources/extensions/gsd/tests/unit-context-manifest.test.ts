@@ -12,6 +12,7 @@ import {
   UNIT_MANIFESTS,
   resolveManifest,
   type ArtifactKey,
+  type ContextModePolicy,
   type SkillsPolicy,
   type UnitContextManifest,
 } from "../unit-context-manifest.ts";
@@ -102,6 +103,37 @@ test("#4782 phase 1: every manifest has a positive maxSystemPromptChars", () => 
       typeof manifest.maxSystemPromptChars === "number" && manifest.maxSystemPromptChars > 0,
       `manifest "${unitType}" has invalid maxSystemPromptChars: ${manifest.maxSystemPromptChars}`,
     );
+  }
+});
+
+test("Context Mode: every manifest declares the expected contextMode lane", () => {
+  const expected: Record<string, ContextModePolicy> = {
+    "workflow-preferences": "none",
+    "research-decision": "none",
+    "discuss-project": "interview",
+    "discuss-requirements": "interview",
+    "discuss-milestone": "interview",
+    "research-project": "research",
+    "research-milestone": "research",
+    "research-slice": "research",
+    "plan-milestone": "planning",
+    "plan-slice": "planning",
+    "refine-slice": "planning",
+    "replan-slice": "planning",
+    "reassess-roadmap": "planning",
+    "execute-task": "execution",
+    "reactive-execute": "execution",
+    "run-uat": "verification",
+    "gate-evaluate": "verification",
+    "validate-milestone": "verification",
+    "complete-slice": "verification",
+    "complete-milestone": "verification",
+    "rewrite-docs": "docs",
+  };
+
+  assert.deepEqual(Object.keys(expected).sort(), [...KNOWN_UNIT_TYPES].sort());
+  for (const unitType of KNOWN_UNIT_TYPES) {
+    assert.strictEqual(UNIT_MANIFESTS[unitType].contextMode, expected[unitType]);
   }
 });
 

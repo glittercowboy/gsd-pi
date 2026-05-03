@@ -64,6 +64,38 @@ async function applyDisabledModelProviderPolicy(ctx: ExtensionContext): Promise<
   }
 }
 
+async function writeContextModeCompactionSnapshot(basePath: string): Promise<void> {
+  try {
+    const { loadEffectiveGSDPreferences } = await import("../preferences.js");
+    const { isContextModeEnabled } = await import("../preferences-types.js");
+    const prefs = loadEffectiveGSDPreferences(basePath);
+    if (!isContextModeEnabled(prefs?.preferences)) return;
+
+    const { writeCompactionSnapshot } = await import("../compaction-snapshot.js");
+    const { ensureDbOpen } = await import("./dynamic-tools.js");
+    await ensureDbOpen(basePath);
+
+    let activeContext: string | null = null;
+    try {
+      const state = await deriveGsdState(basePath);
+      if (state.activeMilestone && state.activeSlice && state.activeTask) {
+        activeContext =
+          `Active: ${state.activeMilestone.id} / ${state.activeSlice.id} / ${state.activeTask.id}` +
+          (state.activeTask.title ? ` - ${state.activeTask.title}` : "");
+      }
+    } catch {
+      /* non-fatal */
+    }
+
+    writeCompactionSnapshot(basePath, { activeContext });
+  } catch (err) {
+    safetyLogWarning(
+      "context-mode",
+      `failed to write compaction snapshot: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
 export function registerHooks(
   pi: ExtensionAPI,
   ecosystemHandlers: GSDEcosystemBeforeAgentStartHandler[],
@@ -229,15 +261,19 @@ export function registerHooks(
   });
 
   pi.on("session_before_compact", async () => {
+    const basePath = process.cwd();
+    // Context Mode is default-on. Write the resumable snapshot before any
+    // active-auto cancel return so auto sessions still leave re-entry context.
+    await writeContextModeCompactionSnapshot(basePath);
+
     // Only cancel compaction while auto-mode is actively running.
     // Paused auto-mode should allow compaction — the user may be doing
     // interactive work (#3165).
     if (isAutoActive()) {
       return { cancel: true };
     }
-    const basePath = process.cwd();
     const { ensureDbOpen } = await import("./dynamic-tools.js");
-    await ensureDbOpen();
+    await ensureDbOpen(basePath);
     const state = await deriveGsdState(basePath);
     if (!state.activeMilestone || !state.activeSlice) return;
     // Write checkpoint for ALL phases, not just "executing" — discuss, research,
@@ -280,42 +316,6 @@ export function registerHooks(
         ? `Resume task ${taskId}: ${taskTitle}.`
         : `Resume ${phaseLabel} work for slice ${state.activeSlice.id}.`,
     }));
-  });
-
-  // Context-mode snapshot: write .gsd/last-snapshot.md before compaction so
-  // agents can call gsd_resume (or Read the file) to re-orient. Opt-in via
-  // preferences.context_mode.enabled. Runs after the auto-cancel handler
-  // above — if that one returned cancel:true, pi still fires us but the
-  // compaction won't actually happen; the snapshot is still useful then,
-  // since auto may pause and resume later.
-  pi.on("session_before_compact", async () => {
-    try {
-      const { loadEffectiveGSDPreferences } = await import("../preferences.js");
-      const { isContextModeEnabled } = await import("../preferences-types.js");
-      const prefs = loadEffectiveGSDPreferences();
-      if (!isContextModeEnabled(prefs?.preferences)) return;
-      const { writeCompactionSnapshot } = await import("../compaction-snapshot.js");
-      const { ensureDbOpen } = await import("./dynamic-tools.js");
-      await ensureDbOpen();
-      const basePath = process.cwd();
-      let activeContext: string | null = null;
-      try {
-        const state = await deriveGsdState(basePath);
-        if (state.activeMilestone && state.activeSlice && state.activeTask) {
-          activeContext =
-            `Active: ${state.activeMilestone.id} / ${state.activeSlice.id} / ${state.activeTask.id}` +
-            (state.activeTask.title ? ` — ${state.activeTask.title}` : "");
-        }
-      } catch {
-        /* non-fatal */
-      }
-      writeCompactionSnapshot(basePath, { activeContext });
-    } catch (err) {
-      safetyLogWarning(
-        "context-mode",
-        `failed to write compaction snapshot: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
   });
 
   pi.on("message_update", async (event, ctx: ExtensionContext) => {

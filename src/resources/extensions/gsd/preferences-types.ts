@@ -343,7 +343,8 @@ export interface GSDPreferences {
   /**
    * Tool-output sandboxing via gsd_exec. Keeps sub-session context windows
    * clean by running scripts in a subprocess and only surfacing a short
-   * digest. See `ContextModeConfig`. Default: disabled.
+   * digest. See `ContextModeConfig`. Default: enabled unless explicitly
+   * disabled with `context_mode.enabled: false`.
    */
   context_mode?: ContextModeConfig;
   token_profile?: TokenProfile;

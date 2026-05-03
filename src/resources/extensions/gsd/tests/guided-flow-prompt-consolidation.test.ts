@@ -101,6 +101,20 @@ describe("guided-flow → auto-prompts consolidation (#5183)", () => {
       prompt.includes("Implement the thing"),
       "must include task plan body content from disk",
     );
+    assert.ok(prompt.includes("## Context Mode"), "execute-task should include standalone Context Mode guidance");
+    assert.ok(prompt.includes("execution lane"), "execute-task should render the execution lane");
+  });
+
+  test("buildExecuteTaskPrompt omits Context Mode when disabled", async () => {
+    writeFileSync(
+      join(base, ".gsd", "PREFERENCES.md"),
+      ["---", "context_mode:", "  enabled: false", "---", ""].join("\n"),
+    );
+
+    const prompt = await buildExecuteTaskPrompt(MID, SID, S_TITLE, TID, T_TITLE, base);
+
+    assert.ok(!prompt.includes("## Context Mode"));
+    assert.ok(!prompt.includes("Context Mode (execution lane)"));
   });
 
   test("buildCompleteSlicePrompt carries the complete-slice contract", async () => {

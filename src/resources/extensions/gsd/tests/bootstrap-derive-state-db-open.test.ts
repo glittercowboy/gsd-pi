@@ -31,9 +31,9 @@ describe("bootstrap deriveState DB guards (#3844)", () => {
     const compactIdx = registerHooksSrc.indexOf('pi.on("session_before_compact"');
     assert.ok(compactIdx > -1, "register-hooks should define session_before_compact");
     const compactSection = extractSourceRegion(registerHooksSrc, 'pi.on("session_before_compact"');
-    const ensureIdx = compactSection.indexOf("ensureDbOpen()");
+    const ensureIdx = compactSection.indexOf("ensureDbOpen(basePath)");
     const deriveIdx = compactSection.indexOf("deriveGsdState(basePath)");
-    assert.ok(ensureIdx > -1, "session_before_compact should call ensureDbOpen()");
+    assert.ok(ensureIdx > -1, "session_before_compact should call ensureDbOpen(basePath)");
     assert.ok(deriveIdx > -1, "session_before_compact should derive state");
     assert.ok(ensureIdx < deriveIdx, "session_before_compact should open DB before deriveState");
   });

@@ -211,6 +211,14 @@ test("buildReactiveExecutePrompt: output contains model string when subagentMode
     prompt.includes('model: "claude-opus-4-6"'),
     `Prompt should contain model instruction. Got:\n${prompt.slice(0, 500)}`,
   );
+  assert.ok(
+    prompt.includes("Context Mode (execution lane):"),
+    "embedded reactive-execute task prompt should use nested Context Mode guidance",
+  );
+  assert.ok(
+    prompt.includes("## Context Mode"),
+    "reactive-execute parent prompt should include standalone Context Mode guidance",
+  );
 });
 
 test("buildReactiveExecutePrompt: no model instruction when subagentModel omitted", async (t) => {
@@ -265,4 +273,55 @@ test("buildReactiveExecutePrompt: no model instruction when subagentModel omitte
     !prompt.includes('with model:'),
     "Prompt should not contain model instruction when subagentModel is omitted",
   );
+});
+
+test("buildGateEvaluatePrompt: embedded gate prompts use nested Context Mode guidance", async (t) => {
+  const { buildGateEvaluatePrompt } = await import("../auto-prompts.ts");
+  const { closeDatabase, insertGateRow, insertMilestone, insertSlice, openDatabase } = await import("../gsd-db.ts");
+  const repo = mkdtempSync(join(tmpdir(), "gsd-subagent-model-gate-"));
+  t.after(() => {
+    try { closeDatabase(); } catch { /* noop */ }
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  const sliceDir = join(repo, ".gsd", "milestones", "M001", "slices", "S01");
+  mkdirSync(sliceDir, { recursive: true });
+  writeFileSync(join(sliceDir, "S01-PLAN.md"), "# S01 Plan\n\n## Verification\n- Run checks.\n");
+  openDatabase(join(repo, ".gsd", "gsd.db"));
+  insertMilestone({ id: "M001", title: "Test Milestone", status: "active", depends_on: [] });
+  insertSlice({
+    id: "S01",
+    milestoneId: "M001",
+    title: "Test Slice",
+    status: "planned",
+    risk: "low",
+    depends: [],
+    demo: "",
+    sequence: 1,
+  });
+  insertGateRow({
+    milestoneId: "M001",
+    sliceId: "S01",
+    gateId: "Q3",
+    scope: "slice",
+  });
+
+  const prompt = await buildGateEvaluatePrompt(
+    "M001",
+    "Test Milestone",
+    "S01",
+    "Test Slice",
+    repo,
+    "claude-opus-4-6",
+  );
+
+  assert.ok(
+    prompt.includes("Context Mode (verification lane):"),
+    "embedded gate-evaluate prompt should use nested Context Mode guidance",
+  );
+  assert.ok(
+    prompt.includes("## Context Mode"),
+    "gate-evaluate parent prompt should include standalone Context Mode guidance",
+  );
+  assert.ok(prompt.includes('model: "claude-opus-4-6"'), "gate subagent prompt should preserve model instruction");
 });

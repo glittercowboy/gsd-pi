@@ -98,6 +98,19 @@ Fire-and-forget thought capture. Captures are triaged automatically between task
 
 Every task gets a clean AI context window. No accumulated garbage, no quality degradation from context bloat. The dispatch prompt includes everything needed — task plans, prior summaries, decisions, dependency context — so the AI starts oriented.
 
+## Context Mode
+
+Context Mode is enabled by default for auto-mode runs. Each unit receives manifest-driven guidance to preserve the conversation window: use `gsd_exec` for noisy codebase scans, builds, tests, and diagnostics; use `gsd_exec_search` before repeating a prior sandboxed run; and use `gsd_resume` after compaction or session resume to read `.gsd/last-snapshot.md`.
+
+`gsd_exec` writes full stdout/stderr and metadata under `.gsd/exec/`, then returns only a short digest to the agent. This keeps large command output out of the LLM context while preserving exact evidence on disk. Opt out with:
+
+```yaml
+context_mode:
+  enabled: false
+```
+
+You can also tune sandbox behavior with `context_mode.exec_timeout_ms`, `context_mode.exec_stdout_cap_bytes`, and `context_mode.exec_digest_chars`.
+
 ## Runtime Tool Policy
 
 Every auto-mode unit declares a `ToolsPolicy` in its `UnitContextManifest`, and GSD enforces it before tool calls run. Execution units use `all` mode and can edit project files, run shell commands, and dispatch subagents. Most planning and discussion units use `planning` mode: read tools are allowed, writes are limited to `.gsd/`, bash must be read-only, and subagent dispatch is blocked. Selected planning and closeout units use `planning-dispatch` mode, which keeps the same source-write and bash restrictions but allows `subagent` dispatch for isolated recon, planning, or review work. Documentation units use `docs` mode, which also allows writes to the manifest's documentation globs such as `docs/**`, top-level `README*.md`, `CHANGELOG.md`, and top-level `*.md`.
