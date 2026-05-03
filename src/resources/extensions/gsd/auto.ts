@@ -2019,6 +2019,18 @@ export async function dispatchHookUnit(
     return false;
   }
 
+  // Flush stale queue events before opening a new hook session (#5174).
+  // Mirrors run-unit.ts cleanup; without it, leftover events from a prior
+  // unit can crash newSession() during hook dispatch.
+  try {
+    const cmdCtxAny = s.cmdCtx as Record<string, unknown> | null;
+    if (typeof cmdCtxAny?.clearQueue === "function") {
+      (cmdCtxAny.clearQueue as () => unknown)();
+    }
+  } catch (e) {
+    debugLog("hook-cleanup-queue", { error: e instanceof Error ? e.message : String(e) });
+  }
+
   const result = await s.cmdCtx!.newSession();
   if (result.cancelled) {
     await stopAuto(ctx, pi);
